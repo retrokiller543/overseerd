@@ -29,9 +29,10 @@ pub struct BoxedComponent {
 pub struct ComponentConstructionContext {}
 
 /// Async factory function pointer for constructing a component.
-pub type ComponentFactory = for<'a> fn(
-    &'a mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + 'a>>;
+pub type ComponentFactory =
+    for<'a> fn(
+        &'a mut ComponentConstructionContext,
+    ) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + 'a>>;
 
 /// Static metadata describing a component and how to construct it.
 pub struct ComponentDescriptor {
