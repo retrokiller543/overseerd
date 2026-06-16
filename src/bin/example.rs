@@ -1,169 +1,331 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{future::Future, pin::Pin};
+
+use clap::{Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
+use tracing_subscriber::EnvFilter;
 
 use overseer_core::{
-    BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentScope,
-    Daemon, DependencyDescriptor, OperationKind, ParameterDescriptor, ParameterKind,
-    RpcCallContext, RpcDescriptor, RpcResponse, ServiceDescriptor, TypeDescriptor,
+    Daemon, OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor,
+    RpcResponse, ServiceDescriptor, TypeDescriptor,
+};
+use overseer_transport::{
+    TcpTransport, UdpTransport, WireMessage, WireOutcome, WireRequest,
+    protocol::codec::{decode, encode, read_message, write_message},
 };
 
-// ---------------------------------------------------------------------------
-// Stand-in domain types — macros will generate these from annotated structs.
-// ---------------------------------------------------------------------------
-
-struct Config;
-struct DatabasePool;
-struct BackupRepository;
-struct BackupService;
-struct StartBackupInput;
-struct JobId;
-struct BackupStatus;
-struct BackupSummary;
+#[cfg(unix)]
+use overseer_transport::UnixTransport;
 
 // ---------------------------------------------------------------------------
-// Factories — macros will generate one per #[component].
+// CLI
 // ---------------------------------------------------------------------------
 
-fn config_factory<'a>(
-    _: &'a mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<BoxedComponent>> + Send + 'a>> {
+#[derive(Parser)]
+#[command(name = "example", about = "Overseer ping/greet example")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Start the daemon on the selected transport.
+    Daemon {
+        #[arg(value_enum, default_value = "tcp")]
+        transport: TransportKind,
+    },
+    /// Run the client against the selected transport.
+    Client {
+        #[arg(value_enum, default_value = "tcp")]
+        transport: TransportKind,
+    },
+}
+
+#[derive(Clone, ValueEnum)]
+enum TransportKind {
+    Tcp,
+    Udp,
+    #[cfg(unix)]
+    Unix,
+}
+
+// ---------------------------------------------------------------------------
+// Addresses
+// ---------------------------------------------------------------------------
+
+const TCP_ADDR: &str = "127.0.0.1:9001";
+const UDP_ADDR: &str = "127.0.0.1:9002";
+#[cfg(unix)]
+const UNIX_SOCK: &str = "/tmp/overseer-example.sock";
+
+// ---------------------------------------------------------------------------
+// Domain types
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize, Debug)]
+struct PingRequest;
+
+#[derive(Serialize, Deserialize, Debug)]
+struct PingResponse {
+    message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct GreetRequest {
+    name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct GreetResponse {
+    message: String,
+}
+
+// Stand-in service type — macros will generate this from #[service].
+struct GreeterService;
+
+// ---------------------------------------------------------------------------
+// RPC handlers
+// ---------------------------------------------------------------------------
+
+fn ping_handler(
+    _ctx: RpcCallContext,
+) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
     Box::pin(async {
-        Ok(BoxedComponent {
-            ty: TypeDescriptor::of::<Config>("Config"),
-            value: Box::new(Arc::new(Config)),
-        })
+        let response = PingResponse {
+            message: "pong".to_string(),
+        };
+        let payload = postcard::to_allocvec(&response).unwrap();
+
+        Ok(RpcResponse { payload })
     })
 }
 
-fn database_pool_factory<'a>(
-    ctx: &'a mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<BoxedComponent>> + Send + 'a>> {
+fn greet_handler(
+    ctx: RpcCallContext,
+) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
     Box::pin(async move {
-        let _config = ctx.resolve::<Config>();
+        let req: GreetRequest = postcard::from_bytes(&ctx.payload).unwrap();
+        let response = GreetResponse {
+            message: format!("Hello, {}!", req.name),
+        };
+        let payload = postcard::to_allocvec(&response).unwrap();
 
-        Ok(BoxedComponent {
-            ty: TypeDescriptor::of::<DatabasePool>("DatabasePool"),
-            value: Box::new(Arc::new(DatabasePool)),
-        })
-    })
-}
-
-fn backup_repository_factory<'a>(
-    ctx: &'a mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<BoxedComponent>> + Send + 'a>> {
-    Box::pin(async move {
-        let _pool = ctx.resolve::<DatabasePool>();
-
-        Ok(BoxedComponent {
-            ty: TypeDescriptor::of::<BackupRepository>("BackupRepository"),
-            value: Box::new(Arc::new(BackupRepository)),
-        })
+        Ok(RpcResponse { payload })
     })
 }
 
 // ---------------------------------------------------------------------------
-// RPC handlers — macros will generate these from #[rpc] impl blocks.
+// Static descriptors
 // ---------------------------------------------------------------------------
 
-fn start_backup_handler(
-    _: RpcCallContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
-    Box::pin(async { Ok(RpcResponse {}) })
-}
-
-fn backup_status_handler(
-    _: RpcCallContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
-    Box::pin(async { Ok(RpcResponse {}) })
-}
-
-fn list_backups_handler(
-    _: RpcCallContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
-    Box::pin(async { Ok(RpcResponse {}) })
-}
-
-// ---------------------------------------------------------------------------
-// Static descriptors — macros will emit these into the binary via inventory::submit!
-// ---------------------------------------------------------------------------
-
-static CONFIG: ComponentDescriptor = ComponentDescriptor {
-    id: "config",
-    name: "Config",
-    ty: TypeDescriptor::of::<Config>("Config"),
-    scope: ComponentScope::Singleton,
-    dependencies: &[],
-    factory: config_factory,
-};
-
-static DATABASE_POOL_DEPS: [DependencyDescriptor; 1] = [DependencyDescriptor {
-    name: "Config",
-    ty: TypeDescriptor::of::<Config>("Config"),
-    optional: false,
-}];
-
-static DATABASE_POOL: ComponentDescriptor = ComponentDescriptor {
-    id: "database_pool",
-    name: "DatabasePool",
-    ty: TypeDescriptor::of::<DatabasePool>("DatabasePool"),
-    scope: ComponentScope::Singleton,
-    dependencies: &DATABASE_POOL_DEPS,
-    factory: database_pool_factory,
-};
-
-static BACKUP_REPO_DEPS: [DependencyDescriptor; 1] = [DependencyDescriptor {
-    name: "DatabasePool",
-    ty: TypeDescriptor::of::<DatabasePool>("DatabasePool"),
-    optional: false,
-}];
-
-static BACKUP_REPO: ComponentDescriptor = ComponentDescriptor {
-    id: "backup_repository",
-    name: "BackupRepository",
-    ty: TypeDescriptor::of::<BackupRepository>("BackupRepository"),
-    scope: ComponentScope::Singleton,
-    dependencies: &BACKUP_REPO_DEPS,
-    factory: backup_repository_factory,
-};
-
-static BACKUP_SERVICE_RPCS: [RpcDescriptor; 3] = [
+static GREETER_SERVICE_RPCS: [RpcDescriptor; 2] = [
     RpcDescriptor {
-        name: "start_backup",
-        operation: OperationKind::Command,
-        parameters: &[ParameterDescriptor {
-            name: "input",
-            kind: ParameterKind::Payload,
-            ty: TypeDescriptor::of::<StartBackupInput>("StartBackupInput"),
-        }],
-        output: TypeDescriptor::of::<JobId>("JobId"),
-        handler: start_backup_handler,
-    },
-    RpcDescriptor {
-        name: "backup_status",
-        operation: OperationKind::Query,
-        parameters: &[ParameterDescriptor {
-            name: "job_id",
-            kind: ParameterKind::Payload,
-            ty: TypeDescriptor::of::<JobId>("JobId"),
-        }],
-        output: TypeDescriptor::of::<BackupStatus>("BackupStatus"),
-        handler: backup_status_handler,
-    },
-    RpcDescriptor {
-        name: "list_backups",
+        name: "ping",
         operation: OperationKind::Query,
         parameters: &[],
-        output: TypeDescriptor::of::<BackupSummary>("Vec<BackupSummary>"),
-        handler: list_backups_handler,
+        output: TypeDescriptor::of::<PingResponse>("PingResponse"),
+        handler: ping_handler,
+    },
+    RpcDescriptor {
+        name: "greet",
+        operation: OperationKind::Command,
+        parameters: &[ParameterDescriptor {
+            name: "request",
+            kind: ParameterKind::Payload,
+            ty: TypeDescriptor::of::<GreetRequest>("GreetRequest"),
+        }],
+        output: TypeDescriptor::of::<GreetResponse>("GreetResponse"),
+        handler: greet_handler,
     },
 ];
 
-static BACKUP_SERVICE_DESC: ServiceDescriptor = ServiceDescriptor {
-    id: "backup_service",
-    name: "BackupService",
-    ty: TypeDescriptor::of::<BackupService>("BackupService"),
+static GREETER_SERVICE: ServiceDescriptor = ServiceDescriptor {
+    id: "greeter",
+    name: "Greeter",
+    ty: TypeDescriptor::of::<GreeterService>("GreeterService"),
     version: Some("0.1"),
-    rpcs: &BACKUP_SERVICE_RPCS,
+    rpcs: &GREETER_SERVICE_RPCS,
 };
+
+// ---------------------------------------------------------------------------
+// Daemon
+// ---------------------------------------------------------------------------
+
+async fn run_daemon(transport: TransportKind) -> overseer_core::Result<()> {
+    let daemon = Daemon::builder("greeter")
+        .service(&GREETER_SERVICE)
+        .build()
+        .await?;
+
+    println!("{}", daemon.registry);
+
+    match transport {
+        TransportKind::Tcp => {
+            let t = TcpTransport::bind(TCP_ADDR).await?;
+            println!("Listening on TCP  {TCP_ADDR}  (ctrl-c to stop)\n");
+            daemon.serve(t).await
+        }
+
+        TransportKind::Udp => {
+            let t = UdpTransport::bind(UDP_ADDR).await?;
+            println!("Listening on UDP  {UDP_ADDR}  (ctrl-c to stop)\n");
+            daemon.serve(t).await
+        }
+
+        #[cfg(unix)]
+        TransportKind::Unix => {
+            let t = UnixTransport::bind(UNIX_SOCK)?;
+            println!("Listening on Unix {UNIX_SOCK}  (ctrl-c to stop)\n");
+            daemon.serve(t).await
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Client helpers — all reuse the caller's open stream/socket
+// ---------------------------------------------------------------------------
+
+async fn call_stream<S, Req, Resp>(stream: &mut S, id: u64, path: &str, req: &Req) -> Resp
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    Req: Serialize,
+    Resp: for<'de> Deserialize<'de>,
+{
+    let payload = postcard::to_allocvec(req).unwrap();
+    let msg = WireMessage::Request(WireRequest {
+        id,
+        path: path.to_string(),
+        payload,
+    });
+
+    write_message(stream, &msg).await.expect("send request");
+
+    let resp = read_message(stream).await.expect("recv response");
+
+    unpack(resp)
+}
+
+async fn call_udp<Req, Resp>(socket: &tokio::net::UdpSocket, id: u64, path: &str, req: &Req) -> Resp
+where
+    Req: Serialize,
+    Resp: for<'de> Deserialize<'de>,
+{
+    let payload = postcard::to_allocvec(req).unwrap();
+    let msg = WireMessage::Request(WireRequest {
+        id,
+        path: path.to_string(),
+        payload,
+    });
+    let bytes = encode(&msg).expect("encode");
+
+    socket.send(&bytes).await.expect("send UDP datagram");
+
+    let mut buf = vec![0u8; 65507];
+    let len = socket.recv(&mut buf).await.expect("recv UDP datagram");
+    let resp = decode(&buf[..len]).expect("decode");
+
+    unpack(resp)
+}
+
+fn unpack<Resp: for<'de> Deserialize<'de>>(msg: WireMessage) -> Resp {
+    match msg {
+        WireMessage::Response(r) => match r.outcome {
+            WireOutcome::Ok(bytes) => postcard::from_bytes(&bytes).expect("deserialize response"),
+            WireOutcome::Err(e) => panic!("RPC error: {e}"),
+        },
+        _ => panic!("unexpected message type"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
+
+async fn run_client(transport: TransportKind) {
+    match transport {
+        TransportKind::Tcp => {
+            use tokio::net::TcpStream;
+
+            println!("--- TCP (persistent connection) ---");
+
+            let mut stream = TcpStream::connect(TCP_ADDR).await.expect("connect TCP");
+            println!("[connection opened → {TCP_ADDR}]");
+
+            let r1: PingResponse = call_stream(&mut stream, 1, "Greeter.ping", &PingRequest).await;
+            println!("call 1  ping   →  {}", r1.message);
+
+            let r2: GreetResponse =
+                call_stream(&mut stream, 2, "Greeter.greet", &GreetRequest { name: "World".to_string() }).await;
+            println!("call 2  greet  →  {}", r2.message);
+
+            let r3: GreetResponse =
+                call_stream(&mut stream, 3, "Greeter.greet", &GreetRequest { name: "Overseer".to_string() }).await;
+            println!("call 3  greet  →  {}", r3.message);
+
+            let r4: PingResponse = call_stream(&mut stream, 4, "Greeter.ping", &PingRequest).await;
+            println!("call 4  ping   →  {}", r4.message);
+
+            drop(stream);
+            println!("[connection closed]");
+        }
+
+        TransportKind::Udp => {
+            use tokio::net::UdpSocket;
+
+            // One socket, multiple datagrams. The router on the daemon side
+            // groups them into a single UdpConnection by peer address.
+            println!("--- UDP (persistent session via router) ---");
+
+            let socket = UdpSocket::bind("0.0.0.0:0").await.expect("bind UDP");
+            socket.connect(UDP_ADDR).await.expect("connect UDP");
+            println!("[socket bound, peer → {UDP_ADDR}]");
+
+            let r1: PingResponse = call_udp(&socket, 1, "Greeter.ping", &PingRequest).await;
+            println!("call 1  ping   →  {}", r1.message);
+
+            let r2: GreetResponse =
+                call_udp(&socket, 2, "Greeter.greet", &GreetRequest { name: "World".to_string() }).await;
+            println!("call 2  greet  →  {}", r2.message);
+
+            let r3: GreetResponse =
+                call_udp(&socket, 3, "Greeter.greet", &GreetRequest { name: "Overseer".to_string() }).await;
+            println!("call 3  greet  →  {}", r3.message);
+
+            let r4: PingResponse = call_udp(&socket, 4, "Greeter.ping", &PingRequest).await;
+            println!("call 4  ping   →  {}", r4.message);
+
+            drop(socket);
+            println!("[session ended — router will evict peer on next datagram]");
+        }
+
+        #[cfg(unix)]
+        TransportKind::Unix => {
+            use tokio::net::UnixStream;
+
+            println!("--- Unix socket (persistent connection) ---");
+
+            let mut stream = UnixStream::connect(UNIX_SOCK).await.expect("connect Unix");
+            println!("[connection opened → {UNIX_SOCK}]");
+
+            let r1: PingResponse = call_stream(&mut stream, 1, "Greeter.ping", &PingRequest).await;
+            println!("call 1  ping   →  {}", r1.message);
+
+            let r2: GreetResponse =
+                call_stream(&mut stream, 2, "Greeter.greet", &GreetRequest { name: "World".to_string() }).await;
+            println!("call 2  greet  →  {}", r2.message);
+
+            let r3: GreetResponse =
+                call_stream(&mut stream, 3, "Greeter.greet", &GreetRequest { name: "Overseer".to_string() }).await;
+            println!("call 3  greet  →  {}", r3.message);
+
+            let r4: PingResponse = call_stream(&mut stream, 4, "Greeter.ping", &PingRequest).await;
+            println!("call 4  ping   →  {}", r4.message);
+
+            drop(stream);
+            println!("[connection closed]");
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Main
@@ -171,28 +333,21 @@ static BACKUP_SERVICE_DESC: ServiceDescriptor = ServiceDescriptor {
 
 #[tokio::main]
 async fn main() -> overseer_core::Result<()> {
-    let daemon = Daemon::builder("backup-daemon")
-        .component(&CONFIG)
-        .component(&DATABASE_POOL)
-        .component(&BACKUP_REPO)
-        .service(&BACKUP_SERVICE_DESC)
-        .build()
-        .await?;
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("debug")),
+        )
+        .with_target(true)
+        .init();
 
-    println!("{}", daemon.registry);
+    let cli = Cli::parse();
 
-    println!("Routes ({}):", daemon.router.route_count());
-    let mut paths: Vec<&str> = daemon.router.paths().collect();
-    paths.sort();
-    for path in &paths {
-        println!("  {path}");
+    match cli.command {
+        Command::Daemon { transport } => run_daemon(transport).await,
+        Command::Client { transport } => {
+            run_client(transport).await;
+            Ok(())
+        }
     }
-
-    println!();
-    println!("Container:");
-    println!("  Config:           {}", daemon.container.get::<Config>().is_some());
-    println!("  DatabasePool:     {}", daemon.container.get::<DatabasePool>().is_some());
-    println!("  BackupRepository: {}", daemon.container.get::<BackupRepository>().is_some());
-
-    Ok(())
 }

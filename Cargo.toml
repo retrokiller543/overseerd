@@ -2,6 +2,7 @@
 members = [
     ".",
     "crates/core",
+    "crates/transport",
 ]
 resolver = "3"
 
@@ -14,9 +15,14 @@ authors = ["Emil Schütt <emil.schutt@gmail.com>"]
 [workspace.dependencies]
 # Workspace member crates
 overseer-core = { path = "crates/core" }
+overseer-transport = { path = "crates/transport" }
 
 # Common dependencies
 tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [package]
 name = "overseer"
@@ -31,4 +37,10 @@ path = "src/bin/example.rs"
 
 [dependencies]
 overseer-core = { workspace = true }
+overseer-transport = { workspace = true }
 tokio = { workspace = true }
+serde = { workspace = true }
+postcard = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { version = "4", features = ["derive"] }

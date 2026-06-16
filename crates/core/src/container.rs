@@ -4,6 +4,8 @@ use std::{
     sync::Arc,
 };
 
+use tracing::{debug, error, info, instrument, trace};
+
 use crate::{
     descriptors::{component::ComponentConstructionContext, ComponentDescriptor},
     Error, Registry,
@@ -16,18 +18,28 @@ pub struct Container {
 
 impl Container {
     /// Resolves all registered components in dependency order and returns a built Container.
+    #[instrument(skip_all, fields(count = registry.components.len()))]
     pub async fn build(registry: &Registry) -> crate::Result<Self> {
+        debug!("resolving component dependency order");
+
         let sorted = topological_sort(&registry.components)?;
         let mut ctx = ComponentConstructionContext::new();
 
-        for descriptor in sorted {
+        for descriptor in &sorted {
+            debug!(component = %descriptor.name, "constructing component");
+
             let component = (descriptor.factory)(&mut ctx).await?;
+
             ctx.insert(component);
+
+            trace!(component = %descriptor.name, "component ready");
         }
 
-        Ok(Self {
-            components: ctx.into_components(),
-        })
+        let components = ctx.into_components();
+
+        info!(count = components.len(), "container built");
+
+        Ok(Self { components })
     }
 
     /// Returns a cloned `Arc<T>` for the registered component of type `T`.
@@ -42,6 +54,8 @@ impl Container {
 fn topological_sort(
     components: &[&'static ComponentDescriptor],
 ) -> crate::Result<Vec<&'static ComponentDescriptor>> {
+    trace!(total = components.len(), "starting topological sort");
+
     let mut result: Vec<&'static ComponentDescriptor> = Vec::new();
     let mut remaining: Vec<&'static ComponentDescriptor> = components.to_vec();
 
@@ -59,6 +73,7 @@ fn topological_sort(
                 });
 
             if resolved {
+                trace!(component = %descriptor.name, "dependency order resolved");
                 result.push(descriptor);
                 false
             } else {
@@ -67,9 +82,12 @@ fn topological_sort(
         });
 
         if remaining.len() == before_len {
+            error!("dependency cycle detected in component graph");
             return Err(Error::DependencyCycle);
         }
     }
+
+    trace!(count = result.len(), "topological sort complete");
 
     Ok(result)
 }

@@ -1,6 +1,12 @@
+use std::sync::Arc;
+
+use tracing::{debug, error, info, instrument, trace, warn};
+use overseer_transport::{CallResult, Connection, OutgoingResponse, Respond, Transport};
+
 use crate::{
+    connection::{ConnectionHandler, ConnectionInfo},
     container::Container,
-    descriptors::{ComponentDescriptor, ServiceDescriptor},
+    descriptors::{ComponentDescriptor, RpcCallContext, RpcResponse, ServiceDescriptor},
     lifecycle::{ShutdownHandle, ShutdownSignal},
     registry::Registry,
     router::RpcRouter,
@@ -10,6 +16,7 @@ use crate::{
 pub struct DaemonBuilder {
     name: String,
     registry: Registry,
+    connection_handlers: Vec<Box<dyn ConnectionHandler>>,
 }
 
 impl DaemonBuilder {
@@ -17,6 +24,7 @@ impl DaemonBuilder {
         Self {
             name: name.into(),
             registry: Registry::default(),
+            connection_handlers: Vec::new(),
         }
     }
 
@@ -39,13 +47,30 @@ impl DaemonBuilder {
         self
     }
 
+    /// Registers a handler called once per accepted connection to populate
+    /// connection-scoped context. Handlers run in registration order.
+    pub fn connection_handler<H: ConnectionHandler>(mut self, handler: H) -> Self {
+        self.connection_handlers.push(Box::new(handler));
+
+        self
+    }
+
     /// Validates the registry, resolves all components, and builds a ready-to-run Daemon.
     pub async fn build(self) -> crate::Result<Daemon> {
+        debug!(daemon = %self.name, "building daemon");
+
         self.registry.validate()?;
 
         let container = Container::build(&self.registry).await?;
         let router = RpcRouter::from_registry(&self.registry);
         let shutdown = ShutdownSignal::new();
+
+        info!(
+            daemon = %self.name,
+            components = self.registry.components.len(),
+            services = self.registry.services.len(),
+            "daemon built"
+        );
 
         Ok(Daemon {
             name: self.name,
@@ -53,17 +78,19 @@ impl DaemonBuilder {
             container,
             router,
             shutdown,
+            connection_handlers: self.connection_handlers,
         })
     }
 }
 
-/// A fully assembled daemon, ready to accept RPC calls and run until shutdown.
+/// A fully assembled daemon, ready to accept connections and dispatch RPC calls.
 pub struct Daemon {
     pub name: String,
     pub registry: Registry,
     pub container: Container,
     pub router: RpcRouter,
     shutdown: ShutdownSignal,
+    connection_handlers: Vec<Box<dyn ConnectionHandler>>,
 }
 
 impl Daemon {
@@ -76,7 +103,64 @@ impl Daemon {
         self.shutdown.handle()
     }
 
-    /// Runs the daemon until ctrl-c or an explicit shutdown signal is received.
+    /// Serves RPC calls from `transport` until ctrl-c or a shutdown signal.
+    ///
+    /// One task is spawned per accepted connection. Within each connection task,
+    /// calls are dispatched sequentially — the response is sent before the next
+    /// call is read.
+    pub async fn serve<T>(self, mut transport: T) -> crate::Result<()>
+    where
+        T: Transport,
+        T::Connection: 'static,
+    {
+        let transport_name = std::any::type_name::<T>();
+
+        info!(daemon = %self.name, transport = transport_name, "serve starting");
+
+        let router = Arc::new(self.router);
+        let handlers = Arc::new(self.connection_handlers);
+        let mut shutdown = self.shutdown;
+
+        loop {
+            tokio::select! {
+                result = transport.accept() => {
+                    match result {
+                        Ok(conn) => {
+                            debug!(peer = ?conn.peer().addr, "connection accepted, spawning task");
+
+                            let router = Arc::clone(&router);
+                            let handlers = Arc::clone(&handlers);
+
+                            tokio::spawn(async move {
+                                serve_connection(conn, router, handlers).await;
+                            });
+                        }
+
+                        Err(e) => {
+                            error!(error = %e, "transport accept failed");
+                            return Err(e.into());
+                        }
+                    }
+                }
+
+                _ = tokio::signal::ctrl_c() => {
+                    info!("ctrl-c received, shutting down");
+                    break;
+                }
+
+                _ = shutdown.wait() => {
+                    info!("shutdown signal received");
+                    break;
+                }
+            }
+        }
+
+        info!(transport = transport_name, "serve stopped");
+
+        Ok(())
+    }
+
+    /// Waits for ctrl-c or a shutdown signal without serving any transport.
     pub async fn run(self) -> crate::Result<()> {
         let mut shutdown = self.shutdown;
 
@@ -87,4 +171,80 @@ impl Daemon {
 
         Ok(())
     }
+}
+
+#[instrument(
+    skip_all,
+    fields(peer = ?conn.peer().addr),
+    name = "connection"
+)]
+async fn serve_connection<C: Connection>(
+    mut conn: C,
+    router: Arc<RpcRouter>,
+    handlers: Arc<Vec<Box<dyn ConnectionHandler>>>,
+) {
+    debug!("connection established");
+
+    let mut info = ConnectionInfo::new(conn.peer().clone());
+
+    for (i, handler) in handlers.iter().enumerate() {
+        trace!(index = i, "running connection handler");
+
+        if let Err(e) = handler.on_connect(&mut info).await {
+            error!(error = %e, "connection handler failed, closing");
+            return;
+        }
+    }
+
+    let info = Arc::new(info);
+
+    debug!("connection ready");
+
+    loop {
+        match conn.recv().await {
+            Ok(Some((call, responder))) => {
+                let call_id = call.id;
+                let path = call.path.clone();
+
+                debug!(id = call_id, %path, "dispatching call");
+
+                let ctx = RpcCallContext {
+                    id: call.id,
+                    payload: call.payload,
+                    connection: Arc::clone(&info),
+                };
+
+                let outcome = match router.dispatch(&call.path, ctx).await {
+                    Ok(RpcResponse { payload }) => {
+                        debug!(id = call_id, %path, "call succeeded");
+                        CallResult::Ok(payload)
+                    }
+
+                    Err(e) => {
+                        warn!(id = call_id, %path, error = %e, "call returned error");
+                        CallResult::Err(e.to_string())
+                    }
+                };
+
+                let response = OutgoingResponse { id: call_id, outcome };
+
+                if let Err(e) = responder.respond(response).await {
+                    warn!(id = call_id, error = %e, "failed to send response");
+                    break;
+                }
+            }
+
+            Ok(None) => {
+                debug!("connection closed by peer");
+                break;
+            }
+
+            Err(e) => {
+                warn!(error = %e, "connection error");
+                break;
+            }
+        }
+    }
+
+    debug!("connection ended");
 }

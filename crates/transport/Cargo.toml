@@ -1,13 +1,13 @@
 [package]
-name = "overseer-core"
+name = "overseer-transport"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [dependencies]
-inventory = "0.3"
 thiserror = "2"
 tokio = { workspace = true }
+serde = { workspace = true }
+postcard = { workspace = true }
 tracing = { workspace = true }
-overseer-transport = { workspace = true }

@@ -16,10 +16,7 @@ pub enum Error {
     DuplicateRpcPath(String),
 
     #[error("missing dependency for component '{component}': type '{type_name}'")]
-    MissingDependency {
-        component: String,
-        type_name: String,
-    },
+    MissingDependency { component: String, type_name: String },
 
     #[error("service '{0}' has no RPC methods")]
     EmptyService(String),
@@ -29,4 +26,7 @@ pub enum Error {
 
     #[error("route not found: {0}")]
     RouteNotFound(String),
+
+    #[error("transport error: {0}")]
+    Transport(#[from] overseer_transport::Error),
 }

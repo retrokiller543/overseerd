@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use tracing::{debug, instrument, trace, warn};
+
 use crate::{
     descriptors::RpcHandler,
     registry::Registry,
@@ -21,20 +23,35 @@ impl RpcRouter {
         for service in &registry.services {
             for rpc in service.rpcs {
                 let path = format!("{}.{}", service.name, rpc.name);
+                debug!(%path, "registered route");
                 routes.insert(path, rpc.handler);
             }
         }
 
+        debug!(count = routes.len(), "router built");
+
         Self { routes }
     }
 
+    #[instrument(skip_all, fields(%path))]
     pub async fn dispatch(&self, path: &str, ctx: RpcCallContext) -> crate::Result<RpcResponse> {
-        let handler = self
-            .routes
-            .get(path)
-            .ok_or_else(|| Error::RouteNotFound(path.to_string()))?;
+        trace!("looking up handler");
 
-        handler(ctx).await
+        let Some(handler) = self.routes.get(path) else {
+            warn!("route not found");
+            return Err(Error::RouteNotFound(path.to_string()));
+        };
+
+        trace!("invoking handler");
+
+        let result = handler(ctx).await;
+
+        match &result {
+            Ok(_) => trace!("handler succeeded"),
+            Err(e) => warn!(error = %e, "handler returned error"),
+        }
+
+        result
     }
 
     /// Returns the number of registered routes.
