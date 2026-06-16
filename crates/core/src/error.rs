@@ -29,4 +29,13 @@ pub enum Error {
 
     #[error("transport error: {0}")]
     Transport(#[from] overseer_transport::Error),
+
+    #[error("invalid request payload: {0}")]
+    InvalidPayload(String),
+
+    #[error("missing connection extension: {0}")]
+    MissingExtension(&'static str),
+
+    #[error("response serialization failed: {0}")]
+    Serialization(String),
 }
