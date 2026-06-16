@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/core",
 ]
 resolver = "3"
 
@@ -11,7 +12,8 @@ license = "MIT"
 authors = ["Emil Schütt <emil.schutt@gmail.com>"]
 
 [workspace.dependencies]
-# Any workspace member should be registered as a dependency here
+# Workspace member crates
+overseer-core = { path = "crates/core" }
 
 # Common dependencies
 
