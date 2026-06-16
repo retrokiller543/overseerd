@@ -40,7 +40,16 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- Spec traceability: user journeys, acceptance scenarios, edge cases,
+  requirements, assumptions, and success criteria are complete enough to plan.
+- Minimal scope: planned files and behavior are limited to this feature; any
+  unrelated refactor or dependency addition is justified in Complexity Tracking.
+- Testable increments: each user story has an independent verification method;
+  automated tests are planned where behavior can be checked programmatically.
+- Explicit contracts: interfaces, data models, storage expectations, migrations,
+  and compatibility impacts are documented where applicable.
+- Operational safety: logging, error handling, configuration, permissions,
+  credentials, and sensitive-data handling are addressed for the feature scope.
 
 ## Project Structure
 

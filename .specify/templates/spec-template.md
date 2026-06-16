@@ -98,6 +98,13 @@
 - **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
 - **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
 
+### Constitution Alignment *(mandatory)*
+
+- **Scope Control**: [Describe what is intentionally in scope and out of scope]
+- **Independent Verification**: [Describe how each user story can be verified independently]
+- **Interfaces & Data Contracts**: [List external interfaces, commands, APIs, data models, storage/migration impacts, or N/A]
+- **Operational Safety**: [Describe logging, errors, configuration, permissions, credentials, sensitive-data handling, or N/A]
+
 ### Key Entities *(include if feature involves data)*
 
 - **[Entity 1]**: [What it represents, key attributes without implementation]
