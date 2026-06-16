@@ -10,20 +10,12 @@ use std::{collections::HashSet, fmt};
 ///
 /// Owns `Vec` allocations for the collected descriptor references; the
 /// underlying descriptors remain in static storage.
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct Registry {
     pub components: Vec<&'static ComponentDescriptor>,
     pub services: Vec<&'static ServiceDescriptor>,
 }
 
-impl Default for Registry {
-    fn default() -> Self {
-        Self {
-            components: Vec::new(),
-            services: Vec::new(),
-        }
-    }
-}
 
 impl Registry {
     /// Collects all submitted inventory descriptors into a Registry.
