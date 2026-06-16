@@ -12,6 +12,9 @@ pub enum Error {
     #[error("serialization error: {0}")]
     Serialization(String),
 
+    #[error("frame too large: {len} bytes exceeds maximum of {max}")]
+    FrameTooLarge { len: usize, max: usize },
+
     #[error("unexpected message type")]
     UnexpectedMessage,
 }

@@ -2,7 +2,7 @@ pub mod codec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::frame::{CallId, CallResult, IncomingCall, OutgoingResponse};
+use crate::frame::{CallId, CallResult, IncomingCall};
 
 /// Top-level wire message. Every frame on the wire is one of these.
 #[derive(Serialize, Deserialize)]
@@ -36,23 +36,20 @@ pub enum WireOutcome {
 impl From<WireRequest> for IncomingCall {
     fn from(req: WireRequest) -> Self {
         Self {
-            id: req.id,
             path: req.path,
             payload: req.payload,
         }
     }
 }
 
-impl From<OutgoingResponse> for WireResponse {
-    fn from(resp: OutgoingResponse) -> Self {
-        let outcome = match resp.outcome {
+impl WireResponse {
+    /// Builds a wire response for `id` from a transport-level outcome.
+    pub fn new(id: CallId, outcome: CallResult) -> Self {
+        let outcome = match outcome {
             CallResult::Ok(bytes) => WireOutcome::Ok(bytes),
             CallResult::Err(msg) => WireOutcome::Err(msg),
         };
 
-        Self {
-            id: resp.id,
-            outcome,
-        }
+        Self { id, outcome }
     }
 }

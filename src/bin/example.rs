@@ -9,8 +9,8 @@ use overseer_core::{
     RpcResponse, ServiceDescriptor, TypeDescriptor,
 };
 use overseer_transport::{
-    TcpTransport, UdpTransport, WireMessage, WireOutcome, WireRequest,
-    protocol::codec::{decode, encode, read_message, write_message},
+    TcpTransport, WireMessage, WireOutcome, WireRequest,
+    protocol::codec::{read_message, write_message},
 };
 
 #[cfg(unix)]
@@ -44,7 +44,6 @@ enum Command {
 #[derive(Clone, ValueEnum)]
 enum TransportKind {
     Tcp,
-    Udp,
     #[cfg(unix)]
     Unix,
 }
@@ -54,7 +53,6 @@ enum TransportKind {
 // ---------------------------------------------------------------------------
 
 const TCP_ADDR: &str = "127.0.0.1:9001";
-const UDP_ADDR: &str = "127.0.0.1:9002";
 #[cfg(unix)]
 const UNIX_SOCK: &str = "/tmp/overseer-example.sock";
 
@@ -166,12 +164,6 @@ async fn run_daemon(transport: TransportKind) -> overseer_core::Result<()> {
             daemon.serve(t).await
         }
 
-        TransportKind::Udp => {
-            let t = UdpTransport::bind(UDP_ADDR).await?;
-            println!("Listening on UDP  {UDP_ADDR}  (ctrl-c to stop)\n");
-            daemon.serve(t).await
-        }
-
         #[cfg(unix)]
         TransportKind::Unix => {
             let t = UnixTransport::bind(UNIX_SOCK)?;
@@ -201,28 +193,6 @@ where
     write_message(stream, &msg).await.expect("send request");
 
     let resp = read_message(stream).await.expect("recv response");
-
-    unpack(resp)
-}
-
-async fn call_udp<Req, Resp>(socket: &tokio::net::UdpSocket, id: u64, path: &str, req: &Req) -> Resp
-where
-    Req: Serialize,
-    Resp: for<'de> Deserialize<'de>,
-{
-    let payload = postcard::to_allocvec(req).unwrap();
-    let msg = WireMessage::Request(WireRequest {
-        id,
-        path: path.to_string(),
-        payload,
-    });
-    let bytes = encode(&msg).expect("encode");
-
-    socket.send(&bytes).await.expect("send UDP datagram");
-
-    let mut buf = vec![0u8; 65507];
-    let len = socket.recv(&mut buf).await.expect("recv UDP datagram");
-    let resp = decode(&buf[..len]).expect("decode");
 
     unpack(resp)
 }
@@ -267,35 +237,6 @@ async fn run_client(transport: TransportKind) {
 
             drop(stream);
             println!("[connection closed]");
-        }
-
-        TransportKind::Udp => {
-            use tokio::net::UdpSocket;
-
-            // One socket, multiple datagrams. The router on the daemon side
-            // groups them into a single UdpConnection by peer address.
-            println!("--- UDP (persistent session via router) ---");
-
-            let socket = UdpSocket::bind("0.0.0.0:0").await.expect("bind UDP");
-            socket.connect(UDP_ADDR).await.expect("connect UDP");
-            println!("[socket bound, peer → {UDP_ADDR}]");
-
-            let r1: PingResponse = call_udp(&socket, 1, "Greeter.ping", &PingRequest).await;
-            println!("call 1  ping   →  {}", r1.message);
-
-            let r2: GreetResponse =
-                call_udp(&socket, 2, "Greeter.greet", &GreetRequest { name: "World".to_string() }).await;
-            println!("call 2  greet  →  {}", r2.message);
-
-            let r3: GreetResponse =
-                call_udp(&socket, 3, "Greeter.greet", &GreetRequest { name: "Overseer".to_string() }).await;
-            println!("call 3  greet  →  {}", r3.message);
-
-            let r4: PingResponse = call_udp(&socket, 4, "Greeter.ping", &PingRequest).await;
-            println!("call 4  ping   →  {}", r4.message);
-
-            drop(socket);
-            println!("[session ended — router will evict peer on next datagram]");
         }
 
         #[cfg(unix)]

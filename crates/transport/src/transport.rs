@@ -2,12 +2,16 @@ use std::future::Future;
 
 use crate::{
     error::Result,
-    frame::{IncomingCall, OutgoingResponse, PeerInfo},
+    frame::{CallResult, IncomingCall, PeerInfo},
 };
 
-/// Sends a response back to the caller of a specific inbound RPC.
+/// Sends the response back to the caller of a specific inbound RPC.
+///
+/// A responder is created 1:1 with its call and privately owns that call's
+/// wire correlation id, so the daemon supplies only the outcome — it never
+/// sees or sets the id.
 pub trait Respond {
-    fn respond(self, response: OutgoingResponse) -> impl Future<Output = Result<()>> + Send;
+    fn respond(self, outcome: CallResult) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// A live session between the daemon and one remote peer.

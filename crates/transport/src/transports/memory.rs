@@ -1,17 +1,15 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, instrument, trace};
 
 use crate::{
     error::{Error, Result},
-    frame::{CallId, IncomingCall, OutgoingResponse, PeerInfo},
+    frame::{CallResult, IncomingCall, PeerInfo},
     transport::{Connection, Respond, Transport},
 };
 
 struct Frame {
     call: IncomingCall,
-    response_tx: oneshot::Sender<OutgoingResponse>,
+    response_tx: oneshot::Sender<CallResult>,
 }
 
 /// A logical in-memory connection. Yielded by `MemoryTransport::accept`.
@@ -22,7 +20,7 @@ pub struct MemoryConnection {
 
 /// Sends a response back through the oneshot for one specific call.
 pub struct MemoryResponder {
-    response_tx: oneshot::Sender<OutgoingResponse>,
+    response_tx: oneshot::Sender<CallResult>,
 }
 
 /// The daemon side of an in-memory transport. Yields one `MemoryConnection`
@@ -40,7 +38,6 @@ pub struct MemoryClient {
 /// Dropped when the client is done with the connection.
 pub struct MemoryConnectionHandle {
     request_tx: mpsc::Sender<Frame>,
-    next_id: AtomicU64,
 }
 
 impl MemoryClient {
@@ -63,36 +60,31 @@ impl MemoryClient {
 
         debug!("memory connection opened");
 
-        Ok(MemoryConnectionHandle {
-            request_tx,
-            next_id: AtomicU64::new(0),
-        })
+        Ok(MemoryConnectionHandle { request_tx })
     }
 }
 
 impl MemoryConnectionHandle {
-    /// Sends a call and waits for the response.
+    /// Sends a call and waits for the response. The oneshot reply channel
+    /// correlates the response to this call, so no wire id is needed.
     #[instrument(skip(self, payload), fields(path = %path.as_ref()))]
-    pub async fn call(&self, path: impl AsRef<str>, payload: Vec<u8>) -> Result<OutgoingResponse> {
+    pub async fn call(&self, path: impl AsRef<str>, payload: Vec<u8>) -> Result<CallResult> {
         let (response_tx, response_rx) = oneshot::channel();
-        let id: CallId = self.next_id.fetch_add(1, Ordering::Relaxed);
-
-        trace!(id, "sending memory call");
-
         let frame = Frame {
             call: IncomingCall {
-                id,
                 path: path.as_ref().to_string(),
                 payload,
             },
             response_tx,
         };
 
+        trace!("sending memory call");
+
         self.request_tx.send(frame).await.map_err(|_| Error::Closed)?;
 
         let result = response_rx.await.map_err(|_| Error::Closed);
 
-        trace!(id, "memory call completed");
+        trace!("memory call completed");
 
         result
     }
@@ -105,16 +97,14 @@ impl Connection for MemoryConnection {
         &self.peer
     }
 
-    #[instrument(skip_all, fields(id = tracing::field::Empty, path = tracing::field::Empty))]
+    #[instrument(skip_all, fields(path = tracing::field::Empty))]
     async fn recv(&mut self) -> Result<Option<(IncomingCall, MemoryResponder)>> {
         let Some(frame) = self.receiver.recv().await else {
             debug!("memory connection closed by client");
             return Ok(None);
         };
 
-        tracing::Span::current()
-            .record("id", frame.call.id)
-            .record("path", tracing::field::display(&frame.call.path));
+        tracing::Span::current().record("path", tracing::field::display(&frame.call.path));
 
         trace!("memory call received");
 
@@ -127,11 +117,11 @@ impl Connection for MemoryConnection {
 }
 
 impl Respond for MemoryResponder {
-    #[instrument(skip_all, fields(id = response.id))]
-    async fn respond(self, response: OutgoingResponse) -> Result<()> {
+    #[instrument(skip_all)]
+    async fn respond(self, outcome: CallResult) -> Result<()> {
         trace!("sending memory response");
 
-        let _ = self.response_tx.send(response);
+        let _ = self.response_tx.send(outcome);
 
         Ok(())
     }

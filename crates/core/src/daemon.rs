@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use tracing::{debug, error, info, instrument, trace, warn};
-use overseer_transport::{CallResult, Connection, OutgoingResponse, Respond, Transport};
+use overseer_transport::{CallResult, Connection, Respond, Transport};
 
 use crate::{
     connection::{ConnectionHandler, ConnectionInfo},
@@ -203,33 +203,29 @@ async fn serve_connection<C: Connection>(
     loop {
         match conn.recv().await {
             Ok(Some((call, responder))) => {
-                let call_id = call.id;
                 let path = call.path.clone();
 
-                debug!(id = call_id, %path, "dispatching call");
+                debug!(%path, "dispatching call");
 
                 let ctx = RpcCallContext {
-                    id: call.id,
                     payload: call.payload,
                     connection: Arc::clone(&info),
                 };
 
-                let outcome = match router.dispatch(&call.path, ctx).await {
+                let outcome = match router.dispatch(&path, ctx).await {
                     Ok(RpcResponse { payload }) => {
-                        debug!(id = call_id, %path, "call succeeded");
+                        debug!(%path, "call succeeded");
                         CallResult::Ok(payload)
                     }
 
                     Err(e) => {
-                        warn!(id = call_id, %path, error = %e, "call returned error");
+                        warn!(%path, error = %e, "call returned error");
                         CallResult::Err(e.to_string())
                     }
                 };
 
-                let response = OutgoingResponse { id: call_id, outcome };
-
-                if let Err(e) = responder.respond(response).await {
-                    warn!(id = call_id, error = %e, "failed to send response");
+                if let Err(e) = responder.respond(outcome).await {
+                    warn!(%path, error = %e, "failed to send response");
                     break;
                 }
             }
