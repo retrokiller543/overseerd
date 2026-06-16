@@ -24,4 +24,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[[bin]]
+name = "example"
+path = "src/bin/example.rs"
+
 [dependencies]
+overseer-core = { workspace = true }

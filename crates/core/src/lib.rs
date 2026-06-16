@@ -1,14 +1,14 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+pub mod descriptors;
+pub mod error;
+pub mod registry;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub use descriptors::{
+    BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
+    ComponentScope, DependencyDescriptor, Descriptor, OperationKind, ParameterDescriptor,
+    ParameterKind, RpcCallContext, RpcDescriptor, RpcHandler, RpcResponse, ServiceDescriptor,
+    TypeDescriptor, type_id_of,
+};
+pub use error::Error;
+pub use registry::Registry;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub type Result<T> = std::result::Result<T, Error>;
