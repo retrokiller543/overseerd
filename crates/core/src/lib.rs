@@ -1,3 +1,4 @@
+pub mod connection;
 pub mod container;
 pub mod daemon;
 pub mod descriptors;
@@ -6,6 +7,7 @@ pub mod lifecycle;
 pub mod registry;
 pub mod router;
 
+pub use connection::{ConnectionHandler, ConnectionInfo};
 pub use container::Container;
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{

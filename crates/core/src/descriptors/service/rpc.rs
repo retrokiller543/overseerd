@@ -28,11 +28,33 @@ pub struct ParameterDescriptor {
     pub ty: TypeDescriptor,
 }
 
-/// Placeholder context passed to an RPC handler on invocation.
-pub struct RpcCallContext {}
+/// Context passed to an RPC handler on invocation.
+///
+/// Carries the raw postcard-encoded payload bytes and the connection-scoped
+/// context. Handler extractors (e.g. `Payload<T>`) deserialize from `payload`
+/// into the user's own types; `connection` provides per-connection data such
+/// as auth context or rate-limit state.
+pub struct RpcCallContext {
+    pub id: u64,
+    pub payload: Vec<u8>,
+    pub connection: std::sync::Arc<crate::connection::ConnectionInfo>,
+}
 
-/// Placeholder response returned from an RPC handler.
-pub struct RpcResponse {}
+/// The response returned by an RPC handler.
+///
+/// `payload` holds postcard-encoded response bytes. An empty payload is valid
+/// for commands that return no meaningful data.
+pub struct RpcResponse {
+    pub payload: Vec<u8>,
+}
+
+impl Default for RpcResponse {
+    fn default() -> Self {
+        Self {
+            payload: Vec::new(),
+        }
+    }
+}
 
 /// Async function pointer type for dispatching an RPC call.
 pub type RpcHandler =
