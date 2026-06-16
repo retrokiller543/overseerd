@@ -8,3 +8,4 @@ authors.workspace = true
 [dependencies]
 inventory = "0.3"
 thiserror = "2"
+tokio = { workspace = true }

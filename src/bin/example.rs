@@ -1,24 +1,15 @@
-use std::{future::Future, pin::Pin};
+use std::{future::Future, pin::Pin, sync::Arc};
 
 use overseer_core::{
     BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentScope,
-    DependencyDescriptor, OperationKind, ParameterDescriptor, ParameterKind, Registry,
+    Daemon, DependencyDescriptor, OperationKind, ParameterDescriptor, ParameterKind,
     RpcCallContext, RpcDescriptor, RpcResponse, ServiceDescriptor, TypeDescriptor,
 };
 
-fn unimplemented_factory<'a>(
-    _: &'a mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<BoxedComponent>> + Send + 'a>> {
-    Box::pin(async { todo!("factory not implemented in example") })
-}
+// ---------------------------------------------------------------------------
+// Stand-in domain types — macros will generate these from annotated structs.
+// ---------------------------------------------------------------------------
 
-fn unimplemented_handler(
-    _: RpcCallContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
-    Box::pin(async { todo!("handler not implemented in example") })
-}
-
-// Stand-in types — macros will use the real application types here.
 struct Config;
 struct DatabasePool;
 struct BackupRepository;
@@ -28,13 +19,80 @@ struct JobId;
 struct BackupStatus;
 struct BackupSummary;
 
+// ---------------------------------------------------------------------------
+// Factories — macros will generate one per #[component].
+// ---------------------------------------------------------------------------
+
+fn config_factory<'a>(
+    _: &'a mut ComponentConstructionContext,
+) -> Pin<Box<dyn Future<Output = overseer_core::Result<BoxedComponent>> + Send + 'a>> {
+    Box::pin(async {
+        Ok(BoxedComponent {
+            ty: TypeDescriptor::of::<Config>("Config"),
+            value: Box::new(Arc::new(Config)),
+        })
+    })
+}
+
+fn database_pool_factory<'a>(
+    ctx: &'a mut ComponentConstructionContext,
+) -> Pin<Box<dyn Future<Output = overseer_core::Result<BoxedComponent>> + Send + 'a>> {
+    Box::pin(async move {
+        let _config = ctx.resolve::<Config>();
+
+        Ok(BoxedComponent {
+            ty: TypeDescriptor::of::<DatabasePool>("DatabasePool"),
+            value: Box::new(Arc::new(DatabasePool)),
+        })
+    })
+}
+
+fn backup_repository_factory<'a>(
+    ctx: &'a mut ComponentConstructionContext,
+) -> Pin<Box<dyn Future<Output = overseer_core::Result<BoxedComponent>> + Send + 'a>> {
+    Box::pin(async move {
+        let _pool = ctx.resolve::<DatabasePool>();
+
+        Ok(BoxedComponent {
+            ty: TypeDescriptor::of::<BackupRepository>("BackupRepository"),
+            value: Box::new(Arc::new(BackupRepository)),
+        })
+    })
+}
+
+// ---------------------------------------------------------------------------
+// RPC handlers — macros will generate these from #[rpc] impl blocks.
+// ---------------------------------------------------------------------------
+
+fn start_backup_handler(
+    _: RpcCallContext,
+) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
+    Box::pin(async { Ok(RpcResponse {}) })
+}
+
+fn backup_status_handler(
+    _: RpcCallContext,
+) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
+    Box::pin(async { Ok(RpcResponse {}) })
+}
+
+fn list_backups_handler(
+    _: RpcCallContext,
+) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
+    Box::pin(async { Ok(RpcResponse {}) })
+}
+
+// ---------------------------------------------------------------------------
+// Static descriptors — macros will emit these into the binary via inventory::submit!
+// ---------------------------------------------------------------------------
+
 static CONFIG: ComponentDescriptor = ComponentDescriptor {
     id: "config",
     name: "Config",
     ty: TypeDescriptor::of::<Config>("Config"),
     scope: ComponentScope::Singleton,
     dependencies: &[],
-    factory: unimplemented_factory,
+    factory: config_factory,
 };
 
 static DATABASE_POOL_DEPS: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -49,7 +107,7 @@ static DATABASE_POOL: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<DatabasePool>("DatabasePool"),
     scope: ComponentScope::Singleton,
     dependencies: &DATABASE_POOL_DEPS,
-    factory: unimplemented_factory,
+    factory: database_pool_factory,
 };
 
 static BACKUP_REPO_DEPS: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -64,7 +122,7 @@ static BACKUP_REPO: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<BackupRepository>("BackupRepository"),
     scope: ComponentScope::Singleton,
     dependencies: &BACKUP_REPO_DEPS,
-    factory: unimplemented_factory,
+    factory: backup_repository_factory,
 };
 
 static BACKUP_SERVICE_RPCS: [RpcDescriptor; 3] = [
@@ -77,7 +135,7 @@ static BACKUP_SERVICE_RPCS: [RpcDescriptor; 3] = [
             ty: TypeDescriptor::of::<StartBackupInput>("StartBackupInput"),
         }],
         output: TypeDescriptor::of::<JobId>("JobId"),
-        handler: unimplemented_handler,
+        handler: start_backup_handler,
     },
     RpcDescriptor {
         name: "backup_status",
@@ -88,14 +146,14 @@ static BACKUP_SERVICE_RPCS: [RpcDescriptor; 3] = [
             ty: TypeDescriptor::of::<JobId>("JobId"),
         }],
         output: TypeDescriptor::of::<BackupStatus>("BackupStatus"),
-        handler: unimplemented_handler,
+        handler: backup_status_handler,
     },
     RpcDescriptor {
         name: "list_backups",
         operation: OperationKind::Query,
         parameters: &[],
         output: TypeDescriptor::of::<BackupSummary>("Vec<BackupSummary>"),
-        handler: unimplemented_handler,
+        handler: list_backups_handler,
     },
 ];
 
@@ -107,20 +165,34 @@ static BACKUP_SERVICE_DESC: ServiceDescriptor = ServiceDescriptor {
     rpcs: &BACKUP_SERVICE_RPCS,
 };
 
-fn main() {
-    let registry = Registry {
-        components: vec![&CONFIG, &DATABASE_POOL, &BACKUP_REPO],
-        services: vec![&BACKUP_SERVICE_DESC],
-    };
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
 
-    match registry.validate() {
-        Ok(()) => println!("Registry validation passed.\n"),
-        Err(e) => {
-            eprintln!("Registry validation failed: {e}");
-            std::process::exit(1);
-        }
+#[tokio::main]
+async fn main() -> overseer_core::Result<()> {
+    let daemon = Daemon::builder("backup-daemon")
+        .component(&CONFIG)
+        .component(&DATABASE_POOL)
+        .component(&BACKUP_REPO)
+        .service(&BACKUP_SERVICE_DESC)
+        .build()
+        .await?;
+
+    println!("{}", daemon.registry);
+
+    println!("Routes ({}):", daemon.router.route_count());
+    let mut paths: Vec<&str> = daemon.router.paths().collect();
+    paths.sort();
+    for path in &paths {
+        println!("  {path}");
     }
 
-    println!("=== describe ===\n{}", registry);
-    println!("=== debug ===\n{:#?}", registry);
+    println!();
+    println!("Container:");
+    println!("  Config:           {}", daemon.container.get::<Config>().is_some());
+    println!("  DatabasePool:     {}", daemon.container.get::<DatabasePool>().is_some());
+    println!("  BackupRepository: {}", daemon.container.get::<BackupRepository>().is_some());
+
+    Ok(())
 }
