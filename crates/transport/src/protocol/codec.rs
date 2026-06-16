@@ -4,11 +4,20 @@ use crate::error::{Error, Result};
 
 use super::WireMessage;
 
+/// Upper bound on a single frame's payload. Guards against a peer sending a
+/// huge length prefix that would otherwise trigger an unbounded allocation.
+const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
+
 /// Reads a length-prefixed frame from a stream and deserializes it.
 ///
 /// Frame layout: `[u32 LE payload length][postcard-encoded WireMessage]`
 pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<WireMessage> {
     let len = reader.read_u32_le().await? as usize;
+
+    if len > MAX_FRAME_LEN {
+        return Err(Error::FrameTooLarge { len, max: MAX_FRAME_LEN });
+    }
+
     let mut buf = vec![0u8; len];
 
     reader.read_exact(&mut buf).await?;
@@ -27,14 +36,4 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
     writer.write_all(&bytes).await?;
 
     Ok(())
-}
-
-/// Encodes a message to bytes for datagram transports.
-pub fn encode(msg: &WireMessage) -> Result<Vec<u8>> {
-    postcard::to_allocvec(msg).map_err(|e| Error::Serialization(e.to_string()))
-}
-
-/// Decodes a message from raw datagram bytes.
-pub fn decode(bytes: &[u8]) -> Result<WireMessage> {
-    postcard::from_bytes(bytes).map_err(|e| Error::Serialization(e.to_string()))
 }

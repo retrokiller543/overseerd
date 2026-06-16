@@ -35,7 +35,6 @@ pub struct ParameterDescriptor {
 /// into the user's own types; `connection` provides per-connection data such
 /// as auth context or rate-limit state.
 pub struct RpcCallContext {
-    pub id: u64,
     pub payload: Vec<u8>,
     pub connection: std::sync::Arc<crate::connection::ConnectionInfo>,
 }

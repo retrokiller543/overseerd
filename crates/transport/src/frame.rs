@@ -1,17 +1,13 @@
 /// Opaque identifier correlating a request to its response within a connection.
+///
+/// Assigned by the client and echoed back unchanged. The daemon never
+/// interprets it; correlation lives entirely in the transport layer.
 pub type CallId = u64;
 
 /// An inbound RPC call received from the transport layer.
 pub struct IncomingCall {
-    pub id: CallId,
     pub path: String,
     pub payload: Vec<u8>,
-}
-
-/// The response to send back for an inbound call.
-pub struct OutgoingResponse {
-    pub id: CallId,
-    pub outcome: CallResult,
 }
 
 /// Success or failure of an RPC call at the transport layer.
