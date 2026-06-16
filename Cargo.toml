@@ -1,0 +1,25 @@
+[workspace]
+members = [
+    ".",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Emil Schütt <emil.schutt@gmail.com>"]
+
+[workspace.dependencies]
+# Any workspace member should be registered as a dependency here
+
+# Common dependencies
+
+[package]
+name = "overseer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
