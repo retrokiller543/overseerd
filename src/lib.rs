@@ -10,8 +10,10 @@
 //! crates introduced by the prototype live under `crates/`.
 
 pub use overseer_core::{
-    ComponentDescriptor, DaemonBuilder, DaemonDefinition, DependencyRelationship, OverseerError,
-    Result, RpcOperationDescriptor, ServiceDescriptor,
+    BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
+    ComponentScope, DependencyDescriptor, Descriptor, Error, OperationKind, ParameterDescriptor,
+    ParameterKind, Registry, Result, RpcCallContext, RpcDescriptor, RpcHandler, RpcResponse,
+    ServiceDescriptor, TypeDescriptor, type_id_of,
 };
 
 #[cfg(test)]
@@ -19,23 +21,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn facade_exposes_core_concepts_without_owning_implementation() {
-        let component = ComponentDescriptor::new(
-            "facade_component",
-            "Facade Component",
-            "Proves root crate can access core descriptors",
-        )
-        .unwrap();
-
-        let daemon = DaemonBuilder::new("facaded")
-            .unwrap()
-            .component(component)
-            .unwrap()
-            .build()
-            .unwrap();
-
-        assert_eq!(daemon.name(), "facaded");
-        assert_eq!(daemon.components()[0].id(), "facade_component");
-        assert_eq!(daemon.inspection_categories()[0], "daemon");
+    fn facade_exposes_core_types() {
+        let td = TypeDescriptor::of::<u8>("byte");
+        assert_eq!(td.name, "byte");
+        assert_eq!((td.type_id)(), (type_id_of::<u8>)());
     }
 }
