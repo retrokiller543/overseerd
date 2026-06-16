@@ -10,7 +10,7 @@ pub use service::{
     OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor, RpcHandler,
     RpcResponse, ServiceDescriptor,
 };
-pub use types::{type_id_of, TypeDescriptor};
+pub use types::{TypeDescriptor, type_id_of};
 
 /// Top-level inventory entry submitted by proc macros.
 ///

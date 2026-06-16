@@ -1,9 +1,10 @@
-use std::collections::HashSet;
-
 use crate::{
+    DependencyDescriptor, ParameterDescriptor, RpcDescriptor,
     descriptors::{ComponentDescriptor, Descriptor, ServiceDescriptor},
     error::Error,
 };
+use std::fmt::Write;
+use std::{collections::HashSet, fmt};
 
 /// Runtime registry built by collecting static inventory descriptors.
 ///
@@ -34,6 +35,7 @@ impl Registry {
                 Descriptor::Service(s) => registry.services.push(s),
             }
         }
+
         registry
     }
 
@@ -42,41 +44,8 @@ impl Registry {
         self.validate_component_ids()?;
         self.validate_services()?;
         self.validate_dependencies()?;
+
         Ok(())
-    }
-
-    /// Returns a human-readable description of all registered components, services, and RPCs.
-    pub fn describe(&self) -> String {
-        let mut out = String::new();
-
-        out.push_str("Components:\n");
-        for c in &self.components {
-            out.push_str(&format!("  {}\n", c.name));
-            if !c.dependencies.is_empty() {
-                let deps: Vec<&str> = c.dependencies.iter().map(|d| d.name).collect();
-                out.push_str(&format!("    depends on: {}\n", deps.join(", ")));
-            }
-        }
-
-        out.push_str("\nServices:\n");
-        for s in &self.services {
-            if let Some(v) = s.version {
-                out.push_str(&format!("  {} (v{})\n", s.name, v));
-            } else {
-                out.push_str(&format!("  {}\n", s.name));
-            }
-            for rpc in s.rpcs {
-                let params: Vec<&str> = rpc.parameters.iter().map(|p| p.ty.name).collect();
-                out.push_str(&format!(
-                    "    rpc {}({}) -> {}\n",
-                    rpc.name,
-                    params.join(", "),
-                    rpc.output.name,
-                ));
-            }
-        }
-
-        out
     }
 
     fn validate_component_ids(&self) -> crate::Result<()> {
@@ -86,6 +55,7 @@ impl Registry {
                 return Err(Error::DuplicateComponentId(c.id.to_string()));
             }
         }
+
         Ok(())
     }
 
@@ -110,6 +80,7 @@ impl Registry {
                         rpc: rpc.name.to_string(),
                     });
                 }
+
                 let path = format!("{}.{}", s.name, rpc.name);
                 if !seen_paths.insert(path.clone()) {
                     return Err(Error::DuplicateRpcPath(path));
@@ -134,6 +105,89 @@ impl Registry {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    fn write_components(&self, f: &mut impl Write) -> fmt::Result {
+        writeln!(f, "Components:")?;
+        for c in &self.components {
+            writeln!(f, "  {}", c.name)?;
+
+            if !c.dependencies.is_empty() {
+                Self::write_dependency(f, c.dependencies.iter())?
+            }
+        }
+
+        Ok(())
+    }
+
+    fn write_dependency<'a>(
+        f: &mut impl Write,
+        deps: impl Iterator<Item = &'a DependencyDescriptor>,
+    ) -> fmt::Result {
+        write!(f, "    depends on:")?;
+        for (i, dep) in deps.enumerate() {
+            if i > 0 {
+                write!(f, ",")?;
+            }
+
+            write!(f, " {}", dep.name)?;
+        }
+
+        writeln!(f)?;
+
+        Ok(())
+    }
+
+    fn write_services(&self, f: &mut impl Write) -> fmt::Result {
+        writeln!(f, "Services:")?;
+        for s in &self.services {
+            match s.version {
+                Some(v) => writeln!(f, "  {} (v{})", s.name, v)?,
+                None => writeln!(f, "  {}", s.name)?,
+            }
+
+            Self::write_rpcs(f, s.rpcs.iter())?;
+        }
+
+        Ok(())
+    }
+
+    fn write_rpcs<'a>(
+        f: &mut impl Write,
+        rpcs: impl Iterator<Item = &'a RpcDescriptor>,
+    ) -> fmt::Result {
+        for rpc in rpcs {
+            write!(f, "    rpc {}(", rpc.name)?;
+            Self::write_parameters(f, rpc.parameters.iter())?;
+            writeln!(f, ") -> {}", rpc.output.name)?;
+        }
+
+        Ok(())
+    }
+
+    fn write_parameters<'a>(
+        f: &mut impl Write,
+        params: impl Iterator<Item = &'a ParameterDescriptor>,
+    ) -> fmt::Result {
+        for (i, param) in params.enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+
+            write!(f, "{}", param.ty.name)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for Registry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.write_components(f)?;
+        writeln!(f)?;
+        self.write_services(f)?;
 
         Ok(())
     }
@@ -223,15 +277,26 @@ mod tests {
             components: vec![&BACKUP_REPO, &PG_POOL],
             services: vec![&BACKUP_SERVICE],
         };
-
-        let description = registry.describe();
+        let description = registry.to_string();
 
         assert!(description.contains("BackupRepository"));
         assert!(description.contains("BackupService"));
+        assert!(description.contains("start_backup"));
+        assert!(description.contains("backup_status"));
+        assert!(
+            description.contains("depends on: PgPool"),
+            "dependency should appear in describe output"
+        );
 
-        let service_pos = description.find("BackupService").unwrap();
-        let start_backup_pos = description.find("start_backup").unwrap();
-        let backup_status_pos = description.find("backup_status").unwrap();
+        let service_pos = description
+            .find("BackupService")
+            .expect("BackupService in output");
+        let start_backup_pos = description
+            .find("start_backup")
+            .expect("start_backup in output");
+        let backup_status_pos = description
+            .find("backup_status")
+            .expect("backup_status in output");
 
         assert!(
             service_pos < start_backup_pos,
@@ -241,10 +306,6 @@ mod tests {
             service_pos < backup_status_pos,
             "backup_status should appear after BackupService header"
         );
-        assert!(
-            description.contains("depends on: PgPool"),
-            "dependency should appear in describe output"
-        );
     }
 
     #[test]
@@ -253,6 +314,7 @@ mod tests {
             components: vec![&BACKUP_REPO, &PG_POOL],
             services: vec![&BACKUP_SERVICE],
         };
+
         assert!(registry.validate().is_ok());
     }
 
@@ -262,6 +324,7 @@ mod tests {
             components: vec![&BACKUP_REPO, &BACKUP_REPO],
             services: vec![],
         };
+
         assert!(registry.validate().is_err());
     }
 
@@ -271,6 +334,7 @@ mod tests {
             components: vec![&BACKUP_REPO],
             services: vec![],
         };
+
         assert!(registry.validate().is_err());
     }
 
@@ -288,6 +352,7 @@ mod tests {
             components: vec![],
             services: vec![&EMPTY_SERVICE],
         };
+
         assert!(registry.validate().is_err());
     }
 }

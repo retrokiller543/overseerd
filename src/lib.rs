@@ -23,6 +23,7 @@ mod tests {
     #[test]
     fn facade_exposes_core_types() {
         let td = TypeDescriptor::of::<u8>("byte");
+
         assert_eq!(td.name, "byte");
         assert_eq!((td.type_id)(), (type_id_of::<u8>)());
     }

@@ -2,8 +2,8 @@ use std::{future::Future, pin::Pin};
 
 use overseer_core::{
     BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentScope,
-    DependencyDescriptor, OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext,
-    RpcDescriptor, RpcResponse, Registry, ServiceDescriptor, TypeDescriptor,
+    DependencyDescriptor, OperationKind, ParameterDescriptor, ParameterKind, Registry,
+    RpcCallContext, RpcDescriptor, RpcResponse, ServiceDescriptor, TypeDescriptor,
 };
 
 fn unimplemented_factory<'a>(
@@ -121,6 +121,6 @@ fn main() {
         }
     }
 
-    println!("=== describe ===\n{}", registry.describe());
+    println!("=== describe ===\n{}", registry);
     println!("=== debug ===\n{:#?}", registry);
 }
