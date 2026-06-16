@@ -3,11 +3,13 @@ pub mod container;
 pub mod daemon;
 pub mod descriptors;
 pub mod error;
+pub mod extract;
 pub mod lifecycle;
 pub mod registry;
 pub mod router;
 
 pub use connection::{ConnectionHandler, ConnectionInfo};
+pub use extract::{Conn, Extension, FromContext, Handler, Payload, dispatch_with};
 pub use container::Container;
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
