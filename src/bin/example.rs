@@ -129,10 +129,10 @@ impl Greeter {
     // No `&self`: `ping` needs no common deps, so it stays a plain associated
     // fn with direct dispatch (no per-call singleton lookup).
     #[rpc]
-    async fn ping() -> overseer_core::Result<PingResponse> {
-        Ok(PingResponse {
+    async fn ping() -> PingResponse {
+        PingResponse {
             message: "pong".to_string(),
-        })
+        }
     }
 
     #[rpc]
@@ -151,9 +151,7 @@ impl Greeter {
 #[handlers]
 impl Greeter {
     #[rpc]
-    async fn test() -> overseer_core::Result<()> {
-        Ok(())
-    }
+    async fn test() {}
 }
 
 #[derive(Component)]
@@ -166,8 +164,8 @@ impl ServiceComponent for ManualService {
 #[handlers]
 impl ManualService {
     #[rpc]
-    async fn test() -> overseer_core::Result<String> {
-        Ok(String::from("Hello, world!"))
+    async fn test() -> String {
+        String::from("Hello, world!")
     }
 }
 
@@ -185,7 +183,7 @@ async fn run_daemon(transport: TransportKind) -> overseer_core::Result<()> {
         .build()
         .await?;
 
-    println!("{:#?}", daemon.registry);
+    println!("{}", daemon.registry);
 
     match transport {
         TransportKind::Tcp => {

@@ -152,6 +152,42 @@ async fn drain(call: &mut overseer::MemoryCall) -> (Vec<u32>, bool) {
 }
 
 // ---------------------------------------------------------------------------
+// Macro inference: the kind is derived from the signature
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn infers_operation_kinds() {
+    let daemon = Daemon::builder("test")
+        .auto_discover()
+        .build()
+        .await
+        .expect("build daemon");
+
+    let services = daemon.registry.resolved_services();
+    let svc = services
+        .iter()
+        .find(|s| s.descriptor.name == "StreamSvc")
+        .expect("StreamSvc registered");
+
+    let kind = |name: &str| {
+        let rpc = svc
+            .rpcs
+            .iter()
+            .find(|r| r.name == name)
+            .expect("rpc present");
+
+        format!("{:?}", rpc.operation)
+    };
+
+    assert_eq!(kind("bare"), "Unary");
+    assert_eq!(kind("fallible_ok"), "Unary");
+    assert_eq!(kind("count"), "ServerStream");
+    assert_eq!(kind("forever"), "ServerStream");
+    assert_eq!(kind("sum"), "ClientStream");
+    assert_eq!(kind("echo"), "BidiStream");
+}
+
+// ---------------------------------------------------------------------------
 // Unary / Responder return shapes
 // ---------------------------------------------------------------------------
 

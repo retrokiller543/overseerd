@@ -299,8 +299,9 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Errors
 ///
 /// Emits a `compile_error!` if applied to a non-inherent-impl, if a `#[rpc]`
-/// method isn't `async`, if a receiver is `&mut self`/`self`, or if a method
-/// return type isn't a `Result`.
+/// method isn't `async`, if a receiver is `&mut self`/`self`, if a `#[rpc]`
+/// carries arguments, or if a streaming signature is malformed (more than one
+/// `Streaming<T>`, or `Payload<T>` alongside `Streaming<T>`).
 #[proc_macro_attribute]
 pub fn handlers(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemImpl);
@@ -321,8 +322,7 @@ pub fn handlers(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `Result` return, extractor parameters, optional `&self`) and the accepted
 /// arguments.
 #[proc_macro_attribute]
-pub fn rpc(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let _ = parse_macro_input!(attr as attr::RpcArgs);
+pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemFn);
 
     rpc::expand_standalone(item)

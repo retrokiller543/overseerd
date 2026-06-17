@@ -66,63 +66,76 @@ impl Parse for KeyValue {
     }
 }
 
-/// Arguments of `#[rpc]` / `#[rpc(command|query|stream)]`.
-pub struct RpcArgs {
-    pub operation: Option<Ident>,
+/// Maps the `(streamed_input, streamed_output)` pair inferred from a handler
+/// signature to its `OperationKind` variant ident. The kind is structural, so
+/// `#[rpc]` derives it rather than taking an annotation.
+pub fn operation_ident(streamed_input: bool, streamed_output: bool) -> Ident {
+    let name = match (streamed_input, streamed_output) {
+        (false, false) => "Unary",
+        (false, true) => "ServerStream",
+        (true, false) => "ClientStream",
+        (true, true) => "BidiStream",
+    };
+
+    Ident::new(name, Span::call_site())
 }
 
-impl Parse for RpcArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.is_empty() {
-            return Ok(RpcArgs { operation: None });
-        }
+/// Whether a return type's body is a `ResponseStream<T>` (after peeling an
+/// optional outer `Result`), i.e. the handler streams its output.
+pub fn returns_response_stream(output: &ReturnType) -> bool {
+    let ReturnType::Type(_, ty) = output else {
+        return false;
+    };
 
-        let operation: Ident = input.parse()?;
-
-        Ok(RpcArgs {
-            operation: Some(operation),
-        })
-    }
+    type_name(peel_named(ty, "Result")).is_some_and(|id| id == "ResponseStream")
 }
 
-/// Maps an optional operation keyword to its `OperationKind` variant ident.
-///
-/// Only unary RPCs are supported today: a bare `#[rpc]` maps to `Unary`. Any
-/// argument is rejected until streaming lands (see the streaming plan).
-pub fn operation_variant(operation: &Option<Ident>) -> syn::Result<Ident> {
-    match operation {
-        None => Ok(Ident::new("Unary", Span::call_site())),
-        Some(ident) => Err(syn::Error::new(
-            ident.span(),
-            "streaming RPCs are not implemented yet (see specs/002-streaming-rpcs/plan.md); \
-             use a bare `#[rpc]` for a unary method",
-        )),
-    }
+/// Whether a parameter type is the inbound-stream extractor `Streaming<T>`.
+pub fn is_streaming_param(ty: &Type) -> bool {
+    type_name(ty).is_some_and(|id| id == "Streaming")
+}
+
+/// Whether a parameter type is the single-body extractor `Payload<T>`.
+pub fn is_payload_param(ty: &Type) -> bool {
+    type_name(ty).is_some_and(|id| id == "Payload")
 }
 
 /// The logical response *body* type, for descriptor metadata only.
 ///
 /// Handlers may return any [`Responder`](overseer_core::Responder): a bare value,
-/// `Result<T, E>`, `ResponseStream<T>`, `()`, etc. This peels the wrappers that
-/// carry a body to its inner type — `Result<T, _>` and `ResponseStream<T>` both
-/// yield `T` — and reports `()` for an absent return. It never fails: dispatch
-/// is uniform regardless of the shape, so this only feeds the `output` field.
+/// `Result<T, E>`, `ResponseStream<T>`, `Result<ResponseStream<T>, E>`, `()`,
+/// etc. This peels the `Result` and `ResponseStream` wrappers to the body type,
+/// and reports `()` for an absent return. It never fails: dispatch is uniform
+/// regardless of the shape, so this only feeds the `output` field.
 pub fn response_body_type(output: &ReturnType) -> Type {
     let ty = match output {
         ReturnType::Default => return syn::parse_quote!(()),
         ReturnType::Type(_, ty) => ty.as_ref(),
     };
 
+    peel_named(peel_named(ty, "Result"), "ResponseStream").clone()
+}
+
+/// The last path-segment ident of a simple path type (e.g. `Foo` of `a::b::Foo<T>`).
+fn type_name(ty: &Type) -> Option<&Ident> {
+    match ty {
+        Type::Path(path) => path.path.segments.last().map(|segment| &segment.ident),
+        _ => None,
+    }
+}
+
+/// If `ty` is `Name<T, ..>`, returns its first type argument `T`; otherwise `ty`.
+fn peel_named<'a>(ty: &'a Type, name: &str) -> &'a Type {
     if let Type::Path(path) = ty
         && let Some(segment) = path.path.segments.last()
-        && (segment.ident == "Result" || segment.ident == "ResponseStream")
+        && segment.ident == name
         && let PathArguments::AngleBracketed(generics) = &segment.arguments
         && let Some(GenericArgument::Type(inner)) = generics.args.first()
     {
-        return inner.clone();
+        return inner;
     }
 
-    ty.clone()
+    ty
 }
 
 /// Extracts `T` from `Arc<T>` (the form `#[init]` dependency parameters take).
