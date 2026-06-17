@@ -18,13 +18,13 @@ use std::{collections::HashSet, fmt};
 #[derive(Default, Debug)]
 pub struct DescriptorRegistry {
     pub components: Vec<ComponentDescriptor>,
-    pub services: Vec<&'static ServiceDescriptor>,
-    pub rpc_groups: Vec<&'static RpcGroup>,
+    pub services: Vec<ServiceDescriptor>,
+    pub rpc_groups: Vec<RpcGroup>,
 }
 
 /// A service header with its RPCs assembled from every matching `RpcGroup`.
 pub struct ResolvedService {
-    pub descriptor: &'static ServiceDescriptor,
+    pub descriptor: ServiceDescriptor,
     pub rpcs: Vec<&'static RpcDescriptor>,
 }
 
@@ -35,8 +35,8 @@ impl DescriptorRegistry {
         for descriptor in inventory::iter::<Descriptor> {
             match descriptor {
                 Descriptor::Component(c) => registry.components.push(**c),
-                Descriptor::Service(s) => registry.services.push(s),
-                Descriptor::Rpcs(g) => registry.rpc_groups.push(g),
+                Descriptor::Service(s) => registry.services.push(**s),
+                Descriptor::Rpcs(g) => registry.rpc_groups.push(**g),
             }
         }
 
@@ -47,7 +47,7 @@ impl DescriptorRegistry {
     pub fn resolved_services(&self) -> Vec<ResolvedService> {
         self.services
             .iter()
-            .map(|&descriptor| {
+            .map(|descriptor| {
                 let service_ty = (descriptor.ty.type_id)();
                 let rpcs = self
                     .rpc_groups
@@ -56,7 +56,10 @@ impl DescriptorRegistry {
                     .flat_map(|group| group.rpcs.iter())
                     .collect();
 
-                ResolvedService { descriptor, rpcs }
+                ResolvedService {
+                    descriptor: *descriptor,
+                    rpcs,
+                }
             })
             .collect()
     }
@@ -355,12 +358,21 @@ mod tests {
         rpcs: &BACKUP_SERVICE_RPCS,
     };
 
+    // i8 = stand-in type for a manually-registered service.
+    static MANUAL_RPCS: [RpcDescriptor; 1] = [RpcDescriptor {
+        name: "do_it",
+        operation: OperationKind::Unary,
+        parameters: &[],
+        output: TypeDescriptor::of::<()>("()"),
+        handler: fake_handler,
+    }];
+
     #[test]
     fn describe_groups_rpcs_under_service() {
         let registry = DescriptorRegistry {
             components: vec![BACKUP_REPO, PG_POOL],
-            services: vec![&BACKUP_SERVICE],
-            rpc_groups: vec![&BACKUP_RPCS_GROUP],
+            services: vec![BACKUP_SERVICE],
+            rpc_groups: vec![BACKUP_RPCS_GROUP],
             ..Default::default()
         };
         let description = registry.to_string();
@@ -398,8 +410,8 @@ mod tests {
     fn validate_passes_with_fulfilled_dependencies() {
         let registry = DescriptorRegistry {
             components: vec![BACKUP_REPO, PG_POOL],
-            services: vec![&BACKUP_SERVICE],
-            rpc_groups: vec![&BACKUP_RPCS_GROUP],
+            services: vec![BACKUP_SERVICE],
+            rpc_groups: vec![BACKUP_RPCS_GROUP],
             ..Default::default()
         };
 
@@ -455,6 +467,41 @@ mod tests {
     }
 
     #[test]
+    fn manual_service_registration_validates() {
+        // The shape `with_service(instance).rpcs(..)` produces: a header, a
+        // factory-less component (the provided instance), and an RPC group — all
+        // for the same type.
+        let service = ServiceDescriptor {
+            id: "manual",
+            name: "Manual",
+            ty: TypeDescriptor::of::<i8>("Manual"),
+            version: Some("1.0"),
+        };
+        let component = ComponentDescriptor {
+            id: "manual",
+            name: "Manual",
+            ty: TypeDescriptor::of::<i8>("Manual"),
+            scope: ComponentScope::Singleton,
+            dependencies: &[],
+            factory: None,
+            default_factory: false,
+        };
+        let group = RpcGroup {
+            service: TypeDescriptor::of::<i8>("Manual"),
+            rpcs: &MANUAL_RPCS,
+        };
+
+        let registry = DescriptorRegistry {
+            components: vec![component],
+            services: vec![service],
+            rpc_groups: vec![group],
+        };
+
+        assert!(registry.validate().is_ok());
+        assert_eq!(registry.resolved_services()[0].rpcs.len(), 1);
+    }
+
+    #[test]
     fn validate_detects_empty_service() {
         static EMPTY_SERVICE: ServiceDescriptor = ServiceDescriptor {
             id: "empty",
@@ -464,7 +511,7 @@ mod tests {
         };
 
         let registry = DescriptorRegistry {
-            services: vec![&EMPTY_SERVICE],
+            services: vec![EMPTY_SERVICE],
             ..Default::default()
         };
 

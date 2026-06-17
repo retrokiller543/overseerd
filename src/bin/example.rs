@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 
-use overseer_core::{Component, Daemon, Payload, component, handlers, service};
+use overseer_core::{Component, Daemon, Payload, component, handlers, service, ServiceComponent};
 use overseer_transport::{
     TcpTransport, WireMessage, WireOutcome, WireRequest,
     protocol::codec::{read_message, write_message},
@@ -156,6 +156,22 @@ impl Greeter {
     }
 }
 
+
+#[derive(Component)]
+struct ManualService;
+
+impl ServiceComponent for ManualService {
+    const VERSION: Option<&'static str> = None;
+}
+
+#[handlers]
+impl ManualService {
+    #[rpc]
+    async fn test() -> overseer_core::Result<String> {
+        Ok(String::from("Hello, world!"))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Daemon
 // ---------------------------------------------------------------------------
@@ -163,6 +179,7 @@ impl Greeter {
 async fn run_daemon(transport: TransportKind) -> overseer_core::Result<()> {
     let daemon = Daemon::builder("greeter")
         .auto_discover()
+        .with_service(ManualService)
         .with_component(GreetConfig {
             greeting: "Hello".to_string(),
         })
