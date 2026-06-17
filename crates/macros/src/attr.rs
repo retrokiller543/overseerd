@@ -142,3 +142,45 @@ pub fn result_ok_type(output: &ReturnType) -> syn::Result<Type> {
         )),
     }
 }
+
+/// Extracts `T` from `Arc<T>` (the form `#[init]` dependency parameters take).
+pub fn arc_inner_type(ty: &Type) -> syn::Result<Type> {
+    let err = || {
+        syn::Error::new_spanned(ty, "#[init] parameters must be `Arc<Component>` dependencies")
+    };
+
+    let Type::Path(path) = ty else {
+        return Err(err());
+    };
+
+    let segment = path.path.segments.last().ok_or_else(err)?;
+
+    if segment.ident != "Arc" {
+        return Err(err());
+    }
+
+    let PathArguments::AngleBracketed(generics) = &segment.arguments else {
+        return Err(err());
+    };
+
+    match generics.args.first() {
+        Some(GenericArgument::Type(inner)) => Ok(inner.clone()),
+        _ => Err(err()),
+    }
+}
+
+/// Whether a return type is a `Result<...>` (vs. an infallible bare value).
+pub fn returns_result(output: &ReturnType) -> bool {
+    let ReturnType::Type(_, ty) = output else {
+        return false;
+    };
+
+    let Type::Path(path) = ty.as_ref() else {
+        return false;
+    };
+
+    path.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "Result")
+}

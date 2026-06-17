@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
@@ -73,21 +75,55 @@ struct GreetResponse {
     message: String,
 }
 
-/// The service type. Handlers are stateless for now, so it carries no data;
-/// the macro derives the service name ("Greeter") from this ident.
-struct Greeter;
+/// A common dependency shared by every call — provided to the daemon via
+/// `with_component` and injected into the service through `#[init]`.
+struct GreetConfig {
+    greeting: String,
+}
+
+/// A stateful service: the singleton holds common deps (`config`), while each
+/// `#[rpc]` method takes `&self` for those and extracts request-scoped values
+/// from its parameters (`Payload<T>`).
+struct Greeter {
+    config: Arc<GreetConfig>,
+}
 
 // ---------------------------------------------------------------------------
 // RPC handlers
 //
-// `#[service]` turns each `#[rpc]` method into a registered descriptor and the
-// erased handler wrapper, then submits the service to `inventory` so that
-// `auto_discover` finds it. Parameters are extracted by type (`Payload<T>`,
-// `Conn`, `Extension<T>`); the handler returns `Result<T: Serialize, E>`.
+// `#[service]` registers the singleton component (built by `#[init]`, whose
+// `Arc<T>` params are injected dependencies) and turns each `#[rpc]` method
+// into a descriptor + erased wrapper that resolves the singleton per call.
+// `#[init]` here is sync and infallible; it may also be `async` and/or return
+// `Result<Self>`.
 // ---------------------------------------------------------------------------
+
+#[service(id = "greeter2", version = "0.2")]
+impl Greeter {
+    #[init]
+    fn init() -> Self {
+        let config = Arc::new(GreetConfig {
+            greeting: "Hello, World!".to_string(),
+        });
+
+        Self { config }
+    }
+
+    #[rpc]
+    async fn test() -> overseer_core::Result<()> {
+        Ok(())
+    }
+}
 
 #[service(id = "greeter", version = "0.1")]
 impl Greeter {
+    #[init]
+    fn new(config: Arc<GreetConfig>) -> Self {
+        Self { config }
+    }
+
+    // No `&self`: `ping` needs no common deps, so it stays a plain associated
+    // fn with direct dispatch (no per-call singleton lookup).
     #[rpc]
     async fn ping() -> overseer_core::Result<PingResponse> {
         Ok(PingResponse {
@@ -96,9 +132,12 @@ impl Greeter {
     }
 
     #[rpc]
-    async fn greet(Payload(req): Payload<GreetRequest>) -> overseer_core::Result<GreetResponse> {
+    async fn greet(
+        &self,
+        Payload(req): Payload<GreetRequest>,
+    ) -> overseer_core::Result<GreetResponse> {
         Ok(GreetResponse {
-            message: format!("Hello, {}!", req.name),
+            message: format!("{}, {}!", self.config.greeting, req.name),
         })
     }
 }
@@ -108,7 +147,13 @@ impl Greeter {
 // ---------------------------------------------------------------------------
 
 async fn run_daemon(transport: TransportKind) -> overseer_core::Result<()> {
-    let daemon = Daemon::builder("greeter").auto_discover().build().await?;
+    let daemon = Daemon::builder("greeter")
+        .auto_discover()
+        .with_component(GreetConfig {
+            greeting: "Hello".to_string(),
+        })
+        .build()
+        .await?;
 
     println!("{}", daemon.registry);
 

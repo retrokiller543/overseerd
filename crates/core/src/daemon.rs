@@ -1,4 +1,8 @@
-use std::sync::Arc;
+use std::{
+    any::{Any, TypeId},
+    collections::HashSet,
+    sync::Arc,
+};
 
 use tracing::{debug, error, info, instrument, trace, warn};
 use overseer_transport::{CallResult, Connection, Respond, Transport};
@@ -6,7 +10,10 @@ use overseer_transport::{CallResult, Connection, Respond, Transport};
 use crate::{
     connection::{ConnectionHandler, ConnectionInfo},
     container::Container,
-    descriptors::{ComponentDescriptor, RpcCallContext, RpcResponse, ServiceDescriptor},
+    descriptors::{
+        BoxedComponent, ComponentDescriptor, RpcCallContext, RpcResponse, ServiceDescriptor,
+        TypeDescriptor,
+    },
     lifecycle::{ShutdownHandle, ShutdownSignal},
     registry::Registry,
     router::RpcRouter,
@@ -17,6 +24,7 @@ pub struct DaemonBuilder {
     name: String,
     registry: Registry,
     connection_handlers: Vec<Box<dyn ConnectionHandler>>,
+    manual_components: Vec<BoxedComponent>,
 }
 
 impl DaemonBuilder {
@@ -25,7 +33,20 @@ impl DaemonBuilder {
             name: name.into(),
             registry: Registry::default(),
             connection_handlers: Vec::new(),
+            manual_components: Vec::new(),
         }
+    }
+
+    /// Registers a pre-built singleton instance (e.g. a stateful service
+    /// constructed by hand). Available to handlers via `ctx.component::<T>()`
+    /// and as a dependency of factory-built components.
+    pub fn with_component<T: Any + Send + Sync + 'static>(mut self, value: T) -> Self {
+        self.manual_components.push(BoxedComponent {
+            ty: TypeDescriptor::of::<T>(std::any::type_name::<T>()),
+            value: Box::new(Arc::new(value)),
+        });
+
+        self
     }
 
     /// Populates the registry from all `inventory::submit!` entries in the binary.
@@ -59,9 +80,15 @@ impl DaemonBuilder {
     pub async fn build(self) -> crate::Result<Daemon> {
         debug!(daemon = %self.name, "building daemon");
 
-        self.registry.validate()?;
+        let external: HashSet<TypeId> = self
+            .manual_components
+            .iter()
+            .map(|c| (c.ty.type_id)())
+            .collect();
 
-        let container = Container::build(&self.registry).await?;
+        self.registry.validate_with(&external)?;
+
+        let container = Container::build(&self.registry, self.manual_components).await?;
         let router = RpcRouter::from_registry(&self.registry);
         let shutdown = ShutdownSignal::new();
 
@@ -119,6 +146,7 @@ impl Daemon {
 
         let router = Arc::new(self.router);
         let handlers = Arc::new(self.connection_handlers);
+        let components = Arc::new(self.container);
         let mut shutdown = self.shutdown;
 
         loop {
@@ -130,9 +158,10 @@ impl Daemon {
 
                             let router = Arc::clone(&router);
                             let handlers = Arc::clone(&handlers);
+                            let components = Arc::clone(&components);
 
                             tokio::spawn(async move {
-                                serve_connection(conn, router, handlers).await;
+                                serve_connection(conn, router, handlers, components).await;
                             });
                         }
 
@@ -182,6 +211,7 @@ async fn serve_connection<C: Connection>(
     mut conn: C,
     router: Arc<RpcRouter>,
     handlers: Arc<Vec<Box<dyn ConnectionHandler>>>,
+    components: Arc<Container>,
 ) {
     debug!("connection established");
 
@@ -210,6 +240,7 @@ async fn serve_connection<C: Connection>(
                 let ctx = RpcCallContext {
                     payload: call.payload,
                     connection: Arc::clone(&info),
+                    components: Arc::clone(&components),
                 };
 
                 let outcome = match router.dispatch(&path, ctx).await {
