@@ -20,9 +20,9 @@ impl RpcRouter {
     pub fn from_registry(registry: &Registry) -> Self {
         let mut routes = HashMap::new();
 
-        for service in &registry.services {
-            for rpc in service.rpcs {
-                let path = format!("{}.{}", service.name, rpc.name);
+        for service in registry.resolved_services() {
+            for rpc in &service.rpcs {
+                let path = format!("{}.{}", service.descriptor.name, rpc.name);
                 debug!(%path, "registered route");
                 routes.insert(path, rpc.handler);
             }

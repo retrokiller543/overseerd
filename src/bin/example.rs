@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 
-use overseer_core::{Daemon, Payload, service};
+use overseer_core::{Daemon, Payload, handlers, service};
 use overseer_transport::{
     TcpTransport, WireMessage, WireOutcome, WireRequest,
     protocol::codec::{read_message, write_message},
@@ -76,14 +76,16 @@ struct GreetResponse {
 }
 
 /// A common dependency shared by every call — provided to the daemon via
-/// `with_component` and injected into the service through `#[init]`.
+/// `with_component` and resolved into the service by field injection.
 struct GreetConfig {
     greeting: String,
 }
 
-/// A stateful service: the singleton holds common deps (`config`), while each
-/// `#[rpc]` method takes `&self` for those and extracts request-scoped values
-/// from its parameters (`Payload<T>`).
+/// A stateful service. Identity lives on the type via `#[service]`; the
+/// singleton holds common deps (`config`), resolved from the container by field
+/// injection (each `Arc<T>` field). An `#[init]` constructor in a `#[handlers]`
+/// impl could override that default.
+#[service(id = "greeter", version = "0.1")]
 struct Greeter {
     config: Arc<GreetConfig>,
 }
@@ -91,34 +93,15 @@ struct Greeter {
 // ---------------------------------------------------------------------------
 // RPC handlers
 //
-// `#[service]` registers the singleton component (built by `#[init]`, whose
-// `Arc<T>` params are injected dependencies) and turns each `#[rpc]` method
-// into a descriptor + erased wrapper that resolves the singleton per call.
-// `#[init]` here is sync and infallible; it may also be `async` and/or return
-// `Result<Self>`.
+// `#[handlers]` contributes each `#[rpc]` method to the service of `Self`.
+// Several impl blocks may target one service. `&self` methods read the
+// singleton's common deps; parameters are extracted by type (`Payload<T>`).
 // ---------------------------------------------------------------------------
 
-#[service(id = "greeter2", version = "0.2")]
+#[handlers]
 impl Greeter {
     #[init]
-    fn init() -> Self {
-        let config = Arc::new(GreetConfig {
-            greeting: "Hello, World!".to_string(),
-        });
-
-        Self { config }
-    }
-
-    #[rpc]
-    async fn test() -> overseer_core::Result<()> {
-        Ok(())
-    }
-}
-
-#[service(id = "greeter", version = "0.1")]
-impl Greeter {
-    #[init]
-    fn new(config: Arc<GreetConfig>) -> Self {
+    fn init(config: Arc<GreetConfig>) -> Self {
         Self { config }
     }
 
@@ -139,6 +122,16 @@ impl Greeter {
         Ok(GreetResponse {
             message: format!("{}, {}!", self.config.greeting, req.name),
         })
+    }
+}
+
+// A second impl block contributing to the *same* service — ping, greet, and
+// test all roll up under "Greeter".
+#[handlers]
+impl Greeter {
+    #[rpc]
+    async fn test() -> overseer_core::Result<()> {
+        Ok(())
     }
 }
 

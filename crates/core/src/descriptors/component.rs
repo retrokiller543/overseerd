@@ -85,6 +85,10 @@ pub struct ComponentDescriptor {
     pub scope: ComponentScope,
     pub dependencies: &'static [DependencyDescriptor],
     pub factory: ComponentFactory,
+    /// Whether this is a default (field-injection) factory that an explicit
+    /// `#[init]` constructor or a manual registration may override. Exactly one
+    /// non-default factory is allowed per type.
+    pub default_factory: bool,
 }
 
 impl fmt::Debug for ComponentDescriptor {
@@ -95,6 +99,7 @@ impl fmt::Debug for ComponentDescriptor {
             .field("ty", &self.ty)
             .field("scope", &self.scope)
             .field("dependencies", &self.dependencies)
+            .field("default_factory", &self.default_factory)
             .finish_non_exhaustive()
     }
 }
