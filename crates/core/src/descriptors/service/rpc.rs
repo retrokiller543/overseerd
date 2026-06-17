@@ -2,12 +2,21 @@ use std::{fmt, future::Future, pin::Pin};
 
 use crate::descriptors::types::TypeDescriptor;
 
-/// Classifies the interaction pattern of an RPC method.
+/// The interaction pattern of an RPC method, following gRPC's four kinds.
+///
+/// Only `Unary` is served today. The streaming variants are the target of the
+/// streaming plan (`specs/002-streaming-rpcs/plan.md`); they are not yet
+/// produced by the `#[rpc]` macro nor handled by the runtime.
 #[derive(Clone, Copy, Debug)]
 pub enum OperationKind {
-    Command,
-    Query,
-    Stream,
+    /// One request, one response.
+    Unary,
+    /// One request, a stream of responses.
+    ServerStream,
+    /// A stream of requests, one response.
+    ClientStream,
+    /// A bidirectional stream of requests and responses.
+    BidiStream,
 }
 
 /// Classifies how a parameter value is sourced during an RPC call.

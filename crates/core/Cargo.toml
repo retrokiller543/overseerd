@@ -13,3 +13,4 @@ serde = { workspace = true }
 postcard = { workspace = true }
 tracing = { workspace = true }
 overseer-transport = { workspace = true }
+overseer-macros = { workspace = true }

@@ -13,8 +13,8 @@ pub use overseer_core::{
     BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
     ComponentScope, Conn, DependencyDescriptor, Descriptor, Error, Extension, FromContext, Handler,
     OperationKind, ParameterDescriptor, ParameterKind, Payload, Registry, Result, RpcCallContext,
-    RpcDescriptor, RpcHandler, RpcResponse, ServiceDescriptor, TypeDescriptor, dispatch_with,
-    type_id_of,
+    RpcDescriptor, RpcHandler, RpcResponse, ServiceDescriptor, TypeDescriptor, dispatch_with, rpc,
+    service, type_id_of,
 };
 
 #[cfg(test)]

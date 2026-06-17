@@ -314,12 +314,22 @@ name = "overseer-core"
 version = "0.1.0"
 dependencies = [
  "inventory",
+ "overseer-macros",
  "overseer-transport",
  "postcard",
  "serde",
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "overseer-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
