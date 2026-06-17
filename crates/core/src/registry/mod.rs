@@ -33,9 +33,17 @@ impl Registry {
 
     /// Validates structural consistency of the registry.
     pub fn validate(&self) -> crate::Result<()> {
+        self.validate_with(&HashSet::new())
+    }
+
+    /// Like [`validate`](Self::validate), but treats `external` component types
+    /// (e.g. instances supplied via `DaemonBuilder::with_component`) as
+    /// available when checking dependencies, since they are seeded into the
+    /// container before factory-built components are constructed.
+    pub fn validate_with(&self, external: &HashSet<std::any::TypeId>) -> crate::Result<()> {
         self.validate_component_ids()?;
         self.validate_services()?;
-        self.validate_dependencies()?;
+        self.validate_dependencies(external)?;
 
         Ok(())
     }
@@ -83,9 +91,11 @@ impl Registry {
         Ok(())
     }
 
-    fn validate_dependencies(&self) -> crate::Result<()> {
-        let available: HashSet<std::any::TypeId> =
+    fn validate_dependencies(&self, external: &HashSet<std::any::TypeId>) -> crate::Result<()> {
+        let mut available: HashSet<std::any::TypeId> =
             self.components.iter().map(|c| (c.ty.type_id)()).collect();
+
+        available.extend(external.iter().copied());
 
         for c in &self.components {
             for dep in c.dependencies {
@@ -328,6 +338,22 @@ mod tests {
         };
 
         assert!(registry.validate().is_err());
+    }
+
+    #[test]
+    fn validate_with_accepts_externally_provided_dependency() {
+        let registry = Registry {
+            components: vec![&BACKUP_REPO],
+            services: vec![],
+        };
+
+        // BackupRepository depends on PgPool (u16). Absent from the registry,
+        // it fails plain validation, but a `with_component`-supplied instance
+        // (modeled as an external type id) satisfies it.
+        let external = HashSet::from([std::any::TypeId::of::<u16>()]);
+
+        assert!(registry.validate().is_err());
+        assert!(registry.validate_with(&external).is_ok());
     }
 
     #[test]

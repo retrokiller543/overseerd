@@ -38,4 +38,7 @@ pub enum Error {
 
     #[error("response serialization failed: {0}")]
     Serialization(String),
+
+    #[error("missing component: {0}")]
+    MissingComponent(&'static str),
 }

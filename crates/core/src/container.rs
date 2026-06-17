@@ -1,14 +1,14 @@
 use std::{
     any::{Any, TypeId},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::Arc,
 };
 
 use tracing::{debug, error, info, instrument, trace};
 
 use crate::{
-    descriptors::{component::ComponentConstructionContext, ComponentDescriptor},
-    Error, Registry,
+    BoxedComponent, Error, Registry,
+    descriptors::{ComponentDescriptor, component::ComponentConstructionContext},
 };
 
 /// Holds all fully constructed component instances for a running daemon.
@@ -18,12 +18,23 @@ pub struct Container {
 
 impl Container {
     /// Resolves all registered components in dependency order and returns a built Container.
+    ///
+    /// `manual` holds pre-built instances supplied at the builder (e.g. a
+    /// service constructed by hand). They are seeded first, so factory-built
+    /// components may depend on them.
     #[instrument(skip_all, fields(count = registry.components.len()))]
-    pub async fn build(registry: &Registry) -> crate::Result<Self> {
+    pub async fn build(registry: &Registry, manual: Vec<BoxedComponent>) -> crate::Result<Self> {
         debug!("resolving component dependency order");
 
-        let sorted = topological_sort(&registry.components)?;
         let mut ctx = ComponentConstructionContext::new();
+        let mut prebuilt: HashSet<TypeId> = HashSet::new();
+
+        for component in manual {
+            prebuilt.insert((component.ty.type_id)());
+            ctx.insert(component);
+        }
+
+        let sorted = topological_sort(&registry.components, &prebuilt)?;
 
         for descriptor in &sorted {
             debug!(component = %descriptor.name, "constructing component");
@@ -53,6 +64,7 @@ impl Container {
 
 fn topological_sort(
     components: &[&'static ComponentDescriptor],
+    prebuilt: &HashSet<TypeId>,
 ) -> crate::Result<Vec<&'static ComponentDescriptor>> {
     trace!(total = components.len(), "starting topological sort");
 
@@ -69,7 +81,8 @@ fn topological_sort(
                 .filter(|dep| !dep.optional)
                 .all(|dep| {
                     let dep_type_id = (dep.ty.type_id)();
-                    result.iter().any(|r| (r.ty.type_id)() == dep_type_id)
+                    prebuilt.contains(&dep_type_id)
+                        || result.iter().any(|r| (r.ty.type_id)() == dep_type_id)
                 });
 
             if resolved {

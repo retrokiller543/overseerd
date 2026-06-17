@@ -39,13 +39,25 @@ pub struct ParameterDescriptor {
 
 /// Context passed to an RPC handler on invocation.
 ///
-/// Carries the raw postcard-encoded payload bytes and the connection-scoped
-/// context. Handler extractors (e.g. `Payload<T>`) deserialize from `payload`
-/// into the user's own types; `connection` provides per-connection data such
-/// as auth context or rate-limit state.
+/// Carries the raw postcard-encoded payload bytes, the connection-scoped
+/// context, and a handle to the daemon's singleton components. Handler
+/// extractors (e.g. `Payload<T>`) deserialize from `payload`; `connection`
+/// provides per-connection data; `component::<T>()` resolves singleton
+/// components such as a stateful service holding common dependencies.
 pub struct RpcCallContext {
     pub payload: Vec<u8>,
     pub connection: std::sync::Arc<crate::connection::ConnectionInfo>,
+    pub(crate) components: std::sync::Arc<crate::container::Container>,
+}
+
+impl RpcCallContext {
+    /// Resolves the singleton component of type `T` (e.g. a stateful service),
+    /// returning a cloned `Arc<T>`. `None` if no such component is registered.
+    pub fn component<T: std::any::Any + Send + Sync + 'static>(
+        &self,
+    ) -> Option<std::sync::Arc<T>> {
+        self.components.get::<T>()
+    }
 }
 
 /// The response returned by an RPC handler.
