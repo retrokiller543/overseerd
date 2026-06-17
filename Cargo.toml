@@ -47,11 +47,9 @@ path = "src/bin/example.rs"
 overseer-core = { workspace = true }
 overseer-transport = { workspace = true }
 tokio = { workspace = true }
+futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { version = "4", features = ["derive"] }
-
-[dev-dependencies]
-futures = { workspace = true }

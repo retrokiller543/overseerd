@@ -1,10 +1,16 @@
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use serde::{Deserialize, Serialize};
+use futures::StreamExt;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite};
 use tracing_subscriber::EnvFilter;
 
-use overseer_core::{Component, Daemon, Payload, ServiceComponent, component, handlers, service};
+use overseer_core::{
+    Component, Daemon, Payload, ResponseStream, ServiceComponent, Streaming, component, handlers,
+    service,
+};
 use overseer_transport::{
     TcpTransport, WireMessage, WireOutcome, WireRequest,
     protocol::codec::{read_message, write_message},
@@ -31,8 +37,13 @@ enum Command {
         #[arg(value_enum, default_value = "tcp")]
         transport: TransportKind,
     },
-    /// Run the client against the selected transport.
+    /// Run the scripted client (unary + one of each streaming kind).
     Client {
+        #[arg(value_enum, default_value = "tcp")]
+        transport: TransportKind,
+    },
+    /// Open an interactive bidirectional echo stream over stdin.
+    Echo {
         #[arg(value_enum, default_value = "tcp")]
         transport: TransportKind,
     },
@@ -169,6 +180,39 @@ impl ManualService {
     }
 }
 
+/// A stateless service demonstrating the three streaming kinds. The `#[rpc]`
+/// macro infers each kind from the signature: a `Streaming<T>` parameter means
+/// streamed input, a `ResponseStream<T>` return means streamed output.
+#[service(id = "echo", version = "0.1")]
+struct Echo;
+
+#[handlers]
+impl Echo {
+    /// Server streaming: one request `n`, a descending stream `n-1 ..= 0`.
+    #[rpc]
+    async fn countdown(Payload(n): Payload<u32>) -> ResponseStream<u32> {
+        ResponseStream::new(futures::stream::iter((0..n).rev().map(Ok)))
+    }
+
+    /// Client streaming: a stream of numbers in, their sum out.
+    #[rpc]
+    async fn sum(mut input: Streaming<u32>) -> overseer_core::Result<u32> {
+        let mut total = 0;
+
+        while let Some(item) = input.next().await {
+            total += item?;
+        }
+
+        Ok(total)
+    }
+
+    /// Bidirectional: each inbound line echoed back uppercased.
+    #[rpc]
+    async fn echo(input: Streaming<String>) -> ResponseStream<String> {
+        ResponseStream::new(input.map(|item| item.map(|line| line.to_uppercase())))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Daemon
 // ---------------------------------------------------------------------------
@@ -236,47 +280,199 @@ fn unpack<Resp: for<'de> Deserialize<'de>>(msg: WireMessage) -> Resp {
     }
 }
 
+/// Writes one wire frame, panicking on transport error (example-grade).
+async fn write_frame<S>(stream: &mut S, msg: &WireMessage)
+where
+    S: AsyncWrite + Unpin,
+{
+    write_message(stream, msg).await.expect("send frame");
+}
+
+/// Server streaming: one request, then collect items until end/error.
+async fn call_server_stream<S, Req, Resp>(
+    stream: &mut S,
+    id: u64,
+    path: &str,
+    req: &Req,
+) -> Vec<Resp>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    Req: Serialize,
+    Resp: DeserializeOwned + Debug,
+{
+    let payload = postcard::to_allocvec(req).unwrap();
+    let open = WireMessage::Request(WireRequest {
+        id,
+        path: path.to_string(),
+        payload,
+        streaming_input: false,
+    });
+
+    write_frame(stream, &open).await;
+
+    let mut items = Vec::new();
+
+    loop {
+        match read_message(stream).await.expect("recv frame") {
+            WireMessage::StreamItem { payload, .. } => {
+                let data = postcard::from_bytes(&payload).expect("decode item");
+                items.push(data);
+            }
+            WireMessage::StreamEnd { .. } => break,
+            WireMessage::StreamError { message, .. } => {
+                eprintln!("stream error: {message}");
+                break;
+            }
+            _ => panic!("unexpected frame in server stream"),
+        }
+    }
+
+    items
+}
+
+/// Client streaming: open with `streaming_input`, send items, half-close, then
+/// read the single response.
+async fn call_client_stream<S, Req, Resp>(
+    stream: &mut S,
+    id: u64,
+    path: &str,
+    items: &[Req],
+) -> Resp
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    Req: Serialize,
+    Resp: for<'de> Deserialize<'de>,
+{
+    let open = WireMessage::Request(WireRequest {
+        id,
+        path: path.to_string(),
+        payload: Vec::new(),
+        streaming_input: true,
+    });
+
+    write_frame(stream, &open).await;
+
+    for item in items {
+        let payload = postcard::to_allocvec(item).unwrap();
+
+        write_frame(stream, &WireMessage::StreamItem { id, payload }).await;
+    }
+
+    write_frame(stream, &WireMessage::StreamEnd { id }).await;
+
+    unpack(read_message(stream).await.expect("recv response"))
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
 
-async fn run_client(transport: TransportKind) {
+/// Runs the scripted demo: each unary call, then one of each streaming kind.
+async fn exercise<S>(stream: &mut S)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let ping: PingResponse = call_stream(stream, 1, "Greeter.ping", &PingRequest).await;
+    println!("ping             →  {}", ping.message);
+
+    let greet: GreetResponse = call_stream(
+        stream,
+        2,
+        "Greeter.greet",
+        &GreetRequest {
+            name: "World".to_string(),
+        },
+    )
+    .await;
+    println!("greet            →  {}", greet.message);
+
+    let countdown: Vec<u32> = call_server_stream(stream, 3, "Echo.countdown", &50u32).await;
+    println!("countdown (srv)  →  {countdown:?}");
+
+    let total: u32 = call_client_stream(stream, 4, "Echo.sum", &[1u32, 2, 3, 4]).await;
+    println!("sum (client)     →  {total}");
+
+    // Scripted bidi: send a few words, read each echoed back uppercased.
+    let id = 5;
+    let open = WireMessage::Request(WireRequest {
+        id,
+        path: "Echo.echo".to_string(),
+        payload: Vec::new(),
+        streaming_input: true,
+    });
+
+    write_frame(stream, &open).await;
+
+    for word in ["hello", "stream", "world"] {
+        let payload = postcard::to_allocvec(&word.to_string()).unwrap();
+
+        write_frame(stream, &WireMessage::StreamItem { id, payload }).await;
+
+        match read_message(stream).await.expect("recv echo") {
+            WireMessage::StreamItem { payload, .. } => {
+                let echoed: String = postcard::from_bytes(&payload).unwrap();
+                println!("echo (bidi)      →  {echoed}");
+            }
+            _ => panic!("unexpected frame in bidi echo"),
+        }
+    }
+
+    write_frame(stream, &WireMessage::StreamEnd { id }).await;
+    let _ = read_message(stream).await; // server's StreamEnd
+}
+
+/// Interactive bidi: stream stdin lines to `Echo.echo`, print each reply.
+async fn interactive_echo<S>(stream: &mut S, id: u64)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let open = WireMessage::Request(WireRequest {
+        id,
+        path: "Echo.echo".to_string(),
+        payload: Vec::new(),
+        streaming_input: true,
+    });
+
+    write_frame(stream, &open).await;
+
+    println!("interactive echo — type lines, Ctrl-D to end:");
+
+    let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+
+    while let Some(line) = lines.next_line().await.expect("read stdin") {
+        let payload = postcard::to_allocvec(&line).unwrap();
+
+        write_frame(stream, &WireMessage::StreamItem { id, payload }).await;
+
+        match read_message(stream).await.expect("recv echo") {
+            WireMessage::StreamItem { payload, .. } => {
+                let echoed: String = postcard::from_bytes(&payload).unwrap();
+                println!("  ← {echoed}");
+            }
+            WireMessage::StreamError { message, .. } => {
+                eprintln!("stream error: {message}");
+                return;
+            }
+            WireMessage::StreamEnd { .. } => break,
+            _ => panic!("unexpected frame in echo"),
+        }
+    }
+
+    write_frame(stream, &WireMessage::StreamEnd { id }).await;
+    let _ = read_message(stream).await; // server's StreamEnd
+
+    println!("[echo stream closed]");
+}
+
+async fn run_client(transport: TransportKind, interactive: bool) {
     match transport {
         TransportKind::Tcp => {
             use tokio::net::TcpStream;
 
-            println!("--- TCP (persistent connection) ---");
-
             let mut stream = TcpStream::connect(TCP_ADDR).await.expect("connect TCP");
-            println!("[connection opened → {TCP_ADDR}]");
+            println!("[connected → {TCP_ADDR}]");
 
-            let r1: PingResponse = call_stream(&mut stream, 1, "Greeter.ping", &PingRequest).await;
-            println!("call 1  ping   →  {}", r1.message);
-
-            let r2: GreetResponse = call_stream(
-                &mut stream,
-                2,
-                "Greeter.greet",
-                &GreetRequest {
-                    name: "World".to_string(),
-                },
-            )
-            .await;
-            println!("call 2  greet  →  {}", r2.message);
-
-            let r3: GreetResponse = call_stream(
-                &mut stream,
-                3,
-                "Greeter.greet",
-                &GreetRequest {
-                    name: "Overseer".to_string(),
-                },
-            )
-            .await;
-            println!("call 3  greet  →  {}", r3.message);
-
-            let r4: PingResponse = call_stream(&mut stream, 4, "Greeter.ping", &PingRequest).await;
-            println!("call 4  ping   →  {}", r4.message);
+            drive(&mut stream, interactive).await;
 
             drop(stream);
             println!("[connection closed]");
@@ -286,42 +482,26 @@ async fn run_client(transport: TransportKind) {
         TransportKind::Unix => {
             use tokio::net::UnixStream;
 
-            println!("--- Unix socket (persistent connection) ---");
-
             let mut stream = UnixStream::connect(UNIX_SOCK).await.expect("connect Unix");
-            println!("[connection opened → {UNIX_SOCK}]");
+            println!("[connected → {UNIX_SOCK}]");
 
-            let r1: PingResponse = call_stream(&mut stream, 1, "Greeter.ping", &PingRequest).await;
-            println!("call 1  ping   →  {}", r1.message);
-
-            let r2: GreetResponse = call_stream(
-                &mut stream,
-                2,
-                "Greeter.greet",
-                &GreetRequest {
-                    name: "World".to_string(),
-                },
-            )
-            .await;
-            println!("call 2  greet  →  {}", r2.message);
-
-            let r3: GreetResponse = call_stream(
-                &mut stream,
-                3,
-                "Greeter.greet",
-                &GreetRequest {
-                    name: "Overseer".to_string(),
-                },
-            )
-            .await;
-            println!("call 3  greet  →  {}", r3.message);
-
-            let r4: PingResponse = call_stream(&mut stream, 4, "Greeter.ping", &PingRequest).await;
-            println!("call 4  ping   →  {}", r4.message);
+            drive(&mut stream, interactive).await;
 
             drop(stream);
             println!("[connection closed]");
         }
+    }
+}
+
+/// Dispatches to the interactive echo loop or the scripted demo.
+async fn drive<S>(stream: &mut S, interactive: bool)
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    if interactive {
+        interactive_echo(stream, 1).await;
+    } else {
+        exercise(stream).await;
     }
 }
 
@@ -343,7 +523,11 @@ async fn main() -> overseer_core::Result<()> {
     match cli.command {
         Command::Daemon { transport } => run_daemon(transport).await,
         Command::Client { transport } => {
-            run_client(transport).await;
+            run_client(transport, false).await;
+            Ok(())
+        }
+        Command::Echo { transport } => {
+            run_client(transport, true).await;
             Ok(())
         }
     }
