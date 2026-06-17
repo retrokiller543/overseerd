@@ -54,6 +54,7 @@ mod component;
 mod derive;
 mod handlers;
 mod inject;
+mod paths;
 mod rpc;
 mod service;
 

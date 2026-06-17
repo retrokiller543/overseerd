@@ -38,7 +38,9 @@ impl Parse for ServiceArgs {
                 _ => {
                     return Err(syn::Error::new(
                         pair.key.span(),
-                        format!("unknown service argument `{key}`, expected `id`, `name`, or `version`"),
+                        format!(
+                            "unknown service argument `{key}`, expected `id`, `name`, or `version`"
+                        ),
                     ));
                 }
             }
@@ -111,7 +113,10 @@ pub fn result_ok_type(output: &ReturnType) -> syn::Result<Type> {
     };
 
     let Type::Path(path) = ty else {
-        return Err(syn::Error::new_spanned(ty, "rpc return type must be a `Result<...>`"));
+        return Err(syn::Error::new_spanned(
+            ty,
+            "rpc return type must be a `Result<...>`",
+        ));
     };
 
     let segment = path
@@ -146,7 +151,10 @@ pub fn result_ok_type(output: &ReturnType) -> syn::Result<Type> {
 /// Extracts `T` from `Arc<T>` (the form `#[init]` dependency parameters take).
 pub fn arc_inner_type(ty: &Type) -> syn::Result<Type> {
     let err = || {
-        syn::Error::new_spanned(ty, "#[init] parameters must be `Arc<Component>` dependencies")
+        syn::Error::new_spanned(
+            ty,
+            "#[init] parameters must be `Arc<Component>` dependencies",
+        )
     };
 
     let Type::Path(path) = ty else {

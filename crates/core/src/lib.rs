@@ -23,10 +23,6 @@ pub use connection::{ConnectionHandler, ConnectionInfo};
 pub use extract::{Conn, Extension, FromContext, Handler, Payload, dispatch_with};
 pub use overseer_macros::{Component, component, handlers, rpc, service};
 
-/// Re-exported so macro-generated code can call `inventory::submit!` through a
-/// stable path without the user crate depending on `inventory` directly.
-#[doc(hidden)]
-pub use inventory;
 pub use container::ComponentContainer;
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
@@ -36,6 +32,10 @@ pub use descriptors::{
     ServiceComponent, ServiceDescriptor, TypeDescriptor, type_id_of,
 };
 pub use error::Error;
+/// Re-exported so macro-generated code can call `inventory::submit!` through a
+/// stable path without the user crate depending on `inventory` directly.
+#[doc(hidden)]
+pub use inventory;
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use registry::DescriptorRegistry;
 pub use router::RpcRouter;

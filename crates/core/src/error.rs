@@ -22,7 +22,10 @@ pub enum Error {
     DuplicateRpcPath(String),
 
     #[error("missing dependency for component '{component}': type '{type_name}'")]
-    MissingDependency { component: String, type_name: String },
+    MissingDependency {
+        component: String,
+        type_name: String,
+    },
 
     #[error("service '{0}' has no RPC methods")]
     EmptyService(String),

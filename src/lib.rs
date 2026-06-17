@@ -54,14 +54,19 @@
 // Core: descriptors, registry, container, daemon, extractors, macros.
 // ---------------------------------------------------------------------------
 pub use overseer_core::{
-    BoxedComponent, Component, ComponentConstructionContext, ComponentContainer, ComponentDescriptor,
-    ComponentFactory, ComponentScope, Conn, ConnectionHandler, ConnectionInfo, Daemon,
-    DaemonBuilder, DependencyDescriptor, Descriptor, DescriptorRegistry, Error, Extension,
+    BoxedComponent, Component, ComponentConstructionContext, ComponentContainer,
+    ComponentDescriptor, ComponentFactory, ComponentScope, Conn, ConnectionHandler, ConnectionInfo,
+    Daemon, DaemonBuilder, DependencyDescriptor, Descriptor, DescriptorRegistry, Error, Extension,
     FromContext, Handler, OperationKind, ParameterDescriptor, ParameterKind, Payload, Result,
     RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcResponse, RpcRouter, ServiceComponent,
     ServiceDescriptor, ShutdownHandle, ShutdownSignal, TypeDescriptor, component, dispatch_with,
     handlers, rpc, service, type_id_of,
 };
+
+/// Re-exported so macro-generated code can call `inventory::submit!` through
+/// the facade crate without user crates depending on `inventory` directly.
+#[doc(hidden)]
+pub use overseer_core::inventory;
 
 // ---------------------------------------------------------------------------
 // Transport: server endpoints, client wire protocol, custom-transport traits.

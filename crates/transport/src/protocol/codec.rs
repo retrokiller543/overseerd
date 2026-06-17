@@ -15,7 +15,10 @@ pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<WireMe
     let len = reader.read_u32_le().await? as usize;
 
     if len > MAX_FRAME_LEN {
-        return Err(Error::FrameTooLarge { len, max: MAX_FRAME_LEN });
+        return Err(Error::FrameTooLarge {
+            len,
+            max: MAX_FRAME_LEN,
+        });
     }
 
     let mut buf = vec![0u8; len];
@@ -26,10 +29,7 @@ pub async fn read_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<WireMe
 }
 
 /// Serializes a message and writes it as a length-prefixed frame to a stream.
-pub async fn write_message<W: AsyncWrite + Unpin>(
-    writer: &mut W,
-    msg: &WireMessage,
-) -> Result<()> {
+pub async fn write_message<W: AsyncWrite + Unpin>(writer: &mut W, msg: &WireMessage) -> Result<()> {
     let bytes = postcard::to_allocvec(msg).map_err(|e| Error::Serialization(e.to_string()))?;
 
     writer.write_u32_le(bytes.len() as u32).await?;
