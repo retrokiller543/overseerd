@@ -194,14 +194,14 @@ struct AccountService;
 static ACCOUNT_RPCS: [RpcDescriptor; 2] = [
     RpcDescriptor {
         name: "greet",
-        operation: OperationKind::Command,
+        operation: OperationKind::Unary,
         parameters: &[],
         output: TypeDescriptor::of::<GreetReply>("GreetReply"),
         handler: greet_erased,
     },
     RpcDescriptor {
         name: "whoami",
-        operation: OperationKind::Query,
+        operation: OperationKind::Unary,
         parameters: &[],
         output: TypeDescriptor::of::<WhoAmI>("WhoAmI"),
         handler: whoami_erased,

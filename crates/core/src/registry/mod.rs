@@ -241,14 +241,14 @@ mod tests {
     static BACKUP_SERVICE_RPCS: [RpcDescriptor; 2] = [
         RpcDescriptor {
             name: "start_backup",
-            operation: OperationKind::Command,
+            operation: OperationKind::Unary,
             parameters: &[],
             output: TypeDescriptor::of::<u32>("JobId"),
             handler: fake_handler,
         },
         RpcDescriptor {
             name: "backup_status",
-            operation: OperationKind::Query,
+            operation: OperationKind::Unary,
             parameters: &[],
             output: TypeDescriptor::of::<u64>("BackupStatus"),
             handler: fake_handler,

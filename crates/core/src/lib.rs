@@ -10,6 +10,12 @@ pub mod router;
 
 pub use connection::{ConnectionHandler, ConnectionInfo};
 pub use extract::{Conn, Extension, FromContext, Handler, Payload, dispatch_with};
+pub use overseer_macros::{rpc, service};
+
+/// Re-exported so macro-generated code can call `inventory::submit!` through a
+/// stable path without the user crate depending on `inventory` directly.
+#[doc(hidden)]
+pub use inventory;
 pub use container::Container;
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{

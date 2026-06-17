@@ -2,6 +2,7 @@
 members = [
     ".",
     "crates/core",
+    "crates/macros",
     "crates/transport",
 ]
 resolver = "3"
@@ -15,6 +16,7 @@ authors = ["Emil Schütt <emil.schutt@gmail.com>"]
 [workspace.dependencies]
 # Workspace member crates
 overseer-core = { path = "crates/core" }
+overseer-macros = { path = "crates/macros" }
 overseer-transport = { path = "crates/transport" }
 
 # Common dependencies
@@ -23,6 +25,9 @@ serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
 
 [package]
 name = "overseer"

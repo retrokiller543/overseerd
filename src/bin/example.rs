@@ -1,13 +1,8 @@
-use std::{future::Future, pin::Pin};
-
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 
-use overseer_core::{
-    Daemon, OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor,
-    RpcResponse, ServiceDescriptor, TypeDescriptor,
-};
+use overseer_core::{Daemon, Payload, service};
 use overseer_transport::{
     TcpTransport, WireMessage, WireOutcome, WireRequest,
     protocol::codec::{read_message, write_message},
@@ -78,82 +73,42 @@ struct GreetResponse {
     message: String,
 }
 
-// Stand-in service type — macros will generate this from #[service].
-struct GreeterService;
+/// The service type. Handlers are stateless for now, so it carries no data;
+/// the macro derives the service name ("Greeter") from this ident.
+struct Greeter;
 
 // ---------------------------------------------------------------------------
 // RPC handlers
+//
+// `#[service]` turns each `#[rpc]` method into a registered descriptor and the
+// erased handler wrapper, then submits the service to `inventory` so that
+// `auto_discover` finds it. Parameters are extracted by type (`Payload<T>`,
+// `Conn`, `Extension<T>`); the handler returns `Result<T: Serialize, E>`.
 // ---------------------------------------------------------------------------
 
-fn ping_handler(
-    _ctx: RpcCallContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
-    Box::pin(async {
-        let response = PingResponse {
+#[service(id = "greeter", version = "0.1")]
+impl Greeter {
+    #[rpc]
+    async fn ping() -> overseer_core::Result<PingResponse> {
+        Ok(PingResponse {
             message: "pong".to_string(),
-        };
-        let payload = postcard::to_allocvec(&response).unwrap();
+        })
+    }
 
-        Ok(RpcResponse { payload })
-    })
-}
-
-fn greet_handler(
-    ctx: RpcCallContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
-    Box::pin(async move {
-        let req: GreetRequest = postcard::from_bytes(&ctx.payload).unwrap();
-        let response = GreetResponse {
+    #[rpc]
+    async fn greet(Payload(req): Payload<GreetRequest>) -> overseer_core::Result<GreetResponse> {
+        Ok(GreetResponse {
             message: format!("Hello, {}!", req.name),
-        };
-        let payload = postcard::to_allocvec(&response).unwrap();
-
-        Ok(RpcResponse { payload })
-    })
+        })
+    }
 }
-
-// ---------------------------------------------------------------------------
-// Static descriptors
-// ---------------------------------------------------------------------------
-
-static GREETER_SERVICE_RPCS: [RpcDescriptor; 2] = [
-    RpcDescriptor {
-        name: "ping",
-        operation: OperationKind::Query,
-        parameters: &[],
-        output: TypeDescriptor::of::<PingResponse>("PingResponse"),
-        handler: ping_handler,
-    },
-    RpcDescriptor {
-        name: "greet",
-        operation: OperationKind::Command,
-        parameters: &[ParameterDescriptor {
-            name: "request",
-            kind: ParameterKind::Payload,
-            ty: TypeDescriptor::of::<GreetRequest>("GreetRequest"),
-        }],
-        output: TypeDescriptor::of::<GreetResponse>("GreetResponse"),
-        handler: greet_handler,
-    },
-];
-
-static GREETER_SERVICE: ServiceDescriptor = ServiceDescriptor {
-    id: "greeter",
-    name: "Greeter",
-    ty: TypeDescriptor::of::<GreeterService>("GreeterService"),
-    version: Some("0.1"),
-    rpcs: &GREETER_SERVICE_RPCS,
-};
 
 // ---------------------------------------------------------------------------
 // Daemon
 // ---------------------------------------------------------------------------
 
 async fn run_daemon(transport: TransportKind) -> overseer_core::Result<()> {
-    let daemon = Daemon::builder("greeter")
-        .service(&GREETER_SERVICE)
-        .build()
-        .await?;
+    let daemon = Daemon::builder("greeter").auto_discover().build().await?;
 
     println!("{}", daemon.registry);
 
