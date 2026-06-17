@@ -48,7 +48,7 @@ impl Drop for UnixTransport {
 impl Transport for UnixTransport {
     type Connection = UnixConnection;
 
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip_all)]
     async fn accept(&mut self) -> Result<UnixConnection> {
         trace!("waiting for Unix connection");
 

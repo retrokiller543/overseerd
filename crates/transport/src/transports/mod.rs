@@ -7,9 +7,10 @@ pub mod tcp;
 pub mod unix;
 
 pub use memory::{
-    MemoryClient, MemoryConnection, MemoryConnectionHandle, MemoryResponder, MemoryTransport,
+    MemoryCall, MemoryClient, MemoryConnection, MemoryConnectionHandle, MemoryResponder,
+    MemorySink, MemoryTransport, ServerEvent,
 };
-pub use stream::{StreamConnection, StreamResponder};
+pub use stream::{StreamConnection, StreamResponder, StreamSink};
 pub use tcp::{TcpConnection, TcpResponder, TcpTransport};
 
 #[cfg(unix)]

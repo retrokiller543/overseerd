@@ -17,10 +17,11 @@ pub mod transports;
 pub use error::{Error, Result};
 pub use frame::{CallId, CallResult, IncomingCall, PeerInfo};
 pub use protocol::{WireMessage, WireOutcome, WireRequest, WireResponse};
-pub use transport::{Connection, Respond, Transport};
+pub use transport::{Connection, Respond, RespondStream, ResponseSink, Transport};
 pub use transports::{
-    MemoryClient, MemoryConnection, MemoryConnectionHandle, MemoryResponder, MemoryTransport,
-    StreamConnection, StreamResponder, TcpConnection, TcpResponder, TcpTransport,
+    MemoryCall, MemoryClient, MemoryConnection, MemoryConnectionHandle, MemoryResponder,
+    MemorySink, MemoryTransport, ServerEvent, StreamConnection, StreamResponder, StreamSink,
+    TcpConnection, TcpResponder, TcpTransport,
 };
 
 #[cfg(unix)]

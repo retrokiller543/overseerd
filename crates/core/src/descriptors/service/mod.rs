@@ -2,7 +2,7 @@ pub mod rpc;
 
 pub use rpc::{
     OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor, RpcHandler,
-    RpcResponse,
+    RpcOutcome, RpcResponse,
 };
 
 use crate::descriptors::types::TypeDescriptor;

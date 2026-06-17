@@ -143,7 +143,7 @@ fn expand_method(
     let method_ident = &method.sig.ident;
     let method_name = LitStr::new(&method_ident.to_string(), method_ident.span());
     let operation = attr::operation_variant(&rpc_args.operation)?;
-    let output_ty = attr::result_ok_type(&method.sig.output)?;
+    let output_ty = attr::response_body_type(&method.sig.output);
     let output_name = LitStr::new(&output_ty.to_token_stream().to_string(), output_ty.span());
 
     let wrapper_ident = format_ident!(
@@ -151,7 +151,15 @@ fn expand_method(
         self_ident.to_string().to_lowercase(),
         method_ident
     );
-    let dispatch_with = overseer_path("dispatch_with");
+
+    // A `Result` return dispatches through `FallibleHandler` (which enforces
+    // `E: IntoErrorResponse`); any other `Responder` return goes through
+    // `Handler`. Both erase to the same `RpcHandler` fn pointer.
+    let dispatch = if attr::returns_result(&method.sig.output) {
+        overseer_path("dispatch_fallible")
+    } else {
+        overseer_path("dispatch_with")
+    };
     let error = overseer_path("Error");
     let operation_kind = overseer_path("OperationKind");
     let rpc_call_context = overseer_path("RpcCallContext");
@@ -180,7 +188,7 @@ fn expand_method(
                         .component::<#self_ty>()
                         .ok_or(#error::MissingComponent(#self_name))?;
 
-                    #dispatch_with(
+                    #dispatch(
                         move |#(#arg_idents: #param_types),*| {
                             let __svc = ::std::sync::Arc::clone(&__svc);
 
@@ -195,7 +203,7 @@ fn expand_method(
     } else {
         quote! {
             fn #wrapper_ident(ctx: #rpc_call_context) -> #ret {
-                #dispatch_with(<#self_ty>::#method_ident, ctx)
+                #dispatch(<#self_ty>::#method_ident, ctx)
             }
         }
     };
@@ -381,13 +389,13 @@ fn generate_init(
 /// The erased `RpcHandler` return type, repeated by both wrapper forms.
 fn handler_return_type() -> TokenStream {
     let result = overseer_path("Result");
-    let rpc_response = overseer_path("RpcResponse");
+    let rpc_outcome = overseer_path("RpcOutcome");
 
     quote! {
         ::core::pin::Pin<
             ::std::boxed::Box<
                 dyn ::core::future::Future<
-                    Output = #result<#rpc_response>,
+                    Output = #result<#rpc_outcome>,
                 > + ::core::marker::Send,
             >,
         >

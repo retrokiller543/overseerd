@@ -20,7 +20,10 @@ pub mod registry;
 pub mod router;
 
 pub use connection::{ConnectionHandler, ConnectionInfo};
-pub use extract::{Conn, Extension, FromContext, Handler, Payload, dispatch_with};
+pub use extract::{
+    Cancel, Conn, Extension, FallibleHandler, FromContext, Handler, IntoErrorResponse, Payload,
+    Responder, ResponseStream, Streaming, dispatch_fallible, dispatch_with,
+};
 pub use overseer_macros::{Component, component, handlers, rpc, service};
 
 pub use container::ComponentContainer;
@@ -28,7 +31,7 @@ pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
     ComponentScope, DependencyDescriptor, Descriptor, OperationKind, ParameterDescriptor,
-    ParameterKind, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcResponse,
+    ParameterKind, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcResponse,
     ServiceComponent, ServiceDescriptor, TypeDescriptor, type_id_of,
 };
 pub use error::Error;
@@ -40,4 +43,4 @@ pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use registry::DescriptorRegistry;
 pub use router::RpcRouter;
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T, E = Error> = core::result::Result<T, E>;

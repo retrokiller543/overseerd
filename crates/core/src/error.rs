@@ -42,6 +42,9 @@ pub enum Error {
     #[error("invalid request payload: {0}")]
     InvalidPayload(String),
 
+    #[error("handler expects a request stream but the call did not open one")]
+    NotStreaming,
+
     #[error("missing connection extension: {0}")]
     MissingExtension(&'static str),
 

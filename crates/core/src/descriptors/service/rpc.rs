@@ -1,4 +1,8 @@
-use std::{fmt, future::Future, pin::Pin};
+use std::{fmt, future::Future, pin::Pin, sync::Mutex};
+
+use futures::Stream;
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::descriptors::types::TypeDescriptor;
 
@@ -44,17 +48,49 @@ pub struct ParameterDescriptor {
 /// extractors (e.g. `Payload<T>`) deserialize from `payload`; `connection`
 /// provides per-connection data; `component::<T>()` resolves singleton
 /// components such as a stateful service holding common dependencies.
+///
+/// For streaming calls, `requests` holds the inbound item stream (taken once by
+/// the `Streaming<T>` extractor) and `cancel` fires when the peer cancels the
+/// call or the connection drops.
 pub struct RpcCallContext {
     pub payload: Vec<u8>,
     pub connection: std::sync::Arc<crate::connection::ConnectionInfo>,
     pub(crate) components: std::sync::Arc<crate::container::ComponentContainer>,
+    /// `Mutex<Option<_>>` because extractors borrow `&ctx`; the `Streaming<T>`
+    /// extractor takes the receiver out exactly once.
+    pub(crate) requests: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
+    pub cancel: CancellationToken,
 }
 
 impl RpcCallContext {
+    /// Builds a call context. `requests` is `Some` only for client/bidirectional
+    /// streaming calls; `cancel` is the call's cancellation token.
+    pub fn new(
+        payload: Vec<u8>,
+        connection: std::sync::Arc<crate::connection::ConnectionInfo>,
+        components: std::sync::Arc<crate::container::ComponentContainer>,
+        requests: Option<mpsc::Receiver<Vec<u8>>>,
+        cancel: CancellationToken,
+    ) -> Self {
+        Self {
+            payload,
+            connection,
+            components,
+            requests: Mutex::new(requests),
+            cancel,
+        }
+    }
+
     /// Resolves the singleton component of type `T` (e.g. a stateful service),
     /// returning a cloned `Arc<T>`. `None` if no such component is registered.
     pub fn component<T: std::any::Any + Send + Sync + 'static>(&self) -> Option<std::sync::Arc<T>> {
         self.components.get::<T>()
+    }
+
+    /// Takes the inbound request stream, if this is a streaming-input call and
+    /// it has not already been taken.
+    pub(crate) fn take_requests(&self) -> Option<mpsc::Receiver<Vec<u8>>> {
+        self.requests.lock().expect("requests lock poisoned").take()
     }
 }
 
@@ -62,21 +98,23 @@ impl RpcCallContext {
 ///
 /// `payload` holds postcard-encoded response bytes. An empty payload is valid
 /// for commands that return no meaningful data.
+#[derive(Default)]
 pub struct RpcResponse {
     pub payload: Vec<u8>,
 }
 
-impl Default for RpcResponse {
-    fn default() -> Self {
-        Self {
-            payload: Vec::new(),
-        }
-    }
+/// The runtime result of an RPC handler: either a single unary response or a
+/// stream of serialized response items. The serve loop drives whichever the
+/// handler produced into the matching transport responder/sink; the handler's
+/// declared `OperationKind` is metadata and does not select this at runtime.
+pub enum RpcOutcome {
+    Unary(RpcResponse),
+    Stream(Pin<Box<dyn Stream<Item = crate::Result<Vec<u8>>> + Send>>),
 }
 
 /// Async function pointer type for dispatching an RPC call.
 pub type RpcHandler =
-    fn(RpcCallContext) -> Pin<Box<dyn Future<Output = crate::Result<RpcResponse>> + Send>>;
+    fn(RpcCallContext) -> Pin<Box<dyn Future<Output = crate::Result<RpcOutcome>> + Send>>;
 
 /// Static metadata describing a single RPC method on a service.
 pub struct RpcDescriptor {

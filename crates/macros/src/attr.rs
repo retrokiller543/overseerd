@@ -100,52 +100,29 @@ pub fn operation_variant(operation: &Option<Ident>) -> syn::Result<Ident> {
     }
 }
 
-/// Extracts `T` from a handler return type of `Result<T, E>` (or `Result<T>`).
-pub fn result_ok_type(output: &ReturnType) -> syn::Result<Type> {
+/// The logical response *body* type, for descriptor metadata only.
+///
+/// Handlers may return any [`Responder`](overseer_core::Responder): a bare value,
+/// `Result<T, E>`, `ResponseStream<T>`, `()`, etc. This peels the wrappers that
+/// carry a body to its inner type — `Result<T, _>` and `ResponseStream<T>` both
+/// yield `T` — and reports `()` for an absent return. It never fails: dispatch
+/// is uniform regardless of the shape, so this only feeds the `output` field.
+pub fn response_body_type(output: &ReturnType) -> Type {
     let ty = match output {
+        ReturnType::Default => return syn::parse_quote!(()),
         ReturnType::Type(_, ty) => ty.as_ref(),
-        ReturnType::Default => {
-            return Err(syn::Error::new(
-                Span::call_site(),
-                "rpc methods must return `Result<T, E>`",
-            ));
-        }
     };
 
-    let Type::Path(path) = ty else {
-        return Err(syn::Error::new_spanned(
-            ty,
-            "rpc return type must be a `Result<...>`",
-        ));
-    };
-
-    let segment = path
-        .path
-        .segments
-        .last()
-        .ok_or_else(|| syn::Error::new_spanned(ty, "invalid return type"))?;
-
-    if segment.ident != "Result" {
-        return Err(syn::Error::new_spanned(
-            &segment.ident,
-            "rpc methods must return a `Result`",
-        ));
+    if let Type::Path(path) = ty
+        && let Some(segment) = path.path.segments.last()
+        && (segment.ident == "Result" || segment.ident == "ResponseStream")
+        && let PathArguments::AngleBracketed(generics) = &segment.arguments
+        && let Some(GenericArgument::Type(inner)) = generics.args.first()
+    {
+        return inner.clone();
     }
 
-    let PathArguments::AngleBracketed(generics) = &segment.arguments else {
-        return Err(syn::Error::new_spanned(
-            segment,
-            "`Result` must have a type argument",
-        ));
-    };
-
-    match generics.args.first() {
-        Some(GenericArgument::Type(ok)) => Ok(ok.clone()),
-        _ => Err(syn::Error::new_spanned(
-            generics,
-            "`Result` must have a type as its first argument",
-        )),
-    }
+    ty.clone()
 }
 
 /// Extracts `T` from `Arc<T>` (the form `#[init]` dependency parameters take).
