@@ -36,6 +36,11 @@ pub fn expand(args: ServiceArgs, item: ItemStruct) -> syn::Result<TokenStream> {
     Ok(quote! {
         #item
 
+        impl ::overseer_core::Component for #self_ident {
+            const ID: &'static str = #id;
+            const NAME: &'static str = #name;
+        }
+
         const _: () = {
             #default_component
 
@@ -137,7 +142,7 @@ fn field_injection_component(item: &ItemStruct, self_name: &LitStr) -> TokenStre
                 ty: ::overseer_core::TypeDescriptor::of::<#self_ident>(#self_name),
                 scope: ::overseer_core::ComponentScope::Singleton,
                 dependencies: &__OVERSEER_DEFAULT_DEPS,
-                factory: __overseer_default_factory,
+                factory: ::core::option::Option::Some(__overseer_default_factory),
                 default_factory: true,
             };
 

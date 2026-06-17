@@ -10,11 +10,11 @@
 //! crates introduced by the prototype live under `crates/`.
 
 pub use overseer_core::{
-    BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
-    ComponentScope, Conn, DependencyDescriptor, Descriptor, Error, Extension, FromContext, Handler,
-    OperationKind, ParameterDescriptor, ParameterKind, Payload, Registry, Result, RpcCallContext,
-    RpcDescriptor, RpcGroup, RpcHandler, RpcResponse, ServiceDescriptor, TypeDescriptor,
-    dispatch_with, handlers, rpc, service, type_id_of,
+    BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
+    ComponentScope, Conn, DependencyDescriptor, Descriptor, DescriptorRegistry, Error, Extension,
+    FromContext, Handler, OperationKind, ParameterDescriptor, ParameterKind, Payload, Result,
+    RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcResponse, ServiceDescriptor,
+    TypeDescriptor, dispatch_with, handlers, rpc, service, type_id_of,
 };
 
 #[cfg(test)]

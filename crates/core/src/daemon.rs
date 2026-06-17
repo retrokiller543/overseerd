@@ -1,63 +1,83 @@
-use std::{
-    any::{Any, TypeId},
-    collections::HashSet,
-    sync::Arc,
-};
+use std::{fmt, sync::Arc};
 
 use tracing::{debug, error, info, instrument, trace, warn};
 use overseer_transport::{CallResult, Connection, Respond, Transport};
 
 use crate::{
     connection::{ConnectionHandler, ConnectionInfo},
-    container::Container,
+    container::ComponentContainer,
     descriptors::{
-        BoxedComponent, ComponentDescriptor, RpcCallContext, RpcGroup, RpcResponse,
-        ServiceDescriptor, TypeDescriptor,
+        BoxedComponent, Component, ComponentDescriptor, ComponentScope, RpcCallContext, RpcGroup,
+        RpcResponse, ServiceDescriptor, TypeDescriptor,
     },
     lifecycle::{ShutdownHandle, ShutdownSignal},
-    registry::Registry,
+    registry::DescriptorRegistry,
     router::RpcRouter,
 };
 
 /// Assembles a Daemon from an explicit set of components and services.
 pub struct DaemonBuilder {
     name: String,
-    registry: Registry,
+    registry: DescriptorRegistry,
     connection_handlers: Vec<Box<dyn ConnectionHandler>>,
-    manual_components: Vec<BoxedComponent>,
+    instances: Vec<BoxedComponent>,
 }
 
 impl DaemonBuilder {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            registry: Registry::default(),
+            registry: DescriptorRegistry::default(),
             connection_handlers: Vec::new(),
-            manual_components: Vec::new(),
+            instances: Vec::new(),
         }
     }
 
     /// Registers a pre-built singleton instance (e.g. a stateful service
-    /// constructed by hand). Available to handlers via `ctx.component::<T>()`
-    /// and as a dependency of factory-built components.
-    pub fn with_component<T: Any + Send + Sync + 'static>(mut self, value: T) -> Self {
-        self.manual_components.push(BoxedComponent {
-            ty: TypeDescriptor::of::<T>(std::any::type_name::<T>()),
+    /// constructed by hand). Synthesizes a `factory: None` descriptor in the
+    /// registry (so the declaration is visible and dependencies validate) and
+    /// holds the instance until the container is built. The type's identity
+    /// comes from its `Component` impl (`#[derive(Component)]` / `#[service]`).
+    pub fn with_component<T: Component>(mut self, value: T) -> Self {
+        self.registry.components.push(Self::generate_component_descriptor::<T>());
+
+        self.instances.push(BoxedComponent {
+            ty: TypeDescriptor::of::<T>(T::NAME),
             value: Box::new(Arc::new(value)),
         });
 
         self
     }
 
-    /// Populates the registry from all `inventory::submit!` entries in the binary.
+    const fn generate_component_descriptor<T: Component>() -> ComponentDescriptor {
+        ComponentDescriptor {
+            id: T::ID,
+            name: T::NAME,
+            ty: TypeDescriptor::of::<T>(T::NAME),
+            scope: ComponentScope::Singleton,
+            dependencies: &[],
+            factory: None,
+            default_factory: false,
+        }
+    }
+
+    /// Merges all `inventory::submit!` entries in the binary into the registry,
+    /// preserving anything already registered (manual components, instances).
     pub fn auto_discover(mut self) -> Self {
-        self.registry = Registry::collect();
+        let discovered = DescriptorRegistry::collect();
+
+        self.registry.components.extend(discovered.components);
+        self.registry.services.extend(discovered.services);
+        self.registry.rpc_groups.extend(discovered.rpc_groups);
 
         self
     }
 
+    /// Manually register a new component descriptor for construction during Daemon build.
+    /// Prefer to use [`DaemonBuilder::with_component`] instead to manually register components, or use
+    /// [`component`](overseer_macros::component) to generate the descriptor.
     pub fn component(mut self, descriptor: &'static ComponentDescriptor) -> Self {
-        self.registry.components.push(descriptor);
+        self.registry.components.push(*descriptor);
 
         self
     }
@@ -87,29 +107,29 @@ impl DaemonBuilder {
     pub async fn build(self) -> crate::Result<Daemon> {
         debug!(daemon = %self.name, "building daemon");
 
-        let external: HashSet<TypeId> = self
-            .manual_components
-            .iter()
-            .map(|c| (c.ty.type_id)())
-            .collect();
+        let mut registry = self.registry;
 
-        self.registry.validate_with(&external)?;
+        registry.validate()?;
 
-        let components = self.registry.resolved_components()?;
-        let container = Container::build(&components, self.manual_components).await?;
-        let router = RpcRouter::from_registry(&self.registry);
+        // Collapse to the effective component set (explicit factories override
+        // field-injection defaults) so the stored registry reflects what runs.
+        let resolved = registry.resolved_components()?;
+        registry.components = resolved;
+
+        let container = ComponentContainer::build(&registry.components, self.instances).await?;
+        let router = RpcRouter::from_registry(&registry);
         let shutdown = ShutdownSignal::new();
 
         info!(
             daemon = %self.name,
-            components = self.registry.components.len(),
-            services = self.registry.services.len(),
+            components = registry.components.len(),
+            services = registry.services.len(),
             "daemon built"
         );
 
         Ok(Daemon {
             name: self.name,
-            registry: self.registry,
+            registry,
             container,
             router,
             shutdown,
@@ -121,11 +141,32 @@ impl DaemonBuilder {
 /// A fully assembled daemon, ready to accept connections and dispatch RPC calls.
 pub struct Daemon {
     pub name: String,
-    pub registry: Registry,
-    pub container: Container,
+    pub registry: DescriptorRegistry,
+    pub container: ComponentContainer,
     pub router: RpcRouter,
     shutdown: ShutdownSignal,
     connection_handlers: Vec<Box<dyn ConnectionHandler>>,
+}
+
+impl fmt::Debug for Daemon {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Daemon")
+            .field("name", &self.name)
+            .field("components", &self.registry.components.len())
+            .field("services", &self.registry.services.len())
+            .field("routes", &self.router.route_count())
+            .field("connection_handlers", &self.connection_handlers.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Display for Daemon {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Daemon: {}", self.name)?;
+        write!(f, "{}", self.registry)?;
+
+        Ok(())
+    }
 }
 
 impl Daemon {
@@ -219,7 +260,7 @@ async fn serve_connection<C: Connection>(
     mut conn: C,
     router: Arc<RpcRouter>,
     handlers: Arc<Vec<Box<dyn ConnectionHandler>>>,
-    components: Arc<Container>,
+    components: Arc<ComponentContainer>,
 ) {
     debug!("connection established");
 
