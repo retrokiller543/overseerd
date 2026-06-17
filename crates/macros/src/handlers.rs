@@ -52,13 +52,16 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
         };
 
         let rpc_attr = method.attrs.remove(pos);
-        let rpc_args = match &rpc_attr.meta {
-            Meta::Path(_) => attr::RpcArgs { operation: None },
-            _ => rpc_attr.parse_args::<attr::RpcArgs>()?,
-        };
 
-        let (wrapper, descriptor) =
-            expand_method(&self_ty, &self_ident, &self_name, method, rpc_args)?;
+        if !matches!(rpc_attr.meta, Meta::Path(_)) {
+            return Err(syn::Error::new_spanned(
+                &rpc_attr.meta,
+                "#[rpc] takes no arguments; the RPC kind is inferred from the signature \
+                 (`Streaming<T>` parameter and/or `ResponseStream<T>` return)",
+            ));
+        }
+
+        let (wrapper, descriptor) = expand_method(&self_ty, &self_ident, &self_name, method)?;
 
         wrappers.push(wrapper);
         descriptors.push(descriptor);
@@ -116,7 +119,6 @@ fn expand_method(
     self_ident: &syn::Ident,
     self_name: &LitStr,
     method: &ImplItemFn,
-    rpc_args: attr::RpcArgs,
 ) -> syn::Result<(TokenStream, TokenStream)> {
     if method.sig.asyncness.is_none() {
         return Err(syn::Error::new_spanned(
@@ -140,9 +142,45 @@ fn expand_method(
         _ => false,
     };
 
+    let param_types: Vec<&Type> = method
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            FnArg::Typed(typed) => Some(typed.ty.as_ref()),
+            FnArg::Receiver(_) => None,
+        })
+        .collect();
+
+    // The kind is inferred from the signature: a `Streaming<T>` parameter means
+    // streamed input, a `ResponseStream<T>` return means streamed output.
+    let streaming_params: Vec<&&Type> = param_types
+        .iter()
+        .filter(|ty| attr::is_streaming_param(ty))
+        .collect();
+
+    if streaming_params.len() > 1 {
+        return Err(syn::Error::new_spanned(
+            &method.sig.inputs,
+            "an rpc method may take at most one `Streaming<T>` parameter",
+        ));
+    }
+
+    let streamed_input = streaming_params.len() == 1;
+
+    if streamed_input && param_types.iter().any(|ty| attr::is_payload_param(ty)) {
+        return Err(syn::Error::new_spanned(
+            &method.sig.inputs,
+            "a streaming-input rpc reads its request from `Streaming<T>`; \
+             remove the `Payload<T>` parameter",
+        ));
+    }
+
+    let streamed_output = attr::returns_response_stream(&method.sig.output);
+    let operation = attr::operation_ident(streamed_input, streamed_output);
+
     let method_ident = &method.sig.ident;
     let method_name = LitStr::new(&method_ident.to_string(), method_ident.span());
-    let operation = attr::operation_variant(&rpc_args.operation)?;
     let output_ty = attr::response_body_type(&method.sig.output);
     let output_name = LitStr::new(&output_ty.to_token_stream().to_string(), output_ty.span());
 
@@ -168,15 +206,6 @@ fn expand_method(
     let ret = handler_return_type();
 
     let wrapper = if takes_self {
-        let param_types: Vec<&Type> = method
-            .sig
-            .inputs
-            .iter()
-            .filter_map(|arg| match arg {
-                FnArg::Typed(typed) => Some(typed.ty.as_ref()),
-                FnArg::Receiver(_) => None,
-            })
-            .collect();
         let arg_idents: Vec<_> = (0..param_types.len())
             .map(|i| format_ident!("__a{i}"))
             .collect();
