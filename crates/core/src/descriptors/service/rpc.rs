@@ -47,7 +47,7 @@ pub struct ParameterDescriptor {
 pub struct RpcCallContext {
     pub payload: Vec<u8>,
     pub connection: std::sync::Arc<crate::connection::ConnectionInfo>,
-    pub(crate) components: std::sync::Arc<crate::container::Container>,
+    pub(crate) components: std::sync::Arc<crate::container::ComponentContainer>,
 }
 
 impl RpcCallContext {

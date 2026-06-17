@@ -16,12 +16,24 @@
 extern crate proc_macro;
 
 mod attr;
+mod derive;
 mod handlers;
 mod rpc;
 mod service;
 
 use proc_macro::TokenStream;
-use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
+use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
+
+/// Implements the `Component` metadata trait for a plain dependency type, so it
+/// can be registered via `DaemonBuilder::with_component`.
+#[proc_macro_derive(Component, attributes(component))]
+pub fn derive_component(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+
+    derive::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
 /// Declares a service's identity on its type (and a default singleton factory).
 #[proc_macro_attribute]

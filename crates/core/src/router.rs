@@ -4,7 +4,7 @@ use tracing::{debug, instrument, trace, warn};
 
 use crate::{
     descriptors::RpcHandler,
-    registry::Registry,
+    registry::DescriptorRegistry,
     Error, RpcCallContext, RpcResponse,
 };
 
@@ -17,7 +17,7 @@ pub struct RpcRouter {
 }
 
 impl RpcRouter {
-    pub fn from_registry(registry: &Registry) -> Self {
+    pub fn from_registry(registry: &DescriptorRegistry) -> Self {
         let mut routes = HashMap::new();
 
         for service in registry.resolved_services() {

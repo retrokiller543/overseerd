@@ -12,12 +12,12 @@ use crate::{
 };
 
 /// Holds all fully constructed component instances for a running daemon.
-pub struct Container {
+pub struct ComponentContainer {
     components: HashMap<TypeId, crate::BoxedComponent>,
 }
 
-impl Container {
-    /// Resolves all registered components in dependency order and returns a built Container.
+impl ComponentContainer {
+    /// Resolves all registered components in dependency order and returns a built ComponentContainer.
     ///
     /// `components` is the effective component set (after default/override
     /// resolution). `manual` holds pre-built instances supplied at the builder
@@ -25,15 +25,15 @@ impl Container {
     /// factory-built components may depend on them.
     #[instrument(skip_all, fields(count = components.len()))]
     pub async fn build(
-        components: &[&'static ComponentDescriptor],
-        manual: Vec<BoxedComponent>,
+        components: &[ComponentDescriptor],
+        instances: Vec<BoxedComponent>,
     ) -> crate::Result<Self> {
         debug!("resolving component dependency order");
 
         let mut ctx = ComponentConstructionContext::new();
         let mut prebuilt: HashSet<TypeId> = HashSet::new();
 
-        for component in manual {
+        for component in instances {
             prebuilt.insert((component.ty.type_id)());
             ctx.insert(component);
         }
@@ -41,13 +41,27 @@ impl Container {
         let sorted = topological_sort(components, &prebuilt)?;
 
         for descriptor in &sorted {
-            debug!(component = %descriptor.name, "constructing component");
+            match descriptor.factory {
+                Some(factory) => {
+                    debug!(component = %descriptor.name, "constructing component");
 
-            let component = (descriptor.factory)(&mut ctx).await?;
+                    let component = factory(&mut ctx).await?;
 
-            ctx.insert(component);
+                    ctx.insert(component);
 
-            trace!(component = %descriptor.name, "component ready");
+                    trace!(component = %descriptor.name, "component ready");
+                }
+
+                None => {
+                    // Manually-provided: the instance must already be seeded.
+                    if !ctx.contains((descriptor.ty.type_id)()) {
+                        error!(component = %descriptor.name, "no instance provided for factory-less component");
+                        return Err(Error::MissingComponent(descriptor.name));
+                    }
+
+                    trace!(component = %descriptor.name, "using provided instance");
+                }
+            }
         }
 
         let components = ctx.into_components();
@@ -66,14 +80,14 @@ impl Container {
     }
 }
 
-fn topological_sort(
-    components: &[&'static ComponentDescriptor],
+fn topological_sort<'a>(
+    components: &'a [ComponentDescriptor],
     prebuilt: &HashSet<TypeId>,
-) -> crate::Result<Vec<&'static ComponentDescriptor>> {
+) -> crate::Result<Vec<&'a ComponentDescriptor>> {
     trace!(total = components.len(), "starting topological sort");
 
-    let mut result: Vec<&'static ComponentDescriptor> = Vec::new();
-    let mut remaining: Vec<&'static ComponentDescriptor> = components.to_vec();
+    let mut result: Vec<&'a ComponentDescriptor> = Vec::new();
+    let mut remaining: Vec<&'a ComponentDescriptor> = components.iter().collect();
 
     while !remaining.is_empty() {
         let before_len = remaining.len();

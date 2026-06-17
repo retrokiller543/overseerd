@@ -8,15 +8,16 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::{collections::HashSet, fmt};
 
-/// Runtime registry built by collecting static inventory descriptors.
+/// Holds the component, service, and RPC *descriptors* for a daemon —
+/// declarations only. Runtime instances live in the `ComponentContainer`.
 ///
-/// Owns `Vec` allocations for the collected descriptor references; the
-/// underlying descriptors remain in static storage. Services are headers tied
-/// to a type; their RPCs are contributed by `rpc_groups` and assembled on
-/// demand via [`resolved_services`](Self::resolved_services).
+/// Component descriptors are owned (a flat `Vec`, since the descriptor is
+/// `Copy`) so that descriptors synthesized at runtime for manually-provided
+/// instances sit alongside inventory-collected ones. A component whose
+/// `factory` is `None` is provided as an instance rather than constructed.
 #[derive(Default, Debug)]
-pub struct Registry {
-    pub components: Vec<&'static ComponentDescriptor>,
+pub struct DescriptorRegistry {
+    pub components: Vec<ComponentDescriptor>,
     pub services: Vec<&'static ServiceDescriptor>,
     pub rpc_groups: Vec<&'static RpcGroup>,
 }
@@ -27,13 +28,13 @@ pub struct ResolvedService {
     pub rpcs: Vec<&'static RpcDescriptor>,
 }
 
-impl Registry {
-    /// Collects all submitted inventory descriptors into a Registry.
+impl DescriptorRegistry {
+    /// Collects all submitted inventory descriptors into a DescriptorRegistry.
     pub fn collect() -> Self {
         let mut registry = Self::default();
         for descriptor in inventory::iter::<Descriptor> {
             match descriptor {
-                Descriptor::Component(c) => registry.components.push(c),
+                Descriptor::Component(c) => registry.components.push(**c),
                 Descriptor::Service(s) => registry.services.push(s),
                 Descriptor::Rpcs(g) => registry.rpc_groups.push(g),
             }
@@ -63,20 +64,20 @@ impl Registry {
     /// Selects the effective component per type: an explicit factory (`#[init]`
     /// or a hand-written descriptor) overrides a default field-injection one.
     /// Two explicit factories for the same type is an error.
-    pub fn resolved_components(&self) -> crate::Result<Vec<&'static ComponentDescriptor>> {
-        let mut chosen: HashMap<TypeId, &'static ComponentDescriptor> = HashMap::new();
+    pub fn resolved_components(&self) -> crate::Result<Vec<ComponentDescriptor>> {
+        let mut chosen: HashMap<TypeId, ComponentDescriptor> = HashMap::new();
 
-        for &component in &self.components {
+        for component in &self.components {
             let type_id = (component.ty.type_id)();
 
             match chosen.get(&type_id) {
                 None => {
-                    chosen.insert(type_id, component);
+                    chosen.insert(type_id, *component);
                 }
 
                 Some(existing) => {
                     if existing.default_factory && !component.default_factory {
-                        chosen.insert(type_id, component);
+                        chosen.insert(type_id, *component);
                     } else if !existing.default_factory && !component.default_factory {
                         return Err(Error::DuplicateComponentType(
                             (component.ty.type_name)().to_string(),
@@ -90,26 +91,21 @@ impl Registry {
     }
 
     /// Validates structural consistency of the registry.
+    ///
+    /// Manually-provided components are first-class descriptors here (with a
+    /// `None` factory), so dependency checking needs no external set.
     pub fn validate(&self) -> crate::Result<()> {
-        self.validate_with(&HashSet::new())
-    }
-
-    /// Like [`validate`](Self::validate), but treats `external` component types
-    /// (e.g. instances supplied via `DaemonBuilder::with_component`) as
-    /// available when checking dependencies, since they are seeded into the
-    /// container before factory-built components are constructed.
-    pub fn validate_with(&self, external: &HashSet<TypeId>) -> crate::Result<()> {
         let components = self.resolved_components()?;
 
         self.validate_component_ids(&components)?;
         self.validate_rpc_groups()?;
         self.validate_services()?;
-        self.validate_dependencies(&components, external)?;
+        self.validate_dependencies(&components)?;
 
         Ok(())
     }
 
-    fn validate_component_ids(&self, components: &[&'static ComponentDescriptor]) -> crate::Result<()> {
+    fn validate_component_ids(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
         let mut seen = HashSet::new();
         for c in components {
             if !seen.insert(c.id) {
@@ -167,15 +163,9 @@ impl Registry {
         Ok(())
     }
 
-    fn validate_dependencies(
-        &self,
-        components: &[&'static ComponentDescriptor],
-        external: &HashSet<TypeId>,
-    ) -> crate::Result<()> {
-        let mut available: HashSet<TypeId> =
+    fn validate_dependencies(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
+        let available: HashSet<TypeId> =
             components.iter().map(|c| (c.ty.type_id)()).collect();
-
-        available.extend(external.iter().copied());
 
         for c in components {
             for dep in c.dependencies {
@@ -271,7 +261,7 @@ impl Registry {
     }
 }
 
-impl fmt::Display for Registry {
+impl fmt::Display for DescriptorRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.write_components(f)?;
         writeln!(f)?;
@@ -316,7 +306,7 @@ mod tests {
         ty: TypeDescriptor::of::<u16>("PgPool"),
         scope: ComponentScope::Singleton,
         dependencies: &PG_POOL_DEPS,
-        factory: fake_factory,
+        factory: Some(fake_factory),
         default_factory: false,
     };
 
@@ -332,7 +322,7 @@ mod tests {
         ty: TypeDescriptor::of::<u8>("BackupRepository"),
         scope: ComponentScope::Singleton,
         dependencies: &BACKUP_REPO_DEPS,
-        factory: fake_factory,
+        factory: Some(fake_factory),
         default_factory: false,
     };
 
@@ -367,10 +357,11 @@ mod tests {
 
     #[test]
     fn describe_groups_rpcs_under_service() {
-        let registry = Registry {
-            components: vec![&BACKUP_REPO, &PG_POOL],
+        let registry = DescriptorRegistry {
+            components: vec![BACKUP_REPO, PG_POOL],
             services: vec![&BACKUP_SERVICE],
             rpc_groups: vec![&BACKUP_RPCS_GROUP],
+            ..Default::default()
         };
         let description = registry.to_string();
 
@@ -405,10 +396,11 @@ mod tests {
 
     #[test]
     fn validate_passes_with_fulfilled_dependencies() {
-        let registry = Registry {
-            components: vec![&BACKUP_REPO, &PG_POOL],
+        let registry = DescriptorRegistry {
+            components: vec![BACKUP_REPO, PG_POOL],
             services: vec![&BACKUP_SERVICE],
             rpc_groups: vec![&BACKUP_RPCS_GROUP],
+            ..Default::default()
         };
 
         assert!(registry.validate().is_ok());
@@ -416,10 +408,9 @@ mod tests {
 
     #[test]
     fn validate_detects_duplicate_component_ids() {
-        let registry = Registry {
-            components: vec![&BACKUP_REPO, &BACKUP_REPO],
-            services: vec![],
-            rpc_groups: vec![],
+        let registry = DescriptorRegistry {
+            components: vec![BACKUP_REPO, BACKUP_REPO],
+            ..Default::default()
         };
 
         assert!(registry.validate().is_err());
@@ -427,30 +418,40 @@ mod tests {
 
     #[test]
     fn validate_detects_missing_dependency() {
-        let registry = Registry {
-            components: vec![&BACKUP_REPO],
-            services: vec![],
-            rpc_groups: vec![],
+        let registry = DescriptorRegistry {
+            components: vec![BACKUP_REPO],
+            ..Default::default()
         };
 
         assert!(registry.validate().is_err());
     }
 
     #[test]
-    fn validate_with_accepts_externally_provided_dependency() {
-        let registry = Registry {
-            components: vec![&BACKUP_REPO],
-            services: vec![],
-            rpc_groups: vec![],
+    fn validate_accepts_manual_component_descriptor() {
+        // BackupRepository depends on PgPool (u16). Absent, validation fails; a
+        // factory-less descriptor (as `with_component` synthesizes) satisfies it.
+        let without = DescriptorRegistry {
+            components: vec![BACKUP_REPO],
+            ..Default::default()
         };
 
-        // BackupRepository depends on PgPool (u16). Absent from the registry,
-        // it fails plain validation, but a `with_component`-supplied instance
-        // (modeled as an external type id) satisfies it.
-        let external = HashSet::from([std::any::TypeId::of::<u16>()]);
+        assert!(without.validate().is_err());
 
-        assert!(registry.validate().is_err());
-        assert!(registry.validate_with(&external).is_ok());
+        let manual = ComponentDescriptor {
+            id: "pg_pool_manual",
+            name: "PgPool",
+            ty: TypeDescriptor::of::<u16>("PgPool"),
+            scope: ComponentScope::Singleton,
+            dependencies: &[],
+            factory: None,
+            default_factory: false,
+        };
+        let with = DescriptorRegistry {
+            components: vec![BACKUP_REPO, manual],
+            ..Default::default()
+        };
+
+        assert!(with.validate().is_ok());
     }
 
     #[test]
@@ -462,10 +463,9 @@ mod tests {
             version: None,
         };
 
-        let registry = Registry {
-            components: vec![],
+        let registry = DescriptorRegistry {
             services: vec![&EMPTY_SERVICE],
-            rpc_groups: vec![],
+            ..Default::default()
         };
 
         assert!(registry.validate().is_err());

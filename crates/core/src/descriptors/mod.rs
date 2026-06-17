@@ -3,7 +3,7 @@ pub mod service;
 pub mod types;
 
 pub use component::{
-    BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
+    BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
     ComponentScope, DependencyDescriptor,
 };
 pub use service::{

@@ -331,7 +331,7 @@ fn generate_init(self_ty: &Type, self_name: &LitStr, info: &InitInfo) -> (TokenS
                 ty: ::overseer_core::TypeDescriptor::of::<#self_ty>(#self_name),
                 scope: ::overseer_core::ComponentScope::Singleton,
                 dependencies: &__OVERSEER_INIT_DEPS,
-                factory: __overseer_init_factory,
+                factory: ::core::option::Option::Some(__overseer_init_factory),
                 default_factory: false,
             };
 

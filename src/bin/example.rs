@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 
-use overseer_core::{Daemon, Payload, handlers, service};
+use overseer_core::{Component, Daemon, Payload, handlers, service};
 use overseer_transport::{
     TcpTransport, WireMessage, WireOutcome, WireRequest,
     protocol::codec::{read_message, write_message},
@@ -77,6 +77,8 @@ struct GreetResponse {
 
 /// A common dependency shared by every call — provided to the daemon via
 /// `with_component` and resolved into the service by field injection.
+/// `#[derive(Component)]` supplies the id/name `with_component` needs.
+#[derive(Component)]
 struct GreetConfig {
     greeting: String,
 }
@@ -148,19 +150,19 @@ async fn run_daemon(transport: TransportKind) -> overseer_core::Result<()> {
         .build()
         .await?;
 
-    println!("{}", daemon.registry);
+    println!("{:#?}", daemon.registry);
 
     match transport {
         TransportKind::Tcp => {
             let t = TcpTransport::bind(TCP_ADDR).await?;
-            println!("Listening on TCP  {TCP_ADDR}  (ctrl-c to stop)\n");
+
             daemon.serve(t).await
         }
 
         #[cfg(unix)]
         TransportKind::Unix => {
             let t = UnixTransport::bind(UNIX_SOCK)?;
-            println!("Listening on Unix {UNIX_SOCK}  (ctrl-c to stop)\n");
+
             daemon.serve(t).await
         }
     }

@@ -9,6 +9,16 @@ use std::{
 
 use super::types::TypeDescriptor;
 
+/// Metadata trait for types registerable as components.
+///
+/// Supplies the runtime identity used to synthesize a descriptor for a
+/// manually-provided instance (`DaemonBuilder::with_component`). Implemented by
+/// `#[derive(Component)]` and by `#[service]`.
+pub trait Component: Any + Send + Sync + 'static {
+    const ID: &'static str;
+    const NAME: &'static str;
+}
+
 /// Lifetime policy for a component instance.
 #[derive(Clone, Copy, Debug)]
 pub enum ComponentScope {
@@ -31,6 +41,14 @@ pub struct DependencyDescriptor {
 pub struct BoxedComponent {
     pub ty: TypeDescriptor,
     pub value: Box<dyn Any + Send + Sync>,
+}
+
+impl fmt::Debug for BoxedComponent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BoxedComponent")
+            .field("ty", &self.ty)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Context passed to a component factory during construction.
@@ -64,6 +82,11 @@ impl ComponentConstructionContext {
     pub(crate) fn into_components(self) -> HashMap<TypeId, BoxedComponent> {
         self.components
     }
+
+    /// Whether a component of `type_id` has already been constructed or seeded.
+    pub(crate) fn contains(&self, type_id: TypeId) -> bool {
+        self.components.contains_key(&type_id)
+    }
 }
 
 impl Default for ComponentConstructionContext {
@@ -78,13 +101,20 @@ pub type ComponentFactory = for<'a> fn(
 ) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + 'a>>;
 
 /// Static metadata describing a component and how to construct it.
+///
+/// `Copy` so the registry can own a flat `Vec<ComponentDescriptor>` holding both
+/// inventory-collected descriptors and ones synthesized at runtime for
+/// manually-provided instances.
+#[derive(Clone, Copy)]
 pub struct ComponentDescriptor {
     pub id: &'static str,
     pub name: &'static str,
     pub ty: TypeDescriptor,
     pub scope: ComponentScope,
     pub dependencies: &'static [DependencyDescriptor],
-    pub factory: ComponentFactory,
+    /// `None` for a manually-provided instance: there is nothing to construct,
+    /// the value is seeded into the container directly.
+    pub factory: Option<ComponentFactory>,
     /// Whether this is a default (field-injection) factory that an explicit
     /// `#[init]` constructor or a manual registration may override. Exactly one
     /// non-default factory is allowed per type.
