@@ -3,17 +3,10 @@ use std::{fmt, sync::Arc};
 use tracing::{debug, error, info, instrument, trace, warn};
 use overseer_transport::{CallResult, Connection, Respond, Transport};
 
-use crate::{
-    connection::{ConnectionHandler, ConnectionInfo},
-    container::ComponentContainer,
-    descriptors::{
-        BoxedComponent, Component, ComponentDescriptor, ComponentScope, RpcCallContext, RpcGroup,
-        RpcResponse, ServiceDescriptor, TypeDescriptor,
-    },
-    lifecycle::{ShutdownHandle, ShutdownSignal},
-    registry::DescriptorRegistry,
-    router::RpcRouter,
-};
+use crate::{connection::{ConnectionHandler, ConnectionInfo}, container::ComponentContainer, descriptors::{
+    BoxedComponent, Component, ComponentDescriptor, ComponentScope, RpcCallContext, RpcGroup,
+    RpcResponse, ServiceDescriptor, TypeDescriptor,
+}, lifecycle::{ShutdownHandle, ShutdownSignal}, registry::DescriptorRegistry, router::RpcRouter, ServiceComponent};
 
 /// Assembles a Daemon from an explicit set of components and services.
 pub struct DaemonBuilder {
@@ -73,24 +66,44 @@ impl DaemonBuilder {
         self
     }
 
-    /// Manually register a new component descriptor for construction during Daemon build.
-    /// Prefer to use [`DaemonBuilder::with_component`] instead to manually register components, or use
-    /// [`component`](overseer_macros::component) to generate the descriptor.
+    /// Registers a pre-built service singleton and its header.
+    ///
+    /// Synthesizes the [`ServiceDescriptor`] from the type's `ServiceComponent`
+    /// impl (id, name, version) and registers the instance like
+    /// [`with_component`](Self::with_component). Pair with `#[handlers]` +
+    /// [`auto_discover`](Self::auto_discover) or explicit [`rpcs`](Self::rpcs)
+    /// to supply the methods; do not also auto-discover the same service or its
+    /// header is registered twice.
+    pub fn with_service<T: ServiceComponent>(mut self, value: T) -> Self {
+        self.registry.services.push(ServiceDescriptor {
+            id: T::ID,
+            name: T::NAME,
+            ty: TypeDescriptor::of::<T>(T::NAME),
+            version: T::VERSION,
+        });
+
+        self.with_component(value)
+    }
+
+    /// Manually register a component descriptor for construction during build.
+    /// Prefer [`with_component`](Self::with_component) for instances, or the
+    /// [`component`](overseer_macros::component) macro to generate the descriptor.
     pub fn component(mut self, descriptor: &'static ComponentDescriptor) -> Self {
         self.registry.components.push(*descriptor);
 
         self
     }
 
+    /// Manually register a service header (prefer the [`service`](overseer_macros::service) macro).
     pub fn service(mut self, descriptor: &'static ServiceDescriptor) -> Self {
-        self.registry.services.push(descriptor);
+        self.registry.services.push(*descriptor);
 
         self
     }
 
     /// Registers a group of RPCs contributed to the service of a matching type.
     pub fn rpcs(mut self, group: &'static RpcGroup) -> Self {
-        self.registry.rpc_groups.push(group);
+        self.registry.rpc_groups.push(*group);
 
         self
     }

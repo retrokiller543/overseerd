@@ -1,3 +1,14 @@
+//! Core of the Overseer framework: descriptors, dependency-injection container,
+//! RPC router, extractors, and the daemon runtime.
+//!
+//! Most users should depend on the `overseer` facade crate rather than this one
+//! directly; the facade re-exports this API alongside the transports and macros.
+//!
+//! The split that runs through the crate: **declarations** live in the
+//! [`DescriptorRegistry`] (component/service/RPC descriptors), while **runtime
+//! instances** live in the [`ComponentContainer`]. [`Daemon`] ties them together
+//! with a [`router::RpcRouter`] and a transport.
+
 pub mod connection;
 pub mod container;
 pub mod daemon;
