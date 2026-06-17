@@ -7,7 +7,7 @@ use std::{
 use tracing::{debug, error, info, instrument, trace};
 
 use crate::{
-    BoxedComponent, Error, Registry,
+    BoxedComponent, Error,
     descriptors::{ComponentDescriptor, component::ComponentConstructionContext},
 };
 
@@ -19,11 +19,15 @@ pub struct Container {
 impl Container {
     /// Resolves all registered components in dependency order and returns a built Container.
     ///
-    /// `manual` holds pre-built instances supplied at the builder (e.g. a
-    /// service constructed by hand). They are seeded first, so factory-built
-    /// components may depend on them.
-    #[instrument(skip_all, fields(count = registry.components.len()))]
-    pub async fn build(registry: &Registry, manual: Vec<BoxedComponent>) -> crate::Result<Self> {
+    /// `components` is the effective component set (after default/override
+    /// resolution). `manual` holds pre-built instances supplied at the builder
+    /// (e.g. a service constructed by hand); they are seeded first, so
+    /// factory-built components may depend on them.
+    #[instrument(skip_all, fields(count = components.len()))]
+    pub async fn build(
+        components: &[&'static ComponentDescriptor],
+        manual: Vec<BoxedComponent>,
+    ) -> crate::Result<Self> {
         debug!("resolving component dependency order");
 
         let mut ctx = ComponentConstructionContext::new();
@@ -34,7 +38,7 @@ impl Container {
             ctx.insert(component);
         }
 
-        let sorted = topological_sort(&registry.components, &prebuilt)?;
+        let sorted = topological_sort(components, &prebuilt)?;
 
         for descriptor in &sorted {
             debug!(component = %descriptor.name, "constructing component");

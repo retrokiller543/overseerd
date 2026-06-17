@@ -1,21 +1,31 @@
 use crate::{
     DependencyDescriptor, ParameterDescriptor, RpcDescriptor,
-    descriptors::{ComponentDescriptor, Descriptor, ServiceDescriptor},
+    descriptors::{ComponentDescriptor, Descriptor, RpcGroup, ServiceDescriptor},
     error::Error,
 };
+use std::any::TypeId;
+use std::collections::HashMap;
 use std::fmt::Write;
 use std::{collections::HashSet, fmt};
 
 /// Runtime registry built by collecting static inventory descriptors.
 ///
 /// Owns `Vec` allocations for the collected descriptor references; the
-/// underlying descriptors remain in static storage.
+/// underlying descriptors remain in static storage. Services are headers tied
+/// to a type; their RPCs are contributed by `rpc_groups` and assembled on
+/// demand via [`resolved_services`](Self::resolved_services).
 #[derive(Default, Debug)]
 pub struct Registry {
     pub components: Vec<&'static ComponentDescriptor>,
     pub services: Vec<&'static ServiceDescriptor>,
+    pub rpc_groups: Vec<&'static RpcGroup>,
 }
 
+/// A service header with its RPCs assembled from every matching `RpcGroup`.
+pub struct ResolvedService {
+    pub descriptor: &'static ServiceDescriptor,
+    pub rpcs: Vec<&'static RpcDescriptor>,
+}
 
 impl Registry {
     /// Collects all submitted inventory descriptors into a Registry.
@@ -25,10 +35,58 @@ impl Registry {
             match descriptor {
                 Descriptor::Component(c) => registry.components.push(c),
                 Descriptor::Service(s) => registry.services.push(s),
+                Descriptor::Rpcs(g) => registry.rpc_groups.push(g),
             }
         }
 
         registry
+    }
+
+    /// Assembles each service header with the RPCs contributed to its type.
+    pub fn resolved_services(&self) -> Vec<ResolvedService> {
+        self.services
+            .iter()
+            .map(|&descriptor| {
+                let service_ty = (descriptor.ty.type_id)();
+                let rpcs = self
+                    .rpc_groups
+                    .iter()
+                    .filter(|group| (group.service.type_id)() == service_ty)
+                    .flat_map(|group| group.rpcs.iter())
+                    .collect();
+
+                ResolvedService { descriptor, rpcs }
+            })
+            .collect()
+    }
+
+    /// Selects the effective component per type: an explicit factory (`#[init]`
+    /// or a hand-written descriptor) overrides a default field-injection one.
+    /// Two explicit factories for the same type is an error.
+    pub fn resolved_components(&self) -> crate::Result<Vec<&'static ComponentDescriptor>> {
+        let mut chosen: HashMap<TypeId, &'static ComponentDescriptor> = HashMap::new();
+
+        for &component in &self.components {
+            let type_id = (component.ty.type_id)();
+
+            match chosen.get(&type_id) {
+                None => {
+                    chosen.insert(type_id, component);
+                }
+
+                Some(existing) => {
+                    if existing.default_factory && !component.default_factory {
+                        chosen.insert(type_id, component);
+                    } else if !existing.default_factory && !component.default_factory {
+                        return Err(Error::DuplicateComponentType(
+                            (component.ty.type_name)().to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(chosen.into_values().collect())
     }
 
     /// Validates structural consistency of the registry.
@@ -40,19 +98,35 @@ impl Registry {
     /// (e.g. instances supplied via `DaemonBuilder::with_component`) as
     /// available when checking dependencies, since they are seeded into the
     /// container before factory-built components are constructed.
-    pub fn validate_with(&self, external: &HashSet<std::any::TypeId>) -> crate::Result<()> {
-        self.validate_component_ids()?;
+    pub fn validate_with(&self, external: &HashSet<TypeId>) -> crate::Result<()> {
+        let components = self.resolved_components()?;
+
+        self.validate_component_ids(&components)?;
+        self.validate_rpc_groups()?;
         self.validate_services()?;
-        self.validate_dependencies(external)?;
+        self.validate_dependencies(&components, external)?;
 
         Ok(())
     }
 
-    fn validate_component_ids(&self) -> crate::Result<()> {
+    fn validate_component_ids(&self, components: &[&'static ComponentDescriptor]) -> crate::Result<()> {
         let mut seen = HashSet::new();
-        for c in &self.components {
+        for c in components {
             if !seen.insert(c.id) {
                 return Err(Error::DuplicateComponentId(c.id.to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_rpc_groups(&self) -> crate::Result<()> {
+        let service_types: HashSet<TypeId> =
+            self.services.iter().map(|s| (s.ty.type_id)()).collect();
+
+        for group in &self.rpc_groups {
+            if !service_types.contains(&(group.service.type_id)()) {
+                return Err(Error::OrphanRpcs((group.service.type_name)().to_string()));
             }
         }
 
@@ -63,17 +137,19 @@ impl Registry {
         let mut seen_ids = HashSet::new();
         let mut seen_paths: HashSet<String> = HashSet::new();
 
-        for s in &self.services {
+        for service in self.resolved_services() {
+            let s = service.descriptor;
+
             if !seen_ids.insert(s.id) {
                 return Err(Error::DuplicateServiceId(s.id.to_string()));
             }
 
-            if s.rpcs.is_empty() {
+            if service.rpcs.is_empty() {
                 return Err(Error::EmptyService(s.name.to_string()));
             }
 
             let mut seen_rpc_names = HashSet::new();
-            for rpc in s.rpcs {
+            for rpc in &service.rpcs {
                 if !seen_rpc_names.insert(rpc.name) {
                     return Err(Error::DuplicateRpcName {
                         service: s.name.to_string(),
@@ -91,13 +167,17 @@ impl Registry {
         Ok(())
     }
 
-    fn validate_dependencies(&self, external: &HashSet<std::any::TypeId>) -> crate::Result<()> {
-        let mut available: HashSet<std::any::TypeId> =
-            self.components.iter().map(|c| (c.ty.type_id)()).collect();
+    fn validate_dependencies(
+        &self,
+        components: &[&'static ComponentDescriptor],
+        external: &HashSet<TypeId>,
+    ) -> crate::Result<()> {
+        let mut available: HashSet<TypeId> =
+            components.iter().map(|c| (c.ty.type_id)()).collect();
 
         available.extend(external.iter().copied());
 
-        for c in &self.components {
+        for c in components {
             for dep in c.dependencies {
                 if !dep.optional && !available.contains(&(dep.ty.type_id)()) {
                     return Err(Error::MissingDependency {
@@ -112,8 +192,12 @@ impl Registry {
     }
 
     fn write_components(&self, f: &mut impl Write) -> fmt::Result {
+        let components = self
+            .resolved_components()
+            .unwrap_or_else(|_| self.components.clone());
+
         writeln!(f, "Components:")?;
-        for c in &self.components {
+        for c in &components {
             writeln!(f, "  {}", c.name)?;
 
             if !c.dependencies.is_empty() {
@@ -144,13 +228,15 @@ impl Registry {
 
     fn write_services(&self, f: &mut impl Write) -> fmt::Result {
         writeln!(f, "Services:")?;
-        for s in &self.services {
+        for service in self.resolved_services() {
+            let s = service.descriptor;
+
             match s.version {
                 Some(v) => writeln!(f, "  {} (v{})", s.name, v)?,
                 None => writeln!(f, "  {}", s.name)?,
             }
 
-            Self::write_rpcs(f, s.rpcs.iter())?;
+            Self::write_rpcs(f, service.rpcs.iter().copied())?;
         }
 
         Ok(())
@@ -202,7 +288,7 @@ mod tests {
     use super::*;
     use crate::descriptors::{
         BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentScope,
-        DependencyDescriptor, OperationKind, RpcCallContext, RpcDescriptor, RpcResponse,
+        DependencyDescriptor, OperationKind, RpcCallContext, RpcDescriptor, RpcGroup, RpcResponse,
         ServiceDescriptor, TypeDescriptor,
     };
 
@@ -231,6 +317,7 @@ mod tests {
         scope: ComponentScope::Singleton,
         dependencies: &PG_POOL_DEPS,
         factory: fake_factory,
+        default_factory: false,
     };
 
     static BACKUP_REPO_DEPS: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -246,6 +333,7 @@ mod tests {
         scope: ComponentScope::Singleton,
         dependencies: &BACKUP_REPO_DEPS,
         factory: fake_factory,
+        default_factory: false,
     };
 
     static BACKUP_SERVICE_RPCS: [RpcDescriptor; 2] = [
@@ -270,6 +358,10 @@ mod tests {
         name: "BackupService",
         ty: TypeDescriptor::of::<i32>("BackupService"),
         version: Some("1.0"),
+    };
+
+    static BACKUP_RPCS_GROUP: RpcGroup = RpcGroup {
+        service: TypeDescriptor::of::<i32>("BackupService"),
         rpcs: &BACKUP_SERVICE_RPCS,
     };
 
@@ -278,6 +370,7 @@ mod tests {
         let registry = Registry {
             components: vec![&BACKUP_REPO, &PG_POOL],
             services: vec![&BACKUP_SERVICE],
+            rpc_groups: vec![&BACKUP_RPCS_GROUP],
         };
         let description = registry.to_string();
 
@@ -315,6 +408,7 @@ mod tests {
         let registry = Registry {
             components: vec![&BACKUP_REPO, &PG_POOL],
             services: vec![&BACKUP_SERVICE],
+            rpc_groups: vec![&BACKUP_RPCS_GROUP],
         };
 
         assert!(registry.validate().is_ok());
@@ -325,6 +419,7 @@ mod tests {
         let registry = Registry {
             components: vec![&BACKUP_REPO, &BACKUP_REPO],
             services: vec![],
+            rpc_groups: vec![],
         };
 
         assert!(registry.validate().is_err());
@@ -335,6 +430,7 @@ mod tests {
         let registry = Registry {
             components: vec![&BACKUP_REPO],
             services: vec![],
+            rpc_groups: vec![],
         };
 
         assert!(registry.validate().is_err());
@@ -345,6 +441,7 @@ mod tests {
         let registry = Registry {
             components: vec![&BACKUP_REPO],
             services: vec![],
+            rpc_groups: vec![],
         };
 
         // BackupRepository depends on PgPool (u16). Absent from the registry,
@@ -363,12 +460,12 @@ mod tests {
             name: "EmptyService",
             ty: TypeDescriptor::of::<i64>("EmptyService"),
             version: None,
-            rpcs: &[],
         };
 
         let registry = Registry {
             components: vec![],
             services: vec![&EMPTY_SERVICE],
+            rpc_groups: vec![],
         };
 
         assert!(registry.validate().is_err());

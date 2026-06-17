@@ -11,8 +11,8 @@ use crate::{
     connection::{ConnectionHandler, ConnectionInfo},
     container::Container,
     descriptors::{
-        BoxedComponent, ComponentDescriptor, RpcCallContext, RpcResponse, ServiceDescriptor,
-        TypeDescriptor,
+        BoxedComponent, ComponentDescriptor, RpcCallContext, RpcGroup, RpcResponse,
+        ServiceDescriptor, TypeDescriptor,
     },
     lifecycle::{ShutdownHandle, ShutdownSignal},
     registry::Registry,
@@ -68,6 +68,13 @@ impl DaemonBuilder {
         self
     }
 
+    /// Registers a group of RPCs contributed to the service of a matching type.
+    pub fn rpcs(mut self, group: &'static RpcGroup) -> Self {
+        self.registry.rpc_groups.push(group);
+
+        self
+    }
+
     /// Registers a handler called once per accepted connection to populate
     /// connection-scoped context. Handlers run in registration order.
     pub fn connection_handler<H: ConnectionHandler>(mut self, handler: H) -> Self {
@@ -88,7 +95,8 @@ impl DaemonBuilder {
 
         self.registry.validate_with(&external)?;
 
-        let container = Container::build(&self.registry, self.manual_components).await?;
+        let components = self.registry.resolved_components()?;
+        let container = Container::build(&components, self.manual_components).await?;
         let router = RpcRouter::from_registry(&self.registry);
         let shutdown = ShutdownSignal::new();
 

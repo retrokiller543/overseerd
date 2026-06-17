@@ -1,47 +1,54 @@
-//! Procedural macros for Overseer: `#[service]` and `#[rpc]`.
+//! Procedural macros for Overseer: `#[service]`, `#[handlers]`, `#[rpc]`.
 //!
-//! `#[service]` annotates an inherent `impl` block and turns each `#[rpc]`
-//! method into a registered `RpcDescriptor`, emitting a `ServiceDescriptor`
-//! collected via `inventory`. `#[rpc]` is a marker consumed by `#[service]`;
-//! used on its own it produces a friendly compile error.
+//! - `#[service(id = "...", version = "...")]` on a **struct** declares a
+//!   service's identity, tied to that type, and (by default) a field-injection
+//!   singleton factory.
+//! - `#[handlers]` on an **impl** block contributes its `#[rpc]` methods to the
+//!   service of `Self`, and turns an optional `#[init]` constructor into an
+//!   explicit singleton factory that overrides the default. Several `#[handlers]`
+//!   impls may target one service.
+//! - `#[rpc]` / `#[init]` are markers consumed by `#[handlers]`.
 //!
 //! Structure follows the dtolnay convention (see `thiserror-impl`): thin
-//! `#[proc_macro_attribute]` entry points that delegate to `expand` functions
-//! returning `syn::Result`, with errors surfaced through
-//! `syn::Error::into_compile_error` rather than panics.
+//! `#[proc_macro_attribute]` entry points delegating to `expand` functions that
+//! return `syn::Result`, with errors surfaced via `into_compile_error`.
 
 extern crate proc_macro;
 
 mod attr;
+mod handlers;
 mod rpc;
 mod service;
 
 use proc_macro::TokenStream;
-use syn::{ItemFn, ItemImpl, parse_macro_input};
+use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 
-/// Registers each `#[rpc]` method of an inherent `impl` block as a service RPC.
-///
-/// ```ignore
-/// #[service(id = "greeter", version = "0.1")]
-/// impl Greeter {
-///     #[rpc]
-///     async fn ping() -> overseer_core::Result<Pong> { /* ... */ }
-/// }
-/// ```
+/// Declares a service's identity on its type (and a default singleton factory).
 #[proc_macro_attribute]
 pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as attr::ServiceArgs);
-    let item = parse_macro_input!(item as ItemImpl);
+    let item = parse_macro_input!(item as ItemStruct);
 
     service::expand(args, item)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
 
-/// Marks a method inside a `#[service]` impl as an RPC.
+/// Contributes the `#[rpc]` methods (and optional `#[init]`) of an impl block to
+/// the service of `Self`.
+#[proc_macro_attribute]
+pub fn handlers(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as ItemImpl);
+
+    handlers::expand(item)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Marks a method inside a `#[handlers]` impl as an RPC.
 ///
-/// This attribute is consumed (and stripped) by `#[service]`. Reaching its own
-/// expansion means it was used outside a `#[service]` block, which is an error.
+/// Consumed (and stripped) by `#[handlers]`. Reaching its own expansion means it
+/// was used outside a `#[handlers]` block, which is an error.
 #[proc_macro_attribute]
 pub fn rpc(attr: TokenStream, item: TokenStream) -> TokenStream {
     let _ = parse_macro_input!(attr as attr::RpcArgs);

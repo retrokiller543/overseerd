@@ -7,18 +7,21 @@ pub use component::{
     ComponentScope, DependencyDescriptor,
 };
 pub use service::{
-    OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor, RpcHandler,
-    RpcResponse, ServiceDescriptor,
+    OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor, RpcGroup,
+    RpcHandler, RpcResponse, ServiceDescriptor,
 };
 pub use types::{TypeDescriptor, type_id_of};
 
 /// Top-level inventory entry submitted by proc macros.
 ///
-/// RPCs belong to ServiceDescriptor.rpcs — they are not submitted as separate
-/// top-level entries. Only components and services appear here.
+/// A `Service` declares a service's identity (tied to its type); each `Rpcs`
+/// group contributes RPC methods to the service of a matching type, so one
+/// service may span several impl blocks. `Component` registers a constructable
+/// singleton (e.g. a stateful service holding common deps).
 pub enum Descriptor {
     Component(&'static ComponentDescriptor),
     Service(&'static ServiceDescriptor),
+    Rpcs(&'static RpcGroup),
 }
 
 inventory::collect!(Descriptor);

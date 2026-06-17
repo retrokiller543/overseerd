@@ -20,8 +20,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use overseer_core::{
-    Conn, ConnectionHandler, ConnectionInfo, Daemon, Extension, OperationKind, Payload,
-    RpcCallContext, RpcDescriptor, RpcResponse, ServiceDescriptor, TypeDescriptor, dispatch_with,
+    Conn, ConnectionHandler, ConnectionInfo, Daemon, Extension, Payload, handlers, service,
 };
 use overseer_transport::TcpTransport;
 
@@ -138,83 +137,47 @@ struct WhoAmI {
     api_key: String,
 }
 
-/// Body via `Payload`, identity via the cloned `Extension`.
-async fn greet(
-    Payload(req): Payload<GreetRequest>,
-    Extension(identity): Extension<Identity>,
-) -> overseer_core::Result<GreetReply> {
-    Ok(GreetReply {
-        message: format!("Hello, {}! (signed for {})", req.name, identity.user_id),
-    })
-}
-
-/// Reaches the non-clone DB handle through the full connection context.
-async fn whoami(conn: Conn) -> overseer_core::Result<WhoAmI> {
-    let identity = conn
-        .0
-        .get::<Identity>()
-        .expect("Authenticator inserts Identity on connect");
-    let db = conn
-        .0
-        .get::<Db>()
-        .expect("Authenticator inserts Db on connect");
-
-    let display_name = db.conn.lookup_display_name(&identity.user_id).await;
-
-    Ok(WhoAmI {
-        display_name,
-        api_key: identity.api_key.clone(),
-    })
-}
-
 // ---------------------------------------------------------------------------
-// Erased wrappers — one line per handler. This is exactly what a `#[rpc]`
-// proc macro will generate; each captures nothing, so it coerces to the
-// `RpcHandler` fn pointer the static descriptor stores.
+// Service — stateless: request state comes from the connection (`Conn`,
+// `Extension<T>`), not a singleton, so it's a unit struct.
 // ---------------------------------------------------------------------------
 
-fn greet_erased(
-    ctx: RpcCallContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
-    dispatch_with(greet, ctx)
-}
-
-fn whoami_erased(
-    ctx: RpcCallContext,
-) -> Pin<Box<dyn Future<Output = overseer_core::Result<RpcResponse>> + Send>> {
-    dispatch_with(whoami, ctx)
-}
-
-// ---------------------------------------------------------------------------
-// Service descriptor + wiring.
-// ---------------------------------------------------------------------------
-
+#[service(id = "account", version = "0.1")]
 struct AccountService;
 
-static ACCOUNT_RPCS: [RpcDescriptor; 2] = [
-    RpcDescriptor {
-        name: "greet",
-        operation: OperationKind::Unary,
-        parameters: &[],
-        output: TypeDescriptor::of::<GreetReply>("GreetReply"),
-        handler: greet_erased,
-    },
-    RpcDescriptor {
-        name: "whoami",
-        operation: OperationKind::Unary,
-        parameters: &[],
-        output: TypeDescriptor::of::<WhoAmI>("WhoAmI"),
-        handler: whoami_erased,
-    },
-];
+#[handlers]
+impl AccountService {
+    /// Body via `Payload`, identity via the cloned `Extension`.
+    #[rpc]
+    async fn greet(
+        Payload(req): Payload<GreetRequest>,
+        Extension(identity): Extension<Identity>,
+    ) -> overseer_core::Result<GreetReply> {
+        Ok(GreetReply {
+            message: format!("Hello, {}! (signed for {})", req.name, identity.user_id),
+        })
+    }
 
-static ACCOUNT_SERVICE: ServiceDescriptor = ServiceDescriptor {
-    id: "account",
-    name: "Account",
-    ty: TypeDescriptor::of::<AccountService>("AccountService"),
-    version: Some("0.1"),
-    rpcs: &ACCOUNT_RPCS,
-};
+    /// Reaches the non-clone DB handle through the full connection context.
+    #[rpc]
+    async fn whoami(conn: Conn) -> overseer_core::Result<WhoAmI> {
+        let identity = conn
+            .0
+            .get::<Identity>()
+            .expect("Authenticator inserts Identity on connect");
+        let db = conn
+            .0
+            .get::<Db>()
+            .expect("Authenticator inserts Db on connect");
+
+        let display_name = db.conn.lookup_display_name(&identity.user_id).await;
+
+        Ok(WhoAmI {
+            display_name,
+            api_key: identity.api_key.clone(),
+        })
+    }
+}
 
 #[tokio::main]
 async fn main() -> overseer_core::Result<()> {
@@ -224,7 +187,7 @@ async fn main() -> overseer_core::Result<()> {
     directory.insert(local, ("alice".to_string(), "sk-alice-123".to_string()));
 
     let daemon = Daemon::builder("account")
-        .service(&ACCOUNT_SERVICE)
+        .auto_discover()
         .connection_handler(Authenticator {
             pool: DbPool::new(),
             directory: Arc::new(directory),
