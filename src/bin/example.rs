@@ -1,10 +1,11 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 
-use overseer_core::{Component, Daemon, Payload, handlers, service};
+use overseer_core::{Component, Daemon, Payload, component, handlers, service};
 use overseer_transport::{
     TcpTransport, WireMessage, WireOutcome, WireRequest,
     protocol::codec::{read_message, write_message},
@@ -75,21 +76,38 @@ struct GreetResponse {
     message: String,
 }
 
-/// A common dependency shared by every call — provided to the daemon via
-/// `with_component` and resolved into the service by field injection.
-/// `#[derive(Component)]` supplies the id/name `with_component` needs.
+// ---------------------------------------------------------------------------
+// Components — the dependency chain the container builds bottom-up:
+//   GreetConfig  (manual instance, `with_component`)
+//     → Greeting (system-built via `#[component]`, resolves GreetConfig)
+//       → Greeter (the service, resolves Greeting)
+// ---------------------------------------------------------------------------
+
+/// Raw config, provided as an instance via `with_component`. `#[derive(Component)]`
+/// supplies the id/name that registration needs.
 #[derive(Component)]
 struct GreetConfig {
     greeting: String,
 }
 
+/// A system-constructed component: `#[component]` registers a field-injection
+/// factory, so the container builds it from its `Arc<T>` dependencies.
+#[component]
+struct Greeting {
+    config: Arc<GreetConfig>,
+}
+
+impl Greeting {
+    fn message(&self, name: &str) -> String {
+        format!("{}, {}!", self.config.greeting, name)
+    }
+}
+
 /// A stateful service. Identity lives on the type via `#[service]`; the
-/// singleton holds common deps (`config`), resolved from the container by field
-/// injection (each `Arc<T>` field). An `#[init]` constructor in a `#[handlers]`
-/// impl could override that default.
+/// singleton holds common deps (`greeting`), resolved from the container.
 #[service(id = "greeter", version = "0.1")]
 struct Greeter {
-    config: Arc<GreetConfig>,
+    greeting: Arc<Greeting>,
 }
 
 // ---------------------------------------------------------------------------
@@ -102,9 +120,11 @@ struct Greeter {
 
 #[handlers]
 impl Greeter {
+    // An explicit `#[init]` constructor; overrides the field-injection default.
+    // Its fixed-name `init` marker makes a second `#[init]` a compile error.
     #[init]
-    fn init(config: Arc<GreetConfig>) -> Self {
-        Self { config }
+    fn init(greeting: Arc<Greeting>) -> Self {
+        Self { greeting }
     }
 
     // No `&self`: `ping` needs no common deps, so it stays a plain associated
@@ -122,7 +142,7 @@ impl Greeter {
         Payload(req): Payload<GreetRequest>,
     ) -> overseer_core::Result<GreetResponse> {
         Ok(GreetResponse {
-            message: format!("{}, {}!", self.config.greeting, req.name),
+            message: self.greeting.message(&req.name),
         })
     }
 }

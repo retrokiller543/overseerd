@@ -10,7 +10,7 @@ pub mod router;
 
 pub use connection::{ConnectionHandler, ConnectionInfo};
 pub use extract::{Conn, Extension, FromContext, Handler, Payload, dispatch_with};
-pub use overseer_macros::{Component, handlers, rpc, service};
+pub use overseer_macros::{Component, component, handlers, rpc, service};
 
 /// Re-exported so macro-generated code can call `inventory::submit!` through a
 /// stable path without the user crate depending on `inventory` directly.
@@ -22,7 +22,7 @@ pub use descriptors::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
     ComponentScope, DependencyDescriptor, Descriptor, OperationKind, ParameterDescriptor,
     ParameterKind, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcResponse,
-    ServiceDescriptor, TypeDescriptor, type_id_of,
+    ServiceComponent, ServiceDescriptor, TypeDescriptor, type_id_of,
 };
 pub use error::Error;
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
