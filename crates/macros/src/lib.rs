@@ -16,13 +16,28 @@
 extern crate proc_macro;
 
 mod attr;
+mod component;
 mod derive;
 mod handlers;
+mod inject;
 mod rpc;
 mod service;
 
 use proc_macro::TokenStream;
 use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
+
+/// Declares a system-constructed singleton component on a struct: implements
+/// `Component` and registers a field-injection factory the container builds from
+/// the type's dependencies.
+#[proc_macro_attribute]
+pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as attr::ServiceArgs);
+    let item = parse_macro_input!(item as ItemStruct);
+
+    component::expand(args, item)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
 /// Implements the `Component` metadata trait for a plain dependency type, so it
 /// can be registered via `DaemonBuilder::with_component`.

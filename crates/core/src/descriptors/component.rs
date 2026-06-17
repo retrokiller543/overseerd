@@ -13,10 +13,19 @@ use super::types::TypeDescriptor;
 ///
 /// Supplies the runtime identity used to synthesize a descriptor for a
 /// manually-provided instance (`DaemonBuilder::with_component`). Implemented by
-/// `#[derive(Component)]` and by `#[service]`.
+/// `#[derive(Component)]`, `#[component]`, and `#[service]`.
 pub trait Component: Any + Send + Sync + 'static {
     const ID: &'static str;
     const NAME: &'static str;
+}
+
+/// A [`Component`] that is also a service, carrying its version in the type.
+///
+/// Implemented by `#[service]`. Tracking the version on the type (rather than
+/// only in the `ServiceDescriptor`) keeps it available generically and opens
+/// the door to manual service registration.
+pub trait ServiceComponent: Component {
+    const VERSION: Option<&'static str>;
 }
 
 /// Lifetime policy for a component instance.

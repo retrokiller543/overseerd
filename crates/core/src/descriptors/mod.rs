@@ -4,7 +4,7 @@ pub mod types;
 
 pub use component::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
-    ComponentScope, DependencyDescriptor,
+    ComponentScope, DependencyDescriptor, ServiceComponent,
 };
 pub use service::{
     OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor, RpcGroup,
