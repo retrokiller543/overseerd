@@ -218,6 +218,7 @@ where
         id,
         path: path.to_string(),
         payload,
+        streaming_input: false,
     });
 
     write_message(stream, &msg).await.expect("send request");

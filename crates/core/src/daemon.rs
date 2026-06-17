@@ -1,6 +1,8 @@
 use std::{fmt, sync::Arc};
 
-use overseer_transport::{CallResult, Connection, Respond, Transport};
+use futures::StreamExt;
+use overseer_transport::{CallResult, Connection, Respond, RespondStream, ResponseSink, Transport};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::{
@@ -9,7 +11,7 @@ use crate::{
     container::ComponentContainer,
     descriptors::{
         BoxedComponent, Component, ComponentDescriptor, ComponentScope, RpcCallContext, RpcGroup,
-        RpcResponse, ServiceDescriptor, TypeDescriptor,
+        RpcOutcome, RpcResponse, ServiceDescriptor, TypeDescriptor,
     },
     lifecycle::{ShutdownHandle, ShutdownSignal},
     registry::DescriptorRegistry,
@@ -204,9 +206,9 @@ impl Daemon {
 
     /// Serves RPC calls from `transport` until ctrl-c or a shutdown signal.
     ///
-    /// One task is spawned per accepted connection. Within each connection task,
-    /// calls are dispatched sequentially — the response is sent before the next
-    /// call is read.
+    /// One task is spawned per accepted connection, and within a connection each
+    /// call is driven on its own task so streaming calls run concurrently and
+    /// the connection keeps reading inbound stream frames while handlers run.
     pub async fn serve<T>(self, mut transport: T) -> crate::Result<()>
     where
         T: Transport,
@@ -275,6 +277,7 @@ impl Daemon {
 }
 
 #[instrument(
+    level = "debug",
     skip_all,
     fields(peer = ?conn.peer().addr),
     name = "connection"
@@ -299,38 +302,26 @@ async fn serve_connection<C: Connection>(
     }
 
     let info = Arc::new(info);
+    let mut tasks: JoinSet<()> = JoinSet::new();
 
     debug!("connection ready");
 
     loop {
         match conn.recv().await {
             Ok(Some((call, responder))) => {
-                let path = call.path.clone();
+                let path = call.path;
+                let ctx = RpcCallContext::new(
+                    call.payload,
+                    Arc::clone(&info),
+                    Arc::clone(&components),
+                    call.requests,
+                    call.cancel,
+                );
+                let router = Arc::clone(&router);
 
                 debug!(%path, "dispatching call");
 
-                let ctx = RpcCallContext {
-                    payload: call.payload,
-                    connection: Arc::clone(&info),
-                    components: Arc::clone(&components),
-                };
-
-                let outcome = match router.dispatch(&path, ctx).await {
-                    Ok(RpcResponse { payload }) => {
-                        debug!(%path, "call succeeded");
-                        CallResult::Ok(payload)
-                    }
-
-                    Err(e) => {
-                        warn!(%path, error = %e, "call returned error");
-                        CallResult::Err(e.to_string())
-                    }
-                };
-
-                if let Err(e) = responder.respond(outcome).await {
-                    warn!(%path, error = %e, "failed to send response");
-                    break;
-                }
+                tasks.spawn(drive_call(path, ctx, responder, router));
             }
 
             Ok(None) => {
@@ -345,5 +336,66 @@ async fn serve_connection<C: Connection>(
         }
     }
 
+    // The connection (and its call table) is dropped here, cancelling in-flight
+    // calls via their tokens; abort any handler tasks still winding down.
+    tasks.abort_all();
+
     debug!("connection ended");
+}
+
+/// Drives one call to completion on its own task: dispatch, then pump the
+/// outcome into the matching responder — a single reply for unary calls, or a
+/// stream of items terminated by `finish`/`error` for streaming calls.
+async fn drive_call<R>(path: String, ctx: RpcCallContext, responder: R, router: Arc<RpcRouter>)
+where
+    R: Respond + RespondStream + Send + 'static,
+{
+    match router.dispatch(&path, ctx).await {
+        Ok(RpcOutcome::Unary(RpcResponse { payload })) => {
+            debug!(%path, "call succeeded");
+
+            if let Err(e) = responder.respond(CallResult::Ok(payload)).await {
+                warn!(%path, error = %e, "failed to send response");
+            }
+        }
+
+        Ok(RpcOutcome::Stream(mut stream)) => {
+            debug!(%path, "streaming response");
+
+            let mut sink = responder.into_sink();
+
+            loop {
+                match stream.next().await {
+                    Some(Ok(item)) => {
+                        if let Err(e) = sink.send(item).await {
+                            warn!(%path, error = %e, "failed to send stream item");
+
+                            return;
+                        }
+                    }
+
+                    Some(Err(e)) => {
+                        warn!(%path, error = %e, "stream handler errored");
+                        let _ = sink.error(e.to_string()).await;
+
+                        return;
+                    }
+
+                    None => break,
+                }
+            }
+
+            if let Err(e) = sink.finish().await {
+                warn!(%path, error = %e, "failed to finish stream");
+            }
+        }
+
+        Err(e) => {
+            warn!(%path, error = %e, "call returned error");
+
+            if let Err(e) = responder.respond(CallResult::Err(e.to_string())).await {
+                warn!(%path, error = %e, "failed to send error response");
+            }
+        }
+    }
 }

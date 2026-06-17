@@ -8,7 +8,7 @@ pub use component::{
 };
 pub use service::{
     OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor, RpcGroup,
-    RpcHandler, RpcResponse, ServiceDescriptor,
+    RpcHandler, RpcOutcome, RpcResponse, ServiceDescriptor,
 };
 pub use types::{TypeDescriptor, type_id_of};
 

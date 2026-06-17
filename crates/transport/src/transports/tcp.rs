@@ -47,7 +47,7 @@ impl TcpTransport {
 impl Transport for TcpTransport {
     type Connection = TcpConnection;
 
-    #[instrument(skip_all, fields(peer = tracing::field::Empty))]
+    #[instrument(level = "debug", skip_all, fields(peer = tracing::field::Empty))]
     async fn accept(&mut self) -> Result<TcpConnection> {
         trace!("waiting for TCP connection");
 

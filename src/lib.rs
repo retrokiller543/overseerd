@@ -54,13 +54,14 @@
 // Core: descriptors, registry, container, daemon, extractors, macros.
 // ---------------------------------------------------------------------------
 pub use overseer_core::{
-    BoxedComponent, Component, ComponentConstructionContext, ComponentContainer,
+    BoxedComponent, Cancel, Component, ComponentConstructionContext, ComponentContainer,
     ComponentDescriptor, ComponentFactory, ComponentScope, Conn, ConnectionHandler, ConnectionInfo,
     Daemon, DaemonBuilder, DependencyDescriptor, Descriptor, DescriptorRegistry, Error, Extension,
-    FromContext, Handler, OperationKind, ParameterDescriptor, ParameterKind, Payload, Result,
-    RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcResponse, RpcRouter, ServiceComponent,
-    ServiceDescriptor, ShutdownHandle, ShutdownSignal, TypeDescriptor, component, dispatch_with,
-    handlers, rpc, service, type_id_of,
+    FallibleHandler, FromContext, Handler, IntoErrorResponse, OperationKind, ParameterDescriptor,
+    ParameterKind, Payload, Responder, ResponseStream, Result, RpcCallContext, RpcDescriptor,
+    RpcGroup, RpcHandler, RpcOutcome, RpcResponse, RpcRouter, ServiceComponent, ServiceDescriptor,
+    ShutdownHandle, ShutdownSignal, Streaming, TypeDescriptor, component, dispatch_fallible,
+    dispatch_with, handlers, rpc, service, type_id_of,
 };
 
 /// Re-exported so macro-generated code can call `inventory::submit!` through
@@ -74,9 +75,10 @@ pub use overseer_core::inventory;
 // reach transport's via `overseer::transport`.
 // ---------------------------------------------------------------------------
 pub use overseer_transport::{
-    CallId, CallResult, Connection, IncomingCall, MemoryClient, MemoryConnection,
-    MemoryConnectionHandle, MemoryResponder, MemoryTransport, PeerInfo, Respond, TcpTransport,
-    Transport, WireMessage, WireOutcome, WireRequest, WireResponse,
+    CallId, CallResult, Connection, IncomingCall, MemoryCall, MemoryClient, MemoryConnection,
+    MemoryConnectionHandle, MemoryResponder, MemoryTransport, PeerInfo, Respond, RespondStream,
+    ResponseSink, ServerEvent, TcpTransport, Transport, WireMessage, WireOutcome, WireRequest,
+    WireResponse,
 };
 
 #[cfg(unix)]

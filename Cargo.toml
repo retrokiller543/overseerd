@@ -21,6 +21,9 @@ overseer-transport = { path = "crates/transport" }
 
 # Common dependencies
 tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tokio-util = "0.7"
+futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
 tracing = "0.1"
@@ -49,3 +52,6 @@ postcard = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+futures = { workspace = true }

@@ -280,7 +280,7 @@ mod tests {
     use super::*;
     use crate::descriptors::{
         BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentScope,
-        DependencyDescriptor, OperationKind, RpcCallContext, RpcDescriptor, RpcGroup, RpcResponse,
+        DependencyDescriptor, OperationKind, RpcCallContext, RpcDescriptor, RpcGroup, RpcOutcome,
         ServiceDescriptor, TypeDescriptor,
     };
 
@@ -292,7 +292,7 @@ mod tests {
 
     fn fake_handler(
         _: RpcCallContext,
-    ) -> Pin<Box<dyn Future<Output = crate::Result<RpcResponse>> + Send>> {
+    ) -> Pin<Box<dyn Future<Output = crate::Result<RpcOutcome>> + Send>> {
         Box::pin(async { todo!() })
     }
 

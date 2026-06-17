@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use tracing::{debug, instrument, trace, warn};
 
 use crate::{
-    Error, RpcCallContext, RpcResponse, descriptors::RpcHandler, registry::DescriptorRegistry,
+    Error, RpcCallContext, descriptors::RpcHandler, descriptors::RpcOutcome,
+    registry::DescriptorRegistry,
 };
 
 /// Routes incoming RPC calls to their registered handlers by path.
@@ -31,8 +32,8 @@ impl RpcRouter {
         Self { routes }
     }
 
-    #[instrument(skip_all, fields(%path))]
-    pub async fn dispatch(&self, path: &str, ctx: RpcCallContext) -> crate::Result<RpcResponse> {
+    #[instrument(level = "debug", skip_all, fields(%path))]
+    pub async fn dispatch(&self, path: &str, ctx: RpcCallContext) -> crate::Result<RpcOutcome> {
         trace!("looking up handler");
 
         let Some(handler) = self.routes.get(path) else {
