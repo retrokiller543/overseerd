@@ -57,7 +57,9 @@ impl Transport for TcpTransport {
         debug!("TCP connection accepted");
 
         let (read, write) = stream.into_split();
-        let peer = PeerInfo { addr: Some(peer_addr) };
+        let peer = PeerInfo {
+            addr: Some(peer_addr),
+        };
 
         Ok(StreamConnection::new(read, write, peer))
     }

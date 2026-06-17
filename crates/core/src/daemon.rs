@@ -1,12 +1,20 @@
 use std::{fmt, sync::Arc};
 
-use tracing::{debug, error, info, instrument, trace, warn};
 use overseer_transport::{CallResult, Connection, Respond, Transport};
+use tracing::{debug, error, info, instrument, trace, warn};
 
-use crate::{connection::{ConnectionHandler, ConnectionInfo}, container::ComponentContainer, descriptors::{
-    BoxedComponent, Component, ComponentDescriptor, ComponentScope, RpcCallContext, RpcGroup,
-    RpcResponse, ServiceDescriptor, TypeDescriptor,
-}, lifecycle::{ShutdownHandle, ShutdownSignal}, registry::DescriptorRegistry, router::RpcRouter, ServiceComponent};
+use crate::{
+    ServiceComponent,
+    connection::{ConnectionHandler, ConnectionInfo},
+    container::ComponentContainer,
+    descriptors::{
+        BoxedComponent, Component, ComponentDescriptor, ComponentScope, RpcCallContext, RpcGroup,
+        RpcResponse, ServiceDescriptor, TypeDescriptor,
+    },
+    lifecycle::{ShutdownHandle, ShutdownSignal},
+    registry::DescriptorRegistry,
+    router::RpcRouter,
+};
 
 /// Assembles a Daemon from an explicit set of components and services.
 pub struct DaemonBuilder {
@@ -32,7 +40,9 @@ impl DaemonBuilder {
     /// holds the instance until the container is built. The type's identity
     /// comes from its `Component` impl (`#[derive(Component)]` / `#[service]`).
     pub fn with_component<T: Component>(mut self, value: T) -> Self {
-        self.registry.components.push(Self::generate_component_descriptor::<T>());
+        self.registry
+            .components
+            .push(Self::generate_component_descriptor::<T>());
 
         self.instances.push(BoxedComponent {
             ty: TypeDescriptor::of::<T>(T::NAME),

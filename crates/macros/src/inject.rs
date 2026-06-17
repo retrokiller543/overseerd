@@ -11,7 +11,7 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{Fields, ItemStruct, LitStr, spanned::Spanned};
 
-use crate::attr;
+use crate::{attr, paths::overseer_path};
 
 pub fn field_injection_component(
     item: &ItemStruct,
@@ -20,6 +20,16 @@ pub fn field_injection_component(
     default_factory: bool,
 ) -> TokenStream {
     let self_ident = &item.ident;
+    let boxed_component = overseer_path("BoxedComponent");
+    let component_construction_context = overseer_path("ComponentConstructionContext");
+    let component_descriptor = overseer_path("ComponentDescriptor");
+    let component_scope = overseer_path("ComponentScope");
+    let dependency_descriptor = overseer_path("DependencyDescriptor");
+    let descriptor = overseer_path("Descriptor");
+    let error = overseer_path("Error");
+    let inventory_submit = overseer_path("inventory::submit");
+    let result = overseer_path("Result");
+    let type_descriptor = overseer_path("TypeDescriptor");
 
     let mut inits = Vec::new();
     let mut dep_types = Vec::new();
@@ -35,7 +45,7 @@ pub fn field_injection_component(
                 inits.push(quote! {
                     #prefix cx
                         .resolve::<#inner>()
-                        .ok_or(::overseer_core::Error::MissingComponent(#inner_name))?
+                        .ok_or(#error::MissingComponent(#inner_name))?
                 });
                 dep_types.push(inner);
             }
@@ -71,9 +81,9 @@ pub fn field_injection_component(
         let dep_name = LitStr::new(&t.to_token_stream().to_string(), t.span());
 
         quote! {
-            ::overseer_core::DependencyDescriptor {
+            #dependency_descriptor {
                 name: #dep_name,
-                ty: ::overseer_core::TypeDescriptor::of::<#t>(#dep_name),
+                ty: #type_descriptor::of::<#t>(#dep_name),
                 optional: false,
             }
         }
@@ -83,41 +93,41 @@ pub fn field_injection_component(
     quote! {
         #[allow(unused_variables)]
         fn __overseer_factory(
-            cx: &mut ::overseer_core::ComponentConstructionContext,
+            cx: &mut #component_construction_context,
         ) -> ::core::pin::Pin<
             ::std::boxed::Box<
                 dyn ::core::future::Future<
-                    Output = ::overseer_core::Result<::overseer_core::BoxedComponent>,
+                    Output = #result<#boxed_component>,
                 > + ::core::marker::Send + '_,
             >,
         > {
             ::std::boxed::Box::pin(async move {
                 let __instance = #construct;
 
-                ::core::result::Result::Ok(::overseer_core::BoxedComponent {
-                    ty: ::overseer_core::TypeDescriptor::of::<#self_ident>(#name),
+                ::core::result::Result::Ok(#boxed_component {
+                    ty: #type_descriptor::of::<#self_ident>(#name),
                     value: ::std::boxed::Box::new(::std::sync::Arc::new(__instance)),
                 })
             })
         }
 
-        static __OVERSEER_DEPS: [::overseer_core::DependencyDescriptor; #dependency_count] = [
+        static __OVERSEER_DEPS: [#dependency_descriptor; #dependency_count] = [
             #(#dependency_descriptors),*
         ];
 
-        static __OVERSEER_COMPONENT: ::overseer_core::ComponentDescriptor =
-            ::overseer_core::ComponentDescriptor {
+        static __OVERSEER_COMPONENT: #component_descriptor =
+            #component_descriptor {
                 id: #id,
                 name: #name,
-                ty: ::overseer_core::TypeDescriptor::of::<#self_ident>(#name),
-                scope: ::overseer_core::ComponentScope::Singleton,
+                ty: #type_descriptor::of::<#self_ident>(#name),
+                scope: #component_scope::Singleton,
                 dependencies: &__OVERSEER_DEPS,
                 factory: ::core::option::Option::Some(__overseer_factory),
                 default_factory: #default_factory,
             };
 
-        ::overseer_core::inventory::submit! {
-            ::overseer_core::Descriptor::Component(&__OVERSEER_COMPONENT)
+        #inventory_submit! {
+            #descriptor::Component(&__OVERSEER_COMPONENT)
         }
     }
 }

@@ -11,7 +11,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{ItemStruct, LitStr};
 
-use crate::{attr::ServiceArgs, inject};
+use crate::{attr::ServiceArgs, inject, paths::overseer_path};
 
 pub fn expand(args: ServiceArgs, item: ItemStruct) -> syn::Result<TokenStream> {
     let self_ident = item.ident.clone();
@@ -24,11 +24,12 @@ pub fn expand(args: ServiceArgs, item: ItemStruct) -> syn::Result<TokenStream> {
         .unwrap_or_else(|| LitStr::new(&self_ident.to_string(), self_ident.span()));
 
     let factory = inject::field_injection_component(&item, &id, &name, false);
+    let component = overseer_path("Component");
 
     Ok(quote! {
         #item
 
-        impl ::overseer_core::Component for #self_ident {
+        impl #component for #self_ident {
             const ID: &'static str = #id;
             const NAME: &'static str = #name;
         }

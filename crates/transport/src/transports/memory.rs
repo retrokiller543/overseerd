@@ -80,7 +80,10 @@ impl MemoryConnectionHandle {
 
         trace!("sending memory call");
 
-        self.request_tx.send(frame).await.map_err(|_| Error::Closed)?;
+        self.request_tx
+            .send(frame)
+            .await
+            .map_err(|_| Error::Closed)?;
 
         let result = response_rx.await.map_err(|_| Error::Closed);
 

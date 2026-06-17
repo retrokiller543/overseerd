@@ -167,8 +167,7 @@ impl DescriptorRegistry {
     }
 
     fn validate_dependencies(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
-        let available: HashSet<TypeId> =
-            components.iter().map(|c| (c.ty.type_id)()).collect();
+        let available: HashSet<TypeId> = components.iter().map(|c| (c.ty.type_id)()).collect();
 
         for c in components {
             for dep in c.dependencies {

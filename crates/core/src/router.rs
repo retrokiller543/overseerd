@@ -3,9 +3,7 @@ use std::collections::HashMap;
 use tracing::{debug, instrument, trace, warn};
 
 use crate::{
-    descriptors::RpcHandler,
-    registry::DescriptorRegistry,
-    Error, RpcCallContext, RpcResponse,
+    Error, RpcCallContext, RpcResponse, descriptors::RpcHandler, registry::DescriptorRegistry,
 };
 
 /// Routes incoming RPC calls to their registered handlers by path.

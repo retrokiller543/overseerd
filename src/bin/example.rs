@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 
-use overseer_core::{Component, Daemon, Payload, component, handlers, service, ServiceComponent};
+use overseer_core::{Component, Daemon, Payload, ServiceComponent, component, handlers, service};
 use overseer_transport::{
     TcpTransport, WireMessage, WireOutcome, WireRequest,
     protocol::codec::{read_message, write_message},
@@ -156,7 +156,6 @@ impl Greeter {
     }
 }
 
-
 #[derive(Component)]
 struct ManualService;
 
@@ -255,12 +254,26 @@ async fn run_client(transport: TransportKind) {
             let r1: PingResponse = call_stream(&mut stream, 1, "Greeter.ping", &PingRequest).await;
             println!("call 1  ping   →  {}", r1.message);
 
-            let r2: GreetResponse =
-                call_stream(&mut stream, 2, "Greeter.greet", &GreetRequest { name: "World".to_string() }).await;
+            let r2: GreetResponse = call_stream(
+                &mut stream,
+                2,
+                "Greeter.greet",
+                &GreetRequest {
+                    name: "World".to_string(),
+                },
+            )
+            .await;
             println!("call 2  greet  →  {}", r2.message);
 
-            let r3: GreetResponse =
-                call_stream(&mut stream, 3, "Greeter.greet", &GreetRequest { name: "Overseer".to_string() }).await;
+            let r3: GreetResponse = call_stream(
+                &mut stream,
+                3,
+                "Greeter.greet",
+                &GreetRequest {
+                    name: "Overseer".to_string(),
+                },
+            )
+            .await;
             println!("call 3  greet  →  {}", r3.message);
 
             let r4: PingResponse = call_stream(&mut stream, 4, "Greeter.ping", &PingRequest).await;
@@ -282,12 +295,26 @@ async fn run_client(transport: TransportKind) {
             let r1: PingResponse = call_stream(&mut stream, 1, "Greeter.ping", &PingRequest).await;
             println!("call 1  ping   →  {}", r1.message);
 
-            let r2: GreetResponse =
-                call_stream(&mut stream, 2, "Greeter.greet", &GreetRequest { name: "World".to_string() }).await;
+            let r2: GreetResponse = call_stream(
+                &mut stream,
+                2,
+                "Greeter.greet",
+                &GreetRequest {
+                    name: "World".to_string(),
+                },
+            )
+            .await;
             println!("call 2  greet  →  {}", r2.message);
 
-            let r3: GreetResponse =
-                call_stream(&mut stream, 3, "Greeter.greet", &GreetRequest { name: "Overseer".to_string() }).await;
+            let r3: GreetResponse = call_stream(
+                &mut stream,
+                3,
+                "Greeter.greet",
+                &GreetRequest {
+                    name: "Overseer".to_string(),
+                },
+            )
+            .await;
             println!("call 3  greet  →  {}", r3.message);
 
             let r4: PingResponse = call_stream(&mut stream, 4, "Greeter.ping", &PingRequest).await;
@@ -307,8 +334,7 @@ async fn run_client(transport: TransportKind) {
 async fn main() -> overseer_core::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("debug")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug")),
         )
         .with_target(true)
         .init();

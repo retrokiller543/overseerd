@@ -12,7 +12,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemStruct, LitStr};
 
-use crate::{attr::ServiceArgs, inject};
+use crate::{attr::ServiceArgs, inject, paths::overseer_path};
 
 pub fn expand(args: ServiceArgs, item: ItemStruct) -> syn::Result<TokenStream> {
     let self_ident = item.ident.clone();
@@ -31,34 +31,42 @@ pub fn expand(args: ServiceArgs, item: ItemStruct) -> syn::Result<TokenStream> {
 
     let default_component = inject::field_injection_component(&item, &id, &name, true);
 
-    let service_static =
-        format_ident!("__OVERSEER_SERVICE_{}", self_ident.to_string().to_uppercase());
+    let service_static = format_ident!(
+        "__OVERSEER_SERVICE_{}",
+        self_ident.to_string().to_uppercase()
+    );
+    let component = overseer_path("Component");
+    let descriptor = overseer_path("Descriptor");
+    let inventory_submit = overseer_path("inventory::submit");
+    let service_component = overseer_path("ServiceComponent");
+    let service_descriptor = overseer_path("ServiceDescriptor");
+    let type_descriptor = overseer_path("TypeDescriptor");
 
     Ok(quote! {
         #item
 
-        impl ::overseer_core::Component for #self_ident {
+        impl #component for #self_ident {
             const ID: &'static str = #id;
             const NAME: &'static str = #name;
         }
 
-        impl ::overseer_core::ServiceComponent for #self_ident {
+        impl #service_component for #self_ident {
             const VERSION: ::core::option::Option<&'static str> = #version;
         }
 
         const _: () = {
             #default_component
 
-            static #service_static: ::overseer_core::ServiceDescriptor =
-                ::overseer_core::ServiceDescriptor {
+            static #service_static: #service_descriptor =
+                #service_descriptor {
                     id: #id,
                     name: #name,
-                    ty: ::overseer_core::TypeDescriptor::of::<#self_ident>(#self_name),
+                    ty: #type_descriptor::of::<#self_ident>(#self_name),
                     version: #version,
                 };
 
-            ::overseer_core::inventory::submit! {
-                ::overseer_core::Descriptor::Service(&#service_static)
+            #inventory_submit! {
+                #descriptor::Service(&#service_static)
             }
         };
     })

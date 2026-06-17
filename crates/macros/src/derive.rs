@@ -9,7 +9,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, LitStr};
 
-use crate::attr::ServiceArgs;
+use crate::{attr::ServiceArgs, paths::overseer_path};
 
 pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let ident = &input.ident;
@@ -32,9 +32,10 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = overrides
         .name
         .unwrap_or_else(|| LitStr::new(&ident.to_string(), ident.span()));
+    let component = overseer_path("Component");
 
     Ok(quote! {
-        impl ::overseer_core::Component for #ident {
+        impl #component for #ident {
             const ID: &'static str = #id;
             const NAME: &'static str = #name;
         }

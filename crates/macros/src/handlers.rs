@@ -13,9 +13,11 @@
 
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
-use syn::{FnArg, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta, ReturnType, Type, spanned::Spanned};
+use syn::{
+    FnArg, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta, ReturnType, Type, spanned::Spanned,
+};
 
-use crate::attr;
+use crate::{attr, paths::overseer_path};
 
 pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
     let self_ty = (*item.self_ty).clone();
@@ -66,19 +68,24 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
         quote!()
     } else {
         let count = descriptors.len();
+        let descriptor = overseer_path("Descriptor");
+        let inventory_submit = overseer_path("inventory::submit");
+        let rpc_descriptor = overseer_path("RpcDescriptor");
+        let rpc_group = overseer_path("RpcGroup");
+        let type_descriptor = overseer_path("TypeDescriptor");
 
         quote! {
-            static __OVERSEER_RPCS: [::overseer_core::RpcDescriptor; #count] = [
+            static __OVERSEER_RPCS: [#rpc_descriptor; #count] = [
                 #(#descriptors),*
             ];
 
-            static __OVERSEER_RPC_GROUP: ::overseer_core::RpcGroup = ::overseer_core::RpcGroup {
-                service: ::overseer_core::TypeDescriptor::of::<#self_ty>(#self_name),
+            static __OVERSEER_RPC_GROUP: #rpc_group = #rpc_group {
+                service: #type_descriptor::of::<#self_ty>(#self_name),
                 rpcs: &__OVERSEER_RPCS,
             };
 
-            ::overseer_core::inventory::submit! {
-                ::overseer_core::Descriptor::Rpcs(&__OVERSEER_RPC_GROUP)
+            #inventory_submit! {
+                #descriptor::Rpcs(&__OVERSEER_RPC_GROUP)
             }
         }
     };
@@ -144,6 +151,12 @@ fn expand_method(
         self_ident.to_string().to_lowercase(),
         method_ident
     );
+    let dispatch_with = overseer_path("dispatch_with");
+    let error = overseer_path("Error");
+    let operation_kind = overseer_path("OperationKind");
+    let rpc_call_context = overseer_path("RpcCallContext");
+    let rpc_descriptor = overseer_path("RpcDescriptor");
+    let type_descriptor = overseer_path("TypeDescriptor");
     let ret = handler_return_type();
 
     let wrapper = if takes_self {
@@ -161,13 +174,13 @@ fn expand_method(
             .collect();
 
         quote! {
-            fn #wrapper_ident(ctx: ::overseer_core::RpcCallContext) -> #ret {
+            fn #wrapper_ident(ctx: #rpc_call_context) -> #ret {
                 ::std::boxed::Box::pin(async move {
                     let __svc = ctx
                         .component::<#self_ty>()
-                        .ok_or(::overseer_core::Error::MissingComponent(#self_name))?;
+                        .ok_or(#error::MissingComponent(#self_name))?;
 
-                    ::overseer_core::dispatch_with(
+                    #dispatch_with(
                         move |#(#arg_idents: #param_types),*| {
                             let __svc = ::std::sync::Arc::clone(&__svc);
 
@@ -181,18 +194,18 @@ fn expand_method(
         }
     } else {
         quote! {
-            fn #wrapper_ident(ctx: ::overseer_core::RpcCallContext) -> #ret {
-                ::overseer_core::dispatch_with(<#self_ty>::#method_ident, ctx)
+            fn #wrapper_ident(ctx: #rpc_call_context) -> #ret {
+                #dispatch_with(<#self_ty>::#method_ident, ctx)
             }
         }
     };
 
     let descriptor = quote! {
-        ::overseer_core::RpcDescriptor {
+        #rpc_descriptor {
             name: #method_name,
-            operation: ::overseer_core::OperationKind::#operation,
+            operation: #operation_kind::#operation,
             parameters: &[],
-            output: ::overseer_core::TypeDescriptor::of::<#output_ty>(#output_name),
+            output: #type_descriptor::of::<#output_ty>(#output_name),
             handler: #wrapper_ident,
         }
     };
@@ -241,8 +254,22 @@ fn parse_init(method: &ImplItemFn) -> syn::Result<InitInfo> {
 
 /// Generates the fixed-name `init` marker/wrapper (module scope) and the
 /// singleton component factory (const-block scope).
-fn generate_init(self_ty: &Type, self_name: &LitStr, info: &InitInfo) -> (TokenStream, TokenStream) {
+fn generate_init(
+    self_ty: &Type,
+    self_name: &LitStr,
+    info: &InitInfo,
+) -> (TokenStream, TokenStream) {
     let marked = &info.ident;
+    let boxed_component = overseer_path("BoxedComponent");
+    let component_construction_context = overseer_path("ComponentConstructionContext");
+    let component_descriptor = overseer_path("ComponentDescriptor");
+    let component_scope = overseer_path("ComponentScope");
+    let dependency_descriptor = overseer_path("DependencyDescriptor");
+    let descriptor = overseer_path("Descriptor");
+    let error = overseer_path("Error");
+    let inventory_submit = overseer_path("inventory::submit");
+    let result = overseer_path("Result");
+    let type_descriptor = overseer_path("TypeDescriptor");
 
     // The fixed `init` name is the compile-time uniqueness guard. If the marked
     // method is already named `init`, it is its own marker and needs no wrapper.
@@ -254,8 +281,16 @@ fn generate_init(self_ty: &Type, self_name: &LitStr, info: &InitInfo) -> (TokenS
             .collect();
         let param_types = &info.param_types;
         let output = &info.output;
-        let asyncness = if info.is_async { quote!(async) } else { quote!() };
-        let dotawait = if info.is_async { quote!(.await) } else { quote!() };
+        let asyncness = if info.is_async {
+            quote!(async)
+        } else {
+            quote!()
+        };
+        let dotawait = if info.is_async {
+            quote!(.await)
+        } else {
+            quote!()
+        };
 
         quote! {
             impl #self_ty {
@@ -272,7 +307,7 @@ fn generate_init(self_ty: &Type, self_name: &LitStr, info: &InitInfo) -> (TokenS
 
         quote! {
             cx.resolve::<#t>()
-                .ok_or(::overseer_core::Error::MissingComponent(#dep_name))?
+                .ok_or(#error::MissingComponent(#dep_name))?
         }
     });
 
@@ -290,9 +325,9 @@ fn generate_init(self_ty: &Type, self_name: &LitStr, info: &InitInfo) -> (TokenS
         let dep_name = LitStr::new(&t.to_token_stream().to_string(), t.span());
 
         quote! {
-            ::overseer_core::DependencyDescriptor {
+            #dependency_descriptor {
                 name: #dep_name,
-                ty: ::overseer_core::TypeDescriptor::of::<#t>(#dep_name),
+                ty: #type_descriptor::of::<#t>(#dep_name),
                 optional: false,
             }
         }
@@ -302,41 +337,41 @@ fn generate_init(self_ty: &Type, self_name: &LitStr, info: &InitInfo) -> (TokenS
     let component = quote! {
         #[allow(unused_variables)]
         fn __overseer_init_factory(
-            cx: &mut ::overseer_core::ComponentConstructionContext,
+            cx: &mut #component_construction_context,
         ) -> ::core::pin::Pin<
             ::std::boxed::Box<
                 dyn ::core::future::Future<
-                    Output = ::overseer_core::Result<::overseer_core::BoxedComponent>,
+                    Output = #result<#boxed_component>,
                 > + ::core::marker::Send + '_,
             >,
         > {
             ::std::boxed::Box::pin(async move {
                 let __instance = #call;
 
-                ::core::result::Result::Ok(::overseer_core::BoxedComponent {
-                    ty: ::overseer_core::TypeDescriptor::of::<#self_ty>(#self_name),
+                ::core::result::Result::Ok(#boxed_component {
+                    ty: #type_descriptor::of::<#self_ty>(#self_name),
                     value: ::std::boxed::Box::new(::std::sync::Arc::new(__instance)),
                 })
             })
         }
 
-        static __OVERSEER_INIT_DEPS: [::overseer_core::DependencyDescriptor; #dependency_count] = [
+        static __OVERSEER_INIT_DEPS: [#dependency_descriptor; #dependency_count] = [
             #(#dependency_descriptors),*
         ];
 
-        static __OVERSEER_INIT_COMPONENT: ::overseer_core::ComponentDescriptor =
-            ::overseer_core::ComponentDescriptor {
+        static __OVERSEER_INIT_COMPONENT: #component_descriptor =
+            #component_descriptor {
                 id: #self_name,
                 name: #self_name,
-                ty: ::overseer_core::TypeDescriptor::of::<#self_ty>(#self_name),
-                scope: ::overseer_core::ComponentScope::Singleton,
+                ty: #type_descriptor::of::<#self_ty>(#self_name),
+                scope: #component_scope::Singleton,
                 dependencies: &__OVERSEER_INIT_DEPS,
                 factory: ::core::option::Option::Some(__overseer_init_factory),
                 default_factory: false,
             };
 
-        ::overseer_core::inventory::submit! {
-            ::overseer_core::Descriptor::Component(&__OVERSEER_INIT_COMPONENT)
+        #inventory_submit! {
+            #descriptor::Component(&__OVERSEER_INIT_COMPONENT)
         }
     };
 
@@ -345,11 +380,14 @@ fn generate_init(self_ty: &Type, self_name: &LitStr, info: &InitInfo) -> (TokenS
 
 /// The erased `RpcHandler` return type, repeated by both wrapper forms.
 fn handler_return_type() -> TokenStream {
+    let result = overseer_path("Result");
+    let rpc_response = overseer_path("RpcResponse");
+
     quote! {
         ::core::pin::Pin<
             ::std::boxed::Box<
                 dyn ::core::future::Future<
-                    Output = ::overseer_core::Result<::overseer_core::RpcResponse>,
+                    Output = #result<#rpc_response>,
                 > + ::core::marker::Send,
             >,
         >
