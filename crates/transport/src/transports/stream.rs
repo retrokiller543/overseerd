@@ -14,6 +14,7 @@ use crate::{
         WireMessage, WireResponse,
         codec::{read_message, write_message},
     },
+    status::StatusCode,
     transport::{Connection, Respond, RespondStream, ResponseSink},
 };
 
@@ -269,12 +270,13 @@ where
     }
 
     #[instrument(level = "trace", skip_all, fields(id = self.id))]
-    async fn error(self, message: String) -> Result<()> {
+    async fn error(self, code: StatusCode, body: Vec<u8>) -> Result<()> {
         trace!("writing stream error");
 
         self.write_frame(&WireMessage::StreamError {
             id: self.id,
-            message,
+            code,
+            body,
         })
         .await?;
 

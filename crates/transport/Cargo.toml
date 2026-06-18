@@ -6,6 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
+bitflags = { workspace = true }
 thiserror = "2"
 tokio = { workspace = true }
 tokio-util = { workspace = true }

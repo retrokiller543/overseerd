@@ -11,12 +11,14 @@
 pub mod error;
 pub mod frame;
 pub mod protocol;
+pub mod status;
 pub mod transport;
 pub mod transports;
 
 pub use error::{Error, Result};
 pub use frame::{CallId, CallResult, IncomingCall, PeerInfo};
 pub use protocol::{WireMessage, WireOutcome, WireRequest, WireResponse};
+pub use status::{Flags, PredefinedCode, StatusCode};
 pub use transport::{Connection, Respond, RespondStream, ResponseSink, Transport};
 pub use transports::{
     MemoryCall, MemoryClient, MemoryConnection, MemoryConnectionHandle, MemoryResponder,

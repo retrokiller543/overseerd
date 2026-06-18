@@ -21,10 +21,13 @@ pub mod router;
 
 pub use connection::{ConnectionHandler, ConnectionInfo};
 pub use extract::{
-    Cancel, Conn, Extension, FallibleHandler, FromContext, Handler, IntoErrorResponse, Payload,
-    Responder, ResponseStream, Streaming, dispatch_fallible, dispatch_with,
+    Cancel, Conn, ErrorResponse, Extension, FallibleHandler, FromContext, Handler, Payload,
+    Responder, ResponseError, ResponseStream, Streaming, dispatch_fallible, dispatch_with,
 };
 pub use overseer_macros::{Component, component, handlers, rpc, service};
+/// Wire-contract status types, re-exported from `overseer-transport` so handler
+/// authors import everything from `overseer_core`.
+pub use overseer_transport::{Flags, PredefinedCode, StatusCode};
 
 pub use container::ComponentContainer;
 pub use daemon::{Daemon, DaemonBuilder};

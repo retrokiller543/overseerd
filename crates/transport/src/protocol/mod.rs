@@ -3,6 +3,7 @@ pub mod codec;
 use serde::{Deserialize, Serialize};
 
 use crate::frame::{CallId, CallResult};
+use crate::status::StatusCode;
 
 /// Top-level wire message. Every frame on the wire is one of these.
 ///
@@ -15,10 +16,21 @@ use crate::frame::{CallId, CallResult};
 pub enum WireMessage {
     Request(WireRequest),
     Response(WireResponse),
-    StreamItem { id: CallId, payload: Vec<u8> },
-    StreamEnd { id: CallId },
-    StreamError { id: CallId, message: String },
-    StreamCancel { id: CallId },
+    StreamItem {
+        id: CallId,
+        payload: Vec<u8>,
+    },
+    StreamEnd {
+        id: CallId,
+    },
+    StreamError {
+        id: CallId,
+        code: StatusCode,
+        body: Vec<u8>,
+    },
+    StreamCancel {
+        id: CallId,
+    },
 }
 
 /// The request half of the wire protocol, also the opening frame of a stream.
@@ -43,10 +55,14 @@ pub struct WireResponse {
 }
 
 /// Success or failure at the wire level.
+///
+/// `Ok` is the postcard-encoded success body, exactly as before. `Err` carries a
+/// machine-readable [`StatusCode`] (always present, defaulting to `Internal`)
+/// and a postcard-encoded error body that may be empty.
 #[derive(Serialize, Deserialize)]
 pub enum WireOutcome {
     Ok(Vec<u8>),
-    Err(String),
+    Err { code: StatusCode, body: Vec<u8> },
 }
 
 impl WireResponse {
@@ -54,7 +70,7 @@ impl WireResponse {
     pub fn new(id: CallId, outcome: CallResult) -> Self {
         let outcome = match outcome {
             CallResult::Ok(bytes) => WireOutcome::Ok(bytes),
-            CallResult::Err(msg) => WireOutcome::Err(msg),
+            CallResult::Err { code, body } => WireOutcome::Err { code, body },
         };
 
         Self { id, outcome }

@@ -191,7 +191,7 @@ fn expand_method(
     );
 
     // A `Result` return dispatches through `FallibleHandler` (which enforces
-    // `E: IntoErrorResponse`); any other `Responder` return goes through
+    // `E: ResponseError`); any other `Responder` return goes through
     // `Handler`. Both erase to the same `RpcHandler` fn pointer.
     let dispatch = if attr::returns_result(&method.sig.output) {
         overseer_path("dispatch_fallible")
@@ -417,14 +417,14 @@ fn generate_init(
 
 /// The erased `RpcHandler` return type, repeated by both wrapper forms.
 fn handler_return_type() -> TokenStream {
-    let result = overseer_path("Result");
+    let error_response = overseer_path("ErrorResponse");
     let rpc_outcome = overseer_path("RpcOutcome");
 
     quote! {
         ::core::pin::Pin<
             ::std::boxed::Box<
                 dyn ::core::future::Future<
-                    Output = #result<#rpc_outcome>,
+                    Output = ::core::result::Result<#rpc_outcome, #error_response>,
                 > + ::core::marker::Send,
             >,
         >

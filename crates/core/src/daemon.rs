@@ -375,8 +375,8 @@ where
                     }
 
                     Some(Err(e)) => {
-                        warn!(%path, error = %e, "stream handler errored");
-                        let _ = sink.error(e.to_string()).await;
+                        warn!(%path, code = ?e.code, "stream handler errored");
+                        let _ = sink.error(e.code, e.body).await;
 
                         return;
                     }
@@ -391,9 +391,15 @@ where
         }
 
         Err(e) => {
-            warn!(%path, error = %e, "call returned error");
+            warn!(%path, code = ?e.code, "call returned error");
 
-            if let Err(e) = responder.respond(CallResult::Err(e.to_string())).await {
+            if let Err(e) = responder
+                .respond(CallResult::Err {
+                    code: e.code,
+                    body: e.body,
+                })
+                .await
+            {
                 warn!(%path, error = %e, "failed to send error response");
             }
         }

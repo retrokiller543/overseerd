@@ -4,7 +4,7 @@ use tracing::{debug, instrument, trace, warn};
 
 use crate::{
     Error, RpcCallContext, descriptors::RpcHandler, descriptors::RpcOutcome,
-    registry::DescriptorRegistry,
+    extract::ErrorResponse, registry::DescriptorRegistry,
 };
 
 /// Routes incoming RPC calls to their registered handlers by path.
@@ -33,12 +33,16 @@ impl RpcRouter {
     }
 
     #[instrument(level = "debug", skip_all, fields(%path))]
-    pub async fn dispatch(&self, path: &str, ctx: RpcCallContext) -> crate::Result<RpcOutcome> {
+    pub async fn dispatch(
+        &self,
+        path: &str,
+        ctx: RpcCallContext,
+    ) -> Result<RpcOutcome, ErrorResponse> {
         trace!("looking up handler");
 
         let Some(handler) = self.routes.get(path) else {
             warn!("route not found");
-            return Err(Error::RouteNotFound(path.to_string()));
+            return Err(Error::RouteNotFound(path.to_string()).into());
         };
 
         trace!("invoking handler");
@@ -47,7 +51,7 @@ impl RpcRouter {
 
         match &result {
             Ok(_) => trace!("handler succeeded"),
-            Err(e) => warn!(error = %e, "handler returned error"),
+            Err(e) => warn!(code = ?e.code, "handler returned error"),
         }
 
         result

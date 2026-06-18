@@ -56,12 +56,13 @@
 pub use overseer_core::{
     BoxedComponent, Cancel, Component, ComponentConstructionContext, ComponentContainer,
     ComponentDescriptor, ComponentFactory, ComponentScope, Conn, ConnectionHandler, ConnectionInfo,
-    Daemon, DaemonBuilder, DependencyDescriptor, Descriptor, DescriptorRegistry, Error, Extension,
-    FallibleHandler, FromContext, Handler, IntoErrorResponse, OperationKind, ParameterDescriptor,
-    ParameterKind, Payload, Responder, ResponseStream, Result, RpcCallContext, RpcDescriptor,
-    RpcGroup, RpcHandler, RpcOutcome, RpcResponse, RpcRouter, ServiceComponent, ServiceDescriptor,
-    ShutdownHandle, ShutdownSignal, Streaming, TypeDescriptor, component, dispatch_fallible,
-    dispatch_with, handlers, rpc, service, type_id_of,
+    Daemon, DaemonBuilder, DependencyDescriptor, Descriptor, DescriptorRegistry, Error,
+    ErrorResponse, Extension, FallibleHandler, Flags, FromContext, Handler, OperationKind,
+    ParameterDescriptor, ParameterKind, Payload, PredefinedCode, Responder, ResponseError,
+    ResponseStream, Result, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
+    RpcResponse, RpcRouter, ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal,
+    StatusCode, Streaming, TypeDescriptor, component, dispatch_fallible, dispatch_with, handlers,
+    rpc, service, type_id_of,
 };
 
 /// Re-exported so macro-generated code can call `inventory::submit!` through

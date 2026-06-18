@@ -144,7 +144,7 @@ async fn drain(call: &mut overseer::MemoryCall) -> (Vec<u32>, bool) {
         match call.recv().await {
             Some(ServerEvent::Item(bytes)) => items.push(dec::<u32>(&bytes)),
             Some(ServerEvent::End) => return (items, true),
-            Some(ServerEvent::Error(_)) => return (items, false),
+            Some(ServerEvent::Error { .. }) => return (items, false),
             Some(ServerEvent::Response(_)) => panic!("unexpected unary response in a stream"),
             None => return (items, false),
         }
@@ -212,7 +212,7 @@ async fn responder_shapes() {
     assert!(matches!(ok, CallResult::Ok(ref b) if dec::<u32>(b) == 1));
 
     let err = conn.call("StreamSvc.fallible_err", enc(&())).await.unwrap();
-    assert!(matches!(err, CallResult::Err(_)));
+    assert!(matches!(err, CallResult::Err { .. }));
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +269,7 @@ async fn server_stream_client_cancellation() {
     while let Some(event) = call.recv().await {
         match event {
             ServerEvent::Item(_) => continue,
-            ServerEvent::End | ServerEvent::Error(_) => {
+            ServerEvent::End | ServerEvent::Error { .. } => {
                 ended = true;
                 break;
             }
