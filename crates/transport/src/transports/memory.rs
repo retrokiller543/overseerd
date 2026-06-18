@@ -5,6 +5,7 @@ use tracing::{debug, instrument, trace};
 use crate::{
     error::{Error, Result},
     frame::{CallResult, IncomingCall, PeerInfo},
+    status::StatusCode,
     transport::{Connection, Respond, RespondStream, ResponseSink, Transport},
 };
 
@@ -18,7 +19,7 @@ pub enum ServerEvent {
     Response(CallResult),
     Item(Vec<u8>),
     End,
-    Error(String),
+    Error { code: StatusCode, body: Vec<u8> },
 }
 
 /// One inbound call frame handed to the daemon side, carrying the call's
@@ -182,7 +183,7 @@ impl MemoryCall {
     pub async fn response(&mut self) -> Result<CallResult> {
         match self.events.recv().await {
             Some(ServerEvent::Response(outcome)) => Ok(outcome),
-            Some(ServerEvent::Error(msg)) => Ok(CallResult::Err(msg)),
+            Some(ServerEvent::Error { code, body }) => Ok(CallResult::Err { code, body }),
             _ => Err(Error::Closed),
         }
     }
@@ -256,9 +257,9 @@ impl ResponseSink for MemorySink {
             .map_err(|_| Error::Closed)
     }
 
-    async fn error(self, message: String) -> Result<()> {
+    async fn error(self, code: StatusCode, body: Vec<u8>) -> Result<()> {
         self.events_tx
-            .send(ServerEvent::Error(message))
+            .send(ServerEvent::Error { code, body })
             .await
             .map_err(|_| Error::Closed)
     }

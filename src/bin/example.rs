@@ -8,11 +8,11 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite};
 use tracing_subscriber::EnvFilter;
 
 use overseer_core::{
-    Component, Daemon, Payload, ResponseStream, ServiceComponent, Streaming, component, handlers,
-    service,
+    Component, Daemon, ErrorResponse, Payload, PredefinedCode, ResponseError, ResponseStream,
+    ServiceComponent, StatusCode, Streaming, component, handlers, service,
 };
 use overseer_transport::{
-    TcpTransport, WireMessage, WireOutcome, WireRequest,
+    Flags, TcpTransport, WireMessage, WireOutcome, WireRequest,
     protocol::codec::{read_message, write_message},
 };
 
@@ -86,6 +86,49 @@ struct GreetResponse {
     message: String,
 }
 
+/// The application subcode carried in the custom section of a `GreetError`.
+const GREET_EMPTY_SUBCODE: u16 = 42;
+
+/// The structured error body a `GreetError` serializes for the client to decode.
+#[derive(Serialize, Deserialize, Debug)]
+struct GreetErrorBody {
+    reason: String,
+}
+
+/// A handler error demonstrating a status code: a predefined category, an
+/// application-owned custom subcode, the `RETRYABLE` flag, and a structured body.
+#[derive(Debug)]
+enum GreetError {
+    EmptyName,
+}
+
+impl std::fmt::Display for GreetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GreetError::EmptyName => write!(f, "name must not be empty"),
+        }
+    }
+}
+
+impl ResponseError for GreetError {
+    fn status_code(&self) -> StatusCode {
+        StatusCode::new_with_custom(
+            PredefinedCode::BadInput,
+            Flags::empty(),
+            GREET_EMPTY_SUBCODE,
+        )
+    }
+
+    fn error_response(self) -> ErrorResponse {
+        let code = self.status_code();
+        let body = GreetErrorBody {
+            reason: self.to_string(),
+        };
+
+        ErrorResponse::with_serialized_body(code, &body)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Components — the dependency chain the container builds bottom-up:
 //   GreetConfig  (manual instance, `with_component`)
@@ -150,7 +193,11 @@ impl Greeter {
     async fn greet(
         &self,
         Payload(req): Payload<GreetRequest>,
-    ) -> overseer_core::Result<GreetResponse> {
+    ) -> Result<GreetResponse, GreetError> {
+        if req.name.is_empty() {
+            return Err(GreetError::EmptyName);
+        }
+
         Ok(GreetResponse {
             message: self.greeting.message(&req.name),
         })
@@ -274,10 +321,34 @@ fn unpack<Resp: for<'de> Deserialize<'de>>(msg: WireMessage) -> Resp {
     match msg {
         WireMessage::Response(r) => match r.outcome {
             WireOutcome::Ok(bytes) => postcard::from_bytes(&bytes).expect("deserialize response"),
-            WireOutcome::Err(e) => panic!("RPC error: {e}"),
+            WireOutcome::Err { code, body } => {
+                panic!("RPC error: {} ({} body bytes)", describe(code), body.len())
+            }
         },
         _ => panic!("unexpected message type"),
     }
+}
+
+/// Like `unpack`, but surfaces an error response's `{ code, body }` to the caller
+/// instead of panicking, so the client can classify the failure.
+fn unpack_result(msg: WireMessage) -> Result<Vec<u8>, (StatusCode, Vec<u8>)> {
+    match msg {
+        WireMessage::Response(r) => match r.outcome {
+            WireOutcome::Ok(bytes) => Ok(bytes),
+            WireOutcome::Err { code, body } => Err((code, body)),
+        },
+        _ => panic!("unexpected message type"),
+    }
+}
+
+/// Renders a status code's three sections for display.
+fn describe(code: StatusCode) -> String {
+    format!(
+        "predefined={} custom={} retryable={}",
+        code.predefined().to_byte(),
+        code.custom(),
+        code.contains(Flags::RETRYABLE),
+    )
 }
 
 /// Writes one wire frame, panicking on transport error (example-grade).
@@ -319,8 +390,8 @@ where
                 items.push(data);
             }
             WireMessage::StreamEnd { .. } => break,
-            WireMessage::StreamError { message, .. } => {
-                eprintln!("stream error: {message}");
+            WireMessage::StreamError { code, .. } => {
+                eprintln!("stream error: {}", describe(code));
                 break;
             }
             _ => panic!("unexpected frame in server stream"),
@@ -386,6 +457,34 @@ where
     .await;
     println!("greet            →  {}", greet.message);
 
+    // Trigger the classified error: an empty name returns a GreetError carrying a
+    // predefined category, a custom subcode, the RETRYABLE flag, and a body.
+    let payload = postcard::to_allocvec(&GreetRequest {
+        name: String::new(),
+    })
+    .unwrap();
+    let req = WireMessage::Request(WireRequest {
+        id: 6,
+        path: "Greeter.greet".to_string(),
+        payload,
+        streaming_input: false,
+    });
+
+    write_frame(stream, &req).await;
+
+    match unpack_result(read_message(stream).await.expect("recv response")) {
+        Ok(_) => println!("greet (empty)    →  unexpected success"),
+        Err((code, body)) => {
+            let detail: GreetErrorBody = postcard::from_bytes(&body).expect("decode error body");
+
+            println!(
+                "greet (empty)    →  error: {} reason={:?}",
+                describe(code),
+                detail.reason,
+            );
+        }
+    }
+
     let countdown: Vec<u32> = call_server_stream(stream, 3, "Echo.countdown", &50u32).await;
     println!("countdown (srv)  →  {countdown:?}");
 
@@ -449,8 +548,8 @@ where
                 let echoed: String = postcard::from_bytes(&payload).unwrap();
                 println!("  ← {echoed}");
             }
-            WireMessage::StreamError { message, .. } => {
-                eprintln!("stream error: {message}");
+            WireMessage::StreamError { code, .. } => {
+                eprintln!("stream error: {}", describe(code));
                 return;
             }
             WireMessage::StreamEnd { .. } => break,

@@ -292,7 +292,12 @@ mod tests {
 
     fn fake_handler(
         _: RpcCallContext,
-    ) -> Pin<Box<dyn Future<Output = crate::Result<RpcOutcome>> + Send>> {
+    ) -> Pin<
+        Box<
+            dyn Future<Output = core::result::Result<RpcOutcome, crate::extract::ErrorResponse>>
+                + Send,
+        >,
+    > {
         Box::pin(async { todo!() })
     }
 

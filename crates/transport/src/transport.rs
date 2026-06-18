@@ -3,6 +3,7 @@ use std::future::Future;
 use crate::{
     error::Result,
     frame::{CallResult, IncomingCall, PeerInfo},
+    status::StatusCode,
 };
 
 /// Sends the single response back to the caller of a unary inbound RPC.
@@ -29,8 +30,9 @@ pub trait ResponseSink: Send {
     /// Sends one response item (a `StreamItem` frame).
     fn send(&mut self, item: Vec<u8>) -> impl Future<Output = Result<()>> + Send;
 
-    /// Terminates the stream with a failure (a `StreamError` frame).
-    fn error(self, message: String) -> impl Future<Output = Result<()>> + Send;
+    /// Terminates the stream with a failure (a `StreamError` frame), carrying
+    /// the same `{ code, body }` shape as a unary error.
+    fn error(self, code: StatusCode, body: Vec<u8>) -> impl Future<Output = Result<()>> + Send;
 
     /// Terminates the stream successfully (a `StreamEnd` frame).
     fn finish(self) -> impl Future<Output = Result<()>> + Send;

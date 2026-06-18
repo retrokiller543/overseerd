@@ -19,7 +19,7 @@
 //! a blanket `impl<T: Serialize>` coexist with an `impl … for Result` (it will
 //! not prove `Result: !Serialize` even though serde never implements it). So a
 //! handler returning `Result<R, E>` satisfies [`FallibleHandler`] instead of
-//! [`Handler`] — that is where `E: IntoErrorResponse` is enforced and `Err` is
+//! [`Handler`] — that is where `E: ResponseError` is enforced and `Err` is
 //! mapped to a transport error. The `#[rpc]` macro picks the matching
 //! `dispatch_*` from the return type, so for a given handler exactly one of the
 //! two traits ever applies.
@@ -32,9 +32,11 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
+use overseer_transport::{PredefinedCode, StatusCode};
 use serde::{Serialize, de::DeserializeOwned};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::{
     Error, RpcCallContext, RpcResponse, connection::ConnectionInfo, descriptors::RpcOutcome,
@@ -135,20 +137,68 @@ impl<T> Stream for Streaming<T> {
     }
 }
 
-/// Converts an error type into the framework error carried back to the client.
-///
-/// The blanket impl covers any `E: Into<Error>`, so handlers returning
-/// `Result<T, Error>` (or any error convertible to it) work unchanged.
-pub trait IntoErrorResponse {
-    fn into_error_response(self) -> Error;
+/// The handler-side error currency: a status code plus a serialized body, carried
+/// to the wire error arm of a call (unary or streaming).
+#[derive(Debug)]
+pub struct ErrorResponse {
+    pub code: StatusCode,
+    pub body: Vec<u8>,
 }
 
-impl<E> IntoErrorResponse for E
+impl ErrorResponse {
+    /// Builds an error response from a status code and an already-serialized body.
+    pub fn new(code: StatusCode, body: Vec<u8>) -> Self {
+        Self { code, body }
+    }
+
+    /// Builds an error response by serializing `body`, degrading to an empty body
+    /// with a logged warning rather than failing (FR-011): the status code must
+    /// survive even when the body cannot be encoded.
+    pub fn with_serialized_body<T: Serialize + ?Sized>(code: StatusCode, body: &T) -> Self {
+        match postcard::to_allocvec(body) {
+            Ok(bytes) => Self::new(code, bytes),
+
+            Err(e) => {
+                warn!(error = %e, "failed to serialize error body; falling back to empty body");
+
+                Self::new(code, Vec::new())
+            }
+        }
+    }
+}
+
+/// Converts an error into the status code + body sent back to the caller.
+///
+/// `status_code` defaults to `Internal`, so most implementors override only that.
+/// A blanket impl covers any `E: Serialize`, serializing the error value itself
+/// as the body under the default code — so a serializable error type is usable as
+/// a handler error with no boilerplate. A type wanting a custom code, or a body
+/// distinct from its own serialization, implements the trait directly (and is
+/// then not `Serialize`, so it does not overlap the blanket). [`Error`] is one
+/// such type: it maps its variants to categories via [`Error::status_code`](crate::Error::status_code).
+pub trait ResponseError {
+    /// The status code for this error. Defaults to `Internal`.
+    fn status_code(&self) -> StatusCode {
+        StatusCode::from(PredefinedCode::Internal)
+    }
+
+    /// Renders the error to a code + serialized body, attaching
+    /// [`status_code`](Self::status_code).
+    fn error_response(self) -> ErrorResponse;
+}
+
+impl<E> ResponseError for E
 where
-    E: Into<Error>,
+    E: Serialize,
 {
-    fn into_error_response(self) -> Error {
-        self.into()
+    fn error_response(self) -> ErrorResponse {
+        ErrorResponse::with_serialized_body(self.status_code(), &self)
+    }
+}
+
+impl From<Error> for ErrorResponse {
+    fn from(err: Error) -> Self {
+        err.error_response()
     }
 }
 
@@ -160,14 +210,14 @@ where
 /// because a blanket `impl<T: Serialize>` and an `impl … for Result` cannot
 /// coexist under Rust's coherence rules.
 pub trait Responder {
-    fn respond(self) -> crate::Result<RpcOutcome>;
+    fn respond(self) -> Result<RpcOutcome, ErrorResponse>;
 }
 
 impl<T> Responder for T
 where
     T: Serialize,
 {
-    fn respond(self) -> crate::Result<RpcOutcome> {
+    fn respond(self) -> Result<RpcOutcome, ErrorResponse> {
         let payload =
             postcard::to_allocvec(&self).map_err(|e| Error::Serialization(e.to_string()))?;
 
@@ -194,11 +244,13 @@ impl<T> Responder for ResponseStream<T>
 where
     T: Serialize + Send + 'static,
 {
-    fn respond(self) -> crate::Result<RpcOutcome> {
-        let items = self.inner.map(|item| {
-            item.and_then(|value| {
-                postcard::to_allocvec(&value).map_err(|e| Error::Serialization(e.to_string()))
-            })
+    fn respond(self) -> Result<RpcOutcome, ErrorResponse> {
+        let items = self.inner.map(|item| -> Result<Vec<u8>, ErrorResponse> {
+            let value = item?;
+            let bytes =
+                postcard::to_allocvec(&value).map_err(|e| Error::Serialization(e.to_string()))?;
+
+            Ok(bytes)
         });
 
         Ok(RpcOutcome::Stream(Box::pin(items)))
@@ -214,7 +266,7 @@ pub trait Handler<Args>: Send + Sized + 'static {
     fn call(
         self,
         ctx: RpcCallContext,
-    ) -> impl Future<Output = crate::Result<RpcOutcome>> + Send + 'static;
+    ) -> impl Future<Output = Result<RpcOutcome, ErrorResponse>> + Send + 'static;
 }
 
 macro_rules! impl_handler {
@@ -227,7 +279,7 @@ macro_rules! impl_handler {
             $( $ty: FromContext + Send + 'static, )*
         {
             #[allow(non_snake_case, unused_variables)]
-            async fn call(self, ctx: RpcCallContext) -> crate::Result<RpcOutcome> {
+            async fn call(self, ctx: RpcCallContext) -> Result<RpcOutcome, ErrorResponse> {
                 $( let $ty = <$ty as FromContext>::from_context(&ctx).await?; )*
 
                 let output = (self)($($ty,)*).await;
@@ -239,7 +291,7 @@ macro_rules! impl_handler {
 }
 
 /// The fallible counterpart to [`Handler`]: an async fn returning
-/// `Result<R, E>` where `R: Responder` and `E: IntoErrorResponse`.
+/// `Result<R, E>` where `R: Responder` and `E: ResponseError`.
 ///
 /// A `Result` return cannot go through [`Handler`] (it is not a `Responder`),
 /// so this trait carries it instead — mapping `Ok` through the responder and
@@ -249,7 +301,7 @@ pub trait FallibleHandler<Args>: Send + Sized + 'static {
     fn call(
         self,
         ctx: RpcCallContext,
-    ) -> impl Future<Output = crate::Result<RpcOutcome>> + Send + 'static;
+    ) -> impl Future<Output = Result<RpcOutcome, ErrorResponse>> + Send + 'static;
 }
 
 macro_rules! impl_fallible_handler {
@@ -259,16 +311,16 @@ macro_rules! impl_fallible_handler {
             F: Fn($($ty,)*) -> Fut + Send + Sync + 'static,
             Fut: Future<Output = core::result::Result<Res, Err>> + Send + 'static,
             Res: Responder + 'static,
-            Err: IntoErrorResponse + 'static,
+            Err: ResponseError + 'static,
             $( $ty: FromContext + Send + 'static, )*
         {
             #[allow(non_snake_case, unused_variables)]
-            async fn call(self, ctx: RpcCallContext) -> crate::Result<RpcOutcome> {
+            async fn call(self, ctx: RpcCallContext) -> Result<RpcOutcome, ErrorResponse> {
                 $( let $ty = <$ty as FromContext>::from_context(&ctx).await?; )*
 
                 match (self)($($ty,)*).await {
                     Ok(value) => value.respond(),
-                    Err(e) => Err(e.into_error_response()),
+                    Err(e) => Err(e.error_response()),
                 }
             }
         }
@@ -303,7 +355,7 @@ impl_params!(impl_fallible_handler);
 pub fn dispatch_with<H, Args>(
     handler: H,
     ctx: RpcCallContext,
-) -> Pin<Box<dyn Future<Output = crate::Result<RpcOutcome>> + Send>>
+) -> Pin<Box<dyn Future<Output = Result<RpcOutcome, ErrorResponse>> + Send>>
 where
     H: Handler<Args>,
 {
@@ -315,9 +367,57 @@ where
 pub fn dispatch_fallible<H, Args>(
     handler: H,
     ctx: RpcCallContext,
-) -> Pin<Box<dyn Future<Output = crate::Result<RpcOutcome>> + Send>>
+) -> Pin<Box<dyn Future<Output = Result<RpcOutcome, ErrorResponse>> + Send>>
 where
     H: FallibleHandler<Args>,
 {
     Box::pin(handler.call(ctx))
+}
+
+#[cfg(test)]
+mod tests {
+    use overseer_transport::PredefinedCode;
+    use serde::Serializer;
+    use serde::ser::Error as _;
+
+    use super::*;
+
+    /// A type whose serialization always fails, to exercise the FR-011 fallback.
+    struct Unserializable;
+
+    impl Serialize for Unserializable {
+        fn serialize<S: Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+            Err(S::Error::custom("intentional serialization failure"))
+        }
+    }
+
+    #[test]
+    fn body_serialization_failure_preserves_code_with_empty_body() {
+        // FR-011: a body that fails to serialize yields the intended code with a
+        // fallback (empty) body rather than dropping the code or panicking.
+        let code = StatusCode::from(PredefinedCode::NotFound);
+        let response = ErrorResponse::with_serialized_body(code, &Unserializable);
+
+        assert_eq!(response.code, code);
+        assert!(response.body.is_empty());
+    }
+
+    #[test]
+    fn serializable_error_uses_blanket_impl() {
+        // A `Serialize` error gets the blanket `ResponseError`: the default
+        // `Internal` code, with the error value itself as the body.
+        #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+        struct PlainError {
+            reason: String,
+        }
+
+        let error = PlainError {
+            reason: "boom".to_string(),
+        };
+        let response = error.error_response();
+        let decoded: PlainError = postcard::from_bytes(&response.body).expect("decode body");
+
+        assert_eq!(decoded.reason, "boom");
+        assert_eq!(response.code.predefined(), PredefinedCode::Internal);
+    }
 }

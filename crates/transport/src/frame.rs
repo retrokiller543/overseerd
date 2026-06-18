@@ -1,6 +1,8 @@
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::status::StatusCode;
+
 /// Opaque identifier correlating a request to its response within a connection.
 ///
 /// Assigned by the client and echoed back unchanged. The daemon never
@@ -24,10 +26,14 @@ pub struct IncomingCall {
 }
 
 /// Success or failure of an RPC call at the transport layer.
+///
+/// The error arm carries a machine-readable [`StatusCode`] and a serialized
+/// body chosen by the error type; the body may be empty. The success arm is the
+/// raw response bytes, unchanged.
 #[derive(Debug)]
 pub enum CallResult {
     Ok(Vec<u8>),
-    Err(String),
+    Err { code: StatusCode, body: Vec<u8> },
 }
 
 /// Transport-level information about the remote peer.

@@ -5,6 +5,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::descriptors::types::TypeDescriptor;
+use crate::extract::ErrorResponse;
 
 /// The interaction pattern of an RPC method, following gRPC's four kinds.
 ///
@@ -109,12 +110,15 @@ pub struct RpcResponse {
 /// declared `OperationKind` is metadata and does not select this at runtime.
 pub enum RpcOutcome {
     Unary(RpcResponse),
-    Stream(Pin<Box<dyn Stream<Item = crate::Result<Vec<u8>>> + Send>>),
+    Stream(Pin<Box<dyn Stream<Item = core::result::Result<Vec<u8>, ErrorResponse>> + Send>>),
 }
 
 /// Async function pointer type for dispatching an RPC call.
-pub type RpcHandler =
-    fn(RpcCallContext) -> Pin<Box<dyn Future<Output = crate::Result<RpcOutcome>> + Send>>;
+pub type RpcHandler = fn(
+    RpcCallContext,
+) -> Pin<
+    Box<dyn Future<Output = core::result::Result<RpcOutcome, ErrorResponse>> + Send>,
+>;
 
 /// Static metadata describing a single RPC method on a service.
 pub struct RpcDescriptor {
