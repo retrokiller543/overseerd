@@ -303,10 +303,11 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// carries arguments, or if a streaming signature is malformed (more than one
 /// `Streaming<T>`, or `Payload<T>` alongside `Streaming<T>`).
 #[proc_macro_attribute]
-pub fn handlers(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as attr::HandlersArgs);
     let item = parse_macro_input!(item as ItemImpl);
 
-    handlers::expand(item)
+    handlers::expand(args, item)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

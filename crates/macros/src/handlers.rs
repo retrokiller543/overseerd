@@ -17,15 +17,16 @@ use syn::{
     FnArg, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta, ReturnType, Type, spanned::Spanned,
 };
 
-use crate::{attr, paths::overseer_path};
+use crate::{attr, attr::HandlersArgs, paths::overseer_path};
 
-pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
+pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream> {
     let self_ty = (*item.self_ty).clone();
     let self_ident = self_ty_ident(&self_ty)?;
     let self_name = LitStr::new(&self_ident.to_string(), self_ident.span());
 
     let mut wrappers = Vec::new();
     let mut descriptors = Vec::new();
+    let mut client_methods = Vec::new();
     let mut init: Option<InitInfo> = None;
 
     for impl_item in &mut item.items {
@@ -61,11 +62,14 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
             ));
         }
 
-        let (wrapper, descriptor) = expand_method(&self_ty, &self_ident, &self_name, method)?;
+        let (wrapper, descriptor, client) = expand_method(&self_ty, &self_ident, &self_name, method)?;
 
         wrappers.push(wrapper);
         descriptors.push(descriptor);
+        client_methods.push(client);
     }
+
+    let client_code = generate_client(&self_ident, &args.client_trait, &client_methods);
 
     let rpc_registration = if descriptors.is_empty() {
         quote!()
@@ -103,6 +107,8 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
 
         #init_marker
 
+        #client_code
+
         const _: () = {
             #(#wrappers)*
 
@@ -113,13 +119,14 @@ pub fn expand(mut item: ItemImpl) -> syn::Result<TokenStream> {
     })
 }
 
-/// Builds the erased handler wrapper and `RpcDescriptor` for one `#[rpc]` method.
+/// Builds the erased handler wrapper, `RpcDescriptor`, and client method for one
+/// `#[rpc]` method.
 fn expand_method(
     self_ty: &Type,
     self_ident: &syn::Ident,
     self_name: &LitStr,
     method: &ImplItemFn,
-) -> syn::Result<(TokenStream, TokenStream)> {
+) -> syn::Result<(TokenStream, TokenStream, ClientMethod)> {
     if method.sig.asyncness.is_none() {
         return Err(syn::Error::new_spanned(
             &method.sig,
@@ -247,7 +254,234 @@ fn expand_method(
         }
     };
 
-    Ok((wrapper, descriptor))
+    let client = client_method(
+        self_ident,
+        method_ident,
+        &param_types,
+        &method.sig.output,
+        streamed_input,
+        streamed_output,
+    );
+
+    Ok((wrapper, descriptor, client))
+}
+
+/// A generated client method's pieces: the call name, its argument list
+/// (including `&self`), its return type, and the body that drives the connection.
+struct ClientMethod {
+    ident: syn::Ident,
+    args: TokenStream,
+    ret: TokenStream,
+    body: TokenStream,
+}
+
+/// Derives the typed client method mirroring one `#[rpc]`. Request types come from
+/// the `Payload<T>`/`Streaming<T>` parameters and response/error types from the
+/// return shape; the operation kind selects which `ClientConnection` call to make.
+fn client_method(
+    self_ident: &syn::Ident,
+    method_ident: &syn::Ident,
+    param_types: &[&Type],
+    output: &ReturnType,
+    streamed_input: bool,
+    streamed_output: bool,
+) -> ClientMethod {
+    let path = LitStr::new(
+        &format!("{}.{}", self_ident, method_ident),
+        method_ident.span(),
+    );
+    let client_error = overseer_path("transport::ClientError");
+    let client_transport = overseer_path("transport::ClientTransport");
+    let response_error = overseer_path("ResponseError");
+    let raw = overseer_path("transport::Raw");
+
+    let payload_ty = param_types.iter().find_map(|ty| attr::payload_inner(ty));
+    let streaming_ty = param_types.iter().find_map(|ty| attr::streaming_inner(ty));
+    let (result_ok, result_err) = match attr::result_type_args(output) {
+        Some((ok, err)) => (Some(ok), err),
+        None => (None, None),
+    };
+
+    // The client decodes the *body* the error serializes, which may differ from
+    // the handler's error type — so it tracks `<E as ResponseError>::Body`, not `E`.
+    // A one-argument `Result<T>` alias hides its error, so it falls back to `Raw`.
+    let err_ty = match &result_err {
+        Some(e) => quote!(<#e as #response_error>::Body),
+        None => quote!(#raw),
+    };
+
+    // The success type carried on the wire: the `Ok` of a `Result`, else the bare
+    // return type, else `()` for an absent return. `Option<T>` is left intact.
+    let success_ty: Type = match (&result_ok, output) {
+        (Some(ok), _) => ok.clone(),
+        (None, ReturnType::Type(_, ty)) => (**ty).clone(),
+        (None, ReturnType::Default) => syn::parse_quote!(()),
+    };
+
+    // The optional request parameter and the value forwarded to a unary or
+    // server-streaming call (a no-payload method sends the unit body).
+    let (req_arg, call_arg) = match &payload_ty {
+        Some(req) => (quote!(, req: &#req), quote!(req)),
+        None => (quote!(), quote!(&())),
+    };
+    let req_item = streaming_ty
+        .as_ref()
+        .map(|t| quote!(#t))
+        .unwrap_or_else(|| quote!(()));
+
+    let (args, ret, body) = match (streamed_input, streamed_output) {
+        (false, false) => {
+            let ret = quote!(::core::result::Result<#success_ty, #client_error<#err_ty>>);
+            let body = quote!(self.conn.call(#path, #call_arg).await);
+
+            (quote!(&self #req_arg), ret, body)
+        }
+
+        (false, true) => {
+            let server_stream = overseer_path("transport::ServerStream");
+            let item = attr::response_stream_inner(&success_ty).unwrap_or_else(|| success_ty.clone());
+            let ret = quote! {
+                ::core::result::Result<
+                    #server_stream<<T as #client_transport>::Call, #item, #err_ty>,
+                    #client_error<#err_ty>,
+                >
+            };
+            let body = quote!(self.conn.server_stream(#path, #call_arg).await);
+
+            (quote!(&self #req_arg), ret, body)
+        }
+
+        (true, false) => {
+            let client_upstream = overseer_path("transport::ClientUpstream");
+            let ret = quote! {
+                ::core::result::Result<
+                    #client_upstream<<T as #client_transport>::Call, #req_item, #success_ty, #err_ty>,
+                    #client_error<#err_ty>,
+                >
+            };
+            let body = quote!(self.conn.client_stream(#path).await);
+
+            (quote!(&self), ret, body)
+        }
+
+        (true, true) => {
+            let bidi_stream = overseer_path("transport::BidiStream");
+            let item = attr::response_stream_inner(&success_ty).unwrap_or_else(|| success_ty.clone());
+            let ret = quote! {
+                ::core::result::Result<
+                    #bidi_stream<<T as #client_transport>::Call, #req_item, #item, #err_ty>,
+                    #client_error<#err_ty>,
+                >
+            };
+            let body = quote!(self.conn.bidi_stream(#path).await);
+
+            (quote!(&self), ret, body)
+        }
+    };
+
+    ClientMethod {
+        ident: method_ident.clone(),
+        args,
+        ret,
+        body,
+    }
+}
+
+/// Assembles the per-service client: a `{Service}Client<T>` wrapper plus its
+/// methods, as either a plain inherent impl or — with `#[handlers(client_trait =
+/// Name)]` — a `dyn`-compatible trait `Name` and its impl. Emits nothing when the
+/// macro is built without the `client` feature or the block declares no `#[rpc]`s.
+fn generate_client(
+    self_ident: &syn::Ident,
+    client_trait: &Option<syn::Ident>,
+    methods: &[ClientMethod],
+) -> TokenStream {
+    if !cfg!(feature = "client") || methods.is_empty() {
+        return quote!();
+    }
+
+    let client_ident = format_ident!("{}Client", self_ident);
+    let client_connection = overseer_path("transport::ClientConnection");
+    let client_transport = overseer_path("transport::ClientTransport");
+
+    let scaffold = quote! {
+        pub struct #client_ident<T: #client_transport> {
+            conn: #client_connection<T>,
+        }
+
+        impl<T: #client_transport> #client_ident<T> {
+            /// Wraps an established client connection.
+            pub fn new(conn: #client_connection<T>) -> Self {
+                Self { conn }
+            }
+        }
+    };
+
+    match client_trait {
+        None => {
+            let methods = methods.iter().map(|m| {
+                let ClientMethod {
+                    ident,
+                    args,
+                    ret,
+                    body,
+                } = m;
+
+                quote! {
+                    pub async fn #ident(#args) -> #ret {
+                        #body
+                    }
+                }
+            });
+
+            quote! {
+                #scaffold
+
+                impl<T: #client_transport> #client_ident<T> {
+                    #(#methods)*
+                }
+            }
+        }
+
+        Some(trait_ident) => {
+            let async_trait = overseer_path("async_trait::async_trait");
+            let signatures = methods.iter().map(|m| {
+                let ClientMethod {
+                    ident, args, ret, ..
+                } = m;
+
+                quote!(async fn #ident(#args) -> #ret;)
+            });
+            let implementations = methods.iter().map(|m| {
+                let ClientMethod {
+                    ident,
+                    args,
+                    ret,
+                    body,
+                } = m;
+
+                quote! {
+                    async fn #ident(#args) -> #ret {
+                        #body
+                    }
+                }
+            });
+
+            quote! {
+                #scaffold
+
+                #[#async_trait]
+                pub trait #trait_ident<T: #client_transport> {
+                    #(#signatures)*
+                }
+
+                #[#async_trait]
+                impl<T: #client_transport> #trait_ident<T> for #client_ident<T> {
+                    #(#implementations)*
+                }
+            }
+        }
+    }
 }
 
 /// The `#[init]` constructor: its `Arc<T>` parameters are injected dependencies.

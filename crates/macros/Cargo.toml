@@ -8,6 +8,9 @@ authors.workspace = true
 [lib]
 proc-macro = true
 
+[features]
+client = []
+
 [dependencies]
 syn = { workspace = true }
 quote = { workspace = true }

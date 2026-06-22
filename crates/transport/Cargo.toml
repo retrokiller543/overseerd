@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+client = []
+
 [dependencies]
 bitflags = { workspace = true }
 thiserror = "2"

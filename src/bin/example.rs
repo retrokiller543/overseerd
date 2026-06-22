@@ -1,24 +1,23 @@
-use std::fmt::Debug;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use futures::StreamExt;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite};
+use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 
-use overseer_core::{
-    Component, Daemon, ErrorResponse, Payload, PredefinedCode, ResponseError, ResponseStream,
-    ServiceComponent, StatusCode, Streaming, component, handlers, service,
-};
-use overseer_transport::{
-    Flags, TcpTransport, WireMessage, WireOutcome, WireRequest,
-    protocol::codec::{read_message, write_message},
-};
+use overseer_core::{Component, Daemon, ErrorResponse, Payload, PredefinedCode, ResponseError, ResponseStream, ServiceComponent, StatusCode, Streaming, component, handlers, service, TypeDescriptor};
+use overseer_transport::{Flags, TcpTransport};
 
 #[cfg(unix)]
 use overseer_transport::UnixTransport;
 
+// The client SDK is generated and compiled only under the `client` feature; the
+// daemon build pulls in none of it.
+#[cfg(feature = "client")]
+use overseer::{ClientConnection, ClientError, ClientTransport};
+#[cfg(feature = "client")]
+use tokio::io::AsyncBufReadExt;
+use overseer::inventory;
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -69,9 +68,6 @@ const UNIX_SOCK: &str = "/tmp/overseer-example.sock";
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize, Debug)]
-struct PingRequest;
-
-#[derive(Serialize, Deserialize, Debug)]
 struct PingResponse {
     message: String,
 }
@@ -111,6 +107,8 @@ impl std::fmt::Display for GreetError {
 }
 
 impl ResponseError for GreetError {
+    type Body = GreetErrorBody;
+    
     fn status_code(&self) -> StatusCode {
         StatusCode::new_with_custom(
             PredefinedCode::BadInput,
@@ -171,7 +169,14 @@ struct Greeter {
 // singleton's common deps; parameters are extracted by type (`Payload<T>`).
 // ---------------------------------------------------------------------------
 
-#[handlers]
+// `#[handlers(client_trait = GreeterApi)]` additionally generates a
+// `GreeterApi<T>` trait (and a `GreeterClient<T>` impl of it) under the `client`
+// feature, so callers can depend on the trait and mock it; `#[async_trait]` keeps
+// it `dyn`-compatible. It is generic over the transport `T` because streaming
+// return types name the transport's stream handle. A service whose RPCs are split
+// across several `#[handlers]` blocks may still generate a client, but only a
+// single block may carry it (the client struct is defined once).
+#[handlers(client_trait = GreeterApi)]
 impl Greeter {
     // An explicit `#[init]` constructor; overrides the field-injection default.
     // Its fixed-name `init` marker makes a second `#[init]` a compile error.
@@ -202,12 +207,7 @@ impl Greeter {
             message: self.greeting.message(&req.name),
         })
     }
-}
 
-// A second impl block contributing to the *same* service — ping, greet, and
-// test all roll up under "Greeter".
-#[handlers]
-impl Greeter {
     #[rpc]
     async fn test() {}
 }
@@ -293,314 +293,169 @@ async fn run_daemon(transport: TransportKind) -> overseer_core::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// Client helpers — all reuse the caller's open stream/socket
-// ---------------------------------------------------------------------------
-
-async fn call_stream<S, Req, Resp>(stream: &mut S, id: u64, path: &str, req: &Req) -> Resp
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-    Req: Serialize,
-    Resp: for<'de> Deserialize<'de>,
-{
-    let payload = postcard::to_allocvec(req).unwrap();
-    let msg = WireMessage::Request(WireRequest {
-        id,
-        path: path.to_string(),
-        payload,
-        streaming_input: false,
-    });
-
-    write_message(stream, &msg).await.expect("send request");
-
-    let resp = read_message(stream).await.expect("recv response");
-
-    unpack(resp)
-}
-
-fn unpack<Resp: for<'de> Deserialize<'de>>(msg: WireMessage) -> Resp {
-    match msg {
-        WireMessage::Response(r) => match r.outcome {
-            WireOutcome::Ok(bytes) => postcard::from_bytes(&bytes).expect("deserialize response"),
-            WireOutcome::Err { code, body } => {
-                panic!("RPC error: {} ({} body bytes)", describe(code), body.len())
-            }
-        },
-        _ => panic!("unexpected message type"),
-    }
-}
-
-/// Like `unpack`, but surfaces an error response's `{ code, body }` to the caller
-/// instead of panicking, so the client can classify the failure.
-fn unpack_result(msg: WireMessage) -> Result<Vec<u8>, (StatusCode, Vec<u8>)> {
-    match msg {
-        WireMessage::Response(r) => match r.outcome {
-            WireOutcome::Ok(bytes) => Ok(bytes),
-            WireOutcome::Err { code, body } => Err((code, body)),
-        },
-        _ => panic!("unexpected message type"),
-    }
-}
-
-/// Renders a status code's three sections for display.
-fn describe(code: StatusCode) -> String {
-    format!(
-        "predefined={} custom={} retryable={}",
-        code.predefined().to_byte(),
-        code.custom(),
-        code.contains(Flags::RETRYABLE),
-    )
-}
-
-/// Writes one wire frame, panicking on transport error (example-grade).
-async fn write_frame<S>(stream: &mut S, msg: &WireMessage)
-where
-    S: AsyncWrite + Unpin,
-{
-    write_message(stream, msg).await.expect("send frame");
-}
-
-/// Server streaming: one request, then collect items until end/error.
-async fn call_server_stream<S, Req, Resp>(
-    stream: &mut S,
-    id: u64,
-    path: &str,
-    req: &Req,
-) -> Vec<Resp>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-    Req: Serialize,
-    Resp: DeserializeOwned + Debug,
-{
-    let payload = postcard::to_allocvec(req).unwrap();
-    let open = WireMessage::Request(WireRequest {
-        id,
-        path: path.to_string(),
-        payload,
-        streaming_input: false,
-    });
-
-    write_frame(stream, &open).await;
-
-    let mut items = Vec::new();
-
-    loop {
-        match read_message(stream).await.expect("recv frame") {
-            WireMessage::StreamItem { payload, .. } => {
-                let data = postcard::from_bytes(&payload).expect("decode item");
-                items.push(data);
-            }
-            WireMessage::StreamEnd { .. } => break,
-            WireMessage::StreamError { code, .. } => {
-                eprintln!("stream error: {}", describe(code));
-                break;
-            }
-            _ => panic!("unexpected frame in server stream"),
-        }
-    }
-
-    items
-}
-
-/// Client streaming: open with `streaming_input`, send items, half-close, then
-/// read the single response.
-async fn call_client_stream<S, Req, Resp>(
-    stream: &mut S,
-    id: u64,
-    path: &str,
-    items: &[Req],
-) -> Resp
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-    Req: Serialize,
-    Resp: for<'de> Deserialize<'de>,
-{
-    let open = WireMessage::Request(WireRequest {
-        id,
-        path: path.to_string(),
-        payload: Vec::new(),
-        streaming_input: true,
-    });
-
-    write_frame(stream, &open).await;
-
-    for item in items {
-        let payload = postcard::to_allocvec(item).unwrap();
-
-        write_frame(stream, &WireMessage::StreamItem { id, payload }).await;
-    }
-
-    write_frame(stream, &WireMessage::StreamEnd { id }).await;
-
-    unpack(read_message(stream).await.expect("recv response"))
-}
-
-// ---------------------------------------------------------------------------
 // Client
+//
+// Compiled only under `--features client`. The generated `GreeterClient`/`EchoClient`
+// (and the `dyn`-compatible `GreeterApi` trait) talk to the daemon over a
+// `ClientConnection`, touching only the shared request/response types — never the
+// handler bodies. The `daemon` subcommand builds with none of this present.
 // ---------------------------------------------------------------------------
 
-/// Runs the scripted demo: each unary call, then one of each streaming kind.
-async fn exercise<S>(stream: &mut S)
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    let ping: PingResponse = call_stream(stream, 1, "Greeter.ping", &PingRequest).await;
+/// Scripted demo: each unary call (including the classified error), then one of
+/// each streaming kind. Generic over the transport so it serves TCP and Unix alike.
+#[cfg(feature = "client")]
+async fn exercise<T: ClientTransport>(greeter: GreeterClient<T>, echo: EchoClient<T>) {
+    let ping = greeter.ping().await.expect("ping");
     println!("ping             →  {}", ping.message);
 
-    let greet: GreetResponse = call_stream(
-        stream,
-        2,
-        "Greeter.greet",
-        &GreetRequest {
+    let greet = greeter
+        .greet(&GreetRequest {
             name: "World".to_string(),
-        },
-    )
-    .await;
+        })
+        .await
+        .expect("greet");
     println!("greet            →  {}", greet.message);
 
-    // Trigger the classified error: an empty name returns a GreetError carrying a
-    // predefined category, a custom subcode, the RETRYABLE flag, and a body.
-    let payload = postcard::to_allocvec(&GreetRequest {
-        name: String::new(),
-    })
-    .unwrap();
-    let req = WireMessage::Request(WireRequest {
-        id: 6,
-        path: "Greeter.greet".to_string(),
-        payload,
-        streaming_input: false,
-    });
-
-    write_frame(stream, &req).await;
-
-    match unpack_result(read_message(stream).await.expect("recv response")) {
+    // Trigger the classified error. `greet` returns `Result<_, GreetError>`, and
+    // `GreetError::Body` is `GreetErrorBody`, so the generated client hands back an
+    // `ErrorBody<GreetErrorBody>` that decodes directly — the error type and its
+    // serialized body need not be the same.
+    match greeter
+        .greet(&GreetRequest {
+            name: String::new(),
+        })
+        .await
+    {
         Ok(_) => println!("greet (empty)    →  unexpected success"),
-        Err((code, body)) => {
-            let detail: GreetErrorBody = postcard::from_bytes(&body).expect("decode error body");
+
+        Err(ClientError::Remote(err)) => {
+            let detail = err.deserialize().expect("decode error body");
 
             println!(
-                "greet (empty)    →  error: {} reason={:?}",
-                describe(code),
+                "greet (empty)    →  error: status={:?} reason={:?}",
+                err.code(),
                 detail.reason,
             );
         }
+
+        Err(e) => println!("greet (empty)    →  transport error: {e}"),
     }
 
-    let countdown: Vec<u32> = call_server_stream(stream, 3, "Echo.countdown", &50u32).await;
-    println!("countdown (srv)  →  {countdown:?}");
+    let mut countdown = echo.countdown(&5u32).await.expect("countdown");
+    let mut items = Vec::new();
 
-    let total: u32 = call_client_stream(stream, 4, "Echo.sum", &[1u32, 2, 3, 4]).await;
+    while let Some(item) = countdown.next().await {
+        items.push(item.expect("countdown item"));
+    }
+
+    println!("countdown (srv)  →  {items:?}");
+
+    let mut sum = echo.sum().await.expect("sum");
+
+    for n in [1u32, 2, 3, 4] {
+        sum.send(&n).await.expect("send sum item");
+    }
+
+    let total = sum.finish().await.expect("sum result");
     println!("sum (client)     →  {total}");
 
-    // Scripted bidi: send a few words, read each echoed back uppercased.
-    let id = 5;
-    let open = WireMessage::Request(WireRequest {
-        id,
-        path: "Echo.echo".to_string(),
-        payload: Vec::new(),
-        streaming_input: true,
-    });
-
-    write_frame(stream, &open).await;
+    let mut bidi = echo.echo().await.expect("echo");
 
     for word in ["hello", "stream", "world"] {
-        let payload = postcard::to_allocvec(&word.to_string()).unwrap();
+        bidi.send(&word.to_string()).await.expect("send echo item");
 
-        write_frame(stream, &WireMessage::StreamItem { id, payload }).await;
-
-        match read_message(stream).await.expect("recv echo") {
-            WireMessage::StreamItem { payload, .. } => {
-                let echoed: String = postcard::from_bytes(&payload).unwrap();
-                println!("echo (bidi)      →  {echoed}");
-            }
-            _ => panic!("unexpected frame in bidi echo"),
+        if let Some(reply) = bidi.next().await {
+            println!("echo (bidi)      →  {}", reply.expect("echo reply"));
         }
     }
 
-    write_frame(stream, &WireMessage::StreamEnd { id }).await;
-    let _ = read_message(stream).await; // server's StreamEnd
+    bidi.close_send().await.expect("close echo");
 }
 
 /// Interactive bidi: stream stdin lines to `Echo.echo`, print each reply.
-async fn interactive_echo<S>(stream: &mut S, id: u64)
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    let open = WireMessage::Request(WireRequest {
-        id,
-        path: "Echo.echo".to_string(),
-        payload: Vec::new(),
-        streaming_input: true,
-    });
-
-    write_frame(stream, &open).await;
+#[cfg(feature = "client")]
+async fn interactive_echo<T: ClientTransport>(echo: EchoClient<T>) {
+    let mut bidi = echo.echo().await.expect("open echo");
 
     println!("interactive echo — type lines, Ctrl-D to end:");
 
     let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
 
     while let Some(line) = lines.next_line().await.expect("read stdin") {
-        let payload = postcard::to_allocvec(&line).unwrap();
+        bidi.send(&line).await.expect("send line");
 
-        write_frame(stream, &WireMessage::StreamItem { id, payload }).await;
+        match bidi.next().await {
+            Some(Ok(reply)) => println!("  ← {reply}"),
 
-        match read_message(stream).await.expect("recv echo") {
-            WireMessage::StreamItem { payload, .. } => {
-                let echoed: String = postcard::from_bytes(&payload).unwrap();
-                println!("  ← {echoed}");
-            }
-            WireMessage::StreamError { code, .. } => {
-                eprintln!("stream error: {}", describe(code));
+            Some(Err(e)) => {
+                eprintln!("stream error: {e}");
+
                 return;
             }
-            WireMessage::StreamEnd { .. } => break,
-            _ => panic!("unexpected frame in echo"),
+
+            None => break,
         }
     }
 
-    write_frame(stream, &WireMessage::StreamEnd { id }).await;
-    let _ = read_message(stream).await; // server's StreamEnd
+    bidi.close_send().await.expect("close echo");
 
     println!("[echo stream closed]");
 }
 
+/// Connects fresh clients over the chosen transport, then runs the scripted demo
+/// or the interactive echo loop.
+#[cfg(feature = "client")]
 async fn run_client(transport: TransportKind, interactive: bool) {
     match transport {
         TransportKind::Tcp => {
-            use tokio::net::TcpStream;
+            let greeter = GreeterClient::new(
+                ClientConnection::connect_tcp(TCP_ADDR).await.expect("connect"),
+            );
+            let echo =
+                EchoClient::new(ClientConnection::connect_tcp(TCP_ADDR).await.expect("connect"));
 
-            let mut stream = TcpStream::connect(TCP_ADDR).await.expect("connect TCP");
             println!("[connected → {TCP_ADDR}]");
 
-            drive(&mut stream, interactive).await;
-
-            drop(stream);
-            println!("[connection closed]");
+            if interactive {
+                interactive_echo(echo).await;
+            } else {
+                exercise(greeter, echo).await;
+            }
         }
 
         #[cfg(unix)]
         TransportKind::Unix => {
-            use tokio::net::UnixStream;
+            let greeter = GreeterClient::new(
+                ClientConnection::connect_unix(UNIX_SOCK).await.expect("connect"),
+            );
+            let echo = EchoClient::new(
+                ClientConnection::connect_unix(UNIX_SOCK).await.expect("connect"),
+            );
 
-            let mut stream = UnixStream::connect(UNIX_SOCK).await.expect("connect Unix");
             println!("[connected → {UNIX_SOCK}]");
 
-            drive(&mut stream, interactive).await;
-
-            drop(stream);
-            println!("[connection closed]");
+            if interactive {
+                interactive_echo(echo).await;
+            } else {
+                exercise(greeter, echo).await;
+            }
         }
     }
 }
 
-/// Dispatches to the interactive echo loop or the scripted demo.
-async fn drive<S>(stream: &mut S, interactive: bool)
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    if interactive {
-        interactive_echo(stream, 1).await;
-    } else {
-        exercise(stream).await;
+/// Entry point for the `client`/`echo` subcommands, present in every build so the
+/// daemon-only build still parses the CLI; the work itself needs `--features client`.
+async fn run_client_command(transport: TransportKind, interactive: bool) {
+    #[cfg(feature = "client")]
+    run_client(transport, interactive).await;
+
+    #[cfg(not(feature = "client"))]
+    {
+        let _ = (transport, interactive);
+
+        eprintln!(
+            "the client is generated only under `--features client`; rebuild with it to run this command"
+        );
     }
 }
 
@@ -622,11 +477,11 @@ async fn main() -> overseer_core::Result<()> {
     match cli.command {
         Command::Daemon { transport } => run_daemon(transport).await,
         Command::Client { transport } => {
-            run_client(transport, false).await;
+            run_client_command(transport, false).await;
             Ok(())
         }
         Command::Echo { transport } => {
-            run_client(transport, true).await;
+            run_client_command(transport, true).await;
             Ok(())
         }
     }
