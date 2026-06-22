@@ -153,8 +153,15 @@ fn topological_sort<'a>(
         });
 
         if remaining.len() == before_len {
-            error!("dependency cycle detected in component graph");
-            return Err(Error::DependencyCycle);
+            let stuck = remaining
+                .iter()
+                .map(|d| d.name)
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            error!(components = %stuck, "dependency cycle detected in component graph");
+
+            return Err(Error::DependencyCycle(stuck));
         }
     }
 
