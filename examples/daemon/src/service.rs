@@ -1,0 +1,62 @@
+//! A service tying the DI surface together: a runtime config (`Dynamic`), a
+//! by-value pool, the primary notifier, every notifier, and the notifiers keyed
+//! by channel — then an RPC that uses them.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use overseer::{Dynamic, Payload, handlers, service};
+use serde::{Deserialize, Serialize};
+
+use crate::components::{Config, Db};
+use crate::notifiers::Notifier;
+
+#[derive(Serialize, Deserialize)]
+pub struct NotifyRequest {
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct NotifyResponse {
+    pub greeting: String,
+    pub delivered_to: Vec<String>,
+    pub query_count: u64,
+}
+
+/// Each field shows a different injection shape resolved from the container.
+#[service(id = "notifications", version = "0.1")]
+pub struct Notifications {
+    /// Runtime-provided (via `with_component`), so it is exempt from build-time
+    /// validation and resolved dynamically.
+    config: Dynamic<Arc<Config>>,
+    /// Injected by value — `Db`, not `Arc<Db>`.
+    db: Db,
+    /// The primary `dyn Notifier` (`Email`).
+    default: Arc<dyn Notifier>,
+    /// Every provider of `dyn Notifier`.
+    all: Vec<Arc<dyn Notifier>>,
+    /// Providers keyed by qualifier (`"email"`, `"sms"`, `"push"`).
+    by_channel: HashMap<String, Arc<dyn Notifier>>,
+}
+
+#[handlers]
+impl Notifications {
+    /// Broadcasts to every channel, stamping the configured greeting and the
+    /// running query count from the shared by-value pool.
+    #[rpc]
+    async fn notify(&self, Payload(req): Payload<NotifyRequest>) -> NotifyResponse {
+        let count = self.db.record_query();
+
+        let mut delivered: Vec<String> =
+            self.all.iter().map(|n| n.channel().to_string()).collect();
+        delivered.sort_unstable();
+
+        let _ = (&self.default, &self.by_channel, &req.message);
+
+        NotifyResponse {
+            greeting: self.config.greeting.clone(),
+            delivered_to: delivered,
+            query_count: count,
+        }
+    }
+}

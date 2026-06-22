@@ -448,6 +448,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "overseer-example-daemon"
+version = "0.1.0"
+dependencies = [
+ "overseer",
+ "overseer-analyze",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "overseer-macros"
 version = "0.1.0"
 dependencies = [

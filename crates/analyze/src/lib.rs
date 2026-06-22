@@ -144,4 +144,141 @@ mod tests {
             "expected a cycle diagnostic, got: {errors:?}"
         );
     }
+
+    #[test]
+    fn accepts_trait_providers_and_collections() {
+        let source = r#"
+            #[component(provide = dyn Notifier, primary)]
+            struct Email;
+
+            #[component(provide = dyn Notifier, qualifier = "sms")]
+            struct Sms;
+
+            #[service]
+            struct Svc {
+                one: Arc<dyn Notifier>,
+                all: Vec<Arc<dyn Notifier>>,
+                keyed: HashMap<String, Arc<dyn Notifier>>,
+                #[qualifier = "sms"]
+                texter: Arc<dyn Notifier>,
+            }
+        "#;
+
+        assert!(validate_source(source).is_ok());
+    }
+
+    #[test]
+    fn flags_a_missing_trait_provider() {
+        let source = r#"
+            #[service]
+            struct Svc { one: Arc<dyn Notifier> }
+        "#;
+
+        let errors = validate_source(source).unwrap_err();
+
+        assert!(errors.iter().any(|e| e.message.contains("Notifier")));
+    }
+
+    #[test]
+    fn flags_an_ambiguous_provider() {
+        let source = r#"
+            #[component(provide = dyn Notifier)]
+            struct Email;
+
+            #[component(provide = dyn Notifier)]
+            struct Sms;
+
+            #[service]
+            struct Svc { one: Arc<dyn Notifier> }
+        "#;
+
+        let errors = validate_source(source).unwrap_err();
+
+        assert!(
+            errors.iter().any(|e| e.message.contains("ambiguous")),
+            "expected an ambiguity diagnostic, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn flags_an_unknown_qualifier() {
+        let source = r#"
+            #[component(provide = dyn Notifier, primary)]
+            struct Email;
+
+            #[service]
+            struct Svc {
+                #[qualifier = "carrier-pigeon"]
+                bird: Arc<dyn Notifier>,
+            }
+        "#;
+
+        let errors = validate_source(source).unwrap_err();
+
+        assert!(errors.iter().any(|e| e.message.contains("carrier-pigeon")));
+    }
+
+    #[test]
+    fn flags_duplicate_ids_and_rpc_paths() {
+        let dup_id = r#"
+            #[component(id = "shared")]
+            struct A;
+
+            #[component(id = "shared")]
+            struct B;
+        "#;
+        assert!(
+            validate_source(dup_id)
+                .unwrap_err()
+                .iter()
+                .any(|e| e.message.contains("duplicate component id"))
+        );
+
+        let dup_rpc = r#"
+            #[service]
+            struct Svc;
+
+            #[handlers]
+            impl Svc {
+                #[rpc]
+                async fn ping() {}
+            }
+
+            #[handlers]
+            impl Svc {
+                #[rpc]
+                async fn ping() {}
+            }
+        "#;
+        assert!(
+            validate_source(dup_rpc)
+                .unwrap_err()
+                .iter()
+                .any(|e| e.message.contains("duplicate RPC path"))
+        );
+    }
+
+    #[test]
+    fn init_params_override_field_deps() {
+        // The struct field is `Arc<Missing>`, but `#[init]` constructs from
+        // `Arc<Present>` — so `Missing` is not actually a dependency.
+        let source = r#"
+            #[derive(Component)]
+            struct Present;
+
+            #[service]
+            struct Svc { ignored: Arc<Missing> }
+
+            #[handlers]
+            impl Svc {
+                #[init]
+                fn new(p: Arc<Present>) -> Self { Self { ignored: todo!() } }
+            }
+        "#;
+
+        assert!(
+            validate_source(source).is_ok(),
+            "init params should replace field-injected deps"
+        );
+    }
 }

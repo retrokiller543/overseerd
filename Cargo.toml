@@ -5,6 +5,7 @@ members = [
     "crates/core",
     "crates/macros",
     "crates/transport",
+    "examples/daemon",
 ]
 resolver = "3"
 
