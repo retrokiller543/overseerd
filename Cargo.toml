@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/analyze",
     "crates/core",
     "crates/macros",
     "crates/transport",
