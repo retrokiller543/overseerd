@@ -35,8 +35,8 @@ pub use descriptors::{
     COMPONENTS, PROVIDERS, RPC_GROUPS, SERVICES, BoxedComponent, Cardinality, Component,
     ComponentConstructionContext, ComponentDescriptor, ComponentFactory, ComponentScope,
     DependencyDescriptor, Dynamic, Injectable, OperationKind, ParameterDescriptor, ParameterKind,
-    ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
-    RpcResponse, ServiceComponent, ServiceDescriptor, TypeDescriptor, type_id_of,
+    Provide, ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
+    RpcResponse, ServiceComponent, ServiceDescriptor, TypeDescriptor, Wiring, type_id_of,
 };
 pub use error::Error;
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`

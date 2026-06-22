@@ -651,7 +651,19 @@ fn generate_init(
             };
     };
 
-    (marker, component)
+    // Assert that each concrete `#[init]` dependency is provided. These are the
+    // service's real deps (init overrides field injection), so the assert is
+    // emitted here rather than from the struct macro. Trait-object deps are
+    // skipped (the per-macro path does concrete only).
+    let di_targets: Vec<TokenStream> = info
+        .dep_types
+        .iter()
+        .filter(|t| !matches!(t, Type::TraitObject(_)))
+        .map(|t| quote!(#t))
+        .collect();
+    let di_assert = crate::di::assert(&di_targets);
+
+    (quote!(#marker #di_assert), component)
 }
 
 /// The erased `RpcHandler` return type, repeated by both wrapper forms.

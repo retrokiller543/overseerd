@@ -43,14 +43,23 @@ pub fn field_injection_component(
 
     let mut inits = Vec::new();
     let mut dep_descriptors = Vec::new();
+    let mut checks = Vec::new();
 
     let mut plan = |inits: &mut Vec<TokenStream>, prefix: TokenStream, field: &mut Field| {
-        let FieldPlan { value, dependency } = plan_field(field);
+        let FieldPlan {
+            value,
+            dependency,
+            check,
+        } = plan_field(field);
 
         inits.push(quote!(#prefix #value));
 
         if let Some(dep) = dependency {
             dep_descriptors.push(dep);
+        }
+
+        if let Some(check) = check {
+            checks.push(check);
         }
     };
 
@@ -77,7 +86,19 @@ pub fn field_injection_component(
 
     let dependency_count = dep_descriptors.len();
 
+    // Assert deps only for a real (non-default) field-injection factory — a
+    // `#[component]`. A `#[service]`'s default factory may be overridden by an
+    // `#[init]`, so its field deps are not necessarily the real ones; the
+    // `#[init]` path and the source analyzer cover those.
+    let di_assert = if default_factory {
+        quote!()
+    } else {
+        crate::di::assert(&checks)
+    };
+
     quote! {
+        #di_assert
+
         #[allow(unused_variables)]
         fn __overseer_factory(
             cx: &mut #component_construction_context,
@@ -125,6 +146,10 @@ pub fn field_injection_component(
 struct FieldPlan {
     value: TokenStream,
     dependency: Option<TokenStream>,
+    /// The `Provide<Target>` type to assert for this field, when it is a required
+    /// *concrete* dependency (trait-object / optional / dynamic / multi edges are
+    /// not asserted in the per-macro path).
+    check: Option<TokenStream>,
 }
 
 /// Classifies a field and, as a side effect, strips the `#[default]` marker so
@@ -137,6 +162,7 @@ fn plan_field(field: &mut Field) -> FieldPlan {
         return FieldPlan {
             value: quote!(::core::default::Default::default()),
             dependency: None,
+            check: None,
         };
     }
 
@@ -191,6 +217,7 @@ fn plan_field(field: &mut Field) -> FieldPlan {
         return FieldPlan {
             value: quote!(cx.resolve_all::<#item>()),
             dependency: Some(dependency),
+            check: None,
         };
     }
 
@@ -200,6 +227,7 @@ fn plan_field(field: &mut Field) -> FieldPlan {
         return FieldPlan {
             value: quote!(cx.resolve_keyed::<#value>()),
             dependency: Some(dependency),
+            check: None,
         };
     }
 
@@ -236,8 +264,19 @@ fn plan_field(field: &mut Field) -> FieldPlan {
 
     let dependency = dep(&handle, quote!(#cardinality::One), optional, dynamic, qualifier);
 
+    // A required, concrete single edge is `Provide`-checkable; trait-object,
+    // optional, and dynamic edges are not asserted in the per-macro path.
+    let handle_is_trait = matches!(&handle, syn::Type::TraitObject(_))
+        || matches!(attr::arc_inner_type(&handle), Ok(inner) if matches!(inner, syn::Type::TraitObject(_)));
+    let check = if optional || dynamic || handle_is_trait {
+        None
+    } else {
+        Some(quote!(<#handle as #injectable>::Target))
+    };
+
     FieldPlan {
         value,
         dependency: Some(dependency),
+        check,
     }
 }

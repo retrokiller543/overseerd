@@ -59,11 +59,11 @@ pub use overseer_core::{
     ComponentScope, Conn, ConnectionHandler, ConnectionInfo, Daemon, DaemonBuilder,
     DependencyDescriptor, DescriptorRegistry, Dynamic, Error, ErrorResponse, Extension,
     FallibleHandler, Flags, FromContext, Handler, Injectable, OperationKind, ParameterDescriptor,
-    ParameterKind, Payload, PredefinedCode, ProviderDescriptor, Responder, ResponseError,
+    ParameterKind, Payload, PredefinedCode, Provide, ProviderDescriptor, Responder, ResponseError,
     ResponseStream, Result, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
     RpcResponse, RpcRouter, ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal,
-    StatusCode, Streaming, TypeDescriptor, component, dispatch_fallible, dispatch_with, handlers,
-    rpc, service, type_id_of,
+    StatusCode, Streaming, TypeDescriptor, Wiring, component, dispatch_fallible, dispatch_with,
+    handlers, rpc, service, type_id_of,
 };
 
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
