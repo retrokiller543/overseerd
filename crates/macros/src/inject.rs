@@ -44,12 +44,14 @@ pub fn field_injection_component(
     let mut inits = Vec::new();
     let mut dep_descriptors = Vec::new();
     let mut checks = Vec::new();
+    let mut wired_targets = Vec::new();
 
     let mut plan = |inits: &mut Vec<TokenStream>, prefix: TokenStream, field: &mut Field| {
         let FieldPlan {
             value,
             dependency,
             check,
+            wired,
         } = plan_field(field);
 
         inits.push(quote!(#prefix #value));
@@ -60,6 +62,10 @@ pub fn field_injection_component(
 
         if let Some(check) = check {
             checks.push(check);
+        }
+
+        if let Some(wired) = wired {
+            wired_targets.push(wired);
         }
     };
 
@@ -96,8 +102,14 @@ pub fn field_injection_component(
         crate::di::assert(&checks)
     };
 
+    // The lazy `Wired` predicate — every single dep, incl. trait objects —
+    // checked when `app!` demands `T: Wired`.
+    let wired = crate::di::wired_impl(&self_ident, &wired_targets);
+
     quote! {
         #di_assert
+
+        #wired
 
         #[allow(unused_variables)]
         fn __overseer_factory(
@@ -146,10 +158,13 @@ pub fn field_injection_component(
 struct FieldPlan {
     value: TokenStream,
     dependency: Option<TokenStream>,
-    /// The `Provide<Target>` type to assert for this field, when it is a required
-    /// *concrete* dependency (trait-object / optional / dynamic / multi edges are
-    /// not asserted in the per-macro path).
+    /// The `Provide<Target>` type to assert eagerly for this field, when it is a
+    /// required *concrete* dependency (trait-object / optional / dynamic / multi
+    /// edges are not eagerly asserted in the per-macro path).
     check: Option<TokenStream>,
+    /// The `Provide<Target>` type for the lazy `Wired` bound — every required
+    /// single dependency, *including* trait objects (checked only via `app!`).
+    wired: Option<TokenStream>,
 }
 
 /// Classifies a field and, as a side effect, strips the `#[default]` marker so
@@ -163,6 +178,7 @@ fn plan_field(field: &mut Field) -> FieldPlan {
             value: quote!(::core::default::Default::default()),
             dependency: None,
             check: None,
+            wired: None,
         };
     }
 
@@ -218,6 +234,7 @@ fn plan_field(field: &mut Field) -> FieldPlan {
             value: quote!(cx.resolve_all::<#item>()),
             dependency: Some(dependency),
             check: None,
+            wired: None,
         };
     }
 
@@ -228,6 +245,7 @@ fn plan_field(field: &mut Field) -> FieldPlan {
             value: quote!(cx.resolve_keyed::<#value>()),
             dependency: Some(dependency),
             check: None,
+            wired: None,
         };
     }
 
@@ -268,15 +286,16 @@ fn plan_field(field: &mut Field) -> FieldPlan {
     // optional, and dynamic edges are not asserted in the per-macro path.
     let handle_is_trait = matches!(&handle, syn::Type::TraitObject(_))
         || matches!(attr::arc_inner_type(&handle), Ok(inner) if matches!(inner, syn::Type::TraitObject(_)));
-    let check = if optional || dynamic || handle_is_trait {
-        None
-    } else {
-        Some(quote!(<#handle as #injectable>::Target))
-    };
+    let target = quote!(<#handle as #injectable>::Target);
+
+    // Eager concrete-only assert; lazy `Wired` includes trait objects too.
+    let check = (!optional && !dynamic && !handle_is_trait).then(|| target.clone());
+    let wired = (!optional && !dynamic).then_some(target);
 
     FieldPlan {
         value,
         dependency: Some(dependency),
         check,
+        wired,
     }
 }

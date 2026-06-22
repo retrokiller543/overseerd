@@ -49,6 +49,8 @@ name = "example"
 path = "src/bin/example.rs"
 
 [features]
+default = ["di-check"]
+
 # Compile the generated client SDK and the client-side transport. Opt in via
 # `overseer = { features = ["client"] }`; no feature is needed in the user crate.
 client = [

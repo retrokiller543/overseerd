@@ -24,7 +24,9 @@ pub use extract::{
     Cancel, Conn, ErrorResponse, Extension, FallibleHandler, FromContext, Handler, Payload,
     Responder, ResponseError, ResponseStream, Streaming, dispatch_fallible, dispatch_with,
 };
-pub use overseer_macros::{Component, component, handlers, rpc, service};
+pub use overseer_macros::{
+    Component, component, daemon, handlers, injectable, rpc, service,
+};
 /// Wire-contract status types, re-exported from `overseer-transport` so handler
 /// authors import everything from `overseer_core`.
 pub use overseer_transport::{Flags, PredefinedCode, StatusCode};
@@ -36,7 +38,7 @@ pub use descriptors::{
     ComponentConstructionContext, ComponentDescriptor, ComponentFactory, ComponentScope,
     DependencyDescriptor, Dynamic, Injectable, OperationKind, ParameterDescriptor, ParameterKind,
     Provide, ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
-    RpcResponse, ServiceComponent, ServiceDescriptor, TypeDescriptor, Wiring, type_id_of,
+    RpcResponse, ServiceComponent, ServiceDescriptor, TypeDescriptor, Wired, Wiring, type_id_of,
 };
 pub use error::Error;
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`

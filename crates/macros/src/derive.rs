@@ -33,6 +33,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let handle_items = &handle.items;
     let injectable = &handle.injectable;
     let provide = di::provide_impl(ident);
+    let wired = di::wired_impl(ident, &[]);
 
     Ok(quote! {
         impl #component for #ident {
@@ -44,5 +45,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         #injectable
 
         #provide
+
+        #wired
     })
 }

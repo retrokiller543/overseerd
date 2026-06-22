@@ -96,6 +96,15 @@ pub trait Provide<T: ?Sized> {}
 /// dependency assertion is the bound `Wiring: Provide<Dep>`.
 pub struct Wiring;
 
+/// Marker that all of a component's dependencies are provided. Under `di-check`
+/// the macros emit `impl Wired for T where Wiring: Provide<Dep>, ..` carrying
+/// *every* single dependency (concrete and trait-object) as a lazy bound. The
+/// [`app!`](overseer_macros::daemon) macro asserts `T: Wired` for its listed types,
+/// discharging the whole set at the binary — where every `Provide` impl (across
+/// crates) is visible, so it catches the cross-crate and trait-object cases the
+/// per-component asserts cannot.
+pub trait Wired {}
+
 /// Lifetime policy for a component instance.
 #[derive(Clone, Copy, Debug)]
 pub enum ComponentScope {
