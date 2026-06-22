@@ -32,7 +32,9 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
-use overseer_transport::{PredefinedCode, StatusCode};
+use overseer_transport::{
+    PredefinedCode, StatusCode, StreamDecode, StreamEncode, StreamEncodeError,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -114,14 +116,13 @@ pub struct Streaming<T> {
 
 impl<T> FromContext for Streaming<T>
 where
-    T: DeserializeOwned + Send + 'static,
+    T: StreamDecode + Send + 'static,
 {
     async fn from_context(ctx: &RpcCallContext) -> crate::Result<Self> {
         let rx = ctx.take_requests().ok_or(Error::NotStreaming)?;
 
-        let stream = ReceiverStream::new(rx).map(|bytes| {
-            postcard::from_bytes(&bytes).map_err(|e| Error::InvalidPayload(e.to_string()))
-        });
+        let stream = T::from_frames(ReceiverStream::new(rx))
+            .map(|item| item.map_err(|e| Error::InvalidPayload(e.to_string())));
 
         Ok(Streaming {
             inner: Box::pin(stream),
@@ -131,6 +132,48 @@ where
 
 impl<T> Stream for Streaming<T> {
     type Item = crate::Result<T>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.get_mut().inner.as_mut().poll_next(cx)
+    }
+}
+
+/// The infallible-item counterpart to [`Streaming<T>`]: yields each inbound item
+/// parsed into `T`, ending the stream (with a logged warning) the first time an
+/// item fails to decode rather than surfacing a `Result` to the handler.
+///
+/// This is the type the `#[rpc]` macro feeds a handler parameter declared as
+/// `impl Stream<Item = T>` (or a generic `S: Stream<Item = T>`); a parameter
+/// declared with fallible items maps to [`Streaming<T>`] instead.
+pub struct RequestStream<T> {
+    inner: Pin<Box<dyn Stream<Item = T> + Send>>,
+}
+
+impl<T> FromContext for RequestStream<T>
+where
+    T: StreamDecode + Send + 'static,
+{
+    async fn from_context(ctx: &RpcCallContext) -> crate::Result<Self> {
+        let rx = ctx.take_requests().ok_or(Error::NotStreaming)?;
+
+        let stream = T::from_frames(ReceiverStream::new(rx))
+            .take_while(|item| {
+                if let Err(e) = item {
+                    warn!(error = %e, "request stream item failed to decode; ending stream");
+                }
+
+                std::future::ready(item.is_ok())
+            })
+            .filter_map(|item| std::future::ready(item.ok()));
+
+        Ok(RequestStream {
+            inner: Box::pin(stream),
+        })
+    }
+}
+
+impl<T> Stream for RequestStream<T> {
+    type Item = T;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.get_mut().inner.as_mut().poll_next(cx)
@@ -206,6 +249,12 @@ impl From<Error> for ErrorResponse {
     }
 }
 
+impl From<StreamEncodeError> for ErrorResponse {
+    fn from(err: StreamEncodeError) -> Self {
+        Self::new(err.code, err.body)
+    }
+}
+
 /// What a *successful* handler return value becomes on the wire.
 ///
 /// Implemented for any `Serialize` type (the default unary body format) and for
@@ -232,32 +281,67 @@ where
 /// A stream of response items returned by server- and bidirectional-streaming
 /// handlers. Each item is serialized to a `StreamItem` frame; a yielded `Err`
 /// terminates the stream with a `StreamError`.
+///
+/// Handlers rarely name this type: the `#[rpc]` macro recognizes a handler that
+/// returns `impl Stream<Item = T>` or `impl Stream<Item = Result<T, E>>` (or a
+/// generic bound by `Stream`) and wraps the returned stream into a
+/// `ResponseStream` via [`from_items`](Self::from_items) /
+/// [`from_results`](Self::from_results). It stays public as the manual escape
+/// hatch and the canonical carrier the wrappers build.
 pub struct ResponseStream<T> {
-    inner: Pin<Box<dyn Stream<Item = crate::Result<T>> + Send>>,
+    inner: Pin<Box<dyn Stream<Item = Result<Vec<u8>, ErrorResponse>> + Send>>,
+    _marker: std::marker::PhantomData<fn() -> T>,
 }
 
-impl<T> ResponseStream<T> {
+impl<T> ResponseStream<T>
+where
+    T: StreamEncode + Send + 'static,
+{
+    /// Wraps a stream of framework-`Result` items. Equivalent to
+    /// [`from_results`](Self::from_results) specialized to [`Error`].
     pub fn new(stream: impl Stream<Item = crate::Result<T>> + Send + 'static) -> Self {
+        Self::from_results(stream)
+    }
+
+    /// Wraps a stream of infallible items: every item is a value to be sent,
+    /// framed through the item's [`StreamEncode`] codec. This is the shape a
+    /// handler returning `impl Stream<Item = T>` produces, so a stream straight
+    /// from a database SDK works without per-item wrapping.
+    pub fn from_items<S>(stream: S) -> Self
+    where
+        S: Stream<Item = T> + Send + 'static,
+    {
         Self {
-            inner: Box::pin(stream),
+            inner: Box::pin(T::into_frames(stream).map(|frame| frame.map_err(ErrorResponse::from))),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Wraps a stream of fallible items keyed on any [`ResponseError`]: a yielded
+    /// `Err` terminates the stream with a `StreamError`, leaving the user free to
+    /// choose their own item error type rather than the framework's. `Ok` items are
+    /// framed per-item through [`StreamEncode`].
+    pub fn from_results<S, E>(stream: S) -> Self
+    where
+        S: Stream<Item = Result<T, E>> + Send + 'static,
+        E: ResponseError + 'static,
+    {
+        let inner = stream.map(|item| match item {
+            Ok(value) => value.encode().map_err(ErrorResponse::from),
+
+            Err(e) => Err(e.error_response()),
+        });
+
+        Self {
+            inner: Box::pin(inner),
+            _marker: std::marker::PhantomData,
         }
     }
 }
 
-impl<T> Responder for ResponseStream<T>
-where
-    T: Serialize + Send + 'static,
-{
+impl<T> Responder for ResponseStream<T> {
     fn respond(self) -> Result<RpcOutcome, ErrorResponse> {
-        let items = self.inner.map(|item| -> Result<Vec<u8>, ErrorResponse> {
-            let value = item?;
-            let bytes =
-                postcard::to_allocvec(&value).map_err(|e| Error::Serialization(e.to_string()))?;
-
-            Ok(bytes)
-        });
-
-        Ok(RpcOutcome::Stream(Box::pin(items)))
+        Ok(RpcOutcome::Stream(self.inner))
     }
 }
 

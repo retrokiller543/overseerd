@@ -12,6 +12,7 @@ pub mod error;
 pub mod frame;
 pub mod protocol;
 pub mod status;
+pub mod stream_codec;
 pub mod transport;
 pub mod transports;
 
@@ -19,6 +20,7 @@ pub use error::{Error, Result};
 pub use frame::{CallId, CallResult, IncomingCall, PeerInfo};
 pub use protocol::{WireMessage, WireOutcome, WireRequest, WireResponse};
 pub use status::{Flags, PredefinedCode, StatusCode};
+pub use stream_codec::{StreamDecode, StreamDecodeError, StreamEncode, StreamEncodeError};
 pub use transport::{Connection, Respond, RespondStream, ResponseSink, Transport};
 pub use transports::{
     MemoryCall, MemoryClient, MemoryConnection, MemoryConnectionHandle, MemoryResponder,
@@ -31,6 +33,7 @@ pub use transports::{UnixConnection, UnixResponder, UnixTransport};
 
 #[cfg(feature = "client")]
 pub use transports::{
-    BidiStream, ClientCall, ClientConnection, ClientError, ClientTransport, ClientUpstream,
-    ErrorBody, Raw, Reply, ServerStream, StreamCall, StreamClientTransport,
+    BidiResponses, CallSink, CallSource, ClientCall, ClientConnection, ClientError,
+    ClientTransport, ErrorBody, Raw, Reply, ServerStream, StreamArg, StreamCall, StreamCallSink,
+    StreamClientTransport, StreamSource,
 };

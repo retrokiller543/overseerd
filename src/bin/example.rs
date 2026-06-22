@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 
-use overseer_core::{Component, Daemon, ErrorResponse, Payload, PredefinedCode, ResponseError, ResponseStream, ServiceComponent, StatusCode, Streaming, component, handlers, service};
+use overseer_core::{Component, Daemon, ErrorResponse, Payload, PredefinedCode, ResponseError, ServiceComponent, StatusCode, component, handlers, service};
 use overseer_transport::{Flags, TcpTransport};
 
 #[cfg(unix)]
@@ -228,35 +228,32 @@ impl ManualService {
 }
 
 /// A stateless service demonstrating the three streaming kinds. The `#[rpc]`
-/// macro infers each kind from the signature: a `Streaming<T>` parameter means
-/// streamed input, a `ResponseStream<T>` return means streamed output.
+/// macro infers each kind from the signature: a stream-typed parameter (here
+/// `impl Stream<Item = T>`) means streamed input, a stream-typed return means
+/// streamed output. Handlers return their stream unwrapped — the macro adapts it
+/// onto the wire — so a stream straight from an SDK works as-is.
 #[service(id = "echo", version = "0.1")]
 struct Echo;
 
 #[handlers]
 impl Echo {
-    /// Server streaming: one request `n`, a descending stream `n-1 ..= 0`.
+    /// Server streaming: one request `n`, a descending stream `n-1 ..= 0`. The
+    /// items are infallible (`Item = u32`), so no per-item `Result` wrapping.
     #[rpc]
-    async fn countdown(Payload(n): Payload<u32>) -> ResponseStream<u32> {
-        ResponseStream::new(futures::stream::iter((0..n).rev().map(Ok)))
+    async fn countdown(Payload(n): Payload<u32>) -> impl Stream<Item = u32> {
+        futures::stream::iter((0..n).rev())
     }
 
     /// Client streaming: a stream of numbers in, their sum out.
     #[rpc]
-    async fn sum(mut input: Streaming<u32>) -> overseer_core::Result<u32> {
-        let mut total = 0;
-
-        while let Some(item) = input.next().await {
-            total += item?;
-        }
-
-        Ok(total)
+    async fn sum(input: impl Stream<Item = u32>) -> u32 {
+        input.fold(0u32, |total, n| async move { total + n }).await
     }
 
     /// Bidirectional: each inbound line echoed back uppercased.
     #[rpc]
-    async fn echo(input: Streaming<String>) -> ResponseStream<String> {
-        ResponseStream::new(input.map(|item| item.map(|line| line.to_uppercase())))
+    async fn echo(input: impl Stream<Item = String>) -> impl Stream<Item = String> {
+        input.map(|line| line.to_uppercase())
     }
 }
 
@@ -350,54 +347,67 @@ async fn exercise<T: ClientTransport>(greeter: GreeterClient<T>, echo: EchoClien
 
     println!("countdown (srv)  →  {items:?}");
 
-    let mut sum = echo.sum().await.expect("sum");
-
-    for n in [1u32, 2, 3, 4] {
-        sum.send(&n).await.expect("send sum item");
-    }
-
-    let total = sum.finish().await.expect("sum result");
+    // Client streaming now mirrors the daemon: hand it the input stream, get the
+    // one response back.
+    let total = echo
+        .sum(futures::stream::iter([1u32, 2, 3, 4]))
+        .await
+        .expect("sum result");
     println!("sum (client)     →  {total}");
 
-    let mut bidi = echo.echo().await.expect("echo");
+    // Bidi mirrors the daemon too: an input stream in, a response stream out,
+    // pumped concurrently. Here the input is a fixed list; the interactive demo
+    // below feeds a channel instead.
+    let mut replies = echo
+        .echo(futures::stream::iter(
+            ["hello", "stream", "world"].map(String::from),
+        ))
+        .await
+        .expect("echo");
 
-    for word in ["hello", "stream", "world"] {
-        bidi.send(&word.to_string()).await.expect("send echo item");
-
-        if let Some(reply) = bidi.next().await {
-            println!("echo (bidi)      →  {}", reply.expect("echo reply"));
-        }
+    while let Some(reply) = replies.next().await {
+        println!("echo (bidi)      →  {}", reply.expect("echo reply"));
     }
-
-    bidi.close_send().await.expect("close echo");
 }
 
-/// Interactive bidi: stream stdin lines to `Echo.echo`, print each reply.
+/// Interactive bidi: stream stdin lines to `Echo.echo`, print each reply. The
+/// input is a channel the stdin loop pushes into (the caller's "sink"); the
+/// response stream is read independently — the two run concurrently.
 #[cfg(feature = "client")]
 async fn interactive_echo<T: ClientTransport>(echo: EchoClient<T>) {
-    let mut bidi = echo.echo().await.expect("open echo");
+    let (tx, rx) = tokio::sync::mpsc::channel::<String>(16);
+
+    // Adapt the channel receiver into the input `Stream` the call consumes.
+    let input = futures::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|line| (line, rx))
+    });
+    let mut replies = echo.echo(input).await.expect("open echo");
 
     println!("interactive echo — type lines, Ctrl-D to end:");
 
-    let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+    // Feed stdin lines into the input stream on a separate task; closing `tx`
+    // (on EOF) half-closes the call so the server ends the response stream.
+    tokio::spawn(async move {
+        let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
 
-    while let Some(line) = lines.next_line().await.expect("read stdin") {
-        bidi.send(&line).await.expect("send line");
+        while let Some(line) = lines.next_line().await.expect("read stdin") {
+            if tx.send(line).await.is_err() {
+                break;
+            }
+        }
+    });
 
-        match bidi.next().await {
-            Some(Ok(reply)) => println!("  ← {reply}"),
+    while let Some(reply) = replies.next().await {
+        match reply {
+            Ok(line) => println!("  ← {line}"),
 
-            Some(Err(e)) => {
+            Err(e) => {
                 eprintln!("stream error: {e}");
 
                 return;
             }
-
-            None => break,
         }
     }
-
-    bidi.close_send().await.expect("close echo");
 
     println!("[echo stream closed]");
 }

@@ -7,11 +7,12 @@
 
 use std::time::Duration;
 
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 
 use overseer::{
     CallResult, Cancel, Daemon, MemoryClient, MemoryConnectionHandle, Payload, ResponseStream,
-    ServerEvent, Streaming, handlers, service,
+    ServerEvent, StreamDecode, StreamDecodeError, StreamEncode, StreamEncodeError, Streaming,
+    handlers, service,
 };
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,93 @@ impl StreamSvc {
     #[rpc]
     async fn echo(input: Streaming<u32>) -> ResponseStream<u32> {
         ResponseStream::new(input.map(|item| item.map(|v| v * 2)))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// A second service exercising the ergonomic stream forms: `impl Stream` and
+// generic `S: Stream` parameters/returns (auto-detected, auto-wrapped), a
+// concrete return marked `#[rpc(stream)]`, and a hand-rolled item codec.
+// ---------------------------------------------------------------------------
+
+/// A custom response item with a hand-rolled one-byte wire format. It is not
+/// `Serialize`/`Deserialize`, so it uses its manual `StreamEncode`/`StreamDecode`
+/// impls rather than the postcard blanket.
+#[derive(Debug, PartialEq)]
+struct Tag(u8);
+
+impl StreamEncode for Tag {
+    fn encode(&self) -> Result<Vec<u8>, StreamEncodeError> {
+        Ok(vec![self.0])
+    }
+}
+
+impl StreamDecode for Tag {
+    fn decode(bytes: &[u8]) -> Result<Self, StreamDecodeError> {
+        bytes
+            .first()
+            .copied()
+            .map(Tag)
+            .ok_or_else(|| StreamDecodeError("empty tag frame".to_string()))
+    }
+}
+
+/// A custom error item terminating a fallible response stream.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct StreamFault {
+    reason: String,
+}
+
+/// Service covering the ergonomic stream forms.
+#[service(id = "ergo_svc", version = "0.1")]
+struct ErgoSvc;
+
+#[handlers]
+impl ErgoSvc {
+    /// Server streaming via `impl Stream<Item = T>` (infallible items, no wrap).
+    #[rpc]
+    async fn count_up(Payload(n): Payload<u32>) -> impl Stream<Item = u32> {
+        futures::stream::iter(0..n)
+    }
+
+    /// Server streaming via `impl Stream<Item = Result<T, E>>`: a custom error item
+    /// terminates the stream with a `StreamError`.
+    #[rpc]
+    async fn fail_after(Payload(n): Payload<u32>) -> impl Stream<Item = Result<u32, StreamFault>> {
+        futures::stream::iter((0..=n).map(move |i| {
+            if i == n {
+                Err(StreamFault {
+                    reason: "stop".to_string(),
+                })
+            } else {
+                Ok(i)
+            }
+        }))
+    }
+
+    /// Client streaming via a named generic `S: Stream<Item = T>` parameter.
+    #[rpc]
+    async fn sum_generic<S: futures::Stream<Item = u32>>(input: S) -> u32 {
+        input.fold(0u32, |total, n| async move { total + n }).await
+    }
+
+    /// Bidirectional via `impl Stream` on both sides.
+    #[rpc]
+    async fn double(input: impl Stream<Item = u32>) -> impl Stream<Item = u32> {
+        input.map(|v| v * 2)
+    }
+
+    /// Server streaming over a concrete stream type the macro cannot introspect,
+    /// opted in with `#[rpc(stream)]`.
+    #[rpc(stream)]
+    async fn flagged(Payload(n): Payload<u32>) -> futures::stream::Iter<std::ops::Range<u32>> {
+        futures::stream::iter(0..n)
+    }
+
+    /// Server streaming of a custom item using its hand-rolled wire codec.
+    #[rpc]
+    async fn tags(Payload(n): Payload<u8>) -> impl Stream<Item = Tag> {
+        futures::stream::iter((0..n).map(Tag))
     }
 }
 
@@ -368,4 +456,134 @@ async fn concurrent_streams_on_one_connection() {
 
     assert_eq!(items_a, (vec![0, 1, 2], true));
     assert_eq!(items_b, (vec![0, 1, 2, 3, 4], true));
+}
+
+// ---------------------------------------------------------------------------
+// Ergonomic stream forms (impl Stream / generic S: Stream / #[rpc(stream)])
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ergo_operation_kinds() {
+    let daemon = Daemon::builder("test")
+        .auto_discover()
+        .build()
+        .await
+        .expect("build daemon");
+
+    let services = daemon.registry.resolved_services();
+    let svc = services
+        .iter()
+        .find(|s| s.descriptor.name == "ErgoSvc")
+        .expect("ErgoSvc registered");
+
+    let kind = |name: &str| {
+        let rpc = svc
+            .rpcs
+            .iter()
+            .find(|r| r.name == name)
+            .expect("rpc present");
+
+        format!("{:?}", rpc.operation)
+    };
+
+    assert_eq!(kind("count_up"), "ServerStream");
+    assert_eq!(kind("fail_after"), "ServerStream");
+    assert_eq!(kind("sum_generic"), "ClientStream");
+    assert_eq!(kind("double"), "BidiStream");
+    assert_eq!(kind("flagged"), "ServerStream");
+    assert_eq!(kind("tags"), "ServerStream");
+}
+
+#[tokio::test]
+async fn impl_stream_server_stream() {
+    let conn = start().await;
+
+    let mut call = conn
+        .open("ErgoSvc.count_up", enc(&4u32), false)
+        .await
+        .unwrap();
+    let (items, clean) = drain(&mut call).await;
+
+    assert!(clean);
+    assert_eq!(items, vec![0, 1, 2, 3]);
+}
+
+#[tokio::test]
+async fn impl_stream_fallible_terminates() {
+    let conn = start().await;
+
+    let mut call = conn
+        .open("ErgoSvc.fail_after", enc(&2u32), false)
+        .await
+        .unwrap();
+    let (items, clean) = drain(&mut call).await;
+
+    // Items before the custom error are delivered, then the stream errors out.
+    assert_eq!(items, vec![0, 1]);
+    assert!(!clean);
+}
+
+#[tokio::test]
+async fn generic_stream_client_stream() {
+    let conn = start().await;
+
+    let mut call = conn
+        .open("ErgoSvc.sum_generic", Vec::new(), true)
+        .await
+        .unwrap();
+
+    for i in [10u32, 20, 30] {
+        call.send(enc(&i)).await.unwrap();
+    }
+
+    call.end_input();
+
+    let out = call.response().await.unwrap();
+    assert!(matches!(out, CallResult::Ok(ref b) if dec::<u32>(b) == 60));
+}
+
+#[tokio::test]
+async fn impl_stream_bidi_doubles() {
+    let conn = start().await;
+
+    let mut call = conn.open("ErgoSvc.double", Vec::new(), true).await.unwrap();
+
+    call.send(enc(&5u32)).await.unwrap();
+    assert!(matches!(call.recv().await, Some(ServerEvent::Item(ref b)) if dec::<u32>(b) == 10));
+
+    call.end_input();
+    assert!(matches!(call.recv().await, Some(ServerEvent::End)));
+}
+
+#[tokio::test]
+async fn flagged_concrete_server_stream() {
+    let conn = start().await;
+
+    let mut call = conn
+        .open("ErgoSvc.flagged", enc(&3u32), false)
+        .await
+        .unwrap();
+    let (items, clean) = drain(&mut call).await;
+
+    assert!(clean);
+    assert_eq!(items, vec![0, 1, 2]);
+}
+
+#[tokio::test]
+async fn custom_item_codec_round_trip() {
+    let conn = start().await;
+
+    let mut call = conn.open("ErgoSvc.tags", enc(&3u8), false).await.unwrap();
+    let mut items = Vec::new();
+
+    loop {
+        match call.recv().await {
+            // The hand-rolled codec frames each `Tag` as a single byte.
+            Some(ServerEvent::Item(bytes)) => items.push(Tag::decode(&bytes).unwrap()),
+            Some(ServerEvent::End) => break,
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    assert_eq!(items, vec![Tag(0), Tag(1), Tag(2)]);
 }

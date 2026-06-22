@@ -14,7 +14,7 @@ use crate::protocol::{
     codec::{read_message, write_message},
 };
 
-use super::client::{ClientCall, ClientError, ClientTransport, Reply};
+use super::client::{CallSink, CallSource, ClientCall, ClientError, ClientTransport, Reply};
 
 /// Outbound frames buffered per call before the read loop backpressures.
 const REPLY_BUFFER: usize = 32;
@@ -108,8 +108,9 @@ where
     }
 }
 
-/// One in-flight call on a byte-stream transport. Owns its `CallId`, a shared
-/// handle to the write half, and the receiver for its demuxed replies.
+/// One in-flight call on a byte-stream transport, split on creation into a
+/// [`StreamCallSink`] (shared write half) and a [`StreamSource`] (reply receiver) so
+/// the two directions run independently.
 pub struct StreamCall<W> {
     id: CallId,
     write: Arc<Mutex<W>>,
@@ -117,7 +118,37 @@ pub struct StreamCall<W> {
     replies: mpsc::Receiver<Reply>,
 }
 
-impl<W> StreamCall<W>
+impl<W> ClientCall for StreamCall<W>
+where
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    type Sink = StreamCallSink<W>;
+    type Source = StreamSource;
+
+    fn split(self) -> (StreamCallSink<W>, StreamSource) {
+        (
+            StreamCallSink {
+                id: self.id,
+                write: self.write,
+                calls: Arc::clone(&self.calls),
+            },
+            StreamSource {
+                id: self.id,
+                replies: self.replies,
+                calls: self.calls,
+            },
+        )
+    }
+}
+
+/// The send half: writes inbound frames under the shared write lock.
+pub struct StreamCallSink<W> {
+    id: CallId,
+    write: Arc<Mutex<W>>,
+    calls: CallTable,
+}
+
+impl<W> StreamCallSink<W>
 where
     W: AsyncWrite + Unpin + Send + 'static,
 {
@@ -129,7 +160,7 @@ where
     }
 }
 
-impl<W> ClientCall for StreamCall<W>
+impl<W> CallSink for StreamCallSink<W>
 where
     W: AsyncWrite + Unpin + Send + 'static,
 {
@@ -145,10 +176,6 @@ where
         self.write_frame(&WireMessage::StreamEnd { id: self.id }).await
     }
 
-    async fn recv(&mut self) -> Result<Option<Reply>, ClientError> {
-        Ok(self.replies.recv().await)
-    }
-
     async fn cancel(self) -> Result<(), ClientError> {
         self.write_frame(&WireMessage::StreamCancel { id: self.id })
             .await?;
@@ -159,7 +186,21 @@ where
     }
 }
 
-impl<W> Drop for StreamCall<W> {
+/// The receive half: pulls demuxed replies, and on drop removes the call's entry
+/// from the routing table so the read loop stops demuxing into a dead channel.
+pub struct StreamSource {
+    id: CallId,
+    calls: CallTable,
+    replies: mpsc::Receiver<Reply>,
+}
+
+impl CallSource for StreamSource {
+    async fn recv(&mut self) -> Result<Option<Reply>, ClientError> {
+        Ok(self.replies.recv().await)
+    }
+}
+
+impl Drop for StreamSource {
     fn drop(&mut self) {
         if let Ok(mut calls) = self.calls.lock() {
             calls.remove(&self.id);
