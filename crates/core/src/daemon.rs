@@ -48,7 +48,7 @@ impl DaemonBuilder {
 
         self.instances.push(BoxedComponent {
             ty: TypeDescriptor::of::<T>(T::NAME),
-            value: Box::new(Arc::new(value)),
+            value: Box::new(value.into_handle()),
         });
 
         self
@@ -63,6 +63,7 @@ impl DaemonBuilder {
         self.registry.components.extend(discovered.components);
         self.registry.services.extend(discovered.services);
         self.registry.rpc_groups.extend(discovered.rpc_groups);
+        self.registry.providers.extend(discovered.providers);
 
         self
     }
@@ -124,7 +125,9 @@ impl DaemonBuilder {
         let resolved = registry.resolved_components()?;
         registry.components = resolved;
 
-        let container = ComponentContainer::build(&registry.components, self.instances).await?;
+        let container =
+            ComponentContainer::build(&registry.components, self.instances, &registry.providers)
+                .await?;
         let router = RpcRouter::from_registry(&registry);
         let shutdown = ShutdownSignal::new();
 

@@ -18,7 +18,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
-use syn::{Field, Fields, ItemStruct, LitStr, spanned::Spanned};
+use syn::{Expr, ExprLit, Field, Fields, ItemStruct, Lit, LitStr, Meta, spanned::Spanned};
 
 use crate::{attr, paths::overseer_path};
 
@@ -35,6 +35,7 @@ pub fn field_injection_component(
     let component_scope = overseer_path("ComponentScope");
     let components_slice = overseer_path("COMPONENTS");
     let dependency_descriptor = overseer_path("DependencyDescriptor");
+    let component = overseer_path("Component");
     let distributed_slice = overseer_path("linkme::distributed_slice");
     let linkme_crate = overseer_path("linkme");
     let result = overseer_path("Result");
@@ -92,7 +93,9 @@ pub fn field_injection_component(
 
                 ::core::result::Result::Ok(#boxed_component {
                     ty: #type_descriptor::of::<#self_ident>(#name),
-                    value: ::std::boxed::Box::new(::std::sync::Arc::new(__instance)),
+                    value: ::std::boxed::Box::new(
+                        <#self_ident as #component>::into_handle(__instance),
+                    ),
                 })
             })
         }
@@ -137,6 +140,19 @@ fn plan_field(field: &mut Field) -> FieldPlan {
         };
     }
 
+    // `#[qualifier = ".."]` selects a specific provider for a single trait edge.
+    let field_qualifier = field.attrs.iter().find_map(|a| {
+        if a.path().is_ident("qualifier")
+            && let Meta::NameValue(nv) = &a.meta
+            && let Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) = &nv.value
+        {
+            return Some(s.clone());
+        }
+
+        None
+    });
+    field.attrs.retain(|a| !a.path().is_ident("qualifier"));
+
     let cardinality = overseer_path("Cardinality");
     let dynamic_ty = overseer_path("Dynamic");
     let error = overseer_path("Error");
@@ -144,10 +160,51 @@ fn plan_field(field: &mut Field) -> FieldPlan {
     let type_descriptor = overseer_path("TypeDescriptor");
     let dependency_descriptor = overseer_path("DependencyDescriptor");
 
-    // Peel the edge-shape wrappers off the field type: `Option<…>` marks the
-    // edge optional, `Dynamic<…>` marks it runtime-provided; the remaining type
-    // is the `Injectable` handle to resolve.
+    let dep = |handle: &syn::Type, kind: TokenStream, optional: bool, dynamic: bool, qualifier: TokenStream| {
+        let dep_name_str = match attr::arc_inner_type(handle) {
+            Ok(inner) => inner.to_token_stream().to_string(),
+            Err(_) => handle.to_token_stream().to_string(),
+        };
+        let dep_name = LitStr::new(&dep_name_str, handle.span());
+
+        quote! {
+            #dependency_descriptor {
+                name: #dep_name,
+                ty: #type_descriptor::of::<<#handle as #injectable>::Target>(#dep_name),
+                cardinality: #kind,
+                optional: #optional,
+                dynamic: #dynamic,
+                qualifier: #qualifier,
+            }
+        }
+    };
+
+    let none = quote!(::core::option::Option::None);
+
     let ty = &field.ty;
+
+    // Multi-valued edges resolve every provider of a trait and never fail (empty
+    // `Vec`/`HashMap` is valid), so they take no `Injectable`-missing fallback.
+    if let Some(item) = attr::vec_inner(ty) {
+        let dependency = dep(&item, quote!(#cardinality::Collection), false, false, none.clone());
+
+        return FieldPlan {
+            value: quote!(cx.resolve_all::<#item>()),
+            dependency: Some(dependency),
+        };
+    }
+
+    if let Some(value) = attr::hashmap_value(ty) {
+        let dependency = dep(&value, quote!(#cardinality::Keyed), false, false, none.clone());
+
+        return FieldPlan {
+            value: quote!(cx.resolve_keyed::<#value>()),
+            dependency: Some(dependency),
+        };
+    }
+
+    // Single edge. Peel the wrappers: `Option<…>` marks it optional, `Dynamic<…>`
+    // runtime-provided; the remaining type is the `Injectable` handle to resolve.
     let (optional, after_option) = match attr::option_inner(ty) {
         Some(inner) => (true, inner),
         None => (false, ty.clone()),
@@ -163,7 +220,13 @@ fn plan_field(field: &mut Field) -> FieldPlan {
     };
     let dep_name = LitStr::new(&dep_name_str, handle.span());
 
-    let resolved = quote!(cx.resolve::<#handle>());
+    let (resolved, qualifier) = match &field_qualifier {
+        Some(q) => (
+            quote!(cx.resolve_qualified::<#handle>(#q)),
+            quote!(::core::option::Option::Some(#q)),
+        ),
+        None => (quote!(cx.resolve::<#handle>()), none),
+    };
     let value = match (optional, dynamic) {
         (false, false) => quote!(#resolved.ok_or(#error::MissingComponent(#dep_name))?),
         (false, true) => quote!(#dynamic_ty(#resolved.ok_or(#error::MissingComponent(#dep_name))?)),
@@ -171,15 +234,7 @@ fn plan_field(field: &mut Field) -> FieldPlan {
         (true, true) => quote!(#resolved.map(#dynamic_ty)),
     };
 
-    let dependency = quote! {
-        #dependency_descriptor {
-            name: #dep_name,
-            ty: #type_descriptor::of::<<#handle as #injectable>::Target>(#dep_name),
-            cardinality: #cardinality::One,
-            optional: #optional,
-            dynamic: #dynamic,
-        }
-    };
+    let dependency = dep(&handle, quote!(#cardinality::One), optional, dynamic, qualifier);
 
     FieldPlan {
         value,

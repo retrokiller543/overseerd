@@ -13,11 +13,15 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemStruct, LitStr};
 
-use crate::{attr::ServiceArgs, inject, paths::overseer_path};
+use crate::{attr::ServiceArgs, handle, inject, paths::overseer_path, provide};
 
 pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStream> {
     let self_ident = item.ident.clone();
     let self_name = LitStr::new(&self_ident.to_string(), self_ident.span());
+    let providers = provide::generate_providers(&self_ident, &args);
+    let handle = handle::handle_impl(&self_ident, args.by_value);
+    let handle_items = &handle.items;
+    let injectable = &handle.injectable;
 
     let id = args
         .id
@@ -50,7 +54,10 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         impl #component for #self_ident {
             const ID: &'static str = #id;
             const NAME: &'static str = #name;
+            #handle_items
         }
+
+        #injectable
 
         impl #service_component for #self_ident {
             const VERSION: ::core::option::Option<&'static str> = #version;
@@ -68,6 +75,8 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
                     ty: #type_descriptor::of::<#self_ident>(#self_name),
                     version: #version,
                 };
+
+            #providers
         };
     })
 }

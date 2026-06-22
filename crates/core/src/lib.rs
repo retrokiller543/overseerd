@@ -32,11 +32,11 @@ pub use overseer_transport::{Flags, PredefinedCode, StatusCode};
 pub use container::ComponentContainer;
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
-    COMPONENTS, RPC_GROUPS, SERVICES, BoxedComponent, Cardinality, Component,
+    COMPONENTS, PROVIDERS, RPC_GROUPS, SERVICES, BoxedComponent, Cardinality, Component,
     ComponentConstructionContext, ComponentDescriptor, ComponentFactory, ComponentScope,
     DependencyDescriptor, Dynamic, Injectable, OperationKind, ParameterDescriptor, ParameterKind,
-    RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcResponse, ServiceComponent,
-    ServiceDescriptor, TypeDescriptor, type_id_of,
+    ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
+    RpcResponse, ServiceComponent, ServiceDescriptor, TypeDescriptor, type_id_of,
 };
 pub use error::Error;
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
