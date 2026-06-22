@@ -9,7 +9,7 @@ authors.workspace = true
 client = ["overseer-transport/client"]
 
 [dependencies]
-inventory = "0.3"
+linkme = { workspace = true }
 thiserror = "2"
 tokio = { workspace = true }
 tokio-stream = { workspace = true }

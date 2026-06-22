@@ -3,8 +3,8 @@ pub mod service;
 pub mod types;
 
 pub use component::{
-    BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor, ComponentFactory,
-    ComponentScope, DependencyDescriptor, ServiceComponent,
+    BoxedComponent, Cardinality, Component, ComponentConstructionContext, ComponentDescriptor,
+    ComponentFactory, ComponentScope, DependencyDescriptor, Dynamic, Injectable, ServiceComponent,
 };
 pub use service::{
     OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor, RpcGroup,
@@ -12,16 +12,22 @@ pub use service::{
 };
 pub use types::{TypeDescriptor, type_id_of};
 
-/// Top-level inventory entry submitted by proc macros.
+/// Link-time descriptor registries, one homogeneous slice per descriptor kind.
 ///
-/// A `Service` declares a service's identity (tied to its type); each `Rpcs`
-/// group contributes RPC methods to the service of a matching type, so one
-/// service may span several impl blocks. `Component` registers a constructable
-/// singleton (e.g. a stateful service holding common deps).
-pub enum Descriptor {
-    Component(&'static ComponentDescriptor),
-    Service(&'static ServiceDescriptor),
-    Rpcs(&'static RpcGroup),
-}
+/// Proc macros register one element each via `#[linkme::distributed_slice(..)]`:
+/// a `#[component]`/`#[service]` factory (and an `#[init]` constructor) into
+/// [`COMPONENTS`], a `#[service]` header into [`SERVICES`], and each `#[handlers]`
+/// block's methods into [`RPC_GROUPS`] (so one service may span several impls).
+/// [`DescriptorRegistry::collect`] reads the assembled slices. Unlike a single
+/// tagged-enum stream, each slice is homogeneous and assembled at link time with
+/// no per-startup registration walk.
+#[linkme::distributed_slice]
+pub static COMPONENTS: [ComponentDescriptor];
 
-inventory::collect!(Descriptor);
+/// Link-time registry of every discovered [`ServiceDescriptor`]. See [`COMPONENTS`].
+#[linkme::distributed_slice]
+pub static SERVICES: [ServiceDescriptor];
+
+/// Link-time registry of every discovered [`RpcGroup`]. See [`COMPONENTS`].
+#[linkme::distributed_slice]
+pub static RPC_GROUPS: [RpcGroup];

@@ -10,8 +10,8 @@ use crate::{
     connection::{ConnectionHandler, ConnectionInfo},
     container::ComponentContainer,
     descriptors::{
-        BoxedComponent, Component, ComponentDescriptor, ComponentScope, RpcCallContext, RpcGroup,
-        RpcOutcome, RpcResponse, ServiceDescriptor, TypeDescriptor,
+        BoxedComponent, Component, ComponentDescriptor, RpcCallContext, RpcGroup, RpcOutcome,
+        RpcResponse, ServiceDescriptor, TypeDescriptor,
     },
     lifecycle::{ShutdownHandle, ShutdownSignal},
     registry::DescriptorRegistry,
@@ -44,7 +44,7 @@ impl DaemonBuilder {
     pub fn with_component<T: Component>(mut self, value: T) -> Self {
         self.registry
             .components
-            .push(Self::generate_component_descriptor::<T>());
+            .push(ComponentDescriptor::of::<T>());
 
         self.instances.push(BoxedComponent {
             ty: TypeDescriptor::of::<T>(T::NAME),
@@ -54,20 +54,9 @@ impl DaemonBuilder {
         self
     }
 
-    const fn generate_component_descriptor<T: Component>() -> ComponentDescriptor {
-        ComponentDescriptor {
-            id: T::ID,
-            name: T::NAME,
-            ty: TypeDescriptor::of::<T>(T::NAME),
-            scope: ComponentScope::Singleton,
-            dependencies: &[],
-            factory: None,
-            default_factory: false,
-        }
-    }
-
-    /// Merges all `inventory::submit!` entries in the binary into the registry,
-    /// preserving anything already registered (manual components, instances).
+    /// Merges every link-time-registered descriptor in the binary into the
+    /// registry, preserving anything already registered (manual components,
+    /// instances).
     pub fn auto_discover(mut self) -> Self {
         let discovered = DescriptorRegistry::collect();
 
@@ -87,13 +76,7 @@ impl DaemonBuilder {
     /// to supply the methods; do not also auto-discover the same service or its
     /// header is registered twice.
     pub fn with_service<T: ServiceComponent>(mut self, value: T) -> Self {
-        self.registry.services.push(ServiceDescriptor {
-            id: T::ID,
-            name: T::NAME,
-            ty: TypeDescriptor::of::<T>(T::NAME),
-            version: T::VERSION,
-        });
-
+        self.registry.services.push(ServiceDescriptor::of::<T>());
         self.with_component(value)
     }
 

@@ -96,7 +96,10 @@ fn topological_sort<'a>(
             let resolved = descriptor
                 .dependencies
                 .iter()
-                .filter(|dep| !dep.optional)
+                // Only a required, statically-resolved, single-valued edge
+                // imposes a build-ordering constraint: `optional`/`dynamic` and
+                // multi-valued (trait) edges do not pin a concrete predecessor.
+                .filter(|dep| dep.cardinality.requires_provider() && !dep.optional && !dep.dynamic)
                 .all(|dep| {
                     let dep_type_id = (dep.ty.type_id)();
                     prebuilt.contains(&dep_type_id)
