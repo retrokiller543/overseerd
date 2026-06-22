@@ -38,8 +38,8 @@ pub enum Error {
     #[error("service '{0}' has no RPC methods")]
     EmptyService(String),
 
-    #[error("dependency cycle detected in component graph")]
-    DependencyCycle,
+    #[error("dependency cycle: no construction order for components: {0}")]
+    DependencyCycle(String),
 
     #[error("route not found: {0}")]
     RouteNotFound(String),
