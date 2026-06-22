@@ -28,3 +28,9 @@ pub use transports::{
 
 #[cfg(unix)]
 pub use transports::{UnixConnection, UnixResponder, UnixTransport};
+
+#[cfg(feature = "client")]
+pub use transports::{
+    BidiStream, ClientCall, ClientConnection, ClientError, ClientTransport, ClientUpstream,
+    ErrorBody, Raw, Reply, ServerStream, StreamCall, StreamClientTransport,
+};

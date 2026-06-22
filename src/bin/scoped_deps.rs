@@ -121,17 +121,17 @@ impl ConnectionHandler for Authenticator {
 // Handlers — typed parameters, no raw context.
 // ---------------------------------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct GreetRequest {
     name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct GreetReply {
     message: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct WhoAmI {
     display_name: String,
     api_key: String,

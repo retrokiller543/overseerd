@@ -70,6 +70,12 @@ pub use overseer_core::{
 #[doc(hidden)]
 pub use overseer_core::inventory;
 
+/// Re-exported so generated client traits can be annotated `#[async_trait]`
+/// (for `dyn`-compatibility) without user crates depending on `async-trait`.
+#[cfg(feature = "client")]
+#[doc(hidden)]
+pub use async_trait;
+
 // ---------------------------------------------------------------------------
 // Transport: server endpoints, client wire protocol, custom-transport traits.
 // `Error`/`Result` are intentionally not lifted to the root (the core ones win);
@@ -84,6 +90,15 @@ pub use overseer_transport::{
 
 #[cfg(unix)]
 pub use overseer_transport::UnixTransport;
+
+/// Client SDK runtime: the substrate-agnostic [`ClientTransport`] abstraction,
+/// the byte-stream implementation, and the typed [`ClientConnection`] the
+/// generated clients build on. Gated behind the `client` feature.
+#[cfg(feature = "client")]
+pub use overseer_transport::{
+    BidiStream, ClientCall, ClientConnection, ClientError, ClientTransport, ClientUpstream,
+    ErrorBody, Raw, Reply, ServerStream, StreamCall, StreamClientTransport,
+};
 
 /// The full transport layer, including the framing codec (`transport::protocol::codec`)
 /// and connection/responder types for building clients or custom transports.

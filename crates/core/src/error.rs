@@ -77,6 +77,8 @@ impl Error {
 }
 
 impl ResponseError for Error {
+    type Body = String;
+    
     fn status_code(&self) -> StatusCode {
         self.status_code()
     }

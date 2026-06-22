@@ -50,6 +50,53 @@ impl Parse for ServiceArgs {
     }
 }
 
+/// Arguments of `#[handlers(client_trait = Name)]`. The only key is the optional
+/// `client_trait`: when present the generated client is emitted as a trait `Name`
+/// plus its impl (mockable, `dyn`-compatible); when absent, as a plain inherent impl.
+pub struct HandlersArgs {
+    pub client_trait: Option<Ident>,
+}
+
+impl Parse for HandlersArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut client_trait = None;
+
+        let args = Punctuated::<HandlersArg, Token![,]>::parse_terminated(input)?;
+
+        for arg in args {
+            match arg {
+                HandlersArg::ClientTrait(ident) => client_trait = Some(ident),
+            }
+        }
+
+        Ok(HandlersArgs { client_trait })
+    }
+}
+
+/// A single recognized `#[handlers(...)]` argument.
+enum HandlersArg {
+    ClientTrait(Ident),
+}
+
+impl Parse for HandlersArg {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let key: Ident = input.parse()?;
+        let _: Token![=] = input.parse()?;
+
+        match key.to_string().as_str() {
+            "client_trait" => {
+                let value: Ident = input.parse()?;
+
+                Ok(HandlersArg::ClientTrait(value))
+            }
+            other => Err(syn::Error::new(
+                key.span(),
+                format!("unknown handlers argument `{other}`, expected `client_trait`"),
+            )),
+        }
+    }
+}
+
 /// A single `key = "value"` pair inside `#[service(...)]`.
 struct KeyValue {
     key: Ident,
@@ -122,6 +169,70 @@ fn type_name(ty: &Type) -> Option<&Ident> {
         Type::Path(path) => path.path.segments.last().map(|segment| &segment.ident),
         _ => None,
     }
+}
+
+/// The first type argument of `Name<T, ..>` when the last path segment is `name`.
+/// Used by the client codegen to recover request/response payload types from the
+/// extractor and `Responder` wrappers in a handler signature.
+fn first_type_arg(ty: &Type, name: &str) -> Option<Type> {
+    if let Type::Path(path) = ty
+        && let Some(segment) = path.path.segments.last()
+        && segment.ident == name
+        && let PathArguments::AngleBracketed(generics) = &segment.arguments
+        && let Some(GenericArgument::Type(inner)) = generics.args.first()
+    {
+        return Some(inner.clone());
+    }
+
+    None
+}
+
+/// The request body type `T` of a `Payload<T>` parameter.
+pub fn payload_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "Payload")
+}
+
+/// The request item type `T` of a `Streaming<T>` parameter.
+pub fn streaming_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "Streaming")
+}
+
+/// The response item type `T` of a `ResponseStream<T>` return.
+pub fn response_stream_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "ResponseStream")
+}
+
+/// If `output` is `Result<Ok, Err?>`, returns `(Ok, Err)`. `Err` is `None` for a
+/// one-argument alias such as `overseer::Result<T>` (whose error is the framework
+/// `Error`, opaque to the client and surfaced as a raw body).
+pub fn result_type_args(output: &ReturnType) -> Option<(Type, Option<Type>)> {
+    let ReturnType::Type(_, ty) = output else {
+        return None;
+    };
+
+    let Type::Path(path) = ty.as_ref() else {
+        return None;
+    };
+
+    let segment = path.path.segments.last()?;
+
+    if segment.ident != "Result" {
+        return None;
+    }
+
+    let PathArguments::AngleBracketed(generics) = &segment.arguments else {
+        return None;
+    };
+
+    let mut args = generics.args.iter().filter_map(|arg| match arg {
+        GenericArgument::Type(t) => Some(t.clone()),
+        _ => None,
+    });
+
+    let ok = args.next()?;
+    let err = args.next();
+
+    Some((ok, err))
 }
 
 /// If `ty` is `Name<T, ..>`, returns its first type argument `T`; otherwise `ty`.
