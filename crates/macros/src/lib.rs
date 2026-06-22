@@ -52,6 +52,7 @@ extern crate proc_macro;
 mod attr;
 mod component;
 mod derive;
+mod di;
 mod handle;
 mod handlers;
 mod inject;

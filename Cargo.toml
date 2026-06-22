@@ -58,6 +58,10 @@ client = [
     "dep:async-trait",
 ]
 
+# Emit compile-time dependency-injection checks (a `Wiring: Provide<Dep>` bound
+# per concrete dependency). A missing provider becomes a `cargo check` error.
+di-check = ["overseer-macros/di-check"]
+
 [dependencies]
 overseer-core = { workspace = true }
 overseer-transport = { workspace = true }

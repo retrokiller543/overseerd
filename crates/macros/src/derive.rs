@@ -9,7 +9,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, LitStr};
 
-use crate::{attr::ServiceArgs, handle, paths::overseer_path};
+use crate::{attr::ServiceArgs, di, handle, paths::overseer_path};
 
 pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let ident = &input.ident;
@@ -32,6 +32,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let handle = handle::handle_impl(ident, overrides.by_value);
     let handle_items = &handle.items;
     let injectable = &handle.injectable;
+    let provide = di::provide_impl(ident);
 
     Ok(quote! {
         impl #component for #ident {
@@ -41,5 +42,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         }
 
         #injectable
+
+        #provide
     })
 }

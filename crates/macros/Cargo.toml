@@ -10,6 +10,9 @@ proc-macro = true
 
 [features]
 client = []
+# Emit compile-time dependency-injection checks: `impl Provide<Self> for Wiring`
+# per component, plus a `Wiring: Provide<Dep>` bound per concrete dependency.
+di-check = []
 
 [dependencies]
 syn = { workspace = true }

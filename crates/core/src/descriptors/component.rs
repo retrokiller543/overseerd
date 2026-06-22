@@ -80,6 +80,22 @@ impl<H: Injectable> AsRef<H> for Dynamic<H> {
     }
 }
 
+/// Compile-time dependency marker: `Wiring: Provide<T>` holds when some component
+/// in scope provides `T`. Under the `di-check` feature, the macros emit
+/// `impl Provide<Self> for Wiring` for every component and a bound per concrete
+/// dependency, so a missing provider is a `cargo check` error — a type-checked
+/// alternative to the source-level [`build.rs` analyzer](overseer_analyze) that
+/// catches what source parsing can't (real types, `cfg`, generics).
+#[diagnostic::on_unimplemented(
+    message = "no component provides `{T}`",
+    note = "add a component for `{T}`, or mark the dependency `Dynamic<{T}>` if it is provided at runtime"
+)]
+pub trait Provide<T: ?Sized> {}
+
+/// The crate-wide anchor that each component's `Provide` impl attaches to. A
+/// dependency assertion is the bound `Wiring: Provide<Dep>`.
+pub struct Wiring;
+
 /// Lifetime policy for a component instance.
 #[derive(Clone, Copy, Debug)]
 pub enum ComponentScope {
