@@ -5,7 +5,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing_subscriber::EnvFilter;
 
-use overseer_core::{Component, Daemon, ErrorResponse, Payload, PredefinedCode, ResponseError, ResponseStream, ServiceComponent, StatusCode, Streaming, component, handlers, service, TypeDescriptor};
+use overseer_core::{Component, Daemon, ErrorResponse, Payload, PredefinedCode, ResponseError, ResponseStream, ServiceComponent, StatusCode, Streaming, component, handlers, service};
 use overseer_transport::{Flags, TcpTransport};
 
 #[cfg(unix)]
@@ -17,7 +17,7 @@ use overseer_transport::UnixTransport;
 use overseer::{ClientConnection, ClientError, ClientTransport};
 #[cfg(feature = "client")]
 use tokio::io::AsyncBufReadExt;
-use overseer::inventory;
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -145,7 +145,7 @@ struct GreetConfig {
 /// factory, so the container builds it from its `Arc<T>` dependencies.
 #[component]
 struct Greeting {
-    config: Arc<GreetConfig>,
+    config: Arc<GreetConfig>
 }
 
 impl Greeting {

@@ -1,6 +1,6 @@
 use crate::{
     DependencyDescriptor, ParameterDescriptor, RpcDescriptor,
-    descriptors::{ComponentDescriptor, Descriptor, RpcGroup, ServiceDescriptor},
+    descriptors::{COMPONENTS, ComponentDescriptor, RPC_GROUPS, RpcGroup, SERVICES, ServiceDescriptor},
     error::Error,
 };
 use std::any::TypeId;
@@ -13,7 +13,7 @@ use std::{collections::HashSet, fmt};
 ///
 /// Component descriptors are owned (a flat `Vec`, since the descriptor is
 /// `Copy`) so that descriptors synthesized at runtime for manually-provided
-/// instances sit alongside inventory-collected ones. A component whose
+/// instances sit alongside link-time-collected ones. A component whose
 /// `factory` is `None` is provided as an instance rather than constructed.
 #[derive(Default, Debug)]
 pub struct DescriptorRegistry {
@@ -29,18 +29,13 @@ pub struct ResolvedService {
 }
 
 impl DescriptorRegistry {
-    /// Collects all submitted inventory descriptors into a DescriptorRegistry.
+    /// Collects every link-time-registered descriptor into a DescriptorRegistry.
     pub fn collect() -> Self {
-        let mut registry = Self::default();
-        for descriptor in inventory::iter::<Descriptor> {
-            match descriptor {
-                Descriptor::Component(c) => registry.components.push(**c),
-                Descriptor::Service(s) => registry.services.push(**s),
-                Descriptor::Rpcs(g) => registry.rpc_groups.push(**g),
-            }
+        Self {
+            components: COMPONENTS.iter().copied().collect(),
+            services: SERVICES.iter().copied().collect(),
+            rpc_groups: RPC_GROUPS.iter().copied().collect(),
         }
-
-        registry
     }
 
     /// Assembles each service header with the RPCs contributed to its type.
@@ -171,7 +166,12 @@ impl DescriptorRegistry {
 
         for c in components {
             for dep in c.dependencies {
-                if !dep.optional && !available.contains(&(dep.ty.type_id)()) {
+                // Multi-valued edges (Collection/Keyed) accept zero providers;
+                // `optional` tolerates absence; `dynamic` providers are supplied
+                // at runtime and so are exempt from static validation.
+                let must_exist = dep.cardinality.requires_provider() && !dep.optional && !dep.dynamic;
+
+                if must_exist && !available.contains(&(dep.ty.type_id)()) {
                     return Err(Error::MissingDependency {
                         component: c.name.to_string(),
                         type_name: (dep.ty.type_name)().to_string(),
@@ -279,9 +279,9 @@ mod tests {
 
     use super::*;
     use crate::descriptors::{
-        BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentScope,
-        DependencyDescriptor, OperationKind, RpcCallContext, RpcDescriptor, RpcGroup, RpcOutcome,
-        ServiceDescriptor, TypeDescriptor,
+        BoxedComponent, Cardinality, ComponentConstructionContext, ComponentDescriptor,
+        ComponentScope, DependencyDescriptor, OperationKind, RpcCallContext, RpcDescriptor,
+        RpcGroup, RpcOutcome, ServiceDescriptor, TypeDescriptor,
     };
 
     fn fake_factory<'a>(
@@ -320,7 +320,9 @@ mod tests {
     static BACKUP_REPO_DEPS: [DependencyDescriptor; 1] = [DependencyDescriptor {
         name: "PgPool",
         ty: TypeDescriptor::of::<u16>("PgPool"),
+        cardinality: Cardinality::One,
         optional: false,
+        dynamic: false,
     }];
 
     static BACKUP_REPO: ComponentDescriptor = ComponentDescriptor {

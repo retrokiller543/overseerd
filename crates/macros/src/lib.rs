@@ -44,8 +44,8 @@
 //! `#[proc_macro_*]` entry point is thin, delegating to an `expand` function that
 //! returns `syn::Result`, with errors surfaced through
 //! `syn::Error::into_compile_error` rather than panics. Registration is done by
-//! emitting `inventory::submit!` entries that `DaemonBuilder::auto_discover`
-//! collects.
+//! emitting `#[linkme::distributed_slice]` elements into the per-kind descriptor
+//! slices that `DaemonBuilder::auto_discover` collects.
 
 extern crate proc_macro;
 
@@ -85,8 +85,8 @@ use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 ///
 /// - `impl Component for T` (carrying `ID`/`NAME`);
 /// - a field-injection factory and a `ComponentDescriptor` (with
-///   `default_factory: false`), submitted to `inventory` as
-///   `Descriptor::Component` and picked up by `auto_discover`.
+///   `default_factory: false`), registered into the `COMPONENTS` slice and
+///   picked up by `auto_discover`.
 ///
 /// # Example
 ///
@@ -192,7 +192,7 @@ pub fn derive_component(item: TokenStream) -> TokenStream {
 ///
 /// - `impl Component for T` and `impl ServiceComponent for T` (the latter carries
 ///   `VERSION`, enabling `DaemonBuilder::with_service`);
-/// - a `ServiceDescriptor` header submitted to `inventory`;
+/// - a `ServiceDescriptor` header registered into the `SERVICES` slice;
 /// - a default field-injection factory (`default_factory: true`), overridable by
 ///   an `#[init]` constructor.
 ///
@@ -267,8 +267,8 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # What it generates
 ///
-/// - one erased handler wrapper per `#[rpc]` method, plus an `RpcGroup` submitted
-///   to `inventory`;
+/// - one erased handler wrapper per `#[rpc]` method, plus an `RpcGroup` registered
+///   into the `RPC_GROUPS` slice;
 /// - if an `#[init]` is present, a component factory (and the `init` marker).
 ///
 /// # Example

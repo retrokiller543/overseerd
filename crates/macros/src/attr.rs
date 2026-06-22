@@ -187,6 +187,16 @@ fn first_type_arg(ty: &Type, name: &str) -> Option<Type> {
     None
 }
 
+/// The handle type `H` of an `Option<H>` field (an optional dependency).
+pub fn option_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "Option")
+}
+
+/// The handle type `H` of a `Dynamic<H>` field (a runtime-provided dependency).
+pub fn dynamic_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "Dynamic")
+}
+
 /// The request body type `T` of a `Payload<T>` parameter.
 pub fn payload_inner(ty: &Type) -> Option<Type> {
     first_type_arg(ty, "Payload")

@@ -54,21 +54,22 @@
 // Core: descriptors, registry, container, daemon, extractors, macros.
 // ---------------------------------------------------------------------------
 pub use overseer_core::{
-    BoxedComponent, Cancel, Component, ComponentConstructionContext, ComponentContainer,
-    ComponentDescriptor, ComponentFactory, ComponentScope, Conn, ConnectionHandler, ConnectionInfo,
-    Daemon, DaemonBuilder, DependencyDescriptor, Descriptor, DescriptorRegistry, Error,
-    ErrorResponse, Extension, FallibleHandler, Flags, FromContext, Handler, OperationKind,
-    ParameterDescriptor, ParameterKind, Payload, PredefinedCode, Responder, ResponseError,
-    ResponseStream, Result, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
-    RpcResponse, RpcRouter, ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal,
-    StatusCode, Streaming, TypeDescriptor, component, dispatch_fallible, dispatch_with, handlers,
-    rpc, service, type_id_of,
+    COMPONENTS, RPC_GROUPS, SERVICES, BoxedComponent, Cancel, Cardinality, Component,
+    ComponentConstructionContext, ComponentContainer, ComponentDescriptor, ComponentFactory,
+    ComponentScope, Conn, ConnectionHandler, ConnectionInfo, Daemon, DaemonBuilder,
+    DependencyDescriptor, DescriptorRegistry, Dynamic, Error, ErrorResponse, Extension,
+    FallibleHandler, Flags, FromContext, Handler, Injectable, OperationKind, ParameterDescriptor,
+    ParameterKind, Payload, PredefinedCode, Responder, ResponseError, ResponseStream, Result,
+    RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcResponse, RpcRouter,
+    ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal, StatusCode, Streaming,
+    TypeDescriptor, component, dispatch_fallible, dispatch_with, handlers, rpc, service, type_id_of,
 };
 
-/// Re-exported so macro-generated code can call `inventory::submit!` through
-/// the facade crate without user crates depending on `inventory` directly.
+/// Re-exported so macro-generated code can reference the `#[distributed_slice]`
+/// attribute through the facade crate without user crates depending on `linkme`
+/// directly.
 #[doc(hidden)]
-pub use overseer_core::inventory;
+pub use overseer_core::linkme;
 
 /// Re-exported so generated client traits can be annotated `#[async_trait]`
 /// (for `dyn`-compatibility) without user crates depending on `async-trait`.

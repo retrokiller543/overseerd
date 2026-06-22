@@ -28,6 +28,47 @@ pub trait ServiceComponent: Component {
     const VERSION: Option<&'static str>;
 }
 
+/// How a resolved dependency is stored in, and handed out of, the container.
+///
+/// Every injectable *handle* implements this. `Target` is the type the instance
+/// is keyed under; cloning a handle happens on every resolution, so it must be
+/// cheap. The blanket impl covers the common case — every `Arc<T>` is injectable
+/// and keyed by `T`, so existing `Arc<T>` dependencies need no change. A type
+/// that is itself cheaply shareable (internally `Arc`, e.g. a pool) may instead
+/// implement `Injectable` for itself, so it is injected by value with no outer
+/// `Arc`.
+pub trait Injectable: Clone + Send + Sync + 'static {
+    /// The type this handle is stored and looked up under.
+    type Target: 'static;
+}
+
+impl<T: Send + Sync + 'static> Injectable for Arc<T> {
+    type Target = T;
+}
+
+/// Field wrapper marking a dependency as **runtime-provided**.
+///
+/// A `Dynamic<H>` dependency is satisfied by a provider registered at runtime
+/// (e.g. via `DaemonBuilder::with_component`) rather than one discovered at
+/// build, so the edge is exempt from static dependency validation. It wraps the
+/// resolved handle `H` and derefs to it for transparent access.
+#[derive(Clone)]
+pub struct Dynamic<H: Injectable>(pub H);
+
+impl<H: Injectable> std::ops::Deref for Dynamic<H> {
+    type Target = H;
+
+    fn deref(&self) -> &H {
+        &self.0
+    }
+}
+
+impl<H: Injectable> AsRef<H> for Dynamic<H> {
+    fn as_ref(&self) -> &H {
+        &self.0
+    }
+}
+
 /// Lifetime policy for a component instance.
 #[derive(Clone, Copy, Debug)]
 pub enum ComponentScope {
@@ -35,12 +76,45 @@ pub enum ComponentScope {
     Transient,
 }
 
-/// Declares that a component requires another component by type.
+/// Cardinality of a dependency edge: how many providers satisfy it.
+///
+/// `Collection` and `Keyed` are *multi-valued* and always satisfiable — zero
+/// providers yields an empty `Vec`/`HashMap`, never a missing-dependency error.
+/// Only `One` and `Primary` (when not `optional`) require a provider to exist.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cardinality {
+    /// Exactly one provider, resolved by concrete type (`Arc<T>` / by-value handle).
+    One,
+    /// Every provider of a trait, as `Vec<Arc<dyn Trait>>`. Empty is valid.
+    Collection,
+    /// Every provider of a trait keyed by qualifier, as `HashMap<String, Arc<dyn Trait>>`. Empty is valid.
+    Keyed,
+    /// The primary (or sole) provider of a trait, as `Arc<dyn Trait>`.
+    Primary,
+}
+
+impl Cardinality {
+    /// Whether an edge of this cardinality requires at least one provider to
+    /// exist. Multi-valued edges (`Collection`/`Keyed`) accept zero.
+    pub fn requires_provider(self) -> bool {
+        matches!(self, Cardinality::One | Cardinality::Primary)
+    }
+}
+
+/// Declares that a component requires another component.
+///
+/// The edge's shape is described by three orthogonal axes: `cardinality` (how
+/// many providers satisfy it), `optional` (whether absence is tolerated), and
+/// `dynamic` (whether the provider is registered at runtime rather than
+/// discovered — which exempts the edge from static dependency validation, since
+/// nothing visible at build time is expected to satisfy it).
 #[derive(Clone, Copy, Debug)]
 pub struct DependencyDescriptor {
     pub name: &'static str,
     pub ty: TypeDescriptor,
+    pub cardinality: Cardinality,
     pub optional: bool,
+    pub dynamic: bool,
 }
 
 /// A type-erased instantiated component.
@@ -75,12 +149,14 @@ impl ComponentConstructionContext {
         }
     }
 
-    /// Returns a cloned `Arc<T>` for a previously constructed component of type `T`.
-    pub fn resolve<T: Any + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
-        let type_id = TypeId::of::<T>();
+    /// Resolves a previously constructed dependency by its injectable handle `H`,
+    /// keyed under `H::Target`. For the common case `H = Arc<T>`, this returns a
+    /// cloned `Arc<T>` keyed by `T`, exactly as before.
+    pub fn resolve<H: Injectable>(&self) -> Option<H> {
+        let type_id = TypeId::of::<H::Target>();
         let component = self.components.get(&type_id)?;
 
-        component.value.downcast_ref::<Arc<T>>().cloned()
+        component.value.downcast_ref::<H>().cloned()
     }
 
     pub(crate) fn insert(&mut self, component: BoxedComponent) {
@@ -113,7 +189,7 @@ pub type ComponentFactory =
 /// Static metadata describing a component and how to construct it.
 ///
 /// `Copy` so the registry can own a flat `Vec<ComponentDescriptor>` holding both
-/// inventory-collected descriptors and ones synthesized at runtime for
+/// link-time-collected descriptors and ones synthesized at runtime for
 /// manually-provided instances.
 #[derive(Clone, Copy)]
 pub struct ComponentDescriptor {
@@ -129,6 +205,20 @@ pub struct ComponentDescriptor {
     /// `#[init]` constructor or a manual registration may override. Exactly one
     /// non-default factory is allowed per type.
     pub default_factory: bool,
+}
+
+impl ComponentDescriptor {
+    pub const fn of<T: Component>() -> Self {
+        Self {
+            id: T::ID,
+            name: T::NAME,
+            ty: TypeDescriptor::of::<T>(T::NAME),
+            scope: ComponentScope::Singleton,
+            dependencies: &[],
+            factory: None,
+            default_factory: false,
+        }
+    }
 }
 
 impl fmt::Debug for ComponentDescriptor {

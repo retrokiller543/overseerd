@@ -75,10 +75,11 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
         quote!()
     } else {
         let count = descriptors.len();
-        let descriptor = overseer_path("Descriptor");
-        let inventory_submit = overseer_path("inventory::submit");
+        let distributed_slice = overseer_path("linkme::distributed_slice");
+        let linkme_crate = overseer_path("linkme");
         let rpc_descriptor = overseer_path("RpcDescriptor");
         let rpc_group = overseer_path("RpcGroup");
+        let rpc_groups_slice = overseer_path("RPC_GROUPS");
         let type_descriptor = overseer_path("TypeDescriptor");
 
         quote! {
@@ -86,14 +87,12 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
                 #(#descriptors),*
             ];
 
+            #[#distributed_slice(#rpc_groups_slice)]
+            #[linkme(crate = #linkme_crate)]
             static __OVERSEER_RPC_GROUP: #rpc_group = #rpc_group {
                 service: #type_descriptor::of::<#self_ty>(#self_name),
                 rpcs: &__OVERSEER_RPCS,
             };
-
-            #inventory_submit! {
-                #descriptor::Rpcs(&__OVERSEER_RPC_GROUP)
-            }
         }
     };
 
@@ -535,10 +534,11 @@ fn generate_init(
     let component_construction_context = overseer_path("ComponentConstructionContext");
     let component_descriptor = overseer_path("ComponentDescriptor");
     let component_scope = overseer_path("ComponentScope");
+    let components_slice = overseer_path("COMPONENTS");
     let dependency_descriptor = overseer_path("DependencyDescriptor");
-    let descriptor = overseer_path("Descriptor");
+    let distributed_slice = overseer_path("linkme::distributed_slice");
+    let linkme_crate = overseer_path("linkme");
     let error = overseer_path("Error");
-    let inventory_submit = overseer_path("inventory::submit");
     let result = overseer_path("Result");
     let type_descriptor = overseer_path("TypeDescriptor");
 
@@ -577,7 +577,7 @@ fn generate_init(
         let dep_name = LitStr::new(&t.to_token_stream().to_string(), t.span());
 
         quote! {
-            cx.resolve::<#t>()
+            cx.resolve::<::std::sync::Arc<#t>>()
                 .ok_or(#error::MissingComponent(#dep_name))?
         }
     });
@@ -592,6 +592,7 @@ fn generate_init(
         call = quote!(#call?);
     }
 
+    let cardinality = overseer_path("Cardinality");
     let dependency_descriptors = info.dep_types.iter().map(|t| {
         let dep_name = LitStr::new(&t.to_token_stream().to_string(), t.span());
 
@@ -599,7 +600,9 @@ fn generate_init(
             #dependency_descriptor {
                 name: #dep_name,
                 ty: #type_descriptor::of::<#t>(#dep_name),
+                cardinality: #cardinality::One,
                 optional: false,
+                dynamic: false,
             }
         }
     });
@@ -630,6 +633,8 @@ fn generate_init(
             #(#dependency_descriptors),*
         ];
 
+        #[#distributed_slice(#components_slice)]
+        #[linkme(crate = #linkme_crate)]
         static __OVERSEER_INIT_COMPONENT: #component_descriptor =
             #component_descriptor {
                 id: #self_name,
@@ -640,10 +645,6 @@ fn generate_init(
                 factory: ::core::option::Option::Some(__overseer_init_factory),
                 default_factory: false,
             };
-
-        #inventory_submit! {
-            #descriptor::Component(&__OVERSEER_INIT_COMPONENT)
-        }
     };
 
     (marker, component)
