@@ -9,16 +9,12 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, LitStr};
 
-use crate::{attr::ServiceArgs, paths::overseer_path};
+use crate::{attr::ServiceArgs, handle, paths::overseer_path};
 
 pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let ident = &input.ident;
 
-    let mut overrides = ServiceArgs {
-        id: None,
-        name: None,
-        version: None,
-    };
+    let mut overrides = ServiceArgs::default();
 
     for attr in &input.attrs {
         if attr.path().is_ident("component") {
@@ -33,11 +29,17 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         .name
         .unwrap_or_else(|| LitStr::new(&ident.to_string(), ident.span()));
     let component = overseer_path("Component");
+    let handle = handle::handle_impl(ident, overrides.by_value);
+    let handle_items = &handle.items;
+    let injectable = &handle.injectable;
 
     Ok(quote! {
         impl #component for #ident {
             const ID: &'static str = #id;
             const NAME: &'static str = #name;
+            #handle_items
         }
+
+        #injectable
     })
 }

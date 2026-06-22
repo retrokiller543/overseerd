@@ -1,6 +1,9 @@
 use crate::{
     DependencyDescriptor, ParameterDescriptor, RpcDescriptor,
-    descriptors::{COMPONENTS, ComponentDescriptor, RPC_GROUPS, RpcGroup, SERVICES, ServiceDescriptor},
+    descriptors::{
+        COMPONENTS, Cardinality, ComponentDescriptor, PROVIDERS, ProviderDescriptor, RPC_GROUPS,
+        RpcGroup, SERVICES, ServiceDescriptor,
+    },
     error::Error,
 };
 use std::any::TypeId;
@@ -20,6 +23,7 @@ pub struct DescriptorRegistry {
     pub components: Vec<ComponentDescriptor>,
     pub services: Vec<ServiceDescriptor>,
     pub rpc_groups: Vec<RpcGroup>,
+    pub providers: Vec<ProviderDescriptor>,
 }
 
 /// A service header with its RPCs assembled from every matching `RpcGroup`.
@@ -35,6 +39,7 @@ impl DescriptorRegistry {
             components: COMPONENTS.iter().copied().collect(),
             services: SERVICES.iter().copied().collect(),
             rpc_groups: RPC_GROUPS.iter().copied().collect(),
+            providers: PROVIDERS.iter().copied().collect(),
         }
     }
 
@@ -164,14 +169,58 @@ impl DescriptorRegistry {
     fn validate_dependencies(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
         let available: HashSet<TypeId> = components.iter().map(|c| (c.ty.type_id)()).collect();
 
+        // Per trait: (total providers, primary providers).
+        let mut provider_counts: HashMap<TypeId, (usize, usize)> = HashMap::new();
+
+        for p in &self.providers {
+            let counts = provider_counts.entry((p.trait_ty.type_id)()).or_default();
+            counts.0 += 1;
+            counts.1 += usize::from(p.primary);
+        }
+
         for c in components {
             for dep in c.dependencies {
+                let dep_id = (dep.ty.type_id)();
+                let providers = provider_counts.get(&dep_id).copied();
+
+                // A `#[qualifier]` edge names its provider explicitly: it must
+                // exist, but it is never ambiguous even with several providers.
+                if let Some(qualifier) = dep.qualifier {
+                    let found = dep.dynamic
+                        || self.providers.iter().any(|p| {
+                            (p.trait_ty.type_id)() == dep_id && p.qualifier == qualifier
+                        });
+
+                    if !found {
+                        return Err(Error::MissingDependency {
+                            component: c.name.to_string(),
+                            type_name: format!("{} (qualifier `{qualifier}`)", (dep.ty.type_name)()),
+                        });
+                    }
+
+                    continue;
+                }
+
+                // An unqualified single `Arc<dyn Trait>` edge with several
+                // providers needs a unique `#[primary]` to disambiguate — this is
+                // distinct from "missing".
+                if dep.cardinality == Cardinality::One
+                    && !dep.dynamic
+                    && let Some((total, primary)) = providers
+                    && total > 1
+                    && primary != 1
+                {
+                    return Err(Error::AmbiguousProvider((dep.ty.type_name)().to_string()));
+                }
+
                 // Multi-valued edges (Collection/Keyed) accept zero providers;
                 // `optional` tolerates absence; `dynamic` providers are supplied
                 // at runtime and so are exempt from static validation.
                 let must_exist = dep.cardinality.requires_provider() && !dep.optional && !dep.dynamic;
 
-                if must_exist && !available.contains(&(dep.ty.type_id)()) {
+                // A single edge is satisfied by a concrete component of that type
+                // or by at least one provider of that trait.
+                if must_exist && !available.contains(&dep_id) && providers.is_none() {
                     return Err(Error::MissingDependency {
                         component: c.name.to_string(),
                         type_name: (dep.ty.type_name)().to_string(),
@@ -323,6 +372,7 @@ mod tests {
         cardinality: Cardinality::One,
         optional: false,
         dynamic: false,
+        qualifier: None,
     }];
 
     static BACKUP_REPO: ComponentDescriptor = ComponentDescriptor {
@@ -501,6 +551,7 @@ mod tests {
             components: vec![component],
             services: vec![service],
             rpc_groups: vec![group],
+            ..Default::default()
         };
 
         assert!(registry.validate().is_ok());

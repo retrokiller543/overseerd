@@ -531,6 +531,7 @@ fn generate_init(
 ) -> (TokenStream, TokenStream) {
     let marked = &info.ident;
     let boxed_component = overseer_path("BoxedComponent");
+    let component_trait = overseer_path("Component");
     let component_construction_context = overseer_path("ComponentConstructionContext");
     let component_descriptor = overseer_path("ComponentDescriptor");
     let component_scope = overseer_path("ComponentScope");
@@ -603,6 +604,7 @@ fn generate_init(
                 cardinality: #cardinality::One,
                 optional: false,
                 dynamic: false,
+                qualifier: ::core::option::Option::None,
             }
         }
     });
@@ -624,7 +626,9 @@ fn generate_init(
 
                 ::core::result::Result::Ok(#boxed_component {
                     ty: #type_descriptor::of::<#self_ty>(#self_name),
-                    value: ::std::boxed::Box::new(::std::sync::Arc::new(__instance)),
+                    value: ::std::boxed::Box::new(
+                        <#self_ty as #component_trait>::into_handle(__instance),
+                    ),
                 })
             })
         }

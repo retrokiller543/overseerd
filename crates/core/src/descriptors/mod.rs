@@ -4,7 +4,8 @@ pub mod types;
 
 pub use component::{
     BoxedComponent, Cardinality, Component, ComponentConstructionContext, ComponentDescriptor,
-    ComponentFactory, ComponentScope, DependencyDescriptor, Dynamic, Injectable, ServiceComponent,
+    ComponentFactory, ComponentScope, DependencyDescriptor, Dynamic, Injectable, ProviderDescriptor,
+    ServiceComponent,
 };
 pub use service::{
     OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor, RpcGroup,
@@ -31,3 +32,8 @@ pub static SERVICES: [ServiceDescriptor];
 /// Link-time registry of every discovered [`RpcGroup`]. See [`COMPONENTS`].
 #[linkme::distributed_slice]
 pub static RPC_GROUPS: [RpcGroup];
+
+/// Link-time registry of every discovered [`ProviderDescriptor`] (a component
+/// declaring `provide = dyn Trait`). See [`COMPONENTS`].
+#[linkme::distributed_slice]
+pub static PROVIDERS: [ProviderDescriptor];

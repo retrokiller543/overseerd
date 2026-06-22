@@ -82,9 +82,9 @@ impl RpcCallContext {
         }
     }
 
-    /// Resolves the singleton component of type `T` (e.g. a stateful service),
-    /// returning a cloned `Arc<T>`. `None` if no such component is registered.
-    pub fn component<T: std::any::Any + Send + Sync + 'static>(&self) -> Option<std::sync::Arc<T>> {
+    /// Resolves the singleton component of type `T` (e.g. a stateful service) as
+    /// its handle (`Arc<T>` by default). `None` if no such component is registered.
+    pub fn component<T: crate::Component>(&self) -> Option<T::Handle> {
         self.components.get::<T>()
     }
 

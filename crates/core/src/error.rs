@@ -29,6 +29,12 @@ pub enum Error {
         type_name: String,
     },
 
+    #[error(
+        "ambiguous provider for '{0}': multiple components provide it; mark one `#[primary]`, \
+         or inject `Vec`/`HashMap<String, _>` to receive all of them"
+    )]
+    AmbiguousProvider(String),
+
     #[error("service '{0}' has no RPC methods")]
     EmptyService(String),
 

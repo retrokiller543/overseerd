@@ -54,15 +54,16 @@
 // Core: descriptors, registry, container, daemon, extractors, macros.
 // ---------------------------------------------------------------------------
 pub use overseer_core::{
-    COMPONENTS, RPC_GROUPS, SERVICES, BoxedComponent, Cancel, Cardinality, Component,
+    COMPONENTS, PROVIDERS, RPC_GROUPS, SERVICES, BoxedComponent, Cancel, Cardinality, Component,
     ComponentConstructionContext, ComponentContainer, ComponentDescriptor, ComponentFactory,
     ComponentScope, Conn, ConnectionHandler, ConnectionInfo, Daemon, DaemonBuilder,
     DependencyDescriptor, DescriptorRegistry, Dynamic, Error, ErrorResponse, Extension,
     FallibleHandler, Flags, FromContext, Handler, Injectable, OperationKind, ParameterDescriptor,
-    ParameterKind, Payload, PredefinedCode, Responder, ResponseError, ResponseStream, Result,
-    RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcResponse, RpcRouter,
-    ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal, StatusCode, Streaming,
-    TypeDescriptor, component, dispatch_fallible, dispatch_with, handlers, rpc, service, type_id_of,
+    ParameterKind, Payload, PredefinedCode, ProviderDescriptor, Responder, ResponseError,
+    ResponseStream, Result, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
+    RpcResponse, RpcRouter, ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal,
+    StatusCode, Streaming, TypeDescriptor, component, dispatch_fallible, dispatch_with, handlers,
+    rpc, service, type_id_of,
 };
 
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`

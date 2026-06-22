@@ -1,7 +1,9 @@
 use std::{any::TypeId, fmt};
 
 /// Returns the TypeId of T. Used as a function pointer in TypeDescriptor.
-pub fn type_id_of<T: 'static>() -> TypeId {
+///
+/// `?Sized` so trait-object keys (`dyn Trait`) can be used to look up providers.
+pub fn type_id_of<T: ?Sized + 'static>() -> TypeId {
     TypeId::of::<T>()
 }
 
@@ -22,7 +24,7 @@ impl TypeDescriptor {
     ///
     /// `const fn` because both fields are function pointers — no function call
     /// happens here, only pointer assignment. Safe to use in `static` initializers.
-    pub const fn of<T: 'static>(name: &'static str) -> Self {
+    pub const fn of<T: ?Sized + 'static>(name: &'static str) -> Self {
         Self {
             name,
             type_name: std::any::type_name::<T>,

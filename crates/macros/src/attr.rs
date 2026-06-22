@@ -8,45 +8,102 @@ use syn::{
     GenericArgument, Ident, LitStr, PathArguments, ReturnType, Token, Type,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
+    token,
 };
 
-/// Arguments of `#[service(id = "..", name = "..", version = "..")]`. All keys
-/// are optional; `id`/`name` default to the impl's type name.
+/// Arguments of `#[service(...)]` / `#[component(...)]`. All optional:
+/// - `id` / `name` — default to the type name (`name` is also the RPC prefix);
+/// - `version` — service version;
+/// - `provide = dyn Trait` or `provide = [dyn A, dyn B]` — traits this component
+///   provides, injectable as `Arc<dyn Trait>` / `Vec<_>` / `HashMap<String, _>`.
+///   The trait must be `Send + Sync` (state it as a supertrait: `trait Trait:
+///   Send + Sync`), so no use site needs to write `+ Send + Sync`;
+/// - `qualifier = ".."` — key for `HashMap<String, Arc<dyn Trait>>` injection;
+/// - `primary` — mark this the primary provider for every trait it provides;
+/// - `by_value` — store/inject this component as `Self` rather than `Arc<Self>`
+///   (for cheap-to-clone, typically internally-`Arc`, types).
+#[derive(Default)]
 pub struct ServiceArgs {
     pub id: Option<LitStr>,
     pub name: Option<LitStr>,
     pub version: Option<LitStr>,
+    pub provide: Vec<Type>,
+    pub qualifier: Option<LitStr>,
+    pub primary: bool,
+    pub by_value: bool,
 }
 
 impl Parse for ServiceArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let pairs = Punctuated::<KeyValue, Token![,]>::parse_terminated(input)?;
+        let mut args = ServiceArgs::default();
 
-        let mut args = ServiceArgs {
-            id: None,
-            name: None,
-            version: None,
-        };
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
 
-        for pair in pairs {
-            let key = pair.key.to_string();
+            match key.to_string().as_str() {
+                "id" => args.id = Some(parse_value(input)?),
+                "name" => args.name = Some(parse_value(input)?),
+                "version" => args.version = Some(parse_value(input)?),
+                "qualifier" => args.qualifier = Some(parse_value(input)?),
+                "primary" => args.primary = true,
+                "by_value" => args.by_value = true,
+                "provide" => {
+                    input.parse::<Token![=]>()?;
 
-            match key.as_str() {
-                "id" => args.id = Some(pair.value),
-                "name" => args.name = Some(pair.value),
-                "version" => args.version = Some(pair.value),
-                _ => {
+                    if input.peek(token::Bracket) {
+                        let content;
+                        syn::bracketed!(content in input);
+                        let list =
+                            Punctuated::<ProvidedTrait, Token![,]>::parse_terminated(&content)?;
+                        args.provide.extend(list.into_iter().map(|t| t.0));
+                    } else {
+                        args.provide.push(input.parse::<ProvidedTrait>()?.0);
+                    }
+                }
+                other => {
                     return Err(syn::Error::new(
-                        pair.key.span(),
+                        key.span(),
                         format!(
-                            "unknown service argument `{key}`, expected `id`, `name`, or `version`"
+                            "unknown argument `{other}`, expected `id`, `name`, `version`, \
+                             `provide`, `qualifier`, `primary`, or `by_value`"
                         ),
                     ));
                 }
             }
+
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
         }
 
         Ok(args)
+    }
+}
+
+/// Parses the `= "value"` half of a string-valued argument.
+fn parse_value(input: ParseStream) -> syn::Result<LitStr> {
+    input.parse::<Token![=]>()?;
+
+    input.parse()
+}
+
+/// A provided-trait entry, parsed as a trait-object [`Type`] (`dyn Trait`) so the
+/// IDE treats it as a type — completions, go-to-definition, and highlighting —
+/// rather than an opaque path. The trait must be `Send + Sync` via supertraits.
+struct ProvidedTrait(Type);
+
+impl Parse for ProvidedTrait {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ty: Type = input.parse()?;
+
+        if !matches!(ty, Type::TraitObject(_)) {
+            return Err(syn::Error::new_spanned(
+                &ty,
+                "`provide` expects a trait object, e.g. `dyn Repo`",
+            ));
+        }
+
+        Ok(ProvidedTrait(ty))
     }
 }
 
@@ -94,22 +151,6 @@ impl Parse for HandlersArg {
                 format!("unknown handlers argument `{other}`, expected `client_trait`"),
             )),
         }
-    }
-}
-
-/// A single `key = "value"` pair inside `#[service(...)]`.
-struct KeyValue {
-    key: Ident,
-    value: LitStr,
-}
-
-impl Parse for KeyValue {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let key: Ident = input.parse()?;
-        let _: Token![=] = input.parse()?;
-        let value: LitStr = input.parse()?;
-
-        Ok(KeyValue { key, value })
     }
 }
 
@@ -190,6 +231,41 @@ fn first_type_arg(ty: &Type, name: &str) -> Option<Type> {
 /// The handle type `H` of an `Option<H>` field (an optional dependency).
 pub fn option_inner(ty: &Type) -> Option<Type> {
     first_type_arg(ty, "Option")
+}
+
+/// The item handle `H` of a `Vec<H>` field (a collection of all trait providers).
+pub fn vec_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "Vec")
+}
+
+/// The value handle `H` of a `HashMap<String, H>` field (qualifier-keyed trait
+/// providers). Only matches when the key is `String`.
+pub fn hashmap_value(ty: &Type) -> Option<Type> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+
+    if segment.ident != "HashMap" {
+        return None;
+    }
+
+    let PathArguments::AngleBracketed(generics) = &segment.arguments else {
+        return None;
+    };
+
+    let mut types = generics.args.iter().filter_map(|arg| match arg {
+        GenericArgument::Type(t) => Some(t),
+        _ => None,
+    });
+    let key = types.next()?;
+    let value = types.next()?;
+
+    if type_name(key).is_some_and(|id| id == "String") {
+        return Some(value.clone());
+    }
+
+    None
 }
 
 /// The handle type `H` of a `Dynamic<H>` field (a runtime-provided dependency).
