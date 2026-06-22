@@ -423,6 +423,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "overseer-analyze"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "syn",
+]
+
+[[package]]
 name = "overseer-core"
 version = "0.1.0"
 dependencies = [
