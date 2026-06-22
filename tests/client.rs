@@ -15,7 +15,7 @@ use tokio::io::{DuplexStream, ReadHalf, WriteHalf};
 
 use overseer::{
     ClientConnection, ClientError, Daemon, ErrorResponse, Payload, ResponseError, ResponseStream,
-    StreamClientTransport, Streaming, handlers, service,
+    StreamArg, StreamClientTransport, Streaming, handlers, service,
     transport::{PeerInfo, StreamConnection, Transport},
 };
 
@@ -232,28 +232,52 @@ async fn server_stream_collects_items() {
 async fn client_stream_sums_inputs() {
     let client = start().await;
 
-    let mut upstream = client.sum().await.expect("sum");
+    // The trait-form client takes a boxed `StreamArg` (object-safe); the response
+    // comes straight back, mirroring the daemon's `(stream) -> value` shape.
+    let total = client
+        .sum(futures::stream::iter([1u32, 2, 3, 4]).into())
+        .await
+        .expect("sum");
 
-    for i in [1u32, 2, 3, 4] {
-        upstream.send(&i).await.expect("send");
-    }
-
-    assert_eq!(upstream.finish().await.expect("finish"), 10);
+    assert_eq!(total, 10);
 }
 
 #[tokio::test]
 async fn bidi_echoes_doubled() {
     let client = start().await;
 
-    let mut bidi = client.echo().await.expect("echo");
+    // Symmetric bidi: hand it the input stream, read the response stream back.
+    let mut replies = client
+        .echo(futures::stream::iter([5u32, 7]).into())
+        .await
+        .expect("echo");
 
-    bidi.send(&5u32).await.expect("send");
-    assert_eq!(bidi.next().await.expect("item").expect("ok"), 10);
+    assert_eq!(replies.next().await.expect("item").expect("ok"), 10);
+    assert_eq!(replies.next().await.expect("item").expect("ok"), 14);
+    assert!(replies.next().await.is_none());
+}
 
-    bidi.send(&7u32).await.expect("send");
-    assert_eq!(bidi.next().await.expect("item").expect("ok"), 14);
+#[tokio::test]
+async fn bidi_channel_input_is_concurrent() {
+    let client = start().await;
 
-    bidi.close_send().await.expect("close");
+    // The input stream is a channel the caller pushes into — their "sink". Sending
+    // and receiving are independent, so the caller can drive cause-and-effect
+    // themselves: push one item, then read its reply, then push the next.
+    let (tx, rx) = tokio::sync::mpsc::channel::<u32>(8);
+    let input = futures::stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|item| (item, rx))
+    });
+    let mut replies = client.echo(input.into()).await.expect("echo");
+
+    tx.send(3).await.unwrap();
+    assert_eq!(replies.next().await.expect("item").expect("ok"), 6);
+
+    tx.send(10).await.unwrap();
+    assert_eq!(replies.next().await.expect("item").expect("ok"), 20);
+
+    drop(tx);
+    assert!(replies.next().await.is_none());
 }
 
 // ---------------------------------------------------------------------------

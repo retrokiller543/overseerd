@@ -471,6 +471,7 @@ name = "overseer-transport"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "futures",
  "postcard",
  "serde",
  "thiserror",

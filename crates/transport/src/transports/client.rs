@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 use crate::error::Error;
 use crate::protocol::WireOutcome;
 use crate::status::StatusCode;
+use crate::stream_codec::{StreamDecode, StreamEncode};
 
 use super::client_stream::StreamClientTransport;
 
@@ -191,16 +192,32 @@ pub trait ClientTransport: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Self::Call, ClientError>> + Send;
 }
 
-/// One in-flight call's substrate-agnostic I/O: send inbound items, half-close,
-/// receive the demuxed outbound frames, or cancel.
+/// One in-flight call, split into two independently-owned halves so the inbound
+/// (send) and outbound (receive) directions are fully concurrent: a [`CallSink`]
+/// and a [`CallSource`] can move to separate tasks and run without coordinating.
+/// The substrate and the `CallId` stay hidden below this trait.
 pub trait ClientCall: Send {
+    type Sink: CallSink;
+    type Source: CallSource;
+
+    /// Splits the call into its send and receive halves.
+    fn split(self) -> (Self::Sink, Self::Source);
+}
+
+/// The send half of a call: stream inbound items, half-close, or cancel. Owned
+/// independently of its [`CallSource`], so sending never blocks on receiving.
+pub trait CallSink: Send {
     fn send(&mut self, payload: Vec<u8>) -> impl Future<Output = Result<(), ClientError>> + Send;
 
     fn finish(&mut self) -> impl Future<Output = Result<(), ClientError>> + Send;
 
-    fn recv(&mut self) -> impl Future<Output = Result<Option<Reply>, ClientError>> + Send;
-
     fn cancel(self) -> impl Future<Output = Result<(), ClientError>> + Send;
+}
+
+/// The receive half of a call: pull demuxed outbound frames. Owned independently
+/// of its [`CallSink`], so receiving never blocks on sending.
+pub trait CallSource: Send {
+    fn recv(&mut self) -> impl Future<Output = Result<Option<Reply>, ClientError>> + Send;
 }
 
 /// The user-facing client handle. Holds a [`ClientTransport`] and exposes the
@@ -222,22 +239,10 @@ impl<T: ClientTransport> ClientConnection<T> {
     {
         let payload = postcard::to_allocvec(req).map_err(|e| ClientError::Encode(e.to_string()))?;
 
-        let mut call = self.transport.open(path, false, payload).await.map_err(retype)?;
+        let call = self.transport.open(path, false, payload).await.map_err(retype)?;
+        let (_sink, mut source) = call.split();
 
-        match call.recv().await.map_err(retype)? {
-            Some(Reply::Response(WireOutcome::Ok(bytes))) => {
-                postcard::from_bytes(&bytes).map_err(|e| ClientError::Decode(e.to_string()))
-            }
-
-            Some(Reply::Response(WireOutcome::Err { code, body }))
-            | Some(Reply::Error { code, body }) => Err(ClientError::Remote(ErrorBody::new(code, body))),
-
-            None | Some(Reply::End) => Err(ClientError::ConnectionClosed),
-
-            Some(Reply::Item(_)) => {
-                Err(ClientError::Decode("unexpected stream item for unary call".into()))
-            }
-        }
+        decode_unary(source.recv().await.map_err(retype)?)
     }
 
     /// One request, a stream of responses.
@@ -248,48 +253,81 @@ impl<T: ClientTransport> ClientConnection<T> {
     ) -> Result<ServerStream<T::Call, Resp, E>, ClientError<E>>
     where
         Req: Serialize,
-        Resp: DeserializeOwned,
+        Resp: StreamDecode,
     {
         let payload = postcard::to_allocvec(req).map_err(|e| ClientError::Encode(e.to_string()))?;
 
         let call = self.transport.open(path, false, payload).await.map_err(retype)?;
+        let (_sink, source) = call.split();
 
         Ok(ServerStream {
-            call,
+            source,
             _marker: PhantomData,
         })
     }
 
-    /// A stream of requests, one response.
-    pub async fn client_stream<Req, Resp, E>(
+    /// A stream of requests, one response. Mirrors the daemon: hand it the input
+    /// stream, get the single response back. Items are drained and sent in order,
+    /// then the call is half-closed and the response awaited.
+    pub async fn client_stream<Req, Resp, E, I>(
         &self,
         path: &str,
-    ) -> Result<ClientUpstream<T::Call, Req, Resp, E>, ClientError<E>>
+        input: I,
+    ) -> Result<Resp, ClientError<E>>
     where
-        Req: Serialize,
+        Req: StreamEncode,
         Resp: DeserializeOwned,
+        I: Into<StreamArg<Req>>,
     {
         let call = self.transport.open(path, true, Vec::new()).await.map_err(retype)?;
+        let (mut sink, mut source) = call.split();
+        let mut input = input.into().into_inner();
 
-        Ok(ClientUpstream {
-            call,
-            _marker: PhantomData,
-        })
+        while let Some(item) = futures::StreamExt::next(&mut input).await {
+            send_item(&mut sink, &item).await?;
+        }
+
+        sink.finish().await.map_err(retype)?;
+
+        decode_unary(source.recv().await.map_err(retype)?)
     }
 
-    /// A bidirectional stream of requests and responses.
-    pub async fn bidi_stream<Req, Resp, E>(
+    /// A bidirectional stream of requests and responses, fully symmetric with the
+    /// daemon: an input stream in, a response stream out, driven concurrently. The
+    /// input is pumped to the wire on its own task while the returned stream yields
+    /// responses, so sending and receiving are independent — cause-and-effect is up
+    /// to the caller (e.g. push to a channel-backed `input`, then read responses).
+    pub async fn bidi_stream<Req, Resp, E, I>(
         &self,
         path: &str,
-    ) -> Result<BidiStream<T::Call, Req, Resp, E>, ClientError<E>>
+        input: I,
+    ) -> Result<BidiResponses<T::Call, Resp, E>, ClientError<E>>
     where
-        Req: Serialize,
-        Resp: DeserializeOwned,
+        Req: StreamEncode + Send + 'static,
+        Resp: StreamDecode,
+        I: Into<StreamArg<Req>>,
+        <T::Call as ClientCall>::Sink: 'static,
     {
         let call = self.transport.open(path, true, Vec::new()).await.map_err(retype)?;
+        let (mut sink, source) = call.split();
+        let mut input = input.into().into_inner();
 
-        Ok(BidiStream {
-            call,
+        tokio::spawn(async move {
+            while let Some(item) = futures::StreamExt::next(&mut input).await {
+                let Ok(bytes) = item.encode() else {
+                    break;
+                };
+
+                if sink.send(bytes).await.is_err() {
+                    break;
+                }
+            }
+
+            let _ = sink.finish().await;
+        });
+
+        Ok(BidiResponses {
+            source,
             _marker: PhantomData,
         })
     }
@@ -330,11 +368,11 @@ impl ClientConnection<StreamClientTransport<tokio::net::unix::OwnedWriteHalf>> {
 /// yielding `None` at end-of-stream and a terminal error as `Some(Err(..))`.
 fn decode_item<Resp, E>(reply: Result<Option<Reply>, ClientError>) -> Option<Result<Resp, ClientError<E>>>
 where
-    Resp: DeserializeOwned,
+    Resp: StreamDecode,
 {
     match reply {
         Ok(Some(Reply::Item(bytes))) => Some(
-            postcard::from_bytes(&bytes).map_err(|e| ClientError::Decode(e.to_string())),
+            Resp::decode(&bytes).map_err(|e| ClientError::Decode(e.to_string())),
         ),
 
         Ok(Some(Reply::Error { code, body })) => {
@@ -351,97 +389,110 @@ where
     }
 }
 
-/// Serializes one outbound stream item for a client/bidi call.
-async fn send_item<C, Req, E>(call: &mut C, item: &Req) -> Result<(), ClientError<E>>
+/// Decodes the single response of a unary or client-streaming call.
+fn decode_unary<Resp, E>(reply: Option<Reply>) -> Result<Resp, ClientError<E>>
 where
-    C: ClientCall,
-    Req: Serialize,
+    Resp: DeserializeOwned,
 {
-    let bytes = postcard::to_allocvec(item).map_err(|e| ClientError::Encode(e.to_string()))?;
+    match reply {
+        Some(Reply::Response(WireOutcome::Ok(bytes))) => {
+            postcard::from_bytes(&bytes).map_err(|e| ClientError::Decode(e.to_string()))
+        }
 
-    call.send(bytes).await.map_err(retype)
+        Some(Reply::Response(WireOutcome::Err { code, body })) | Some(Reply::Error { code, body }) => {
+            Err(ClientError::Remote(ErrorBody::new(code, body)))
+        }
+
+        None | Some(Reply::End) => Err(ClientError::ConnectionClosed),
+
+        Some(Reply::Item(_)) => {
+            Err(ClientError::Decode("unexpected stream item awaiting unary response".into()))
+        }
+    }
+}
+
+/// Serializes one outbound stream item and sends it on a call's sink.
+async fn send_item<S, Req, E>(sink: &mut S, item: &Req) -> Result<(), ClientError<E>>
+where
+    S: CallSink,
+    Req: StreamEncode,
+{
+    let bytes = item.encode().map_err(|e| ClientError::Encode(e.to_string()))?;
+
+    sink.send(bytes).await.map_err(retype)
+}
+
+/// A boxed input stream a generated *trait* client accepts, so the (otherwise
+/// generic) method stays object-safe. Build one from any `Stream` with `.into()`
+/// (or [`new`](Self::new)); the inherent client takes an `impl Stream` directly.
+///
+/// It deliberately does **not** implement `Stream` itself — that would collide
+/// with the blanket `From<S: Stream>` against the reflexive `From<T> for T` — so
+/// the connection methods accept `impl Into<StreamArg>` and call
+/// [`into_inner`](Self::into_inner) to recover the boxed stream.
+pub struct StreamArg<T> {
+    inner: std::pin::Pin<Box<dyn futures::Stream<Item = T> + Send>>,
+}
+
+impl<T> StreamArg<T> {
+    pub fn new<S>(stream: S) -> Self
+    where
+        S: futures::Stream<Item = T> + Send + 'static,
+    {
+        Self {
+            inner: Box::pin(stream),
+        }
+    }
+
+    /// The boxed stream, ready to drive (it is itself a `Stream`).
+    pub fn into_inner(self) -> std::pin::Pin<Box<dyn futures::Stream<Item = T> + Send>> {
+        self.inner
+    }
+}
+
+impl<T, S> From<S> for StreamArg<T>
+where
+    S: futures::Stream<Item = T> + Send + 'static,
+{
+    fn from(stream: S) -> Self {
+        Self::new(stream)
+    }
 }
 
 /// The outbound response stream of a server- or bidi-streaming call. Drive it
 /// with `while let Some(item) = stream.next().await`.
-pub struct ServerStream<C, Resp, E = Raw> {
-    call: C,
+pub struct ServerStream<C: ClientCall, Resp, E = Raw> {
+    source: C::Source,
     _marker: Variance<(Resp, E)>,
 }
 
 impl<C, Resp, E> ServerStream<C, Resp, E>
 where
     C: ClientCall,
-    Resp: DeserializeOwned,
+    Resp: StreamDecode,
 {
     pub async fn next(&mut self) -> Option<Result<Resp, ClientError<E>>> {
-        let reply = self.call.recv().await;
+        let reply = self.source.recv().await;
 
         decode_item(reply)
     }
 }
 
-/// The upstream half of a client-streaming call: send items, then `finish` to
-/// half-close and await the single response.
-pub struct ClientUpstream<C, Req, Resp, E = Raw> {
-    call: C,
-    _marker: Variance<(Req, Resp, E)>,
+/// The response stream of a bidirectional call: its outbound half. Drive it with
+/// `while let Some(item) = stream.next().await`, concurrently with the input
+/// stream the framework is pumping on its own task.
+pub struct BidiResponses<C: ClientCall, Resp, E = Raw> {
+    source: C::Source,
+    _marker: Variance<(Resp, E)>,
 }
 
-impl<C, Req, Resp, E> ClientUpstream<C, Req, Resp, E>
+impl<C, Resp, E> BidiResponses<C, Resp, E>
 where
     C: ClientCall,
-    Req: Serialize,
-    Resp: DeserializeOwned,
+    Resp: StreamDecode,
 {
-    pub async fn send(&mut self, item: &Req) -> Result<(), ClientError<E>> {
-        send_item(&mut self.call, item).await
-    }
-
-    pub async fn finish(mut self) -> Result<Resp, ClientError<E>> {
-        self.call.finish().await.map_err(retype)?;
-
-        match self.call.recv().await.map_err(retype)? {
-            Some(Reply::Response(WireOutcome::Ok(bytes))) => {
-                postcard::from_bytes(&bytes).map_err(|e| ClientError::Decode(e.to_string()))
-            }
-
-            Some(Reply::Response(WireOutcome::Err { code, body }))
-            | Some(Reply::Error { code, body }) => Err(ClientError::Remote(ErrorBody::new(code, body))),
-
-            None | Some(Reply::End) => Err(ClientError::ConnectionClosed),
-
-            Some(Reply::Item(_)) => Err(ClientError::Decode(
-                "unexpected stream item awaiting client-stream response".into(),
-            )),
-        }
-    }
-}
-
-/// A bidirectional call: `send`/`close_send` upstream while reading responses
-/// with `next`. v1 drives both halves from `&mut self`, so sends and receives
-/// interleave sequentially rather than truly concurrently.
-pub struct BidiStream<C, Req, Resp, E = Raw> {
-    call: C,
-    _marker: Variance<(Req, Resp, E)>,
-}
-
-impl<C, Req, Resp, E> BidiStream<C, Req, Resp, E>
-where
-    C: ClientCall,
-    Req: Serialize,
-    Resp: DeserializeOwned,
-{
-    pub async fn send(&mut self, item: &Req) -> Result<(), ClientError<E>> {
-        send_item(&mut self.call, item).await
-    }
-
-    pub async fn close_send(&mut self) -> Result<(), ClientError<E>> {
-        self.call.finish().await.map_err(retype)
-    }
-
     pub async fn next(&mut self) -> Option<Result<Resp, ClientError<E>>> {
-        let reply = self.call.recv().await;
+        let reply = self.source.recv().await;
 
         decode_item(reply)
     }

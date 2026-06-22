@@ -23,8 +23,8 @@ pub use unix::{UnixConnection, UnixResponder, UnixTransport};
 
 #[cfg(feature = "client")]
 pub use client::{
-    BidiStream, ClientCall, ClientConnection, ClientError, ClientTransport, ClientUpstream,
-    ErrorBody, Raw, Reply, ServerStream,
+    BidiResponses, CallSink, CallSource, ClientCall, ClientConnection, ClientError,
+    ClientTransport, ErrorBody, Raw, Reply, ServerStream, StreamArg,
 };
 #[cfg(feature = "client")]
-pub use client_stream::{StreamCall, StreamClientTransport};
+pub use client_stream::{StreamCall, StreamCallSink, StreamClientTransport, StreamSource};

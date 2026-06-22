@@ -59,8 +59,9 @@ pub use overseer_core::{
     ComponentScope, Conn, ConnectionHandler, ConnectionInfo, Daemon, DaemonBuilder,
     DependencyDescriptor, DescriptorRegistry, Dynamic, Error, ErrorResponse, Extension,
     FallibleHandler, Flags, FromContext, Handler, Injectable, OperationKind, ParameterDescriptor,
-    ParameterKind, Payload, PredefinedCode, Provide, ProviderDescriptor, Responder, ResponseError,
-    ResponseStream, Result, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
+    ParameterKind, Payload, PredefinedCode, Provide, ProviderDescriptor, RequestStream, Responder,
+    ResponseError, ResponseStream, Result, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler,
+    RpcOutcome,
     RpcResponse, RpcRouter, ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal,
     StatusCode, Streaming, TypeDescriptor, Wired, Wiring, component, daemon, dispatch_fallible,
     dispatch_with, handlers, injectable, rpc, service, type_id_of,
@@ -78,6 +79,12 @@ pub use overseer_core::linkme;
 #[doc(hidden)]
 pub use async_trait;
 
+/// Re-exported so a `#[rpc(stream)]` handler returning a concrete (un-introspectable)
+/// stream type still yields a well-typed client: the generated code projects the
+/// wire item type as `<ReturnType as Stream>::Item` through this alias.
+#[doc(hidden)]
+pub use futures::Stream as __Stream;
+
 // ---------------------------------------------------------------------------
 // Transport: server endpoints, client wire protocol, custom-transport traits.
 // `Error`/`Result` are intentionally not lifted to the root (the core ones win);
@@ -86,8 +93,8 @@ pub use async_trait;
 pub use overseer_transport::{
     CallId, CallResult, Connection, IncomingCall, MemoryCall, MemoryClient, MemoryConnection,
     MemoryConnectionHandle, MemoryResponder, MemoryTransport, PeerInfo, Respond, RespondStream,
-    ResponseSink, ServerEvent, TcpTransport, Transport, WireMessage, WireOutcome, WireRequest,
-    WireResponse,
+    ResponseSink, ServerEvent, StreamDecode, StreamDecodeError, StreamEncode, StreamEncodeError,
+    TcpTransport, Transport, WireMessage, WireOutcome, WireRequest, WireResponse,
 };
 
 #[cfg(unix)]
@@ -98,8 +105,9 @@ pub use overseer_transport::UnixTransport;
 /// generated clients build on. Gated behind the `client` feature.
 #[cfg(feature = "client")]
 pub use overseer_transport::{
-    BidiStream, ClientCall, ClientConnection, ClientError, ClientTransport, ClientUpstream,
-    ErrorBody, Raw, Reply, ServerStream, StreamCall, StreamClientTransport,
+    BidiResponses, CallSink, CallSource, ClientCall, ClientConnection, ClientError,
+    ClientTransport, ErrorBody, Raw, Reply, ServerStream, StreamArg, StreamCall, StreamCallSink,
+    StreamClientTransport, StreamSource,
 };
 
 /// The full transport layer, including the framing codec (`transport::protocol::codec`)

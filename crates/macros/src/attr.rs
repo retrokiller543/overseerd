@@ -5,7 +5,8 @@
 
 use proc_macro2::Span;
 use syn::{
-    GenericArgument, Ident, LitStr, PathArguments, ReturnType, Token, Type,
+    GenericArgument, Generics, Ident, LitStr, PathArguments, ReturnType, Token, TraitBound, Type,
+    TypeParamBound, WherePredicate,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
     token,
@@ -283,11 +284,6 @@ pub fn streaming_inner(ty: &Type) -> Option<Type> {
     first_type_arg(ty, "Streaming")
 }
 
-/// The response item type `T` of a `ResponseStream<T>` return.
-pub fn response_stream_inner(ty: &Type) -> Option<Type> {
-    first_type_arg(ty, "ResponseStream")
-}
-
 /// If `output` is `Result<Ok, Err?>`, returns `(Ok, Err)`. `Err` is `None` for a
 /// one-argument alias such as `overseer::Result<T>` (whose error is the framework
 /// `Error`, opaque to the client and surfaced as a raw body).
@@ -362,6 +358,137 @@ pub fn arc_inner_type(ty: &Type) -> syn::Result<Type> {
         Some(GenericArgument::Type(inner)) => Ok(inner.clone()),
         _ => Err(err()),
     }
+}
+
+/// The item shape of a detected `Stream`, recovered from an `impl Stream<Item =
+/// ..>` type or a generic parameter bound by `Stream`.
+///
+/// `error` is `Some` when the item is `Result<T, E>` (a per-item-fallible
+/// stream): `item` is then the success type `T` and `error` the `E`. For a bare
+/// `Item = T` stream `error` is `None`.
+pub struct StreamShape {
+    pub item: Type,
+    pub error: Option<Type>,
+}
+
+impl StreamShape {
+    /// Whether each item is a `Result` the framework maps to a `StreamError`.
+    pub fn fallible(&self) -> bool {
+        self.error.is_some()
+    }
+}
+
+/// Detects whether `ty` is a `Stream` the macro can introspect — either
+/// `impl Stream<Item = ..>` or a generic parameter of `generics` bound by
+/// `Stream` — and recovers its [`StreamShape`]. A concrete named type is opaque
+/// here (the macro cannot prove it is a `Stream`), so it returns `None`; such
+/// returns are flagged explicitly with `#[rpc(stream)]`.
+pub fn stream_shape(ty: &Type, generics: &Generics) -> Option<StreamShape> {
+    let item = match ty {
+        Type::ImplTrait(it) => stream_item_in_bounds(&it.bounds)?,
+
+        Type::Path(path) if path.qself.is_none() => {
+            let name = path.path.get_ident()?;
+
+            generic_stream_item(name, generics)?
+        }
+
+        _ => return None,
+    };
+
+    Some(shape_from_item(item))
+}
+
+/// Splits a stream's `Item` type into its success/error parts: `Result<T, E>`
+/// becomes a fallible shape, anything else a bare-value shape.
+fn shape_from_item(item: Type) -> StreamShape {
+    match result_args_of_type(&item) {
+        Some((ok, err)) => StreamShape {
+            item: ok,
+            error: Some(err),
+        },
+
+        None => StreamShape { item, error: None },
+    }
+}
+
+/// Finds the `Item = X` binding of a `Stream` bound among `bounds`, if present.
+fn stream_item_in_bounds(bounds: &Punctuated<TypeParamBound, Token![+]>) -> Option<Type> {
+    bounds.iter().find_map(|bound| match bound {
+        TypeParamBound::Trait(trait_bound) => stream_item_of_bound(trait_bound),
+        _ => None,
+    })
+}
+
+/// The `Item = X` of a single `Stream<Item = X>` trait bound, or `None` if the
+/// bound is not `Stream` or names no `Item`.
+fn stream_item_of_bound(bound: &TraitBound) -> Option<Type> {
+    let segment = bound.path.segments.last()?;
+
+    if segment.ident != "Stream" {
+        return None;
+    }
+
+    let PathArguments::AngleBracketed(generics) = &segment.arguments else {
+        return None;
+    };
+
+    generics.args.iter().find_map(|arg| match arg {
+        GenericArgument::AssocType(assoc) if assoc.ident == "Item" => Some(assoc.ty.clone()),
+        _ => None,
+    })
+}
+
+/// The `Item` of a generic parameter `name` bound by `Stream`, checking both the
+/// inline bounds (`<S: Stream<..>>`) and the `where` clause.
+fn generic_stream_item(name: &Ident, generics: &Generics) -> Option<Type> {
+    let inline = generics.params.iter().find_map(|param| match param {
+        syn::GenericParam::Type(type_param) if &type_param.ident == name => {
+            stream_item_in_bounds(&type_param.bounds)
+        }
+        _ => None,
+    });
+
+    if inline.is_some() {
+        return inline;
+    }
+
+    let where_clause = generics.where_clause.as_ref()?;
+
+    where_clause.predicates.iter().find_map(|predicate| match predicate {
+        WherePredicate::Type(predicate) if type_name(&predicate.bounded_ty) == Some(name) => {
+            stream_item_in_bounds(&predicate.bounds)
+        }
+        _ => None,
+    })
+}
+
+/// If `ty` is `Result<Ok, Err>`, returns `(Ok, Err)`. Used to split a stream
+/// item into success and error halves.
+fn result_args_of_type(ty: &Type) -> Option<(Type, Type)> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+
+    let segment = path.path.segments.last()?;
+
+    if segment.ident != "Result" {
+        return None;
+    }
+
+    let PathArguments::AngleBracketed(generics) = &segment.arguments else {
+        return None;
+    };
+
+    let mut args = generics.args.iter().filter_map(|arg| match arg {
+        GenericArgument::Type(t) => Some(t.clone()),
+        _ => None,
+    });
+
+    let ok = args.next()?;
+    let err = args.next()?;
+
+    Some((ok, err))
 }
 
 /// Whether a return type is a `Result<...>` (vs. an infallible bare value).
