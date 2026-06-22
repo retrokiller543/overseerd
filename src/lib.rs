@@ -62,8 +62,8 @@ pub use overseer_core::{
     ParameterKind, Payload, PredefinedCode, Provide, ProviderDescriptor, Responder, ResponseError,
     ResponseStream, Result, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
     RpcResponse, RpcRouter, ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal,
-    StatusCode, Streaming, TypeDescriptor, Wiring, component, dispatch_fallible, dispatch_with,
-    handlers, rpc, service, type_id_of,
+    StatusCode, Streaming, TypeDescriptor, Wired, Wiring, component, daemon, dispatch_fallible,
+    dispatch_with, handlers, injectable, rpc, service, type_id_of,
 };
 
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`

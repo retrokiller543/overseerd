@@ -35,6 +35,52 @@ pub fn provide_impl(self_ident: &Ident) -> TokenStream {
     }
 }
 
+/// `impl Wired for T where Wiring: Provide<T1> + .. {}` — a lazy predicate that
+/// all of `T`'s single dependencies (`targets`, concrete and trait-object) are
+/// provided, checked only where `app!` demands `T: Wired`. A type with no
+/// dependencies is unconditionally `Wired`. Empty unless `di-check` is on.
+pub fn wired_impl(self_ident: &Ident, targets: &[TokenStream]) -> TokenStream {
+    if !enabled() {
+        return quote!();
+    }
+
+    let wired = overseer_path("Wired");
+    let provide = overseer_path("Provide");
+    let wiring = overseer_path("Wiring");
+
+    if targets.is_empty() {
+        quote! {
+            impl #wired for #self_ident {}
+        }
+    } else {
+        quote! {
+            impl #wired for #self_ident
+            where
+                #wiring: #(#provide<#targets>)+*,
+            {
+            }
+        }
+    }
+}
+
+/// `impl Provide<dyn Trait> for Wiring {}`, emitted once at the trait's
+/// definition by `#[injectable]`, so a single `Arc<dyn Trait>` dependency
+/// type-checks. Living on the trait (not each provider) means it is coherent no
+/// matter how many components `provide` it — provider *existence* is checked at
+/// runtime and by the source analyzer. Empty unless `di-check` is on.
+pub fn injectable_impl(trait_ident: &Ident) -> TokenStream {
+    if !enabled() {
+        return quote!();
+    }
+
+    let provide = overseer_path("Provide");
+    let wiring = overseer_path("Wiring");
+
+    quote! {
+        impl #provide<dyn #trait_ident> for #wiring {}
+    }
+}
+
 /// An uncalled assertion that every `target` is provided, as the bound
 /// `Wiring: Provide<T1> + Provide<T2> + ..`. Each `target` is a `Provide` type
 /// argument (e.g. `<Arc<T> as Injectable>::Target`). Empty unless `di-check` is

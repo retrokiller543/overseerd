@@ -51,9 +51,11 @@ extern crate proc_macro;
 
 mod attr;
 mod component;
+mod daemon;
 mod derive;
 mod di;
 mod handle;
+mod injectable;
 mod handlers;
 mod inject;
 mod paths;
@@ -332,4 +334,44 @@ pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
     rpc::expand_standalone(item)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+/// Assembles a daemon and validates it from one declaration.
+///
+/// ```ignore
+/// let daemon = daemon! {
+///     name: "example-daemon",
+///     services: [Notifications, Echo],
+///     components: [Config { greeting: "Hi".into() }],
+/// }
+/// .build()
+/// .await?;
+/// ```
+///
+/// Expands to a `DaemonBuilder` — `Daemon::builder(name).auto_discover()` plus a
+/// `with_component(..)` for each listed instance — so it is what you use in
+/// `main`. The listed `services` are additionally required to be
+/// [`Wired`](overseer_core::Wired) under the `di-check` feature, asserting their
+/// whole dependency graph (including trait-object and `#[service]` field
+/// dependencies, across crates) at compile time. The same declaration that wires
+/// the daemon validates it — there is no separate list to maintain.
+#[proc_macro]
+pub fn daemon(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as daemon::DaemonInput);
+
+    daemon::expand(input).into()
+}
+
+/// Marks a trait as injectable as `Arc<dyn Trait>` (providers register with
+/// `#[component(provide = dyn Trait)]`).
+///
+/// Under the `di-check` feature it emits `impl Provide<dyn Trait> for Wiring` so
+/// a single `Arc<dyn Trait>` dependency type-checks; the trait must be `Send +
+/// Sync` (state it as a supertrait) and object-safe. Without `di-check` the trait
+/// passes through unchanged.
+#[proc_macro_attribute]
+pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item = parse_macro_input!(item as syn::ItemTrait);
+
+    injectable::expand(item).into()
 }

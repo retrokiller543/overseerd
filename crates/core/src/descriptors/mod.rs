@@ -5,7 +5,7 @@ pub mod types;
 pub use component::{
     BoxedComponent, Cardinality, Component, ComponentConstructionContext, ComponentDescriptor,
     ComponentFactory, ComponentScope, DependencyDescriptor, Dynamic, Injectable, Provide,
-    ProviderDescriptor, ServiceComponent, Wiring,
+    ProviderDescriptor, ServiceComponent, Wired, Wiring,
 };
 pub use service::{
     OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor, RpcGroup,
