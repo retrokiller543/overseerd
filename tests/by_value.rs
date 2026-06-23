@@ -32,7 +32,10 @@ async fn by_value_component_is_stored_and_injected_unwrapped() {
     // `get` returns the handle: `Pool` by value, not `Arc<Pool>`. The type
     // annotation is the proof — it would not compile if the handle were wrapped.
     let pool: Pool = daemon.container().get::<Pool>().expect("Pool constructed");
-    let service = daemon.container().get::<Service>().expect("Service constructed");
+    let service = daemon
+        .container()
+        .get::<Service>()
+        .expect("Service constructed");
 
     // The injected `Pool` is a cheap clone sharing the one inner `Arc` counter:
     // bumping it through the service is observed through the container's handle.

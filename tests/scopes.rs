@@ -146,7 +146,10 @@ async fn connection_scope_differs_across_connections() {
     let (c1, _) = ids(&first).await;
     let (c2, _) = ids(&second).await;
 
-    assert_ne!(c1, c2, "each connection gets its own connection-scoped instance");
+    assert_ne!(
+        c1, c2,
+        "each connection gets its own connection-scoped instance"
+    );
 }
 
 #[tokio::test]

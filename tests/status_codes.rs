@@ -34,7 +34,7 @@ impl std::fmt::Display for AppError {
 
 impl ResponseError for AppError {
     type Body = AppErrorBody;
-    
+
     fn status_code(&self) -> StatusCode {
         StatusCode::new_with_custom(PredefinedCode::BadInput, Flags::RETRYABLE, SUBCODE)
     }

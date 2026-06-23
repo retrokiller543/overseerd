@@ -1,16 +1,18 @@
 //! Procedural macros for the Overseer framework.
 //!
 //! These are re-exported from the `overseer` facade crate; depend on that rather
-//! than this crate directly. There are five macros, spanning two subsystems —
-//! components (dependency injection) and services (RPC).
+//! than this crate directly. They span three subsystems — components (dependency
+//! injection), services (RPC), and configuration.
 //!
-//! | Macro                 | Applies to | Produces |
-//! |-----------------------|------------|----------|
-//! | `#[derive(Component)]`| struct/enum| `Component` impl only (metadata) |
-//! | `#[component]`        | struct     | `Component` impl + a registered, system-built factory |
-//! | `#[service]`          | struct     | `Component` + `ServiceComponent` impls + a service header + default factory |
-//! | `#[handlers]`         | impl block | RPC handlers + RPC group; optional `#[init]` constructor |
-//! | `#[rpc]` / `#[init]`  | method     | markers consumed by `#[handlers]` |
+//! | Macro                       | Applies to | Produces |
+//! |-----------------------------|------------|----------|
+//! | `#[derive(Component)]`      | struct/enum| `Component` impl only (metadata) |
+//! | `#[component]`              | struct     | `Component` impl + a registered, system-built factory |
+//! | `#[service]`                | struct     | `Component` + `ServiceComponent` impls + a service header + default factory |
+//! | `#[handlers]`               | impl block | RPC handlers + RPC group; optional `#[init]` constructor |
+//! | `#[rpc]` / `#[init]`        | method     | markers consumed by `#[handlers]` |
+//! | `#[injectable]`             | trait      | `Provide<dyn Trait>` impl (under `di-check`) |
+//! | `#[derive(ConfigProperties)]`| struct   | `ConfigProperties` impl; auto-registers a binding when given `#[config(path = "..")]` |
 //!
 //! # Components: two ways to provide one
 //!
@@ -34,7 +36,9 @@
 //!
 //! - an `Arc<T>` field is treated as a **dependency** and resolved from the
 //!   container (`cx.resolve::<T>()`);
-//! - any other field is **owned state** and built with `Default::default()` — so
+//! - a `Cfg<T>` field carrying `#[config("path")]` is a **config binding** resolved
+//!   by property path (omit the path for the sole-binding shorthand);
+//! - a `#[default]` field is **owned state**, built with `Default::default()` — so
 //!   its type must implement `Default`, otherwise construct the component another
 //!   way (an `#[init]` constructor, or `with_component`).
 //!
@@ -51,13 +55,14 @@ extern crate proc_macro;
 
 mod attr;
 mod component;
+mod config;
 mod daemon;
 mod derive;
 mod di;
 mod handle;
-mod injectable;
 mod handlers;
 mod inject;
+mod injectable;
 mod paths;
 mod provide;
 mod rpc;
@@ -69,11 +74,12 @@ use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// Declares a **system-constructed singleton component** on a struct.
 ///
 /// The container builds the instance during startup by *field injection*: each
-/// `Arc<T>` field is resolved from the container as a dependency, and every other
-/// field is built with `Default::default()`. Use this for dependencies the system
-/// can assemble itself (pools, clients composed from other components, …). For an
-/// instance you must build yourself, use `DaemonBuilder::with_component` with a
-/// `#[derive(Component)]` type instead.
+/// field is resolved from the container as a dependency (its type is an injectable
+/// handle — `Arc<T>`, `Cfg<T>` for config, a trait-object collection, …), unless it
+/// carries `#[default]`, which makes it owned state built with `Default::default()`.
+/// Use this for dependencies the system can assemble itself (pools, clients composed
+/// from other components, …). For an instance you must build yourself, use
+/// `DaemonBuilder::with_component` with a `#[derive(Component)]` type instead.
 ///
 /// # Arguments
 ///
@@ -102,17 +108,18 @@ use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// #[derive(Component)]
 /// struct Config { url: String }
 ///
-/// /// Built from `Config` (resolved) plus owned state (`Default`).
+/// /// Built from `Config` (resolved) plus owned state (`#[default]`).
 /// #[component]
 /// struct Pool {
 ///     config: Arc<Config>,   // dependency, resolved from the container
+///     #[default]
 ///     hits: std::sync::atomic::AtomicU64, // owned state, Default-built
 /// }
 /// ```
 ///
 /// # Errors
 ///
-/// Emits a `compile_error!` if applied to anything but a struct. If a non-`Arc`
+/// Emits a `compile_error!` if applied to anything but a struct. If a `#[default]`
 /// field doesn't implement `Default`, the *generated* factory fails to compile.
 ///
 /// # See also
@@ -166,6 +173,28 @@ pub fn derive_component(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as DeriveInput);
 
     derive::expand(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Implements the `ConfigProperties` trait for a config struct, making it injectable
+/// as `Cfg<T>` from a property path.
+///
+/// The type must also derive `Deserialize`. With `#[config(path = "..")]` the binding
+/// is auto-registered (picked up by `auto_discover`); without a path, bind it
+/// explicitly with `DaemonBuilder::config::<T>(path)` — needed when the same type is
+/// bound at several paths. `#[config(name = "..")]` overrides the display name.
+///
+/// ```ignore
+/// #[derive(ConfigProperties, Deserialize)]
+/// #[config(path = "app.server")]
+/// struct ServerConfig { addr: String, port: u16 }
+/// ```
+#[proc_macro_derive(ConfigProperties, attributes(config))]
+pub fn derive_config_properties(item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+
+    config::expand(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -339,22 +368,40 @@ pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Assembles a daemon and validates it from one declaration.
 ///
 /// ```ignore
+/// // Built earlier in `main`, so their values can also configure the transport.
+/// let config = ConfigManager::<Toml>::load_in(&dirs.dir(), &[])?;
+///
 /// let daemon = daemon! {
 ///     name: "example-daemon",
 ///     services: [Notifications, Echo],
-///     components: [Config { greeting: "Hi".into() }],
+///     configs: [ DbConfig => "app.db.reader", DbConfig => "app.db.writer" ],
+///     managers: {
+///         config: config,        // hand in a pre-built `ConfigManager`
+///         directories: dirs,     // hand in a pre-built `DirectoriesManager`
+///     },
 /// }
 /// .build()
 /// .await?;
 /// ```
 ///
-/// Expands to a `DaemonBuilder` — `Daemon::builder(name).auto_discover()` plus a
-/// `with_component(..)` for each listed instance — so it is what you use in
-/// `main`. The listed `services` are additionally required to be
+/// Expands to a `DaemonBuilder` — `Daemon::builder(name).auto_discover()`, a
+/// `with_component(..)` for each listed instance, a `config::<T>(path)` for each
+/// `configs` entry (`Type => "property.path"`), and `config_source`/`directories`
+/// for any `managers` entries — so it is what you use in `main`.
+///
+/// - `configs` binds the same config type at several property paths; a type with a
+///   baked-in `#[config(path = "..")]` auto-registers and needs no entry.
+/// - `managers` hands in instances built earlier in `main`: `config: <binding>` a
+///   [`ConfigManager`](overseer_core::ConfigManager), `directories: <binding>` a
+///   [`DirectoriesManager`](overseer_core::DirectoriesManager). Both are optional —
+///   omitted, the builder constructs defaults (config loaded from the `Dir<Config>`
+///   directory, directories derived from the daemon name).
+///
+/// The listed `services` are additionally required to be
 /// [`Wired`](overseer_core::Wired) under the `di-check` feature, asserting their
 /// whole dependency graph (including trait-object and `#[service]` field
-/// dependencies, across crates) at compile time. The same declaration that wires
-/// the daemon validates it — there is no separate list to maintain.
+/// dependencies, across crates) at compile time. The same declaration that wires the
+/// daemon validates it — there is no separate list to maintain.
 #[proc_macro]
 pub fn daemon(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as daemon::DaemonInput);

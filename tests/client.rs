@@ -171,10 +171,7 @@ async fn unary_bare_value() {
 async fn unary_result_ok() {
     let client = start().await;
 
-    let sum = client
-        .add(&AddRequest { a: 2, b: 3 })
-        .await
-        .expect("add");
+    let sum = client.add(&AddRequest { a: 2, b: 3 }).await.expect("add");
 
     assert_eq!(sum, 5);
 }

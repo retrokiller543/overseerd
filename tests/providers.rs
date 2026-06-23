@@ -15,8 +15,7 @@ trait Animal: Send + Sync {
 }
 
 #[injectable]
-trait Feline: Animal {
-}
+trait Feline: Animal {}
 
 // `primary` wins a bare `Arc<dyn Animal>`. Qualifier is inferred as the id "dog".
 #[component(provide = dyn Animal, primary)]
@@ -38,8 +37,7 @@ impl Animal for Cat {
     }
 }
 
-impl Feline for Cat {
-}
+impl Feline for Cat {}
 
 /// Consumes the primary provider, the concrete `Dog`, a `#[qualifier]`-selected
 /// provider, and the collection / keyed views of all providers.
@@ -74,7 +72,11 @@ async fn primary_provider_is_chosen_and_aliases_the_single_instance() {
     assert_eq!(zoo.chosen.sound(), "woof", "primary provider chosen");
 
     // `#[qualifier = "feline"]` selects Cat specifically, ignoring primary.
-    assert_eq!(zoo.cat.sound(), "meow", "qualifier selects a specific provider");
+    assert_eq!(
+        zoo.cat.sound(),
+        "meow",
+        "qualifier selects a specific provider"
+    );
 
     // The trait provider and the concrete dependency are the *same* allocation:
     // the provider is an `Arc` alias of the one constructed Dog, not a rebuild.

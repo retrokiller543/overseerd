@@ -187,7 +187,9 @@ fn plan_field(field: &mut Field) -> FieldPlan {
     let field_qualifier = field.attrs.iter().find_map(|a| {
         if a.path().is_ident("qualifier")
             && let Meta::NameValue(nv) = &a.meta
-            && let Expr::Lit(ExprLit { lit: Lit::Str(s), .. }) = &nv.value
+            && let Expr::Lit(ExprLit {
+                lit: Lit::Str(s), ..
+            }) = &nv.value
         {
             return Some(s.clone());
         }
@@ -196,6 +198,16 @@ fn plan_field(field: &mut Field) -> FieldPlan {
     });
     field.attrs.retain(|a| !a.path().is_ident("qualifier"));
 
+    // `#[config]` (sole-binding shorthand) or `#[config("app.db.reader")]` (path)
+    // marks a config-binding injection.
+    let config_attr = field.attrs.iter().find(|a| a.path().is_ident("config"));
+    let is_config = config_attr.is_some();
+    let config_path: Option<LitStr> = config_attr.and_then(|a| match &a.meta {
+        Meta::List(list) => syn::parse2::<LitStr>(list.tokens.clone()).ok(),
+        _ => None,
+    });
+    field.attrs.retain(|a| !a.path().is_ident("config"));
+
     let cardinality = overseer_path("Cardinality");
     let dynamic_ty = overseer_path("Dynamic");
     let error = overseer_path("Error");
@@ -203,7 +215,11 @@ fn plan_field(field: &mut Field) -> FieldPlan {
     let type_descriptor = overseer_path("TypeDescriptor");
     let dependency_descriptor = overseer_path("DependencyDescriptor");
 
-    let dep = |handle: &syn::Type, kind: TokenStream, optional: bool, dynamic: bool, qualifier: TokenStream| {
+    let dep = |handle: &syn::Type,
+               kind: TokenStream,
+               optional: bool,
+               dynamic: bool,
+               qualifier: TokenStream| {
         let dep_name_str = match attr::arc_inner_type(handle) {
             Ok(inner) => inner.to_token_stream().to_string(),
             Err(_) => handle.to_token_stream().to_string(),
@@ -218,6 +234,7 @@ fn plan_field(field: &mut Field) -> FieldPlan {
                 optional: #optional,
                 dynamic: #dynamic,
                 qualifier: #qualifier,
+                config: false,
             }
         }
     };
@@ -226,10 +243,59 @@ fn plan_field(field: &mut Field) -> FieldPlan {
 
     let ty = &field.ty;
 
+    // A `#[config]` / `#[config("path")]` field is a config binding injected as
+    // `Cfg<T>`, keyed by property path. Config edges are validated against the
+    // registered bindings (not the component graph), so they emit no di-check
+    // assertion.
+    if is_config {
+        let handle = ty.clone();
+        let dep_name_str = match attr::cfg_inner(&handle) {
+            Some(inner) => inner.to_token_stream().to_string(),
+            None => handle.to_token_stream().to_string(),
+        };
+        let dep_name = LitStr::new(&dep_name_str, handle.span());
+
+        let (resolved, qualifier) = match &config_path {
+            Some(path) => (
+                quote!(cx.resolve_config::<#handle>(#path).await),
+                quote!(::core::option::Option::Some(#path)),
+            ),
+            None => (
+                quote!(cx.resolve_config_sole::<#handle>().await),
+                none.clone(),
+            ),
+        };
+
+        let dependency = quote! {
+            #dependency_descriptor {
+                name: #dep_name,
+                ty: #type_descriptor::of::<<#handle as #injectable>::Target>(#dep_name),
+                cardinality: #cardinality::One,
+                optional: false,
+                dynamic: false,
+                qualifier: #qualifier,
+                config: true,
+            }
+        };
+
+        return FieldPlan {
+            value: quote!(#resolved.ok_or(#error::MissingComponent(#dep_name))?),
+            dependency: Some(dependency),
+            check: None,
+            wired: None,
+        };
+    }
+
     // Multi-valued edges resolve every provider of a trait and never fail (empty
     // `Vec`/`HashMap` is valid), so they take no `Injectable`-missing fallback.
     if let Some(item) = attr::vec_inner(ty) {
-        let dependency = dep(&item, quote!(#cardinality::Collection), false, false, none.clone());
+        let dependency = dep(
+            &item,
+            quote!(#cardinality::Collection),
+            false,
+            false,
+            none.clone(),
+        );
 
         return FieldPlan {
             value: quote!(cx.resolve_all::<#item>().await),
@@ -240,7 +306,13 @@ fn plan_field(field: &mut Field) -> FieldPlan {
     }
 
     if let Some(value) = attr::hashmap_value(ty) {
-        let dependency = dep(&value, quote!(#cardinality::Keyed), false, false, none.clone());
+        let dependency = dep(
+            &value,
+            quote!(#cardinality::Keyed),
+            false,
+            false,
+            none.clone(),
+        );
 
         return FieldPlan {
             value: quote!(cx.resolve_keyed::<#value>().await),
@@ -281,7 +353,13 @@ fn plan_field(field: &mut Field) -> FieldPlan {
         (true, true) => quote!(#resolved.map(#dynamic_ty)),
     };
 
-    let dependency = dep(&handle, quote!(#cardinality::One), optional, dynamic, qualifier);
+    let dependency = dep(
+        &handle,
+        quote!(#cardinality::One),
+        optional,
+        dynamic,
+        qualifier,
+    );
 
     // A required, concrete single edge is `Provide`-checkable; trait-object,
     // optional, and dynamic edges are not asserted in the per-macro path.

@@ -5,8 +5,8 @@ pub use rpc::{
     RpcOutcome, RpcResponse,
 };
 
-use crate::descriptors::types::TypeDescriptor;
 use crate::ServiceComponent;
+use crate::descriptors::types::TypeDescriptor;
 
 /// Identity of a service, tied to its implementing type.
 ///

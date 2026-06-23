@@ -9,9 +9,11 @@
 //! instances** live in the [`ComponentContainer`]. [`Daemon`] ties them together
 //! with a [`router::RpcRouter`] and a transport.
 
+pub mod config;
 pub mod container;
 pub mod daemon;
 pub mod descriptors;
+pub mod dirs;
 pub mod error;
 pub mod extract;
 pub mod lifecycle;
@@ -24,7 +26,7 @@ pub use extract::{
     dispatch_with,
 };
 pub use overseer_macros::{
-    Component, component, daemon, handlers, injectable, rpc, service,
+    Component, ConfigProperties, component, daemon, handlers, injectable, rpc, service,
 };
 /// Wire-contract status types and stream item codecs, re-exported from
 /// `overseer-transport` so handler authors import everything from `overseer_core`.
@@ -33,22 +35,27 @@ pub use overseer_transport::{
     StreamEncodeError,
 };
 
+pub use config::{
+    Cfg, ConfigBinding, ConfigBindingDescriptor, ConfigError, ConfigManager, ConfigProperties,
+};
 pub use container::{ComponentContainer, ScopeContainer};
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
-    COMPONENTS, PROVIDERS, RPC_GROUPS, SERVICES, BoxedComponent, Cardinality, Component,
+    BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cardinality, Component,
     ComponentConstructionContext, ComponentDescriptor, ComponentFactory, ComponentScope,
-    DependencyDescriptor, Dynamic, Injectable, OperationKind, ParameterDescriptor, ParameterKind,
-    Provide, ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
-    RpcResponse, ServiceComponent, ServiceDescriptor, TypeDescriptor, Wired, Wiring, type_id_of,
+    DependencyDescriptor, Dynamic, Injectable, OperationKind, PROVIDERS, ParameterDescriptor,
+    ParameterKind, Provide, ProviderDescriptor, RPC_GROUPS, RpcCallContext, RpcDescriptor,
+    RpcGroup, RpcHandler, RpcOutcome, RpcResponse, SERVICES, ServiceComponent, ServiceDescriptor,
+    TypeDescriptor, Wired, Wiring, type_id_of,
 };
+pub use dirs::{Dir, DirKind, DirectoriesManager};
 pub use error::Error;
+pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
 /// attribute through a stable path without the user crate depending on `linkme`
 /// directly.
 #[doc(hidden)]
 pub use linkme;
-pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use registry::DescriptorRegistry;
 pub use router::RpcRouter;
 

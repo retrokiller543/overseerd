@@ -8,10 +8,13 @@ authors.workspace = true
 [features]
 client = ["overseer-transport/client"]
 di-check = []
+# Enable YAML config sources (`application.yaml`) in addition to the default TOML.
+yaml = ["overseer-config/yaml"]
 
 [dependencies]
 linkme = { workspace = true }
-thiserror = "2"
+thiserror = { workspace = true }
+directories = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 tokio-util = { workspace = true }
@@ -19,5 +22,6 @@ futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 tracing = { workspace = true }
+overseer-config = { workspace = true }
 overseer-transport = { workspace = true }
 overseer-macros = { workspace = true }

@@ -239,7 +239,11 @@ impl<T: ClientTransport> ClientConnection<T> {
     {
         let payload = postcard::to_allocvec(req).map_err(|e| ClientError::Encode(e.to_string()))?;
 
-        let call = self.transport.open(path, false, payload).await.map_err(retype)?;
+        let call = self
+            .transport
+            .open(path, false, payload)
+            .await
+            .map_err(retype)?;
         let (_sink, mut source) = call.split();
 
         decode_unary(source.recv().await.map_err(retype)?)
@@ -257,7 +261,11 @@ impl<T: ClientTransport> ClientConnection<T> {
     {
         let payload = postcard::to_allocvec(req).map_err(|e| ClientError::Encode(e.to_string()))?;
 
-        let call = self.transport.open(path, false, payload).await.map_err(retype)?;
+        let call = self
+            .transport
+            .open(path, false, payload)
+            .await
+            .map_err(retype)?;
         let (_sink, source) = call.split();
 
         Ok(ServerStream {
@@ -279,7 +287,11 @@ impl<T: ClientTransport> ClientConnection<T> {
         Resp: DeserializeOwned,
         I: Into<StreamArg<Req>>,
     {
-        let call = self.transport.open(path, true, Vec::new()).await.map_err(retype)?;
+        let call = self
+            .transport
+            .open(path, true, Vec::new())
+            .await
+            .map_err(retype)?;
         let (mut sink, mut source) = call.split();
         let mut input = input.into().into_inner();
 
@@ -308,7 +320,11 @@ impl<T: ClientTransport> ClientConnection<T> {
         I: Into<StreamArg<Req>>,
         <T::Call as ClientCall>::Sink: 'static,
     {
-        let call = self.transport.open(path, true, Vec::new()).await.map_err(retype)?;
+        let call = self
+            .transport
+            .open(path, true, Vec::new())
+            .await
+            .map_err(retype)?;
         let (mut sink, source) = call.split();
         let mut input = input.into().into_inner();
 
@@ -335,9 +351,7 @@ impl<T: ClientTransport> ClientConnection<T> {
 
 impl ClientConnection<StreamClientTransport<tokio::net::tcp::OwnedWriteHalf>> {
     /// Connects over TCP and wraps the split stream in a byte-stream transport.
-    pub async fn connect_tcp(
-        addr: impl tokio::net::ToSocketAddrs,
-    ) -> Result<Self, ClientError> {
+    pub async fn connect_tcp(addr: impl tokio::net::ToSocketAddrs) -> Result<Self, ClientError> {
         let stream = tokio::net::TcpStream::connect(addr)
             .await
             .map_err(|e| ClientError::Transport(Error::Io(e)))?;
@@ -351,9 +365,7 @@ impl ClientConnection<StreamClientTransport<tokio::net::tcp::OwnedWriteHalf>> {
 #[cfg(unix)]
 impl ClientConnection<StreamClientTransport<tokio::net::unix::OwnedWriteHalf>> {
     /// Connects over a Unix socket and wraps the split stream in a byte-stream transport.
-    pub async fn connect_unix(
-        path: impl AsRef<std::path::Path>,
-    ) -> Result<Self, ClientError> {
+    pub async fn connect_unix(path: impl AsRef<std::path::Path>) -> Result<Self, ClientError> {
         let stream = tokio::net::UnixStream::connect(path)
             .await
             .map_err(|e| ClientError::Transport(Error::Io(e)))?;
@@ -366,22 +378,24 @@ impl ClientConnection<StreamClientTransport<tokio::net::unix::OwnedWriteHalf>> {
 
 /// Decodes the next response item of a server- or bidirectional-streaming call,
 /// yielding `None` at end-of-stream and a terminal error as `Some(Err(..))`.
-fn decode_item<Resp, E>(reply: Result<Option<Reply>, ClientError>) -> Option<Result<Resp, ClientError<E>>>
+fn decode_item<Resp, E>(
+    reply: Result<Option<Reply>, ClientError>,
+) -> Option<Result<Resp, ClientError<E>>>
 where
     Resp: StreamDecode,
 {
     match reply {
-        Ok(Some(Reply::Item(bytes))) => Some(
-            Resp::decode(&bytes).map_err(|e| ClientError::Decode(e.to_string())),
-        ),
+        Ok(Some(Reply::Item(bytes))) => {
+            Some(Resp::decode(&bytes).map_err(|e| ClientError::Decode(e.to_string())))
+        }
 
         Ok(Some(Reply::Error { code, body })) => {
             Some(Err(ClientError::Remote(ErrorBody::new(code, body))))
         }
 
-        Ok(Some(Reply::Response(_))) => {
-            Some(Err(ClientError::Decode("unexpected unary response in stream".into())))
-        }
+        Ok(Some(Reply::Response(_))) => Some(Err(ClientError::Decode(
+            "unexpected unary response in stream".into(),
+        ))),
 
         Ok(None) | Ok(Some(Reply::End)) => None,
 
@@ -399,15 +413,14 @@ where
             postcard::from_bytes(&bytes).map_err(|e| ClientError::Decode(e.to_string()))
         }
 
-        Some(Reply::Response(WireOutcome::Err { code, body })) | Some(Reply::Error { code, body }) => {
-            Err(ClientError::Remote(ErrorBody::new(code, body)))
-        }
+        Some(Reply::Response(WireOutcome::Err { code, body }))
+        | Some(Reply::Error { code, body }) => Err(ClientError::Remote(ErrorBody::new(code, body))),
 
         None | Some(Reply::End) => Err(ClientError::ConnectionClosed),
 
-        Some(Reply::Item(_)) => {
-            Err(ClientError::Decode("unexpected stream item awaiting unary response".into()))
-        }
+        Some(Reply::Item(_)) => Err(ClientError::Decode(
+            "unexpected stream item awaiting unary response".into(),
+        )),
     }
 }
 
@@ -417,7 +430,9 @@ where
     S: CallSink,
     Req: StreamEncode,
 {
-    let bytes = item.encode().map_err(|e| ClientError::Encode(e.to_string()))?;
+    let bytes = item
+        .encode()
+        .map_err(|e| ClientError::Encode(e.to_string()))?;
 
     sink.send(bytes).await.map_err(retype)
 }

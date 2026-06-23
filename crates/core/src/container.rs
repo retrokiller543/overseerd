@@ -9,7 +9,8 @@ use tracing::{debug, error, info, instrument, trace};
 use crate::{
     BoxedComponent, Error,
     descriptors::{
-        Cardinality, Component, ComponentDescriptor, ComponentScope, Injectable, ProviderDescriptor,
+        Cardinality, Component, ComponentDescriptor, ComponentScope, Injectable,
+        ProviderDescriptor,
         component::{ComponentConstructionContext, ScopeStore},
     },
 };
@@ -57,11 +58,8 @@ pub(crate) async fn construct_transient<H: Injectable>(
     let descriptor = registry.transient(target)?;
     let factory = descriptor.factory?;
 
-    let mut cx = ComponentConstructionContext::new(
-        ComponentScope::Transient,
-        parent,
-        Arc::clone(registry),
-    );
+    let mut cx =
+        ComponentConstructionContext::new(ComponentScope::Transient, parent, Arc::clone(registry));
 
     match factory(&mut cx).await {
         Ok(boxed) => boxed.value.downcast_ref::<H>().cloned(),
@@ -103,15 +101,28 @@ impl ScopeContainer {
     pub async fn build_root(
         components: &[ComponentDescriptor],
         instances: Vec<BoxedComponent>,
+        config_seeds: Vec<(String, BoxedComponent)>,
         registry: Arc<ScopeRegistry>,
     ) -> crate::Result<Arc<ScopeContainer>> {
         debug!("resolving singleton dependency order");
 
-        let prebuilt: HashSet<TypeId> = instances.iter().map(|i| (i.ty.type_id)()).collect();
+        // Both pre-built instances and bound configs are available before any factory
+        // runs, so both count as prebuilt for ordering.
+        let mut prebuilt: HashSet<TypeId> = instances.iter().map(|i| (i.ty.type_id)()).collect();
+        prebuilt.extend(config_seeds.iter().map(|(_, value)| (value.ty.type_id)()));
+
         let order = topological_sort(components, &prebuilt, registry.providers())?;
         let order: Vec<ComponentDescriptor> = order.into_iter().copied().collect();
 
-        let root = Self::build(ComponentScope::Singleton, None, registry, &order, instances).await?;
+        let root = Self::build(
+            ComponentScope::Singleton,
+            None,
+            registry,
+            &order,
+            instances,
+            config_seeds,
+        )
+        .await?;
 
         info!(count = root.store.components.len(), "root container built");
 
@@ -139,7 +150,7 @@ impl ScopeContainer {
             return Ok(parent);
         }
 
-        Self::build(scope, Some(parent), registry, order, seeds).await
+        Self::build(scope, Some(parent), registry, order, seeds, Vec::new()).await
     }
 
     /// Seeds instances, then constructs `order` in sequence, aliasing trait
@@ -151,9 +162,14 @@ impl ScopeContainer {
         registry: Arc<ScopeRegistry>,
         order: &[ComponentDescriptor],
         seeds: Vec<BoxedComponent>,
+        config_seeds: Vec<(String, BoxedComponent)>,
     ) -> crate::Result<Arc<ScopeContainer>> {
         let mut cx = ComponentConstructionContext::new(scope, parent, Arc::clone(&registry));
         let providers = registry.providers();
+
+        for (path, value) in config_seeds {
+            cx.insert_config(path, value);
+        }
 
         for seed in seeds {
             let type_id = (seed.ty.type_id)();
@@ -233,6 +249,32 @@ impl ScopeContainer {
         self.parent
             .as_ref()?
             .resolve_qualified_built::<H>(qualifier)
+    }
+
+    /// Path-selected config binding across this scope and its parents.
+    pub(crate) fn resolve_config_built<H: Injectable>(&self, path: &str) -> Option<H> {
+        if let Some(handle) = self.store.resolve_config_local::<H>(path) {
+            return Some(handle);
+        }
+
+        self.parent.as_ref()?.resolve_config_built::<H>(path)
+    }
+
+    /// Sole config binding of `H::Target` (the type-only shorthand) across this scope
+    /// and its parents.
+    pub(crate) fn resolve_config_sole_built<H: Injectable>(&self) -> Option<H> {
+        if let Some(handle) = self.store.resolve_config_sole_local::<H>() {
+            return Some(handle);
+        }
+
+        self.parent.as_ref()?.resolve_config_sole_built::<H>()
+    }
+
+    /// Resolves a config value bound at `path`, across this scope and its parents.
+    /// The runtime accessor for handlers that need ad-hoc config beyond what their
+    /// service holds.
+    pub fn config<T: Send + Sync + 'static>(&self, path: &str) -> Option<crate::config::Cfg<T>> {
+        self.resolve_config_built::<crate::config::Cfg<T>>(path)
     }
 
     /// Every provider of the trait `H::Target` across this scope and its parents.
@@ -316,7 +358,14 @@ pub(crate) fn topological_sort<'a>(
                 .iter()
                 // `optional`/`dynamic` edges impose no build-ordering constraint.
                 .filter(|dep| !dep.optional && !dep.dynamic)
-                .all(|dep| dep_ready(dep.cardinality, (dep.ty.type_id)(), &provider_concretes, &is_built));
+                .all(|dep| {
+                    dep_ready(
+                        dep.cardinality,
+                        (dep.ty.type_id)(),
+                        &provider_concretes,
+                        &is_built,
+                    )
+                });
 
             if resolved {
                 trace!(component = %descriptor.name, "dependency order resolved");
@@ -374,7 +423,7 @@ mod tests {
     }
 
     async fn root() -> Arc<ScopeContainer> {
-        ScopeContainer::build_root(&[], Vec::new(), registry())
+        ScopeContainer::build_root(&[], Vec::new(), Vec::new(), registry())
             .await
             .expect("root builds")
     }

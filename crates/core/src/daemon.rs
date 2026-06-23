@@ -1,9 +1,4 @@
-use std::{
-    any::TypeId,
-    collections::HashSet,
-    fmt,
-    sync::Arc,
-};
+use std::{any::TypeId, collections::HashSet, fmt, sync::Arc};
 
 use futures::StreamExt;
 use overseer_transport::{
@@ -15,11 +10,13 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     ServiceComponent,
+    config::{ConfigBinding, ConfigManager, ConfigProperties},
     container::{ScopeContainer, ScopeRegistry, topological_sort},
     descriptors::{
         BoxedComponent, Component, ComponentDescriptor, ComponentScope, RpcCallContext, RpcGroup,
         RpcOutcome, RpcResponse, ServiceDescriptor, TypeDescriptor,
     },
+    dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp},
     extract::ErrorResponse,
     lifecycle::{ShutdownHandle, ShutdownSignal},
     registry::DescriptorRegistry,
@@ -46,6 +43,8 @@ pub struct DaemonBuilder {
     name: String,
     registry: DescriptorRegistry,
     instances: Vec<BoxedComponent>,
+    config_source: Option<ConfigManager>,
+    dirs: Option<DirectoriesManager>,
 }
 
 impl DaemonBuilder {
@@ -54,7 +53,44 @@ impl DaemonBuilder {
             name: name.into(),
             registry: DescriptorRegistry::default(),
             instances: Vec::new(),
+            config_source: None,
+            dirs: None,
         }
+    }
+
+    /// Supplies the merged configuration the daemon binds its `Cfg<T>` injections
+    /// from. Built by the application (typically in `main`, so its values can also
+    /// configure the transport) and handed in here. The format is erased — the tree
+    /// is already parsed — but its format tag is retained for reload.
+    ///
+    /// If omitted, the daemon loads config from its `Dir<Config>` directory.
+    pub fn config_source<F>(mut self, config: ConfigManager<F>) -> Self {
+        self.config_source = Some(config.into_dynamic());
+
+        self
+    }
+
+    /// Supplies the [`DirectoriesManager`] the daemon seeds its `Dir<K>` injectables
+    /// from (and which the default config loader reads from). If omitted, one is
+    /// constructed for the daemon's name.
+    pub fn directories(mut self, dirs: DirectoriesManager) -> Self {
+        self.dirs = Some(dirs);
+
+        self
+    }
+
+    /// Binds config type `T` to the subtree at `path`, injectable as `Cfg<T>`
+    /// selected by that path. The same type may be bound at several paths. This is
+    /// the explicit counterpart to auto-registration via
+    /// `#[derive(ConfigProperties)]` with `#[config(path = "..")]`.
+    pub fn config<T: ConfigProperties>(mut self, path: impl Into<String>) -> Self {
+        self.registry.config_bindings.push(ConfigBinding {
+            ty: TypeDescriptor::of::<T>(T::NAME),
+            path: path.into(),
+            bind: T::bind,
+        });
+
+        self
     }
 
     /// Registers a pre-built singleton instance (e.g. a stateful service
@@ -85,6 +121,9 @@ impl DaemonBuilder {
         self.registry.services.extend(discovered.services);
         self.registry.rpc_groups.extend(discovered.rpc_groups);
         self.registry.providers.extend(discovered.providers);
+        self.registry
+            .config_bindings
+            .extend(discovered.config_bindings);
 
         self
     }
@@ -131,10 +170,19 @@ impl DaemonBuilder {
         debug!(daemon = %self.name, "building daemon");
 
         let mut registry = self.registry;
+        let mut instances = self.instances;
 
         // The peer is a framework-provided connection-scoped injectable; declare it
         // so dependencies on it validate and it partitions into the connection scope.
         registry.components.push(PEER_INFO_DESCRIPTOR);
+
+        // Directories are framework-provided singletons: a manager (supplied or
+        // derived from the daemon name) plus one `Dir<K>` per kind, seeded so any
+        // component can inject them.
+        let dirs = self
+            .dirs
+            .unwrap_or_else(|| DirectoriesManager::for_app(&self.name));
+        seed_directories(&dirs, &mut registry, &mut instances);
 
         registry.validate()?;
 
@@ -143,15 +191,42 @@ impl DaemonBuilder {
         let resolved = registry.resolved_components()?;
         registry.components = resolved.clone();
 
-        let scopes = ScopePlan::partition(&resolved, &registry.providers)?;
+        // Config types are seeded before any factory runs, so the connection/request
+        // scopes treat them as prebuilt for ordering.
+        let config_type_ids: Vec<TypeId> = registry
+            .config_bindings
+            .iter()
+            .map(|binding| (binding.ty.type_id)())
+            .collect();
+
+        let scopes = ScopePlan::partition(&resolved, &registry.providers, &config_type_ids)?;
+
+        // Use the supplied config, or load it from the config directory. Each binding
+        // is deserialized from the tree (a missing path is a clear build error).
+        let tree = match self.config_source {
+            Some(config) => config,
+            None => ConfigManager::load_in(&dirs.dir::<Config>(), &[])?,
+        };
+        let mut config_seeds: Vec<(String, BoxedComponent)> =
+            Vec::with_capacity(registry.config_bindings.len());
+
+        for binding in &registry.config_bindings {
+            let boxed = (binding.bind)(&tree, &binding.path)?;
+
+            config_seeds.push((binding.path.clone(), boxed));
+        }
 
         let scope_registry = Arc::new(ScopeRegistry::new(
             scopes.transient,
             registry.providers.clone(),
         ));
-        let root =
-            ScopeContainer::build_root(&scopes.singletons, self.instances, Arc::clone(&scope_registry))
-                .await?;
+        let root = ScopeContainer::build_root(
+            &scopes.singletons,
+            instances,
+            config_seeds,
+            Arc::clone(&scope_registry),
+        )
+        .await?;
         let router = RpcRouter::from_registry(&registry);
         let shutdown = ShutdownSignal::new();
 
@@ -176,6 +251,48 @@ impl DaemonBuilder {
     }
 }
 
+macro_rules! seed_dirs {
+    ($dirs:ident; $registry:ident; $instances:ident; $($name:ident),*) => {
+        $(seed_dir::<$name>($dirs, $registry, $instances);)*
+    };
+}
+
+/// Seeds the [`DirectoriesManager`] and one `Dir<K>` per kind as singleton
+/// instances, so any component can inject them.
+fn seed_directories(
+    dirs: &DirectoriesManager,
+    registry: &mut DescriptorRegistry,
+    instances: &mut Vec<BoxedComponent>,
+) {
+    registry
+        .components
+        .push(ComponentDescriptor::of::<DirectoriesManager>());
+    instances.push(BoxedComponent {
+        ty: TypeDescriptor::of::<DirectoriesManager>(<DirectoriesManager as Component>::NAME),
+        value: Box::new(dirs.clone()),
+    });
+
+    seed_dirs!(
+        dirs; registry; instances;
+        Config, Data, Cache, State, Runtime, Tmp
+    );
+}
+
+/// Seeds one `Dir<K>` as a singleton instance with its factory-less descriptor.
+fn seed_dir<K: DirKind>(
+    dirs: &DirectoriesManager,
+    registry: &mut DescriptorRegistry,
+    instances: &mut Vec<BoxedComponent>,
+) {
+    registry
+        .components
+        .push(ComponentDescriptor::of::<Dir<K>>());
+    instances.push(BoxedComponent {
+        ty: TypeDescriptor::of::<Dir<K>>(<Dir<K> as Component>::NAME),
+        value: Box::new(dirs.dir::<K>()),
+    });
+}
+
 /// The per-scope construction plan computed once at daemon build.
 struct ScopePlan {
     singletons: Vec<ComponentDescriptor>,
@@ -198,6 +315,7 @@ impl ScopePlan {
     fn partition(
         resolved: &[ComponentDescriptor],
         providers: &[crate::descriptors::ProviderDescriptor],
+        config_type_ids: &[TypeId],
     ) -> crate::Result<Self> {
         let mut singletons = Vec::new();
         let mut connection_components = Vec::new();
@@ -209,9 +327,7 @@ impl ScopePlan {
                 ComponentScope::Singleton => singletons.push(*c),
                 // A connection-scoped manual instance (factory None) — only the
                 // framework's PeerInfo — is seeded per connection, not constructed.
-                ComponentScope::Connection if c.factory.is_some() => {
-                    connection_components.push(*c)
-                }
+                ComponentScope::Connection if c.factory.is_some() => connection_components.push(*c),
                 ComponentScope::Connection => {}
                 ComponentScope::Request if c.factory.is_some() => request_components.push(*c),
                 ComponentScope::Request => {}
@@ -221,11 +337,13 @@ impl ScopePlan {
             }
         }
 
-        // Connection components resolve against singletons and the seeded peer.
+        // Connection components resolve against singletons, the seeded peer, and the
+        // singleton-scoped config bindings.
         let peer_id = (PEER_INFO_DESCRIPTOR.ty.type_id)();
         let mut conn_prebuilt: HashSet<TypeId> =
             singletons.iter().map(|c| (c.ty.type_id)()).collect();
         conn_prebuilt.insert(peer_id);
+        conn_prebuilt.extend(config_type_ids.iter().copied());
 
         // Does any real component depend on the peer? If not, the connection scope
         // need not exist solely to hold it.

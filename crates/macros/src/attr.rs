@@ -303,6 +303,11 @@ pub fn dynamic_inner(ty: &Type) -> Option<Type> {
     first_type_arg(ty, "Dynamic")
 }
 
+/// The config type `T` of a `Cfg<T>` field (a property-path-bound config value).
+pub fn cfg_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "Cfg")
+}
+
 /// The request body type `T` of a `Payload<T>` parameter.
 pub fn payload_inner(ty: &Type) -> Option<Type> {
     first_type_arg(ty, "Payload")
@@ -484,12 +489,15 @@ fn generic_stream_item(name: &Ident, generics: &Generics) -> Option<Type> {
 
     let where_clause = generics.where_clause.as_ref()?;
 
-    where_clause.predicates.iter().find_map(|predicate| match predicate {
-        WherePredicate::Type(predicate) if type_name(&predicate.bounded_ty) == Some(name) => {
-            stream_item_in_bounds(&predicate.bounds)
-        }
-        _ => None,
-    })
+    where_clause
+        .predicates
+        .iter()
+        .find_map(|predicate| match predicate {
+            WherePredicate::Type(predicate) if type_name(&predicate.bounded_ty) == Some(name) => {
+                stream_item_in_bounds(&predicate.bounds)
+            }
+            _ => None,
+        })
 }
 
 /// If `ty` is `Result<Ok, Err>`, returns `(Ok, Err)`. Used to split a stream
