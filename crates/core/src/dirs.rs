@@ -29,6 +29,8 @@ use crate::descriptors::{Component, Injectable};
 /// fallback baked in for kinds that some platforms lack); `rooted_path` is the
 /// fallback layout used when no home directory is available.
 pub trait DirKind: Send + Sync + 'static {
+    /// Name to be displayed when printing the dep graph
+    const NAME: &'static str;
     /// Short label — the on-disk subdirectory name and the display name.
     const LABEL: &'static str;
     /// Unique dependency-injection id (namespaced to avoid colliding with user
@@ -47,14 +49,15 @@ pub trait DirKind: Send + Sync + 'static {
 
 /// Generates the directory marker types and their [`DirKind`] impls.
 macro_rules! dir_kinds {
-    ($($(#[$meta:meta])* $name:ident => $label:literal, $id:literal, $project:expr;)*) => {
+    ($($(#[$meta:meta])* $name:ident => $label:literal, $project:expr;)*) => {
         $(
             $(#[$meta])*
             pub struct $name;
 
             impl DirKind for $name {
+                const NAME: &'static str = concat!(stringify!($name), "Dir");
                 const LABEL: &'static str = $label;
-                const COMPONENT_ID: &'static str = $id;
+                const COMPONENT_ID: &'static str = concat!("overseerd:dir:", $label);
 
                 fn project_path(dirs: &ProjectDirs) -> PathBuf {
                     let resolve: fn(&ProjectDirs) -> PathBuf = $project;
@@ -68,19 +71,19 @@ macro_rules! dir_kinds {
 
 dir_kinds! {
     /// Configuration files (`application.toml`, …).
-    Config => "config", "overseerd:dir:config", |d| d.config_dir().to_path_buf();
+    Config => "config", |d| d.config_dir().to_path_buf();
     /// Persistent application data.
-    Data => "data", "overseerd:dir:data", |d| d.data_dir().to_path_buf();
+    Data => "data", |d| d.data_dir().to_path_buf();
     /// Discardable cached data.
-    Cache => "cache", "overseerd:dir:cache", |d| d.cache_dir().to_path_buf();
+    Cache => "cache", |d| d.cache_dir().to_path_buf();
     /// State that should persist but is not user data (logs, history).
-    State => "state", "overseerd:dir:state",
+    State => "state",
         |d| d.state_dir().unwrap_or_else(|| d.data_dir()).to_path_buf();
     /// Runtime files (sockets, pid files); falls back to the cache dir.
-    Runtime => "runtime", "overseerd:dir:runtime",
+    Runtime => "runtime",
         |d| d.runtime_dir().map(Path::to_path_buf).unwrap_or_else(|| d.cache_dir().to_path_buf());
     /// The system temporary directory (shared, not app-scoped).
-    Tmp => "tmp", "overseerd:dir:tmp", |_| std::env::temp_dir();
+    Tmp => "tmp", |_| std::env::temp_dir();
 }
 
 /// A resolved application directory of kind `K`, injectable by value.
@@ -134,7 +137,7 @@ impl<K> Deref for Dir<K> {
 
 impl<K: DirKind> Component for Dir<K> {
     const ID: &'static str = K::COMPONENT_ID;
-    const NAME: &'static str = K::LABEL;
+    const NAME: &'static str = K::NAME;
     type Handle = Dir<K>;
 
     fn into_handle(self) -> Self::Handle {
