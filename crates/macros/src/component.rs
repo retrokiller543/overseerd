@@ -28,7 +28,11 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         .name
         .unwrap_or_else(|| LitStr::new(&self_ident.to_string(), self_ident.span()));
 
-    let factory = inject::field_injection_component(&mut item, &id, &name, false);
+    let scope_variant = args
+        .scope
+        .clone()
+        .unwrap_or_else(|| syn::Ident::new("Singleton", self_ident.span()));
+    let factory = inject::field_injection_component(&mut item, &id, &name, false, &scope_variant);
     let component = overseer_path("Component");
 
     Ok(quote! {

@@ -44,19 +44,18 @@ pub struct ParameterDescriptor {
 
 /// Context passed to an RPC handler on invocation.
 ///
-/// Carries the raw postcard-encoded payload bytes, the connection-scoped
-/// context, and a handle to the daemon's singleton components. Handler
-/// extractors (e.g. `Payload<T>`) deserialize from `payload`; `connection`
-/// provides per-connection data; `component::<T>()` resolves singleton
-/// components such as a stateful service holding common dependencies.
+/// Carries the raw postcard-encoded payload bytes and the call's **request
+/// scope** — a `ScopeContainer` layered request → connection → singleton, so
+/// `component::<T>()` and the `Inject<H>` extractor resolve singleton-, connection-,
+/// and request-scoped components uniformly through it. Handler extractors (e.g.
+/// `Payload<T>`) deserialize from `payload`.
 ///
 /// For streaming calls, `requests` holds the inbound item stream (taken once by
 /// the `Streaming<T>` extractor) and `cancel` fires when the peer cancels the
 /// call or the connection drops.
 pub struct RpcCallContext {
     pub payload: Vec<u8>,
-    pub connection: std::sync::Arc<crate::connection::ConnectionInfo>,
-    pub(crate) components: std::sync::Arc<crate::container::ComponentContainer>,
+    pub(crate) scope: std::sync::Arc<crate::container::ScopeContainer>,
     /// `Mutex<Option<_>>` because extractors borrow `&ctx`; the `Streaming<T>`
     /// extractor takes the receiver out exactly once.
     pub(crate) requests: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
@@ -64,28 +63,33 @@ pub struct RpcCallContext {
 }
 
 impl RpcCallContext {
-    /// Builds a call context. `requests` is `Some` only for client/bidirectional
-    /// streaming calls; `cancel` is the call's cancellation token.
+    /// Builds a call context over the call's request `scope`. `requests` is `Some`
+    /// only for client/bidirectional streaming calls; `cancel` is the call's
+    /// cancellation token.
     pub fn new(
         payload: Vec<u8>,
-        connection: std::sync::Arc<crate::connection::ConnectionInfo>,
-        components: std::sync::Arc<crate::container::ComponentContainer>,
+        scope: std::sync::Arc<crate::container::ScopeContainer>,
         requests: Option<mpsc::Receiver<Vec<u8>>>,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             payload,
-            connection,
-            components,
+            scope,
             requests: Mutex::new(requests),
             cancel,
         }
     }
 
-    /// Resolves the singleton component of type `T` (e.g. a stateful service) as
-    /// its handle (`Arc<T>` by default). `None` if no such component is registered.
+    /// The call's request scope, for resolving scoped components.
+    pub(crate) fn scope(&self) -> &std::sync::Arc<crate::container::ScopeContainer> {
+        &self.scope
+    }
+
+    /// Resolves the component of type `T` (e.g. the stateful service singleton) as
+    /// its handle (`Arc<T>` by default), through the request → connection →
+    /// singleton chain. `None` if no such component is registered.
     pub fn component<T: crate::Component>(&self) -> Option<T::Handle> {
-        self.components.get::<T>()
+        self.scope.get::<T>()
     }
 
     /// Takes the inbound request stream, if this is a streaming-input call and

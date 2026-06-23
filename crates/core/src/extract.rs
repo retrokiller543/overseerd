@@ -27,7 +27,6 @@
 use std::{
     future::Future,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -41,7 +40,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::{
-    Error, RpcCallContext, RpcResponse, connection::ConnectionInfo, descriptors::RpcOutcome,
+    Error, RpcCallContext, RpcResponse,
+    descriptors::{Injectable, RpcOutcome},
 };
 
 /// A value a handler can extract from the call context.
@@ -68,32 +68,25 @@ where
     }
 }
 
-/// A shared handle to the full connection context, for ad-hoc `get::<T>()`
-/// lookups of connection-scoped state.
-pub struct Conn(pub Arc<ConnectionInfo>);
+/// Injects a component by its handle type `H` (`Arc<T>`, or a by-value
+/// `Injectable`) from the call's scope, resolving through the request → connection
+/// → singleton chain — and constructing a fresh instance when `H::Target` is a
+/// `Transient`. Fails if no such component is registered.
+///
+/// This is how a handler reaches connection- and request-scoped components; the
+/// stateful service singleton itself still arrives through `&self`.
+pub struct Inject<H>(pub H);
 
-impl FromContext for Conn {
-    async fn from_context(ctx: &RpcCallContext) -> crate::Result<Self> {
-        Ok(Conn(Arc::clone(&ctx.connection)))
-    }
-}
-
-/// A clone of a connection-scoped value of type `T`, inserted by a
-/// `ConnectionHandler` in `on_connect`. Fails if no such value is present.
-pub struct Extension<T>(pub T);
-
-impl<T> FromContext for Extension<T>
+impl<H> FromContext for Inject<H>
 where
-    T: Clone + Send + Sync + 'static,
+    H: Injectable,
 {
     async fn from_context(ctx: &RpcCallContext) -> crate::Result<Self> {
-        let value = ctx
-            .connection
-            .get::<T>()
-            .cloned()
-            .ok_or(Error::MissingExtension(std::any::type_name::<T>()))?;
-
-        Ok(Extension(value))
+        ctx.scope()
+            .resolve::<H>()
+            .await
+            .map(Inject)
+            .ok_or(Error::MissingComponent(std::any::type_name::<H>()))
     }
 }
 

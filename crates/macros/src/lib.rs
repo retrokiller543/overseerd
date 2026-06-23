@@ -251,8 +251,8 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Serialize` and `E: Into<overseer::Error>`. Parameters are *extractors* drawn
 /// from the call context:
 /// - `Payload<T>` — the deserialized request body;
-/// - `Extension<T>` — a clone of connection-scoped state;
-/// - `Conn` — the full connection context.
+/// - `Inject<H>` — a component resolved from the call scope (a connection- or
+///   request-scoped component, or any singleton), by its handle `H`.
 ///
 /// A method may take `&self` to read the service singleton's common
 /// dependencies; one that needs none omits `self` and is dispatched directly

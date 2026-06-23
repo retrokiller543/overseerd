@@ -57,6 +57,14 @@ impl<T: ?Sized + Send + Sync + 'static> Injectable for Arc<T> {
     type Target = T;
 }
 
+/// The remote peer is a framework-seeded, **by-value** connection-scoped
+/// injectable: every daemon provides it in each connection scope (and below, via
+/// the parent chain), so a connection/request/transient component depends on it
+/// directly as `peer: PeerInfo` — no `Arc`. `PeerInfo` is cheap to clone.
+impl Injectable for overseer_transport::PeerInfo {
+    type Target = overseer_transport::PeerInfo;
+}
+
 /// Field wrapper marking a dependency as **runtime-provided**.
 ///
 /// A `Dynamic<H>` dependency is satisfied by a provider registered at runtime
@@ -96,6 +104,14 @@ pub trait Provide<T: ?Sized> {}
 /// dependency assertion is the bound `Wiring: Provide<Dep>`.
 pub struct Wiring;
 
+/// `PeerInfo` is seeded by the framework into every connection scope, so the
+/// compile-time checker treats it as always provided. The runtime
+/// [`validate_scopes`](crate::registry::DescriptorRegistry) still rejects a
+/// *singleton* depending on it (a connection-scoped value outliving the daemon
+/// would be a scope violation).
+#[cfg(feature = "di-check")]
+impl Provide<overseer_transport::PeerInfo> for Wiring {}
+
 /// Marker that all of a component's dependencies are provided. Under `di-check`
 /// the macros emit `impl Wired for T where Wiring: Provide<Dep>, ..` carrying
 /// *every* single dependency (concrete and trait-object) as a lazy bound. The
@@ -106,10 +122,41 @@ pub struct Wiring;
 pub trait Wired {}
 
 /// Lifetime policy for a component instance.
-#[derive(Clone, Copy, Debug)]
+///
+/// Determines where the instance is stored and how long it lives: a `Singleton`
+/// in the root container for the daemon's lifetime, a `Connection`/`Request`
+/// instance in a per-connection/per-call scope, and a `Transient` built fresh on
+/// every resolution. The captive-dependency rule (a longer-lived component may not
+/// depend on a shorter-lived one) is enforced against [`rank`](Self::rank).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentScope {
     Singleton,
+    Connection,
+    Request,
     Transient,
+}
+
+impl ComponentScope {
+    /// Lifetime rank: longer-lived scopes rank higher. A non-transient component
+    /// may depend only on equal-or-higher-ranked non-transient components.
+    ///
+    /// Defining the lifetime order as a numeric rank (rather than matching on each
+    /// variant at every call site) is what lets a future user-defined scope slot in
+    /// at its own rank without touching the validation or container logic.
+    pub fn rank(self) -> u8 {
+        match self {
+            ComponentScope::Singleton => 3,
+            ComponentScope::Connection => 2,
+            ComponentScope::Request => 1,
+            ComponentScope::Transient => 0,
+        }
+    }
+
+    /// Whether this scope rebuilds its instance on every resolution rather than
+    /// caching one per scope.
+    pub fn is_transient(self) -> bool {
+        matches!(self, ComponentScope::Transient)
+    }
 }
 
 /// Cardinality of a dependency edge: how many values satisfy it.
@@ -230,35 +277,28 @@ impl fmt::Debug for BoxedComponent {
 }
 
 /// One trait provider's constructed value, plus the metadata that selects it.
-struct ProviderInstance {
-    qualifier: &'static str,
-    primary: bool,
-    value: BoxedComponent,
+pub(crate) struct ProviderInstance {
+    pub(crate) qualifier: &'static str,
+    pub(crate) primary: bool,
+    pub(crate) value: BoxedComponent,
 }
 
-/// Context passed to a component factory during construction.
+/// The instances and trait-providers held by one scope.
 ///
-/// Holds all components built so far, in dependency order, plus the per-trait
-/// provider instances erased so far. Factories call `resolve`/`resolve_all`/
-/// `resolve_keyed` to obtain their dependencies before constructing themselves.
-pub struct ComponentConstructionContext {
-    components: HashMap<TypeId, BoxedComponent>,
-    providers: HashMap<TypeId, Vec<ProviderInstance>>,
+/// Shared by both the under-construction [`ComponentConstructionContext`] and the
+/// frozen [`ScopeContainer`](crate::container::ScopeContainer); each owns one
+/// `ScopeStore` and layers parent scopes on top for resolution. All lookups here
+/// are **scope-local** — walking the parent chain is the caller's job.
+#[derive(Default)]
+pub(crate) struct ScopeStore {
+    pub(crate) components: HashMap<TypeId, BoxedComponent>,
+    pub(crate) providers: HashMap<TypeId, Vec<ProviderInstance>>,
 }
 
-impl ComponentConstructionContext {
-    pub fn new() -> Self {
-        Self {
-            components: HashMap::new(),
-            providers: HashMap::new(),
-        }
-    }
-
-    /// Resolves a single dependency by its injectable handle `H`, keyed under
-    /// `H::Target`. A concrete instance is returned directly; for a trait object
-    /// (`Arc<dyn Trait>`) with no concrete of that key, the primary (or sole)
-    /// provider is chosen. `None` if absent or ambiguous.
-    pub fn resolve<H: Injectable>(&self) -> Option<H> {
+impl ScopeStore {
+    /// Single concrete-or-primary-provider lookup, scope-local. `None` if absent or
+    /// ambiguous.
+    pub(crate) fn resolve_local<H: Injectable>(&self) -> Option<H> {
         let type_id = TypeId::of::<H::Target>();
 
         if let Some(component) = self.components.get(&type_id) {
@@ -270,9 +310,8 @@ impl ComponentConstructionContext {
         chosen.value.value.downcast_ref::<H>().cloned()
     }
 
-    /// Resolves the single provider of the trait `H::Target` whose qualifier
-    /// matches, ignoring the primary/sole rule. `None` if no such provider.
-    pub fn resolve_qualified<H: Injectable>(&self, qualifier: &str) -> Option<H> {
+    /// Qualifier-selected single provider, scope-local.
+    pub(crate) fn resolve_qualified_local<H: Injectable>(&self, qualifier: &str) -> Option<H> {
         let type_id = TypeId::of::<H::Target>();
         let entry = self
             .providers
@@ -283,8 +322,8 @@ impl ComponentConstructionContext {
         entry.value.value.downcast_ref::<H>().cloned()
     }
 
-    /// Resolves every provider of the trait `H::Target` as `Vec<H>` (empty if none).
-    pub fn resolve_all<H: Injectable>(&self) -> Vec<H> {
+    /// Every scope-local provider of the trait `H::Target`.
+    pub(crate) fn collect_all_local<H: Injectable>(&self) -> Vec<H> {
         let type_id = TypeId::of::<H::Target>();
 
         self.providers
@@ -295,9 +334,8 @@ impl ComponentConstructionContext {
             .collect()
     }
 
-    /// Resolves every provider of the trait `H::Target` as a `HashMap<String, H>`
-    /// keyed by qualifier (every provider has one — inferred or explicit).
-    pub fn resolve_keyed<H: Injectable>(&self) -> HashMap<String, H> {
+    /// Every scope-local provider of the trait `H::Target`, keyed by qualifier.
+    pub(crate) fn collect_keyed_local<H: Injectable>(&self) -> HashMap<String, H> {
         let type_id = TypeId::of::<H::Target>();
 
         self.providers
@@ -338,13 +376,118 @@ impl ComponentConstructionContext {
             });
     }
 
-    pub(crate) fn into_components(self) -> HashMap<TypeId, BoxedComponent> {
-        self.components
-    }
-
-    /// Whether a component of `type_id` has already been constructed or seeded.
     pub(crate) fn contains(&self, type_id: TypeId) -> bool {
         self.components.contains_key(&type_id)
+    }
+}
+
+/// Context passed to a component factory during construction.
+///
+/// Holds the components built so far in this scope plus a link to the parent scope
+/// chain, so a factory can resolve dependencies from its own scope or any
+/// longer-lived one. Factories call `resolve`/`resolve_all`/`resolve_keyed` to
+/// obtain their dependencies before constructing themselves.
+///
+/// Resolution is `async` even though eagerly-built scopes resolve immediately
+/// (the future is ready): a `Transient` dependency is constructed on demand here,
+/// and keeping the interface async is what lets connection/request scopes move to
+/// lazy construction later without changing generated factory code.
+pub struct ComponentConstructionContext {
+    scope: ComponentScope,
+    store: ScopeStore,
+    parent: Option<Arc<crate::container::ScopeContainer>>,
+    registry: Arc<crate::container::ScopeRegistry>,
+}
+
+impl ComponentConstructionContext {
+    pub(crate) fn new(
+        scope: ComponentScope,
+        parent: Option<Arc<crate::container::ScopeContainer>>,
+        registry: Arc<crate::container::ScopeRegistry>,
+    ) -> Self {
+        Self {
+            scope,
+            store: ScopeStore::default(),
+            parent,
+            registry,
+        }
+    }
+
+    /// Resolves a single dependency by its injectable handle `H`, keyed under
+    /// `H::Target`: this scope first, then each longer-lived parent scope, then —
+    /// if `H::Target` is a `Transient` component — a freshly constructed instance.
+    pub async fn resolve<H: Injectable>(&self) -> Option<H> {
+        if let Some(handle) = self.store.resolve_local::<H>() {
+            return Some(handle);
+        }
+
+        if let Some(parent) = &self.parent
+            && let Some(handle) = parent.resolve_built::<H>()
+        {
+            return Some(handle);
+        }
+
+        crate::container::construct_transient::<H>(&self.registry, self.parent.clone()).await
+    }
+
+    /// Qualifier-selected single provider, this scope then parents.
+    pub async fn resolve_qualified<H: Injectable>(&self, qualifier: &str) -> Option<H> {
+        if let Some(handle) = self.store.resolve_qualified_local::<H>(qualifier) {
+            return Some(handle);
+        }
+
+        self.parent
+            .as_ref()
+            .and_then(|parent| parent.resolve_qualified_built::<H>(qualifier))
+    }
+
+    /// Every provider of the trait `H::Target` across this scope and its parents.
+    pub async fn resolve_all<H: Injectable>(&self) -> Vec<H> {
+        let mut all = self.store.collect_all_local::<H>();
+
+        if let Some(parent) = &self.parent {
+            all.extend(parent.collect_all_built::<H>());
+        }
+
+        all
+    }
+
+    /// Every provider of the trait `H::Target` keyed by qualifier, across this scope
+    /// and its parents (a closer scope wins a qualifier collision).
+    pub async fn resolve_keyed<H: Injectable>(&self) -> HashMap<String, H> {
+        let mut keyed = match &self.parent {
+            Some(parent) => parent.collect_keyed_built::<H>(),
+            None => HashMap::new(),
+        };
+
+        keyed.extend(self.store.collect_keyed_local::<H>());
+
+        keyed
+    }
+
+    pub(crate) fn insert(&mut self, component: BoxedComponent) {
+        self.store.insert(component);
+    }
+
+    pub(crate) fn register_provider(&mut self, provider: &ProviderDescriptor) {
+        self.store.register_provider(provider);
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        ComponentScope,
+        ScopeStore,
+        Option<Arc<crate::container::ScopeContainer>>,
+        Arc<crate::container::ScopeRegistry>,
+    ) {
+        (self.scope, self.store, self.parent, self.registry)
+    }
+
+    /// Whether a component of `type_id` has already been constructed or seeded in
+    /// this scope.
+    pub(crate) fn contains(&self, type_id: TypeId) -> bool {
+        self.store.contains(type_id)
     }
 }
 
@@ -361,12 +504,6 @@ fn pick_single(entries: &[ProviderInstance]) -> Option<&ProviderInstance> {
     match primaries.next() {
         Some(_) => None,
         None => Some(first),
-    }
-}
-
-impl Default for ComponentConstructionContext {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

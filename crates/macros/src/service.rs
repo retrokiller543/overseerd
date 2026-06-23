@@ -35,7 +35,18 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         None => quote!(::core::option::Option::None),
     };
 
-    let default_component = inject::field_injection_component(&mut item, &id, &name, true);
+    if let Some(scope) = &args.scope
+        && scope != "Singleton"
+    {
+        return Err(syn::Error::new(
+            scope.span(),
+            "#[service] components are always singletons; `scope` is only valid on #[component]",
+        ));
+    }
+
+    let singleton = syn::Ident::new("Singleton", self_ident.span());
+    let default_component =
+        inject::field_injection_component(&mut item, &id, &name, true, &singleton);
 
     let service_static = format_ident!(
         "__OVERSEER_SERVICE_{}",

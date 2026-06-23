@@ -1,8 +1,8 @@
 use crate::{
     DependencyDescriptor, ParameterDescriptor, RpcDescriptor,
     descriptors::{
-        COMPONENTS, Cardinality, ComponentDescriptor, PROVIDERS, ProviderDescriptor, RPC_GROUPS,
-        RpcGroup, SERVICES, ServiceDescriptor,
+        COMPONENTS, Cardinality, ComponentDescriptor, ComponentScope, PROVIDERS,
+        ProviderDescriptor, RPC_GROUPS, RpcGroup, SERVICES, ServiceDescriptor,
     },
     error::Error,
 };
@@ -104,6 +104,63 @@ impl DescriptorRegistry {
         self.validate_rpc_groups()?;
         self.validate_services()?;
         self.validate_dependencies(&components)?;
+        self.validate_scopes(&components)?;
+
+        Ok(())
+    }
+
+    /// Enforces the captive-dependency rule: a non-transient component may depend
+    /// only on equal-or-longer-lived non-transient components. A `Transient`
+    /// dependency is always allowed (it is rebuilt inside its consumer, never
+    /// shared); a `Transient` *component* may depend only on singletons in v1, so
+    /// it is safe to construct in any scope.
+    ///
+    /// The rule is checked against [`ComponentScope::rank`], not by matching each
+    /// variant, so a future user-defined scope slots in at its own rank.
+    fn validate_scopes(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
+        let scope_of: HashMap<TypeId, ComponentScope> = components
+            .iter()
+            .map(|c| ((c.ty.type_id)(), c.scope))
+            .collect();
+
+        for c in components {
+            for dep in c.dependencies {
+                if dep.dynamic {
+                    continue;
+                }
+
+                let dep_id = (dep.ty.type_id)();
+
+                // A concrete edge resolves to that type's scope; a trait edge to the
+                // scope of each component providing the trait.
+                let dep_scopes: Vec<(ComponentScope, &'static str)> =
+                    match scope_of.get(&dep_id) {
+                        Some(scope) => vec![(*scope, (dep.ty.type_name)())],
+
+                        None => self
+                            .providers
+                            .iter()
+                            .filter(|p| (p.trait_ty.type_id)() == dep_id)
+                            .filter_map(|p| {
+                                scope_of
+                                    .get(&(p.concrete_ty.type_id)())
+                                    .map(|scope| (*scope, (p.concrete_ty.type_name)()))
+                            })
+                            .collect(),
+                    };
+
+                for (dep_scope, dep_name) in dep_scopes {
+                    if !scope_allows(c.scope, dep_scope) {
+                        return Err(Error::ScopeViolation {
+                            component: c.name.to_string(),
+                            dependency: dep_name.to_string(),
+                            component_scope: c.scope,
+                            dependency_scope: dep_scope,
+                        });
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -310,6 +367,20 @@ impl DescriptorRegistry {
 
         Ok(())
     }
+}
+
+/// Whether a `consumer`-scoped component may hold a `dependency`-scoped one. See
+/// [`DescriptorRegistry::validate_scopes`].
+fn scope_allows(consumer: ComponentScope, dependency: ComponentScope) -> bool {
+    if dependency.is_transient() {
+        return true;
+    }
+
+    if consumer.is_transient() {
+        return dependency == ComponentScope::Singleton;
+    }
+
+    dependency.rank() >= consumer.rank()
 }
 
 impl fmt::Display for DescriptorRegistry {
@@ -573,5 +644,128 @@ mod tests {
         };
 
         assert!(registry.validate().is_err());
+    }
+
+    // --- Scope validation --------------------------------------------------
+    //
+    // Stand-in types per scope: i16 = singleton, i32 = connection, i64 = request.
+
+    /// Builds a one-dependency component descriptor at `scope` depending on the
+    /// concrete type behind `dep`.
+    fn scoped(
+        name: &'static str,
+        scope: ComponentScope,
+        dep: &'static [DependencyDescriptor],
+        ty: TypeDescriptor,
+    ) -> ComponentDescriptor {
+        ComponentDescriptor {
+            id: name,
+            name,
+            ty,
+            scope,
+            dependencies: dep,
+            factory: Some(fake_factory),
+            default_factory: false,
+        }
+    }
+
+    static SINGLETON_DEP_ON_REQUEST: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "ReqComp",
+        ty: TypeDescriptor::of::<i64>("ReqComp"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+    }];
+
+    static REQUEST_DEP_ON_CONNECTION: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "ConnComp",
+        ty: TypeDescriptor::of::<i32>("ConnComp"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+    }];
+
+    #[test]
+    fn validate_rejects_singleton_depending_on_request() {
+        // A singleton outlives a request-scoped instance, so the captive-dependency
+        // rule forbids holding one.
+        let request = scoped(
+            "ReqComp",
+            ComponentScope::Request,
+            &[],
+            TypeDescriptor::of::<i64>("ReqComp"),
+        );
+        let singleton = scoped(
+            "RootComp",
+            ComponentScope::Singleton,
+            &SINGLETON_DEP_ON_REQUEST,
+            TypeDescriptor::of::<i16>("RootComp"),
+        );
+
+        let registry = DescriptorRegistry {
+            components: vec![singleton, request],
+            ..Default::default()
+        };
+
+        // Go through the full `validate()` to confirm scope checking is wired into
+        // the path `Daemon::build` runs.
+        assert!(matches!(
+            registry.validate(),
+            Err(Error::ScopeViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_allows_request_depending_on_connection() {
+        // A request-scoped component may depend on a longer-lived connection one.
+        let connection = scoped(
+            "ConnComp",
+            ComponentScope::Connection,
+            &[],
+            TypeDescriptor::of::<i32>("ConnComp"),
+        );
+        let request = scoped(
+            "ReqComp",
+            ComponentScope::Request,
+            &REQUEST_DEP_ON_CONNECTION,
+            TypeDescriptor::of::<i64>("ReqComp"),
+        );
+
+        let registry = DescriptorRegistry {
+            components: vec![connection, request],
+            ..Default::default()
+        };
+
+        assert!(registry.validate_scopes(&registry.components).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_transient_depending_on_connection() {
+        // A transient may depend only on singletons in v1, so a connection-scoped
+        // dependency is rejected.
+        let connection = scoped(
+            "ConnComp",
+            ComponentScope::Connection,
+            &[],
+            TypeDescriptor::of::<i32>("ConnComp"),
+        );
+        let transient = scoped(
+            "TransComp",
+            ComponentScope::Transient,
+            &REQUEST_DEP_ON_CONNECTION,
+            TypeDescriptor::of::<i64>("TransComp"),
+        );
+
+        let registry = DescriptorRegistry {
+            components: vec![connection, transient],
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            registry.validate_scopes(&registry.components),
+            Err(Error::ScopeViolation { .. })
+        ));
     }
 }

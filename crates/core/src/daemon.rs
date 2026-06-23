@@ -1,28 +1,50 @@
-use std::{fmt, sync::Arc};
+use std::{
+    any::TypeId,
+    collections::HashSet,
+    fmt,
+    sync::Arc,
+};
 
 use futures::StreamExt;
-use overseer_transport::{CallResult, Connection, Respond, RespondStream, ResponseSink, Transport};
-use tokio::task::JoinSet;
-use tracing::{debug, error, info, instrument, trace, warn};
+use overseer_transport::{
+    CallResult, Connection, PeerInfo, Respond, RespondStream, ResponseSink, Transport,
+};
+use tokio::{sync::mpsc, task::JoinSet};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     ServiceComponent,
-    connection::{ConnectionHandler, ConnectionInfo},
-    container::ComponentContainer,
+    container::{ScopeContainer, ScopeRegistry, topological_sort},
     descriptors::{
-        BoxedComponent, Component, ComponentDescriptor, RpcCallContext, RpcGroup, RpcOutcome,
-        RpcResponse, ServiceDescriptor, TypeDescriptor,
+        BoxedComponent, Component, ComponentDescriptor, ComponentScope, RpcCallContext, RpcGroup,
+        RpcOutcome, RpcResponse, ServiceDescriptor, TypeDescriptor,
     },
+    extract::ErrorResponse,
     lifecycle::{ShutdownHandle, ShutdownSignal},
     registry::DescriptorRegistry,
     router::RpcRouter,
+};
+
+/// The framework-provided connection-scoped injectable for the remote peer.
+///
+/// Seeded into every connection scope with the actual `PeerInfo`, so a
+/// connection-scoped component can depend on `Arc<PeerInfo>` (e.g. to authenticate
+/// in its constructor) — the DI-native replacement for the old `on_connect` hook.
+static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor {
+    id: "__overseer_peer_info",
+    name: "PeerInfo",
+    ty: TypeDescriptor::of::<PeerInfo>("PeerInfo"),
+    scope: ComponentScope::Connection,
+    dependencies: &[],
+    factory: None,
+    default_factory: false,
 };
 
 /// Assembles a Daemon from an explicit set of components and services.
 pub struct DaemonBuilder {
     name: String,
     registry: DescriptorRegistry,
-    connection_handlers: Vec<Box<dyn ConnectionHandler>>,
     instances: Vec<BoxedComponent>,
 }
 
@@ -31,7 +53,6 @@ impl DaemonBuilder {
         Self {
             name: name.into(),
             registry: DescriptorRegistry::default(),
-            connection_handlers: Vec::new(),
             instances: Vec::new(),
         }
     }
@@ -104,29 +125,32 @@ impl DaemonBuilder {
         self
     }
 
-    /// Registers a handler called once per accepted connection to populate
-    /// connection-scoped context. Handlers run in registration order.
-    pub fn connection_handler<H: ConnectionHandler>(mut self, handler: H) -> Self {
-        self.connection_handlers.push(Box::new(handler));
-
-        self
-    }
-
-    /// Validates the registry, resolves all components, and builds a ready-to-run Daemon.
+    /// Validates the registry, resolves all components, partitions them by scope,
+    /// and builds a ready-to-run Daemon.
     pub async fn build(self) -> crate::Result<Daemon> {
         debug!(daemon = %self.name, "building daemon");
 
         let mut registry = self.registry;
+
+        // The peer is a framework-provided connection-scoped injectable; declare it
+        // so dependencies on it validate and it partitions into the connection scope.
+        registry.components.push(PEER_INFO_DESCRIPTOR);
 
         registry.validate()?;
 
         // Collapse to the effective component set (explicit factories override
         // field-injection defaults) so the stored registry reflects what runs.
         let resolved = registry.resolved_components()?;
-        registry.components = resolved;
+        registry.components = resolved.clone();
 
-        let container =
-            ComponentContainer::build(&registry.components, self.instances, &registry.providers)
+        let scopes = ScopePlan::partition(&resolved, &registry.providers)?;
+
+        let scope_registry = Arc::new(ScopeRegistry::new(
+            scopes.transient,
+            registry.providers.clone(),
+        ));
+        let root =
+            ScopeContainer::build_root(&scopes.singletons, self.instances, Arc::clone(&scope_registry))
                 .await?;
         let router = RpcRouter::from_registry(&registry);
         let shutdown = ShutdownSignal::new();
@@ -141,10 +165,80 @@ impl DaemonBuilder {
         Ok(Daemon {
             name: self.name,
             registry,
-            container,
+            root,
+            scopes: scope_registry,
+            connection_order: Arc::new(scopes.connection_order),
+            request_order: Arc::new(scopes.request_order),
             router,
             shutdown,
-            connection_handlers: self.connection_handlers,
+        })
+    }
+}
+
+/// The per-scope construction plan computed once at daemon build.
+struct ScopePlan {
+    singletons: Vec<ComponentDescriptor>,
+    connection_order: Vec<ComponentDescriptor>,
+    request_order: Vec<ComponentDescriptor>,
+    transient: std::collections::HashMap<TypeId, ComponentDescriptor>,
+}
+
+impl ScopePlan {
+    /// Splits the resolved components by scope and precomputes the construction
+    /// order for the connection and request scopes (singletons are sorted by
+    /// `build_root`; transients are constructed on demand, so need no order).
+    fn partition(
+        resolved: &[ComponentDescriptor],
+        providers: &[crate::descriptors::ProviderDescriptor],
+    ) -> crate::Result<Self> {
+        let mut singletons = Vec::new();
+        let mut connection_components = Vec::new();
+        let mut request_components = Vec::new();
+        let mut transient = std::collections::HashMap::new();
+
+        for c in resolved {
+            match c.scope {
+                ComponentScope::Singleton => singletons.push(*c),
+                // A connection-scoped manual instance (factory None) — only the
+                // framework's PeerInfo — is seeded per connection, not constructed.
+                ComponentScope::Connection if c.factory.is_some() => {
+                    connection_components.push(*c)
+                }
+                ComponentScope::Connection => {}
+                ComponentScope::Request if c.factory.is_some() => request_components.push(*c),
+                ComponentScope::Request => {}
+                ComponentScope::Transient => {
+                    transient.insert((c.ty.type_id)(), *c);
+                }
+            }
+        }
+
+        // Connection components resolve against singletons and the seeded peer.
+        let peer_id = (PEER_INFO_DESCRIPTOR.ty.type_id)();
+        let mut conn_prebuilt: HashSet<TypeId> =
+            singletons.iter().map(|c| (c.ty.type_id)()).collect();
+        conn_prebuilt.insert(peer_id);
+
+        let connection_order = topological_sort(&connection_components, &conn_prebuilt, providers)?
+            .into_iter()
+            .copied()
+            .collect();
+
+        // Request components resolve against singletons, the peer, and all
+        // connection-scoped components.
+        let mut req_prebuilt = conn_prebuilt.clone();
+        req_prebuilt.extend(connection_components.iter().map(|c| (c.ty.type_id)()));
+
+        let request_order = topological_sort(&request_components, &req_prebuilt, providers)?
+            .into_iter()
+            .copied()
+            .collect();
+
+        Ok(Self {
+            singletons,
+            connection_order,
+            request_order,
+            transient,
         })
     }
 }
@@ -153,10 +247,12 @@ impl DaemonBuilder {
 pub struct Daemon {
     pub name: String,
     pub registry: DescriptorRegistry,
-    pub container: ComponentContainer,
-    pub router: RpcRouter,
+    root: Arc<ScopeContainer>,
+    scopes: Arc<ScopeRegistry>,
+    connection_order: Arc<Vec<ComponentDescriptor>>,
+    request_order: Arc<Vec<ComponentDescriptor>>,
+    router: RpcRouter,
     shutdown: ShutdownSignal,
-    connection_handlers: Vec<Box<dyn ConnectionHandler>>,
 }
 
 impl fmt::Debug for Daemon {
@@ -166,7 +262,6 @@ impl fmt::Debug for Daemon {
             .field("components", &self.registry.components.len())
             .field("services", &self.registry.services.len())
             .field("routes", &self.router.route_count())
-            .field("connection_handlers", &self.connection_handlers.len())
             .finish_non_exhaustive()
     }
 }
@@ -183,6 +278,11 @@ impl fmt::Display for Daemon {
 impl Daemon {
     pub fn builder(name: impl Into<String>) -> DaemonBuilder {
         DaemonBuilder::new(name)
+    }
+
+    /// The root (singleton) scope container.
+    pub fn container(&self) -> &Arc<ScopeContainer> {
+        &self.root
     }
 
     /// Returns a handle that can trigger graceful shutdown from any spawned task.
@@ -205,8 +305,10 @@ impl Daemon {
         info!(daemon = %self.name, transport = transport_name, "serve starting");
 
         let router = Arc::new(self.router);
-        let handlers = Arc::new(self.connection_handlers);
-        let components = Arc::new(self.container);
+        let root = self.root;
+        let scopes = self.scopes;
+        let connection_order = self.connection_order;
+        let request_order = self.request_order;
         let mut shutdown = self.shutdown;
 
         loop {
@@ -217,11 +319,16 @@ impl Daemon {
                             debug!(peer = ?conn.peer().addr, "connection accepted, spawning task");
 
                             let router = Arc::clone(&router);
-                            let handlers = Arc::clone(&handlers);
-                            let components = Arc::clone(&components);
+                            let root = Arc::clone(&root);
+                            let scopes = Arc::clone(&scopes);
+                            let connection_order = Arc::clone(&connection_order);
+                            let request_order = Arc::clone(&request_order);
 
                             tokio::spawn(async move {
-                                serve_connection(conn, router, handlers, components).await;
+                                serve_connection(
+                                    conn, router, root, scopes, connection_order, request_order,
+                                )
+                                .await;
                             });
                         }
 
@@ -271,23 +378,39 @@ impl Daemon {
 async fn serve_connection<C: Connection>(
     mut conn: C,
     router: Arc<RpcRouter>,
-    handlers: Arc<Vec<Box<dyn ConnectionHandler>>>,
-    components: Arc<ComponentContainer>,
+    root: Arc<ScopeContainer>,
+    scopes: Arc<ScopeRegistry>,
+    connection_order: Arc<Vec<ComponentDescriptor>>,
+    request_order: Arc<Vec<ComponentDescriptor>>,
 ) {
     debug!("connection established");
 
-    let mut info = ConnectionInfo::new(conn.peer().clone());
+    // Seed the peer (by value — the framework's connection-scoped injectable) and
+    // build the connection scope (e.g. authenticated session, checked-out DB
+    // handle). A failed factory closes the connection.
+    let peer = conn.peer().clone();
+    let seed = BoxedComponent {
+        ty: TypeDescriptor::of::<PeerInfo>("PeerInfo"),
+        value: Box::new(peer),
+    };
 
-    for (i, handler) in handlers.iter().enumerate() {
-        trace!(index = i, "running connection handler");
+    let connection_scope = match ScopeContainer::open_child(
+        ComponentScope::Connection,
+        root,
+        Arc::clone(&scopes),
+        &connection_order,
+        vec![seed],
+    )
+    .await
+    {
+        Ok(scope) => scope,
 
-        if let Err(e) = handler.on_connect(&mut info).await {
-            error!(error = %e, "connection handler failed, closing");
+        Err(e) => {
+            error!(error = %e, "connection scope build failed, closing");
             return;
         }
-    }
+    };
 
-    let info = Arc::new(info);
     let mut tasks: JoinSet<()> = JoinSet::new();
 
     debug!("connection ready");
@@ -296,18 +419,24 @@ async fn serve_connection<C: Connection>(
         match conn.recv().await {
             Ok(Some((call, responder))) => {
                 let path = call.path;
-                let ctx = RpcCallContext::new(
-                    call.payload,
-                    Arc::clone(&info),
-                    Arc::clone(&components),
-                    call.requests,
-                    call.cancel,
-                );
                 let router = Arc::clone(&router);
+                let connection_scope = Arc::clone(&connection_scope);
+                let scopes = Arc::clone(&scopes);
+                let request_order = Arc::clone(&request_order);
 
                 debug!(%path, "dispatching call");
 
-                tasks.spawn(drive_call(path, ctx, responder, router));
+                tasks.spawn(drive_call(
+                    path,
+                    call.payload,
+                    call.requests,
+                    call.cancel,
+                    connection_scope,
+                    scopes,
+                    request_order,
+                    responder,
+                    router,
+                ));
             }
 
             Ok(None) => {
@@ -329,13 +458,51 @@ async fn serve_connection<C: Connection>(
     debug!("connection ended");
 }
 
-/// Drives one call to completion on its own task: dispatch, then pump the
-/// outcome into the matching responder — a single reply for unary calls, or a
-/// stream of items terminated by `finish`/`error` for streaming calls.
-async fn drive_call<R>(path: String, ctx: RpcCallContext, responder: R, router: Arc<RpcRouter>)
-where
+/// Drives one call to completion on its own task: build its request scope,
+/// dispatch, then pump the outcome into the matching responder — a single reply
+/// for unary calls, or a stream of items terminated by `finish`/`error` for
+/// streaming calls.
+#[allow(clippy::too_many_arguments)]
+async fn drive_call<R>(
+    path: String,
+    payload: Vec<u8>,
+    requests: Option<mpsc::Receiver<Vec<u8>>>,
+    cancel: CancellationToken,
+    connection_scope: Arc<ScopeContainer>,
+    scopes: Arc<ScopeRegistry>,
+    request_order: Arc<Vec<ComponentDescriptor>>,
+    responder: R,
+    router: Arc<RpcRouter>,
+) where
     R: Respond + RespondStream + Send + 'static,
 {
+    let request_scope = match ScopeContainer::open_child(
+        ComponentScope::Request,
+        connection_scope,
+        scopes,
+        &request_order,
+        Vec::new(),
+    )
+    .await
+    {
+        Ok(scope) => scope,
+
+        Err(e) => {
+            error!(%path, error = %e, "request scope build failed");
+            let response = ErrorResponse::from(e);
+            let _ = responder
+                .respond(CallResult::Err {
+                    code: response.code,
+                    body: response.body,
+                })
+                .await;
+
+            return;
+        }
+    };
+
+    let ctx = RpcCallContext::new(payload, request_scope, requests, cancel);
+
     match router.dispatch(&path, ctx).await {
         Ok(RpcOutcome::Unary(RpcResponse { payload })) => {
             debug!(%path, "call succeeded");

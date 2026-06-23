@@ -53,14 +53,22 @@ pub enum Error {
     #[error("handler expects a request stream but the call did not open one")]
     NotStreaming,
 
-    #[error("missing connection extension: {0}")]
-    MissingExtension(&'static str),
-
     #[error("response serialization failed: {0}")]
     Serialization(String),
 
     #[error("missing component: {0}")]
     MissingComponent(&'static str),
+
+    #[error(
+        "scope violation: component '{component}' ({component_scope:?}) depends on \
+         '{dependency}' ({dependency_scope:?}), which is shorter-lived"
+    )]
+    ScopeViolation {
+        component: String,
+        dependency: String,
+        component_scope: crate::ComponentScope,
+        dependency_scope: crate::ComponentScope,
+    },
 }
 
 impl Error {

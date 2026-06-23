@@ -68,7 +68,7 @@ async fn primary_provider_is_chosen_and_aliases_the_single_instance() {
         .await
         .expect("daemon builds");
 
-    let zoo = daemon.container.get::<Zoo>().expect("Zoo constructed");
+    let zoo = daemon.container().get::<Zoo>().expect("Zoo constructed");
 
     // `#[primary]` Dog wins the bare `Arc<dyn Animal>` over Cat.
     assert_eq!(zoo.chosen.sound(), "woof", "primary provider chosen");
