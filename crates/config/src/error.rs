@@ -50,6 +50,11 @@ pub enum ConfigErrorKind {
     #[error("resolution cycle: {} -> {key}", .chain.join(" -> "))]
     ResolutionCycle { chain: Vec<String>, key: String },
 
+    #[error(
+        "placeholder resolution exceeded the maximum depth of {limit} (chain too long or deeply nested)"
+    )]
+    ResolutionDepthExceeded { limit: usize },
+
     #[error("a templated placeholder can only produce a string, but a {target} was expected here")]
     PartialInNonString { target: &'static str },
 

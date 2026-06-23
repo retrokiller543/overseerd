@@ -115,8 +115,8 @@ impl<F: Format> ConfigManager<F> {
             .first()
             .expect("a format defines at least one parser");
 
-        let root = parse(text).map_err(|source| ConfigError::Substitution {
-            path: String::new(),
+        let root = parse(text).map_err(|source| ConfigError::Parse {
+            path: PathBuf::from("<in-memory>"),
             source,
         })?;
 
