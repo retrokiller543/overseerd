@@ -56,13 +56,14 @@
 pub use overseer_core::{
     COMPONENTS, PROVIDERS, RPC_GROUPS, SERVICES, BoxedComponent, Cancel, Cardinality, Component,
     ComponentConstructionContext, ComponentContainer, ComponentDescriptor, ComponentFactory,
-    ComponentScope, Conn, ConnectionHandler, ConnectionInfo, Daemon, DaemonBuilder,
-    DependencyDescriptor, DescriptorRegistry, Dynamic, Error, ErrorResponse, Extension,
-    FallibleHandler, Flags, FromContext, Handler, Injectable, OperationKind, ParameterDescriptor,
-    ParameterKind, Payload, PredefinedCode, Provide, ProviderDescriptor, RequestStream, Responder,
-    ResponseError, ResponseStream, Result, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler,
-    RpcOutcome,
-    RpcResponse, RpcRouter, ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal,
+    ComponentScope, Daemon, DaemonBuilder,
+    DependencyDescriptor, DescriptorRegistry, Dynamic, Error, ErrorResponse,
+    FallibleHandler, Flags, FromContext, Handler, Inject, Injectable, OperationKind,
+    ParameterDescriptor, ParameterKind, Payload, PredefinedCode, Provide, ProviderDescriptor,
+    RequestStream, Responder, ResponseError, ResponseStream, Result, RpcCallContext, RpcDescriptor,
+    RpcGroup, RpcHandler, RpcOutcome,
+    RpcResponse, RpcRouter, ScopeContainer, ServiceComponent, ServiceDescriptor, ShutdownHandle,
+    ShutdownSignal,
     StatusCode, Streaming, TypeDescriptor, Wired, Wiring, component, daemon, dispatch_fallible,
     dispatch_with, handlers, injectable, rpc, service, type_id_of,
 };
@@ -119,8 +120,8 @@ pub mod transport {
 /// The common imports for building a daemon: `use overseer::prelude::*;`.
 pub mod prelude {
     pub use crate::{
-        Component, Conn, Daemon, Extension, Handler, Payload, Result, ServiceComponent, component,
-        handlers, rpc, service,
+        Component, Daemon, Handler, Inject, Payload, Result, ServiceComponent, component, handlers,
+        rpc, service,
     };
 
     pub use overseer_transport::TcpTransport;

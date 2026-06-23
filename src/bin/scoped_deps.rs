@@ -1,199 +1,178 @@
-//! Demonstrates connection-scoped dependencies *and* axum-style typed handlers.
+//! Demonstrates **scoped dependencies** wired through the DI system.
 //!
-//! A `ConnectionHandler` runs once when a connection is accepted and stores
-//! per-connection state on `ConnectionInfo` (here: an authenticated identity
-//! plus a checked-out DB handle). Handlers then declare what they need as
-//! typed parameters — `Payload<T>`, `Extension<T>`, `Conn` — instead of
-//! receiving the raw `RpcCallContext`.
+//! Every scope here is a first-class component the container builds and injects —
+//! no hand-rolled `on_connect` hook:
+//! - `Stats` is a **singleton**, shared by every connection and call.
+//! - `Session` is **connection-scoped**: one per connection, built when the
+//!   connection is accepted. It depends on the framework-seeded `Arc<PeerInfo>`,
+//!   so it sees the remote peer — the DI-native replacement for the old
+//!   connection handler.
+//! - `RequestCtx` is **request-scoped**: one per RPC call. It depends on the
+//!   connection-scoped `Session` (a shorter-lived scope depending on a
+//!   longer-lived one, which the captive-dependency rule permits).
+//! - `Tracer` is **transient**: rebuilt on every resolution, so two `Inject`s in
+//!   one handler get two distinct instances.
+//!
+//! Handlers reach scoped components through the `Inject<H>` extractor; the
+//! per-scope identity is a `#[default]` field seeded from an atomic counter, so a
+//! connection keeps one id across its calls while each call gets a fresh one.
 
-use std::{
-    collections::HashMap,
-    future::Future,
-    net::IpAddr,
-    pin::Pin,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
 };
 
+use overseer::{Daemon, Inject, PeerInfo, Result, component, handlers, service};
+use overseer::transport::TcpTransport;
 use serde::{Deserialize, Serialize};
 
-use overseer_core::{
-    Conn, ConnectionHandler, ConnectionInfo, Daemon, Extension, Payload, handlers, service,
-};
-use overseer_transport::TcpTransport;
-
 // ---------------------------------------------------------------------------
-// Shared dependency: a pool the daemon owns once, shared across connections.
+// Per-scope identities: each `default()` pulls the next value from a counter, so
+// an instance's id is fixed for its lifetime and unique among its scope's peers.
 // ---------------------------------------------------------------------------
 
-/// A database pool owned by the daemon. Cloning is cheap (it shares one inner
-/// pool); each connection checks out its own handle.
-#[derive(Clone)]
-struct DbPool {
-    inner: Arc<PoolInner>,
+static CONNECTION_IDS: AtomicU64 = AtomicU64::new(1);
+static REQUEST_IDS: AtomicU64 = AtomicU64::new(1);
+static TRACE_IDS: AtomicU64 = AtomicU64::new(1);
+
+/// A connection's unique id, allocated once when its `Session` is built.
+struct ConnectionId(u64);
+
+impl Default for ConnectionId {
+    fn default() -> Self {
+        Self(CONNECTION_IDS.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
-struct PoolInner {
-    issued: AtomicU64,
+/// A call's unique id, allocated once when its `RequestCtx` is built.
+struct RequestId(u64);
+
+impl Default for RequestId {
+    fn default() -> Self {
+        Self(REQUEST_IDS.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
-impl DbPool {
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(PoolInner {
-                issued: AtomicU64::new(0),
-            }),
+/// A transient id, allocated afresh on every resolution.
+struct TraceId(u64);
+
+impl Default for TraceId {
+    fn default() -> Self {
+        Self(TRACE_IDS.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Singleton: process-wide call counter, shared across every connection.
+// ---------------------------------------------------------------------------
+
+/// Process-wide statistics, owned for the daemon's lifetime.
+#[component]
+struct Stats {
+    #[default]
+    calls: AtomicU64,
+}
+
+impl Stats {
+    /// Records a call and returns the running total.
+    fn record(&self) -> u64 {
+        self.calls.fetch_add(1, Ordering::Relaxed) + 1
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Connection scope: one Session per connection, aware of the remote peer.
+// ---------------------------------------------------------------------------
+
+/// Per-connection state, built once per accepted connection. Depends on the
+/// framework-seeded peer (a by-value, connection-scoped injectable provided by
+/// every daemon) to label the connection.
+#[component(scope = connection)]
+struct Session {
+    peer: PeerInfo,
+    #[default]
+    id: ConnectionId,
+}
+
+impl Session {
+    fn label(&self) -> String {
+        match self.peer.addr {
+            Some(addr) => format!("connection #{} from {addr}", self.id.0),
+            None => format!("connection #{} (local)", self.id.0),
         }
     }
-
-    /// Checks out a handle for the lifetime of one client connection.
-    fn acquire(&self) -> DbConn {
-        let conn_id = self.inner.issued.fetch_add(1, Ordering::Relaxed);
-
-        DbConn { conn_id }
-    }
-}
-
-/// A database handle scoped to a single client connection.
-struct DbConn {
-    conn_id: u64,
-}
-
-impl DbConn {
-    async fn lookup_display_name(&self, user_id: &str) -> String {
-        format!("'{user_id}' (served via db handle #{})", self.conn_id)
-    }
 }
 
 // ---------------------------------------------------------------------------
-// Connection-scoped state: built per connection, read by every handler.
+// Request scope: one RequestCtx per call, carrying its connection's Session.
 // ---------------------------------------------------------------------------
 
-/// Cheap, cloneable identity — suited to the `Extension<T>` extractor.
-#[derive(Clone)]
-struct Identity {
-    user_id: String,
-    api_key: String,
-}
-
-/// The checked-out DB handle. Not `Clone`, so handlers reach it through `Conn`
-/// and `get::<Db>()` rather than `Extension<T>`.
-struct Db {
-    conn: DbConn,
+/// Per-call state. Depends on the connection-scoped `Session`, so each call sees
+/// the connection it belongs to plus its own request id.
+#[component(scope = request)]
+struct RequestCtx {
+    session: Arc<Session>,
+    #[default]
+    id: RequestId,
 }
 
 // ---------------------------------------------------------------------------
-// The connection handler: authenticates and attaches the scoped state.
+// Transient: a fresh Tracer on every resolution.
 // ---------------------------------------------------------------------------
 
-/// Authenticates each new connection and attaches its scoped state.
-struct Authenticator {
-    pool: DbPool,
-    directory: Arc<HashMap<IpAddr, (String, String)>>,
-}
-
-impl ConnectionHandler for Authenticator {
-    fn on_connect<'a>(
-        &'a self,
-        info: &'a mut ConnectionInfo,
-    ) -> Pin<Box<dyn Future<Output = overseer_core::Result<()>> + Send + 'a>> {
-        Box::pin(async move {
-            let peer_ip = info.peer().addr.map(|addr| addr.ip());
-
-            let (user_id, api_key) = peer_ip
-                .and_then(|ip| self.directory.get(&ip))
-                .cloned()
-                .unwrap_or_else(|| ("anonymous".to_string(), "none".to_string()));
-
-            info.insert(Identity { user_id, api_key });
-            info.insert(Db {
-                conn: self.pool.acquire(),
-            });
-
-            Ok(())
-        })
-    }
+/// A throwaway tracer, rebuilt on each resolution rather than cached.
+#[component(scope = transient)]
+struct Tracer {
+    #[default]
+    id: TraceId,
 }
 
 // ---------------------------------------------------------------------------
-// Handlers — typed parameters, no raw context.
+// Service — stateless: everything it needs is injected per call.
 // ---------------------------------------------------------------------------
-
-#[derive(Serialize, Deserialize)]
-struct GreetRequest {
-    name: String,
-}
-
-#[derive(Serialize, Deserialize)]
-struct GreetReply {
-    message: String,
-}
 
 #[derive(Serialize, Deserialize)]
 struct WhoAmI {
-    display_name: String,
-    api_key: String,
+    connection: String,
+    request_id: u64,
+    total_calls: u64,
 }
 
-// ---------------------------------------------------------------------------
-// Service — stateless: request state comes from the connection (`Conn`,
-// `Extension<T>`), not a singleton, so it's a unit struct.
-// ---------------------------------------------------------------------------
-
-#[service(id = "account", version = "0.1")]
-struct AccountService;
+#[service(id = "scoped", version = "0.1")]
+struct ScopedDemo;
 
 #[handlers]
-impl AccountService {
-    /// Body via `Payload`, identity via the cloned `Extension`.
+impl ScopedDemo {
+    /// Reports the calling connection (stable across its calls), this call's
+    /// request id (fresh each call), and the process-wide call total.
     #[rpc]
-    async fn greet(
-        Payload(req): Payload<GreetRequest>,
-        Extension(identity): Extension<Identity>,
-    ) -> overseer_core::Result<GreetReply> {
-        Ok(GreetReply {
-            message: format!("Hello, {}! (signed for {})", req.name, identity.user_id),
+    async fn whoami(
+        Inject(stats): Inject<Arc<Stats>>,
+        Inject(ctx): Inject<Arc<RequestCtx>>,
+    ) -> Result<WhoAmI> {
+        Ok(WhoAmI {
+            connection: ctx.session.label(),
+            request_id: ctx.id.0,
+            total_calls: stats.record(),
         })
     }
 
-    /// Reaches the non-clone DB handle through the full connection context.
+    /// Resolves two transients in one call; their ids differ, showing each
+    /// resolution builds a fresh instance.
     #[rpc]
-    async fn whoami(conn: Conn) -> overseer_core::Result<WhoAmI> {
-        let identity = conn
-            .0
-            .get::<Identity>()
-            .expect("Authenticator inserts Identity on connect");
-        let db = conn
-            .0
-            .get::<Db>()
-            .expect("Authenticator inserts Db on connect");
-
-        let display_name = db.conn.lookup_display_name(&identity.user_id).await;
-
-        Ok(WhoAmI {
-            display_name,
-            api_key: identity.api_key.clone(),
-        })
+    async fn two_tracers(
+        Inject(first): Inject<Arc<Tracer>>,
+        Inject(second): Inject<Arc<Tracer>>,
+    ) -> Result<(u64, u64)> {
+        Ok((first.id.0, second.id.0))
     }
 }
 
 #[tokio::main]
-async fn main() -> overseer_core::Result<()> {
-    let local: IpAddr = "127.0.0.1".parse().unwrap();
-    let mut directory = HashMap::new();
+async fn main() -> Result<()> {
+    let daemon = Daemon::builder("scoped").auto_discover().build().await?;
 
-    directory.insert(local, ("alice".to_string(), "sk-alice-123".to_string()));
-
-    let daemon = Daemon::builder("account")
-        .auto_discover()
-        .connection_handler(Authenticator {
-            pool: DbPool::new(),
-            directory: Arc::new(directory),
-        })
-        .build()
-        .await?;
+    println!("{daemon}");
 
     let transport = TcpTransport::bind("127.0.0.1:9100").await?;
 

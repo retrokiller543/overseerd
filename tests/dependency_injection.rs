@@ -43,7 +43,7 @@ async fn resolves_default_optional_and_dynamic_edges() {
         .expect("daemon builds");
 
     let widget = daemon
-        .container
+        .container()
         .get::<Widget>()
         .expect("Widget constructed");
 

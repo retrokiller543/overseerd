@@ -776,6 +776,7 @@ fn generate_init(
 
         quote! {
             cx.resolve::<::std::sync::Arc<#t>>()
+                .await
                 .ok_or(#error::MissingComponent(#dep_name))?
         }
     });

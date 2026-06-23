@@ -27,6 +27,7 @@ pub fn field_injection_component(
     id: &LitStr,
     name: &LitStr,
     default_factory: bool,
+    scope_variant: &syn::Ident,
 ) -> TokenStream {
     let self_ident = item.ident.clone();
     let boxed_component = overseer_path("BoxedComponent");
@@ -144,7 +145,7 @@ pub fn field_injection_component(
                 id: #id,
                 name: #name,
                 ty: #type_descriptor::of::<#self_ident>(#name),
-                scope: #component_scope::Singleton,
+                scope: #component_scope::#scope_variant,
                 dependencies: &__OVERSEER_DEPS,
                 factory: ::core::option::Option::Some(__overseer_factory),
                 default_factory: #default_factory,
@@ -231,7 +232,7 @@ fn plan_field(field: &mut Field) -> FieldPlan {
         let dependency = dep(&item, quote!(#cardinality::Collection), false, false, none.clone());
 
         return FieldPlan {
-            value: quote!(cx.resolve_all::<#item>()),
+            value: quote!(cx.resolve_all::<#item>().await),
             dependency: Some(dependency),
             check: None,
             wired: None,
@@ -242,7 +243,7 @@ fn plan_field(field: &mut Field) -> FieldPlan {
         let dependency = dep(&value, quote!(#cardinality::Keyed), false, false, none.clone());
 
         return FieldPlan {
-            value: quote!(cx.resolve_keyed::<#value>()),
+            value: quote!(cx.resolve_keyed::<#value>().await),
             dependency: Some(dependency),
             check: None,
             wired: None,
@@ -268,10 +269,10 @@ fn plan_field(field: &mut Field) -> FieldPlan {
 
     let (resolved, qualifier) = match &field_qualifier {
         Some(q) => (
-            quote!(cx.resolve_qualified::<#handle>(#q)),
+            quote!(cx.resolve_qualified::<#handle>(#q).await),
             quote!(::core::option::Option::Some(#q)),
         ),
-        None => (quote!(cx.resolve::<#handle>()), none),
+        None => (quote!(cx.resolve::<#handle>().await), none),
     };
     let value = match (optional, dynamic) {
         (false, false) => quote!(#resolved.ok_or(#error::MissingComponent(#dep_name))?),

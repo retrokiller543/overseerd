@@ -1,6 +1,7 @@
 use std::{
     any::TypeId,
     collections::{HashMap, HashSet},
+    sync::Arc,
 };
 
 use tracing::{debug, error, info, instrument, trace};
@@ -8,59 +9,163 @@ use tracing::{debug, error, info, instrument, trace};
 use crate::{
     BoxedComponent, Error,
     descriptors::{
-        Cardinality, Component, ComponentDescriptor, ProviderDescriptor,
-        component::ComponentConstructionContext,
+        Cardinality, Component, ComponentDescriptor, ComponentScope, Injectable, ProviderDescriptor,
+        component::{ComponentConstructionContext, ScopeStore},
     },
 };
 
-/// Holds all fully constructed component instances for a running daemon.
-pub struct ComponentContainer {
-    components: HashMap<TypeId, crate::BoxedComponent>,
+/// Shared, immutable data a [`ScopeContainer`] needs to resolve beyond its own
+/// store: the `Transient` components it may construct on demand and the trait
+/// providers used to alias instances. Held behind an `Arc` and shared by every
+/// scope in a daemon (root, per-connection, per-request).
+pub struct ScopeRegistry {
+    /// Transient components keyed by their concrete `TypeId`, for on-demand
+    /// construction at resolution time. Transients are never cached.
+    transient: HashMap<TypeId, ComponentDescriptor>,
+    providers: Vec<ProviderDescriptor>,
 }
 
-impl ComponentContainer {
-    /// Resolves all registered components in dependency order and returns a built ComponentContainer.
+impl ScopeRegistry {
+    pub(crate) fn new(
+        transient: HashMap<TypeId, ComponentDescriptor>,
+        providers: Vec<ProviderDescriptor>,
+    ) -> Self {
+        Self {
+            transient,
+            providers,
+        }
+    }
+
+    pub(crate) fn providers(&self) -> &[ProviderDescriptor] {
+        &self.providers
+    }
+
+    pub(crate) fn transient(&self, target: TypeId) -> Option<ComponentDescriptor> {
+        self.transient.get(&target).copied()
+    }
+}
+
+/// Constructs a fresh `Transient` instance whose `Injectable::Target` is `H`, if
+/// one is registered. A transient is rebuilt on every resolution and never stored,
+/// so it is constructed in a throwaway context parented to `parent` (its
+/// dependencies — singletons in v1 — resolve up the chain).
+pub(crate) async fn construct_transient<H: Injectable>(
+    registry: &Arc<ScopeRegistry>,
+    parent: Option<Arc<ScopeContainer>>,
+) -> Option<H> {
+    let target = TypeId::of::<H::Target>();
+    let descriptor = registry.transient(target)?;
+    let factory = descriptor.factory?;
+
+    let mut cx = ComponentConstructionContext::new(
+        ComponentScope::Transient,
+        parent,
+        Arc::clone(registry),
+    );
+
+    match factory(&mut cx).await {
+        Ok(boxed) => boxed.value.downcast_ref::<H>().cloned(),
+
+        Err(e) => {
+            error!(component = %descriptor.name, error = %e, "transient construction failed");
+
+            None
+        }
+    }
+}
+
+/// One scope's constructed instances, layered over an optional parent scope.
+///
+/// The root container is the singleton scope (`parent: None`); a per-connection
+/// scope parents the root, and a per-request scope parents the connection.
+/// Resolution walks this scope first, then each longer-lived parent, so a request
+/// handler sees request-, connection-, and singleton-scoped instances uniformly.
+pub struct ScopeContainer {
+    scope: ComponentScope,
+    store: ScopeStore,
+    parent: Option<Arc<ScopeContainer>>,
+    registry: Arc<ScopeRegistry>,
+}
+
+impl ScopeContainer {
+    /// The scope this container holds.
+    pub fn scope(&self) -> ComponentScope {
+        self.scope
+    }
+
+    /// Resolves all registered singleton components in dependency order into the
+    /// root container.
     ///
-    /// `components` is the effective component set (after default/override
-    /// resolution). `manual` holds pre-built instances supplied at the builder
-    /// (e.g. a service constructed by hand); they are seeded first, so
-    /// factory-built components may depend on them.
+    /// `components` is the singleton-scoped component set (after default/override
+    /// resolution). `instances` holds pre-built singletons supplied at the builder;
+    /// they are seeded first, so factory-built components may depend on them.
     #[instrument(skip_all, fields(count = components.len()))]
-    pub async fn build(
+    pub async fn build_root(
         components: &[ComponentDescriptor],
         instances: Vec<BoxedComponent>,
-        providers: &[ProviderDescriptor],
-    ) -> crate::Result<Self> {
-        debug!("resolving component dependency order");
+        registry: Arc<ScopeRegistry>,
+    ) -> crate::Result<Arc<ScopeContainer>> {
+        debug!("resolving singleton dependency order");
 
-        let mut ctx = ComponentConstructionContext::new();
-        let mut prebuilt: HashSet<TypeId> = HashSet::new();
+        let prebuilt: HashSet<TypeId> = instances.iter().map(|i| (i.ty.type_id)()).collect();
+        let order = topological_sort(components, &prebuilt, registry.providers())?;
+        let order: Vec<ComponentDescriptor> = order.into_iter().copied().collect();
 
-        for component in instances {
-            let type_id = (component.ty.type_id)();
+        let root = Self::build(ComponentScope::Singleton, None, registry, &order, instances).await?;
 
-            prebuilt.insert(type_id);
-            ctx.insert(component);
-            register_providers_for(&mut ctx, providers, type_id);
+        info!(count = root.store.components.len(), "root container built");
+
+        Ok(root)
+    }
+
+    /// Opens a child scope over `parent`, seeding `seeds` then constructing `order`
+    /// (a dependency order precomputed at daemon build). Every scope — the four
+    /// built-ins and any future user-defined one — is created through this single
+    /// primitive.
+    pub async fn open_child(
+        scope: ComponentScope,
+        parent: Arc<ScopeContainer>,
+        registry: Arc<ScopeRegistry>,
+        order: &[ComponentDescriptor],
+        seeds: Vec<BoxedComponent>,
+    ) -> crate::Result<Arc<ScopeContainer>> {
+        Self::build(scope, Some(parent), registry, order, seeds).await
+    }
+
+    /// Seeds instances, then constructs `order` in sequence, aliasing trait
+    /// providers as each instance lands. Resolution during construction reaches the
+    /// parent chain.
+    async fn build(
+        scope: ComponentScope,
+        parent: Option<Arc<ScopeContainer>>,
+        registry: Arc<ScopeRegistry>,
+        order: &[ComponentDescriptor],
+        seeds: Vec<BoxedComponent>,
+    ) -> crate::Result<Arc<ScopeContainer>> {
+        let mut cx = ComponentConstructionContext::new(scope, parent, Arc::clone(&registry));
+        let providers = registry.providers();
+
+        for seed in seeds {
+            let type_id = (seed.ty.type_id)();
+
+            cx.insert(seed);
+            register_providers_for(&mut cx, providers, type_id);
         }
 
-        let sorted = topological_sort(components, &prebuilt, providers)?;
-
-        for descriptor in &sorted {
+        for descriptor in order {
             match descriptor.factory {
                 Some(factory) => {
-                    debug!(component = %descriptor.name, "constructing component");
+                    debug!(component = %descriptor.name, ?scope, "constructing component");
 
-                    let component = factory(&mut ctx).await?;
+                    let component = factory(&mut cx).await?;
 
-                    ctx.insert(component);
+                    cx.insert(component);
 
                     trace!(component = %descriptor.name, "component ready");
                 }
 
                 None => {
-                    // Manually-provided: the instance must already be seeded.
-                    if !ctx.contains((descriptor.ty.type_id)()) {
+                    if !cx.contains((descriptor.ty.type_id)()) {
                         error!(component = %descriptor.name, "no instance provided for factory-less component");
                         return Err(Error::MissingComponent(descriptor.name));
                     }
@@ -69,33 +174,90 @@ impl ComponentContainer {
                 }
             }
 
-            // Alias the just-built instance under each trait it provides. This is
-            // a clone of the existing `Arc` re-typed as `Arc<dyn Trait>`, never a
-            // second construction.
-            register_providers_for(&mut ctx, providers, (descriptor.ty.type_id)());
+            register_providers_for(&mut cx, providers, (descriptor.ty.type_id)());
         }
 
-        let components = ctx.into_components();
+        let (scope, store, parent, registry) = cx.into_parts();
 
-        info!(count = components.len(), "container built");
-
-        Ok(Self { components })
+        Ok(Arc::new(ScopeContainer {
+            scope,
+            store,
+            parent,
+            registry,
+        }))
     }
 
     /// Returns the registered component of type `T` as its handle (`Arc<T>` by
-    /// default, or the by-value handle for a `#[component(by_value)]` type).
+    /// default, or the by-value handle for a `#[component(by_value)]` type),
+    /// resolved through this scope and its parents.
     pub fn get<T: Component>(&self) -> Option<T::Handle> {
-        let type_id = TypeId::of::<T>();
-        let component = self.components.get(&type_id)?;
+        self.resolve_built::<T::Handle>()
+    }
 
-        component.value.downcast_ref::<T::Handle>().cloned()
+    /// Resolves `H` through this scope then each parent, or — if `H::Target` is a
+    /// `Transient` — constructs a fresh instance. The `async` mirror of
+    /// [`get`](Self::get) for handles whose scope may be transient.
+    pub async fn resolve<H: Injectable>(self: &Arc<Self>) -> Option<H> {
+        if let Some(handle) = self.resolve_built::<H>() {
+            return Some(handle);
+        }
+
+        construct_transient::<H>(&self.registry, Some(Arc::clone(self))).await
+    }
+
+    /// Single concrete-or-primary-provider lookup across this scope and its parents.
+    pub(crate) fn resolve_built<H: Injectable>(&self) -> Option<H> {
+        if let Some(handle) = self.store.resolve_local::<H>() {
+            return Some(handle);
+        }
+
+        self.parent.as_ref()?.resolve_built::<H>()
+    }
+
+    /// Qualifier-selected single provider across this scope and its parents.
+    pub(crate) fn resolve_qualified_built<H: Injectable>(&self, qualifier: &str) -> Option<H> {
+        if let Some(handle) = self.store.resolve_qualified_local::<H>(qualifier) {
+            return Some(handle);
+        }
+
+        self.parent
+            .as_ref()?
+            .resolve_qualified_built::<H>(qualifier)
+    }
+
+    /// Every provider of the trait `H::Target` across this scope and its parents.
+    pub(crate) fn collect_all_built<H: Injectable>(&self) -> Vec<H> {
+        let mut all = self.store.collect_all_local::<H>();
+
+        if let Some(parent) = &self.parent {
+            all.extend(parent.collect_all_built::<H>());
+        }
+
+        all
+    }
+
+    /// Every provider of the trait `H::Target` keyed by qualifier, across this scope
+    /// and its parents (a closer scope wins a qualifier collision).
+    pub(crate) fn collect_keyed_built<H: Injectable>(&self) -> HashMap<String, H> {
+        let mut keyed = match &self.parent {
+            Some(parent) => parent.collect_keyed_built::<H>(),
+            None => HashMap::new(),
+        };
+
+        keyed.extend(self.store.collect_keyed_local::<H>());
+
+        keyed
     }
 }
+
+/// Backwards-compatible alias: the root singleton store is a [`ScopeContainer`]
+/// with no parent.
+pub type ComponentContainer = ScopeContainer;
 
 /// Registers every provider declared by the just-built concrete `concrete_id`,
 /// aliasing its single instance under each trait it provides.
 fn register_providers_for(
-    ctx: &mut ComponentConstructionContext,
+    cx: &mut ComponentConstructionContext,
     providers: &[ProviderDescriptor],
     concrete_id: TypeId,
 ) {
@@ -103,11 +265,14 @@ fn register_providers_for(
         .iter()
         .filter(|p| (p.concrete_ty.type_id)() == concrete_id)
     {
-        ctx.register_provider(provider);
+        cx.register_provider(provider);
     }
 }
 
-fn topological_sort<'a>(
+/// Computes a construction order for `components`, treating every `TypeId` in
+/// `prebuilt` (seeded instances and longer-lived parent-scope components) as
+/// already available.
+pub(crate) fn topological_sort<'a>(
     components: &'a [ComponentDescriptor],
     prebuilt: &HashSet<TypeId>,
     providers: &[ProviderDescriptor],

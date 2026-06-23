@@ -9,7 +9,6 @@
 //! instances** live in the [`ComponentContainer`]. [`Daemon`] ties them together
 //! with a [`router::RpcRouter`] and a transport.
 
-pub mod connection;
 pub mod container;
 pub mod daemon;
 pub mod descriptors;
@@ -19,9 +18,8 @@ pub mod lifecycle;
 pub mod registry;
 pub mod router;
 
-pub use connection::{ConnectionHandler, ConnectionInfo};
 pub use extract::{
-    Cancel, Conn, ErrorResponse, Extension, FallibleHandler, FromContext, Handler, Payload,
+    Cancel, ErrorResponse, FallibleHandler, FromContext, Handler, Inject, Payload,
     RequestStream, Responder, ResponseError, ResponseStream, Streaming, dispatch_fallible,
     dispatch_with,
 };
@@ -35,7 +33,7 @@ pub use overseer_transport::{
     StreamEncodeError,
 };
 
-pub use container::ComponentContainer;
+pub use container::{ComponentContainer, ScopeContainer};
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
     COMPONENTS, PROVIDERS, RPC_GROUPS, SERVICES, BoxedComponent, Cardinality, Component,

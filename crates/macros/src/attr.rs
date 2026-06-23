@@ -22,7 +22,10 @@ use syn::{
 /// - `qualifier = ".."` — key for `HashMap<String, Arc<dyn Trait>>` injection;
 /// - `primary` — mark this the primary provider for every trait it provides;
 /// - `by_value` — store/inject this component as `Self` rather than `Arc<Self>`
-///   (for cheap-to-clone, typically internally-`Arc`, types).
+///   (for cheap-to-clone, typically internally-`Arc`, types);
+/// - `scope = singleton | connection | request | transient` — the lifetime of the
+///   instance (default `singleton`). Only valid on `#[component]`; a `#[service]`
+///   is always a singleton.
 #[derive(Default)]
 pub struct ServiceArgs {
     pub id: Option<LitStr>,
@@ -32,6 +35,10 @@ pub struct ServiceArgs {
     pub qualifier: Option<LitStr>,
     pub primary: bool,
     pub by_value: bool,
+    /// The `ComponentScope` variant ident (`Singleton`/`Connection`/`Request`/
+    /// `Transient`) parsed from `scope = ..`, ready to splice after
+    /// `ComponentScope::`. `None` means the default (singleton).
+    pub scope: Option<Ident>,
 }
 
 impl Parse for ServiceArgs {
@@ -48,6 +55,28 @@ impl Parse for ServiceArgs {
                 "qualifier" => args.qualifier = Some(parse_value(input)?),
                 "primary" => args.primary = true,
                 "by_value" => args.by_value = true,
+                "scope" => {
+                    input.parse::<Token![=]>()?;
+                    let value: Ident = input.parse()?;
+
+                    let variant = match value.to_string().as_str() {
+                        "singleton" => "Singleton",
+                        "connection" => "Connection",
+                        "request" => "Request",
+                        "transient" => "Transient",
+                        other => {
+                            return Err(syn::Error::new(
+                                value.span(),
+                                format!(
+                                    "unknown scope `{other}`, expected `singleton`, \
+                                     `connection`, `request`, or `transient`"
+                                ),
+                            ));
+                        }
+                    };
+
+                    args.scope = Some(Ident::new(variant, value.span()));
+                }
                 "provide" => {
                     input.parse::<Token![=]>()?;
 
@@ -66,7 +95,7 @@ impl Parse for ServiceArgs {
                         key.span(),
                         format!(
                             "unknown argument `{other}`, expected `id`, `name`, `version`, \
-                             `provide`, `qualifier`, `primary`, or `by_value`"
+                             `provide`, `qualifier`, `primary`, `by_value`, or `scope`"
                         ),
                     ));
                 }

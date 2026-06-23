@@ -7,6 +7,7 @@ authors.workspace = true
 
 [features]
 client = ["overseer-transport/client"]
+di-check = []
 
 [dependencies]
 linkme = { workspace = true }
