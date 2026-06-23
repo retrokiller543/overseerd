@@ -93,6 +93,15 @@ pub enum Error {
         component_scope: crate::ComponentScope,
         dependency_scope: crate::ComponentScope,
     },
+
+    #[error(
+        "health check scope violation: '{component}' ({scope:?}) provides `dyn HealthCheck` \
+         but health checks are collected once at startup and must be Singleton or Transient"
+    )]
+    HealthCheckScopeViolation {
+        component: String,
+        scope: crate::ComponentScope,
+    },
 }
 
 impl Error {

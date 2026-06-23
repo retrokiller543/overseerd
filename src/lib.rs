@@ -59,13 +59,14 @@ pub use overseerd_core::{
     ComponentScope, ConfigBinding, ConfigBindingDescriptor, ConfigError, ConfigManager,
     ConfigProperties, Daemon, DaemonBuilder, DependencyDescriptor, DescriptorRegistry, Dir,
     DirKind, DirectoriesManager, Dynamic, Error, ErrorResponse, FallibleHandler, Flags,
-    FromContext, Handler, Inject, Injectable, OperationKind, PROVIDERS, ParameterDescriptor,
-    ParameterKind, Payload, Peer, PredefinedCode, Provide, ProviderDescriptor, RPC_GROUPS,
-    RequestStream, Responder, ResponseError, ResponseStream, Result, RpcCallContext, RpcDescriptor,
-    RpcGroup, RpcHandler, RpcOutcome, RpcResponse, RpcRouter, SERVICES, ScopeContainer,
-    ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal, StatusCode, Streaming,
-    TypeDescriptor, Wired, Wiring, component, daemon, dispatch_fallible, dispatch_with, handlers,
-    injectable, rpc, service, type_id_of,
+    FromContext, Handler, HealthCheck, HealthCheckFuture, HealthStatus, Inject, Injectable,
+    OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Payload, Peer, PredefinedCode,
+    Provide, ProviderDescriptor, RPC_GROUPS, RequestStream, Responder, ResponseError,
+    ResponseStream, Result, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
+    RpcResponse, RpcRouter, SERVICES, ScopeContainer, ServiceComponent, ServiceDescriptor,
+    ShutdownHandle, ShutdownSignal, StatusCode, Streaming, TypeDescriptor, Wired, Wiring,
+    component, daemon, dispatch_fallible, dispatch_with, handlers, injectable, rpc, service,
+    type_id_of,
 };
 
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`

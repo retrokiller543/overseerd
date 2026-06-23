@@ -18,7 +18,9 @@ use crate::{
     },
     dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp},
     extract::ErrorResponse,
+    health::HealthCheck,
     lifecycle::{ShutdownHandle, ShutdownSignal},
+    platform,
     registry::DescriptorRegistry,
     router::RpcRouter,
 };
@@ -230,10 +232,16 @@ impl DaemonBuilder {
         let router = RpcRouter::from_registry(&registry);
         let shutdown = ShutdownSignal::new();
 
+        // Collect all singleton-scoped health check providers. The scope
+        // validation gate (validate_health_check_scopes) already ensured no
+        // connection/request-scoped components slipped through.
+        let health_checks: Vec<Arc<dyn HealthCheck>> = root.collect_all_built();
+
         info!(
             daemon = %self.name,
             components = registry.components.len(),
             services = registry.services.len(),
+            health_checks = health_checks.len(),
             "daemon built"
         );
 
@@ -247,6 +255,7 @@ impl DaemonBuilder {
             needs_peer: scopes.needs_peer,
             router,
             shutdown,
+            health_checks,
         })
     }
 }
@@ -388,6 +397,7 @@ pub struct Daemon {
     needs_peer: bool,
     router: RpcRouter,
     shutdown: ShutdownSignal,
+    health_checks: Vec<Arc<dyn HealthCheck>>,
 }
 
 impl fmt::Debug for Daemon {
@@ -425,7 +435,12 @@ impl Daemon {
         self.shutdown.handle()
     }
 
-    /// Serves RPC calls from `transport` until ctrl-c or a shutdown signal.
+    /// Serves RPC calls from `transport` until ctrl-c, SIGTERM, or a shutdown signal.
+    ///
+    /// After the transport is bound, sends a readiness notification to the service
+    /// manager (READY=1 on systemd). If a watchdog is configured, a background
+    /// task is spawned that polls registered health checks and sends WATCHDOG=1
+    /// pings at the required frequency.
     ///
     /// One task is spawned per accepted connection, and within a connection each
     /// call is driven on its own task so streaming calls run concurrently and
@@ -446,6 +461,11 @@ impl Daemon {
         let request_order = self.request_order;
         let needs_peer = self.needs_peer;
         let mut shutdown = self.shutdown;
+
+        // Notify the service manager that we are ready before accepting the first
+        // connection. The watchdog task (if any) runs for the daemon's lifetime.
+        platform::notify_ready();
+        let _watchdog = platform::spawn_watchdog(self.health_checks, shutdown.subscribe());
 
         loop {
             tokio::select! {
@@ -480,6 +500,11 @@ impl Daemon {
                     break;
                 }
 
+                _ = platform::sigterm() => {
+                    info!("SIGTERM received, shutting down");
+                    break;
+                }
+
                 _ = shutdown.wait() => {
                     info!("shutdown signal received");
                     break;
@@ -487,20 +512,25 @@ impl Daemon {
             }
         }
 
+        platform::notify_stopping();
         info!(transport = transport_name, "serve stopped");
 
         Ok(())
     }
 
-    /// Waits for ctrl-c or a shutdown signal without serving any transport.
+    /// Waits for ctrl-c, SIGTERM, or a shutdown signal without serving any transport.
     pub async fn run(self) -> crate::Result<()> {
+        platform::notify_ready();
+        let _watchdog = platform::spawn_watchdog(self.health_checks, self.shutdown.subscribe());
         let mut shutdown = self.shutdown;
 
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {},
+            _ = platform::sigterm() => {},
             _ = shutdown.wait() => {},
         }
 
+        platform::notify_stopping();
         Ok(())
     }
 }

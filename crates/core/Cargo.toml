@@ -25,3 +25,6 @@ tracing = { workspace = true }
 overseerd-config = { workspace = true }
 overseerd-transport = { workspace = true }
 overseerd-macros = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+sd-notify = { workspace = true }

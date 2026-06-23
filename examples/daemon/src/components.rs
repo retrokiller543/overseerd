@@ -1,10 +1,10 @@
 //! Config-bound and plain components: a greeting config (auto-registered), a
-//! database config bound at two paths, and a by-value pool.
+//! database config bound at two paths, a by-value pool, and a health check.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use overseerd::{ConfigProperties, component};
+use overseerd::{ConfigProperties, HealthCheck, HealthCheckFuture, HealthStatus, component};
 use serde::Deserialize;
 
 #[allow(dead_code)]
@@ -49,5 +49,45 @@ impl Db {
     /// of the handle, since the counter lives behind the internal `Arc`.
     pub fn record_query(&self) -> u64 {
         self.queries.fetch_add(1, Ordering::Relaxed) + 1
+    }
+}
+
+/// A component that monitors database reachability and reports health.
+///
+/// Registered as a normal singleton component *and* as a `dyn HealthCheck`
+/// provider via `provide = dyn HealthCheck`. The framework collects it
+/// automatically — no extra registration needed.
+///
+/// When running under systemd with `WatchdogSec` set the framework polls this
+/// on the watchdog interval and suppresses the ping if `check()` returns
+/// `Unhealthy`, causing the service manager to restart the process.
+#[component(provide = dyn HealthCheck)]
+pub struct DbHealthCheck {
+    #[default]
+    healthy: Arc<AtomicBool>,
+}
+
+impl DbHealthCheck {
+    /// Simulates marking the database as unavailable (for testing).
+    #[allow(dead_code)]
+    pub fn set_healthy(&self, val: bool) {
+        self.healthy.store(val, Ordering::Relaxed);
+    }
+}
+
+impl HealthCheck for DbHealthCheck {
+    fn name(&self) -> &str {
+        "database"
+    }
+
+    fn check(&self) -> HealthCheckFuture {
+        let healthy = Arc::clone(&self.healthy);
+        Box::pin(async move {
+            if healthy.load(Ordering::Relaxed) {
+                HealthStatus::Healthy
+            } else {
+                HealthStatus::Unhealthy
+            }
+        })
     }
 }

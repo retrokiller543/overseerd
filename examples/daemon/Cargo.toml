@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 overseerd = { path = "../.." }
+overseerd-service-manager = { path = "../../crates/service-manager" }
+clap = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 

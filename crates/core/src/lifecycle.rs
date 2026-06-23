@@ -29,6 +29,17 @@ impl ShutdownSignal {
     pub async fn wait(&mut self) {
         let _ = self.receiver.wait_for(|v| *v).await;
     }
+
+    /// Creates an independent listener on the same shutdown channel.
+    ///
+    /// Used to give background tasks (e.g. the watchdog loop) their own signal
+    /// receiver that does not interfere with the primary receiver in `serve()`.
+    pub fn subscribe(&self) -> ShutdownSignal {
+        ShutdownSignal {
+            sender: Arc::clone(&self.sender),
+            receiver: self.sender.subscribe(),
+        }
+    }
 }
 
 impl Default for ShutdownSignal {

@@ -16,7 +16,9 @@ pub mod descriptors;
 pub mod dirs;
 pub mod error;
 pub mod extract;
+pub mod health;
 pub mod lifecycle;
+pub mod platform;
 pub mod registry;
 pub mod router;
 
@@ -50,6 +52,7 @@ pub use descriptors::{
 };
 pub use dirs::{Dir, DirKind, DirectoriesManager};
 pub use error::Error;
+pub use health::{HealthCheck, HealthCheckFuture, HealthStatus};
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
 /// attribute through a stable path without the user crate depending on `linkme`

@@ -111,6 +111,43 @@ impl DescriptorRegistry {
         self.validate_dependencies(&components)?;
         self.validate_scopes(&components)?;
         self.validate_configs(&components)?;
+        self.validate_health_check_scopes(&components)?;
+
+        Ok(())
+    }
+
+    /// Rejects `dyn HealthCheck` providers whose scope is Connection or Request:
+    /// health checks are collected once from the singleton container at startup,
+    /// so shorter-lived providers would never be reached.
+    fn validate_health_check_scopes(
+        &self,
+        components: &[ComponentDescriptor],
+    ) -> crate::Result<()> {
+        use std::any::TypeId;
+        let health_check_id = TypeId::of::<dyn crate::health::HealthCheck>();
+
+        let scope_of: HashMap<TypeId, ComponentScope> = components
+            .iter()
+            .map(|c| ((c.ty.type_id)(), c.scope))
+            .collect();
+
+        for provider in &self.providers {
+            if (provider.trait_ty.type_id)() != health_check_id {
+                continue;
+            }
+
+            let scope = match scope_of.get(&(provider.concrete_ty.type_id)()) {
+                Some(s) => *s,
+                None => continue,
+            };
+
+            if matches!(scope, ComponentScope::Connection | ComponentScope::Request) {
+                return Err(crate::error::Error::HealthCheckScopeViolation {
+                    component: (provider.concrete_ty.type_name)().to_string(),
+                    scope,
+                });
+            }
+        }
 
         Ok(())
     }
