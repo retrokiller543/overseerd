@@ -17,6 +17,7 @@ pub mod dirs;
 pub mod error;
 pub mod extract;
 pub mod lifecycle;
+pub mod middleware;
 pub mod registry;
 pub mod router;
 
@@ -51,6 +52,9 @@ pub use descriptors::{
 pub use dirs::{Dir, DirKind, DirectoriesManager};
 pub use error::Error;
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
+pub use middleware::{
+    ErrorHandler, Guard, GuardLayer, GuardService, RouterService, RpcRequest, RpcService,
+};
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
 /// attribute through a stable path without the user crate depending on `linkme`
 /// directly.
@@ -58,5 +62,8 @@ pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use linkme;
 pub use registry::DescriptorRegistry;
 pub use router::RpcRouter;
+/// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`
+/// (and reach tower's own layers) without depending on `tower` directly.
+pub use tower;
 
 pub type Result<T, E = Error> = core::result::Result<T, E>;

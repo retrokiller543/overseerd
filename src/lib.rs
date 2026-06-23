@@ -58,11 +58,12 @@ pub use overseerd_core::{
     ComponentConstructionContext, ComponentContainer, ComponentDescriptor, ComponentFactory,
     ComponentScope, ConfigBinding, ConfigBindingDescriptor, ConfigError, ConfigManager,
     ConfigProperties, Daemon, DaemonBuilder, DependencyDescriptor, DescriptorRegistry, Dir,
-    DirKind, DirectoriesManager, Dynamic, Error, ErrorResponse, FallibleHandler, Flags,
-    FromContext, Handler, Inject, Injectable, OperationKind, PROVIDERS, ParameterDescriptor,
-    ParameterKind, Payload, Peer, PredefinedCode, Provide, ProviderDescriptor, RPC_GROUPS,
-    RequestStream, Responder, ResponseError, ResponseStream, Result, RpcCallContext, RpcDescriptor,
-    RpcGroup, RpcHandler, RpcOutcome, RpcResponse, RpcRouter, SERVICES, ScopeContainer,
+    DirKind, DirectoriesManager, Dynamic, Error, ErrorHandler, ErrorResponse, FallibleHandler,
+    Flags, FromContext, Guard, GuardLayer, GuardService, Handler, Inject, Injectable,
+    OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Payload, Peer, PredefinedCode,
+    Provide, ProviderDescriptor, RPC_GROUPS, RequestStream, Responder, ResponseError,
+    ResponseStream, Result, RouterService, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler,
+    RpcOutcome, RpcRequest, RpcResponse, RpcRouter, RpcService, SERVICES, ScopeContainer,
     ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal, StatusCode, Streaming,
     TypeDescriptor, Wired, Wiring, component, daemon, dispatch_fallible, dispatch_with, handlers,
     injectable, rpc, service, type_id_of,
@@ -73,6 +74,10 @@ pub use overseerd_core::{
 /// directly.
 #[doc(hidden)]
 pub use overseerd_core::linkme;
+
+/// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`
+/// (and reach tower's own layers) without depending on `tower` directly.
+pub use overseerd_core::tower;
 
 /// Re-exported so generated client traits can be annotated `#[async_trait]`
 /// (for `dyn`-compatibility) without user crates depending on `async-trait`.
