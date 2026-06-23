@@ -173,7 +173,8 @@ where
     }
 
     async fn finish(&mut self) -> Result<(), ClientError> {
-        self.write_frame(&WireMessage::StreamEnd { id: self.id }).await
+        self.write_frame(&WireMessage::StreamEnd { id: self.id })
+            .await
     }
 
     async fn cancel(self) -> Result<(), ClientError> {

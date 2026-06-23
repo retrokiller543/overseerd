@@ -1,5 +1,6 @@
 //! A small but complete Overseer daemon, demonstrating the dependency-injection
-//! surface across modules — and validated at build time by `build.rs`.
+//! surface across modules — including config bound from a merged tree — and
+//! validated at build time by `build.rs`.
 //!
 //! Run it to assemble the daemon and print the discovered registry (components,
 //! their dependencies, services, and RPCs):
@@ -12,25 +13,39 @@ mod components;
 mod notifiers;
 mod service;
 
-use overseer::daemon;
-
-use crate::components::Config;
+use crate::components::{AppServer, DbConfig};
 use crate::service::Notifications;
+use overseer::config::Toml;
+use overseer::{ConfigManager, DirectoriesManager, daemon};
 
 #[tokio::main]
 async fn main() -> overseer::Result<()> {
-    let config = Config {
-        greeting: "Hello, world!".to_string(),
-    };
+    const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
 
-    // `daemon!` assembles the daemon — auto-discovers every
-    // `#[component]`/`#[service]`/`#[handlers]` and registers `Config` (the one
-    // instance built by hand) — and, under `di-check`, asserts at compile time
-    // that the listed services' dependency graphs are fully satisfied.
+    let dir_manager = DirectoriesManager::from_path(CRATE_PATH.into());
+
+    // Build the merged config first. Its `${VAR:default}` placeholders resolve
+    // against the environment as each subtree is deserialized.
+    let config = ConfigManager::<Toml>::load_in(&dir_manager.dir(), &[])?;
+
+    // Configure the transport from config before the daemon is assembled.
+    let server: AppServer = config.get("app.server")?;
+    println!("server would bind to {}", server.addr);
+
+    // `app.greet` auto-registers via its `#[config(path = "app.greet")]`; the two
+    // `DbConfig` bindings share one type at different paths, so they are listed
+    // explicitly. The supplied config source backs both.
     let daemon = daemon! {
         name: "example-daemon",
         services: [Notifications],
-        components: [config],
+        configs: [
+            DbConfig => "app.db.reader",
+            DbConfig => "app.db.writer",
+        ],
+        managers: {
+            config: config,
+            directories: dir_manager,
+        }
     }
     .build()
     .await?;

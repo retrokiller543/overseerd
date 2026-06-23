@@ -37,3 +37,9 @@ pub static RPC_GROUPS: [RpcGroup];
 /// declaring `provide = dyn Trait`). See [`COMPONENTS`].
 #[linkme::distributed_slice]
 pub static PROVIDERS: [ProviderDescriptor];
+
+/// Link-time registry of every auto-registered config binding (a
+/// `#[derive(ConfigProperties)]` type with a `#[config(path = "..")]`). See
+/// [`COMPONENTS`].
+#[linkme::distributed_slice]
+pub static CONFIG_BINDINGS: [crate::config::ConfigBindingDescriptor];

@@ -1,7 +1,8 @@
 use crate::{
     DependencyDescriptor, ParameterDescriptor, RpcDescriptor,
+    config::ConfigBinding,
     descriptors::{
-        COMPONENTS, Cardinality, ComponentDescriptor, ComponentScope, PROVIDERS,
+        COMPONENTS, CONFIG_BINDINGS, Cardinality, ComponentDescriptor, ComponentScope, PROVIDERS,
         ProviderDescriptor, RPC_GROUPS, RpcGroup, SERVICES, ServiceDescriptor,
     },
     error::Error,
@@ -24,6 +25,9 @@ pub struct DescriptorRegistry {
     pub services: Vec<ServiceDescriptor>,
     pub rpc_groups: Vec<RpcGroup>,
     pub providers: Vec<ProviderDescriptor>,
+    /// Config bindings (a config type bound to a property path). Populated from the
+    /// auto-discovered [`CONFIG_BINDINGS`] slice and from explicit builder bindings.
+    pub config_bindings: Vec<ConfigBinding>,
 }
 
 /// A service header with its RPCs assembled from every matching `RpcGroup`.
@@ -40,6 +44,7 @@ impl DescriptorRegistry {
             services: SERVICES.iter().copied().collect(),
             rpc_groups: RPC_GROUPS.iter().copied().collect(),
             providers: PROVIDERS.iter().copied().collect(),
+            config_bindings: CONFIG_BINDINGS.iter().map(|d| d.to_binding()).collect(),
         }
     }
 
@@ -105,6 +110,57 @@ impl DescriptorRegistry {
         self.validate_services()?;
         self.validate_dependencies(&components)?;
         self.validate_scopes(&components)?;
+        self.validate_configs(&components)?;
+
+        Ok(())
+    }
+
+    /// Validates config edges against the registered bindings: a `#[config("path")]`
+    /// edge must have a binding of its type at that path, and a `#[config]` shorthand
+    /// edge must have exactly one binding of its type.
+    fn validate_configs(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
+        let mut bound: HashMap<TypeId, Vec<&str>> = HashMap::new();
+
+        for binding in &self.config_bindings {
+            bound
+                .entry((binding.ty.type_id)())
+                .or_default()
+                .push(&binding.path);
+        }
+
+        for c in components {
+            for dep in c.dependencies.iter().filter(|dep| dep.config) {
+                let dep_id = (dep.ty.type_id)();
+                let paths = bound.get(&dep_id);
+
+                match dep.qualifier {
+                    Some(path) => {
+                        let found = paths.is_some_and(|ps| ps.contains(&path));
+
+                        if !found {
+                            return Err(Error::MissingConfig {
+                                component: c.name.to_string(),
+                                type_name: (dep.ty.type_name)().to_string(),
+                                path: path.to_string(),
+                            });
+                        }
+                    }
+
+                    None => {
+                        let bound_paths = paths.cloned().unwrap_or_default();
+
+                        if bound_paths.len() != 1 {
+                            return Err(Error::AmbiguousConfig {
+                                component: c.name.to_string(),
+                                type_name: (dep.ty.type_name)().to_string(),
+                                count: bound_paths.len(),
+                                paths: bound_paths.join(", "),
+                            });
+                        }
+                    }
+                }
+            }
+        }
 
         Ok(())
     }
@@ -125,7 +181,9 @@ impl DescriptorRegistry {
 
         for c in components {
             for dep in c.dependencies {
-                if dep.dynamic {
+                // Config edges resolve against singleton bindings (validated in
+                // `validate_configs`), so they never violate the scope rule.
+                if dep.dynamic || dep.config {
                     continue;
                 }
 
@@ -133,21 +191,20 @@ impl DescriptorRegistry {
 
                 // A concrete edge resolves to that type's scope; a trait edge to the
                 // scope of each component providing the trait.
-                let dep_scopes: Vec<(ComponentScope, &'static str)> =
-                    match scope_of.get(&dep_id) {
-                        Some(scope) => vec![(*scope, (dep.ty.type_name)())],
+                let dep_scopes: Vec<(ComponentScope, &'static str)> = match scope_of.get(&dep_id) {
+                    Some(scope) => vec![(*scope, (dep.ty.type_name)())],
 
-                        None => self
-                            .providers
-                            .iter()
-                            .filter(|p| (p.trait_ty.type_id)() == dep_id)
-                            .filter_map(|p| {
-                                scope_of
-                                    .get(&(p.concrete_ty.type_id)())
-                                    .map(|scope| (*scope, (p.concrete_ty.type_name)()))
-                            })
-                            .collect(),
-                    };
+                    None => self
+                        .providers
+                        .iter()
+                        .filter(|p| (p.trait_ty.type_id)() == dep_id)
+                        .filter_map(|p| {
+                            scope_of
+                                .get(&(p.concrete_ty.type_id)())
+                                .map(|scope| (*scope, (p.concrete_ty.type_name)()))
+                        })
+                        .collect(),
+                };
 
                 for (dep_scope, dep_name) in dep_scopes {
                     if !scope_allows(c.scope, dep_scope) {
@@ -237,6 +294,12 @@ impl DescriptorRegistry {
 
         for c in components {
             for dep in c.dependencies {
+                // Config edges are validated against bindings in `validate_configs`,
+                // not against the component/provider graph.
+                if dep.config {
+                    continue;
+                }
+
                 let dep_id = (dep.ty.type_id)();
                 let providers = provider_counts.get(&dep_id).copied();
 
@@ -244,14 +307,18 @@ impl DescriptorRegistry {
                 // exist, but it is never ambiguous even with several providers.
                 if let Some(qualifier) = dep.qualifier {
                     let found = dep.dynamic
-                        || self.providers.iter().any(|p| {
-                            (p.trait_ty.type_id)() == dep_id && p.qualifier == qualifier
-                        });
+                        || self
+                            .providers
+                            .iter()
+                            .any(|p| (p.trait_ty.type_id)() == dep_id && p.qualifier == qualifier);
 
                     if !found {
                         return Err(Error::MissingDependency {
                             component: c.name.to_string(),
-                            type_name: format!("{} (qualifier `{qualifier}`)", (dep.ty.type_name)()),
+                            type_name: format!(
+                                "{} (qualifier `{qualifier}`)",
+                                (dep.ty.type_name)()
+                            ),
                         });
                     }
 
@@ -273,7 +340,8 @@ impl DescriptorRegistry {
                 // Multi-valued edges (Collection/Keyed) accept zero providers;
                 // `optional` tolerates absence; `dynamic` providers are supplied
                 // at runtime and so are exempt from static validation.
-                let must_exist = dep.cardinality.requires_provider() && !dep.optional && !dep.dynamic;
+                let must_exist =
+                    dep.cardinality.requires_provider() && !dep.optional && !dep.dynamic;
 
                 // A single edge is satisfied by a concrete component of that type
                 // or by at least one provider of that trait.
@@ -444,6 +512,7 @@ mod tests {
         optional: false,
         dynamic: false,
         qualifier: None,
+        config: false,
     }];
 
     static BACKUP_REPO: ComponentDescriptor = ComponentDescriptor {
@@ -676,6 +745,7 @@ mod tests {
         optional: false,
         dynamic: false,
         qualifier: None,
+        config: false,
     }];
 
     static REQUEST_DEP_ON_CONNECTION: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -685,6 +755,7 @@ mod tests {
         optional: false,
         dynamic: false,
         qualifier: None,
+        config: false,
     }];
 
     #[test]
@@ -739,6 +810,127 @@ mod tests {
         };
 
         assert!(registry.validate_scopes(&registry.components).is_ok());
+    }
+
+    // --- Config validation -------------------------------------------------
+    //
+    // u128 = stand-in type for a config struct (e.g. DbConfig).
+
+    fn dummy_bind(
+        _: &crate::config::ConfigManager,
+        _: &str,
+    ) -> Result<BoxedComponent, crate::config::ConfigError> {
+        unreachable!("validation never binds")
+    }
+
+    fn config_binding(path: &str) -> ConfigBinding {
+        ConfigBinding {
+            ty: TypeDescriptor::of::<u128>("DbConfig"),
+            path: path.to_string(),
+            bind: dummy_bind,
+        }
+    }
+
+    static CONFIG_DEP_PATHED: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "DbConfig",
+        ty: TypeDescriptor::of::<u128>("DbConfig"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: Some("app.db.reader"),
+        config: true,
+    }];
+
+    static CONFIG_DEP_SHORTHAND: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "DbConfig",
+        ty: TypeDescriptor::of::<u128>("DbConfig"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+        config: true,
+    }];
+
+    #[test]
+    fn validate_rejects_unbound_config_path() {
+        let consumer = scoped(
+            "Pools",
+            ComponentScope::Singleton,
+            &CONFIG_DEP_PATHED,
+            TypeDescriptor::of::<i16>("Pools"),
+        );
+
+        let registry = DescriptorRegistry {
+            components: vec![consumer],
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            registry.validate(),
+            Err(Error::MissingConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_bound_config_path() {
+        let consumer = scoped(
+            "Pools",
+            ComponentScope::Singleton,
+            &CONFIG_DEP_PATHED,
+            TypeDescriptor::of::<i16>("Pools"),
+        );
+
+        let registry = DescriptorRegistry {
+            components: vec![consumer],
+            config_bindings: vec![config_binding("app.db.reader")],
+            ..Default::default()
+        };
+
+        assert!(registry.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_ambiguous_config_shorthand() {
+        // Two bindings of the same type with an unpathed `#[config]` edge is
+        // ambiguous — the shorthand only works for a single binding.
+        let consumer = scoped(
+            "Pools",
+            ComponentScope::Singleton,
+            &CONFIG_DEP_SHORTHAND,
+            TypeDescriptor::of::<i16>("Pools"),
+        );
+
+        let registry = DescriptorRegistry {
+            components: vec![consumer],
+            config_bindings: vec![
+                config_binding("app.db.reader"),
+                config_binding("app.db.writer"),
+            ],
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            registry.validate(),
+            Err(Error::AmbiguousConfig { count: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_sole_config_shorthand() {
+        let consumer = scoped(
+            "Pools",
+            ComponentScope::Singleton,
+            &CONFIG_DEP_SHORTHAND,
+            TypeDescriptor::of::<i16>("Pools"),
+        );
+
+        let registry = DescriptorRegistry {
+            components: vec![consumer],
+            config_bindings: vec![config_binding("app.db")],
+            ..Default::default()
+        };
+
+        assert!(registry.validate().is_ok());
     }
 
     #[test]

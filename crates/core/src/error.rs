@@ -59,6 +59,30 @@ pub enum Error {
     #[error("missing component: {0}")]
     MissingComponent(&'static str),
 
+    #[error(transparent)]
+    Config(#[from] crate::config::ConfigError),
+
+    #[error(
+        "missing config for component '{component}': no binding of type '{type_name}' \
+         at path '{path}'"
+    )]
+    MissingConfig {
+        component: String,
+        type_name: String,
+        path: String,
+    },
+
+    #[error(
+        "ambiguous config for component '{component}': type '{type_name}' is bound at \
+         {count} paths ({paths}); name one with `#[config(\"..\")]`"
+    )]
+    AmbiguousConfig {
+        component: String,
+        type_name: String,
+        count: usize,
+        paths: String,
+    },
+
     #[error(
         "scope violation: component '{component}' ({component_scope:?}) depends on \
          '{dependency}' ({dependency_scope:?}), which is shorter-lived"
@@ -92,7 +116,7 @@ impl Error {
 
 impl ResponseError for Error {
     type Body = String;
-    
+
     fn status_code(&self) -> StatusCode {
         self.status_code()
     }

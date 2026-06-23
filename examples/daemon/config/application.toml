@@ -1,0 +1,19 @@
+# Base configuration. `${VAR}` resolves an environment variable (uppercase) or a
+# config path (dotted/lowercase); `${VAR:default}` falls back when unset. A full
+# `${VAR}` leaf coerces to the target type; an embedded one (e.g. the addr below)
+# can only produce a string.
+
+[app.greet]
+greeting = "Hello, ${USER:world}"
+
+[app.server]
+port = "${PORT:9000}"
+addr = "127.0.0.1:${app.server.port}"
+
+[app.db.reader]
+url = "postgres://${DB_HOST:localhost}:5432/app"
+pool_size = "${READER_POOL:8}"
+
+[app.db.writer]
+url = "postgres://${DB_HOST:localhost}:5432/app"
+pool_size = "${WRITER_POOL:4}"

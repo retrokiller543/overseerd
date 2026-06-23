@@ -1,0 +1,5 @@
+[env]
+# Loads the gitignored .env, which exports the GIT_AUTHOR_*/GIT_COMMITTER_*
+# variables git uses for commit identity. This scopes the personal identity to
+# this directory without touching global git config. Copy .env.example to .env.
+_.file = ".env"

@@ -52,7 +52,11 @@ impl StreamEncodeError {
 
 impl fmt::Display for StreamEncodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "stream item encode failed (status {:#010x})", self.code.raw())
+        write!(
+            f,
+            "stream item encode failed (status {:#010x})",
+            self.code.raw()
+        )
     }
 }
 

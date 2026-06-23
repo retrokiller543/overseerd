@@ -2,6 +2,7 @@
 members = [
     ".",
     "crates/analyze",
+    "crates/config",
     "crates/core",
     "crates/macros",
     "crates/transport",
@@ -17,12 +18,17 @@ authors = ["Emil Schütt <emil.schutt@gmail.com>"]
 
 [workspace.dependencies]
 # Workspace member crates
+overseer-config = { path = "crates/config" }
 overseer-core = { path = "crates/core" }
 overseer-macros = { path = "crates/macros" }
 overseer-transport = { path = "crates/transport" }
 
 # Common dependencies
 bitflags = "2"
+thiserror = "2"
+toml = "1.1"
+serde_yaml_ng = "0.10"
+directories = "6"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tokio-util = "0.7"
@@ -32,7 +38,6 @@ postcard = { version = "1", features = ["use-std"] }
 async-trait = "0.1"
 linkme = "0.3"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
@@ -43,10 +48,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-
-[[bin]]
-name = "example"
-path = "src/bin/example.rs"
 
 [features]
 default = ["di-check"]
@@ -64,6 +65,9 @@ client = [
 # per concrete dependency). A missing provider becomes a `cargo check` error.
 di-check = ["overseer-macros/di-check", "overseer-core/di-check"]
 
+# Enable YAML config sources (`application.yaml`) alongside the default TOML.
+yaml = ["overseer-core/yaml"]
+
 [dependencies]
 overseer-core = { workspace = true }
 overseer-transport = { workspace = true }
@@ -73,6 +77,3 @@ futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 async-trait = { workspace = true, optional = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-clap = { version = "4", features = ["derive"] }

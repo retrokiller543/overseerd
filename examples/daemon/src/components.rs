@@ -1,16 +1,37 @@
-//! Plain components: a config provided at startup, and a by-value pool.
+//! Config-bound and plain components: a greeting config (auto-registered), a
+//! database config bound at two paths, and a by-value pool.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use overseer::{Component, component};
+use overseer::{ConfigProperties, component};
+use serde::Deserialize;
 
-/// Application configuration. `#[derive(Component)]` only supplies the metadata;
-/// the instance is handed to the builder with `with_component`, so it is injected
-/// as `Dynamic<Arc<Config>>` (runtime-provided) by anything that needs it.
-#[derive(Component)]
+#[allow(dead_code)]
+#[derive(ConfigProperties, Deserialize)]
+#[config(path = "app.server")]
+pub struct AppServer {
+    pub port: u16,
+    pub addr: String,
+}
+
+/// Greeting configuration, deserialized from the `app.greet` subtree and injected
+/// as `Cfg<Config>`. `#[config(path = "..")]` auto-registers the binding, so
+/// `auto_discover` picks it up — no explicit `configs:` entry needed.
+#[derive(ConfigProperties, Deserialize)]
+#[config(path = "app.greet")]
 pub struct Config {
     pub greeting: String,
+}
+
+/// Database connection settings. The same type is bound at two paths
+/// (`app.db.reader` / `app.db.writer`) — identical shape, different usage — so it is
+/// registered explicitly per path (no baked-in `#[config(path)]`) and selected at
+/// the injection site by property path.
+#[derive(ConfigProperties, Deserialize)]
+pub struct DbConfig {
+    pub url: String,
+    pub pool_size: u16,
 }
 
 /// A connection pool that is internally `Arc` and therefore cheap to clone, so
