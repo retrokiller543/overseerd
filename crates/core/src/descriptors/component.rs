@@ -1,3 +1,5 @@
+use super::types::TypeDescriptor;
+use std::ops::Deref;
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
@@ -6,8 +8,6 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
-use std::ops::Deref;
-use super::types::TypeDescriptor;
 
 /// Metadata trait for types registerable as components.
 ///
@@ -204,8 +204,15 @@ pub struct DependencyDescriptor {
     pub optional: bool,
     pub dynamic: bool,
     /// For a single `Arc<dyn Trait>` edge, selects a specific provider by its
-    /// qualifier (`#[qualifier = ".."]`) instead of the primary/sole one.
+    /// qualifier (`#[qualifier = ".."]`) instead of the primary/sole one. For a
+    /// `config` edge it carries the property path (`#[config("..")]`), or `None` for
+    /// the sole-binding shorthand.
     pub qualifier: Option<&'static str>,
+    /// Whether this edge resolves a `#[derive(ConfigProperties)]` binding (a `Cfg<T>`
+    /// keyed by property path) rather than a component or trait provider. Config
+    /// edges are validated against the registered config bindings, not the component
+    /// graph, so they are exempt from the standard dependency/scope checks.
+    pub config: bool,
 }
 
 /// Declares that a component **provides** a trait, so it can be injected as a
@@ -283,6 +290,14 @@ pub(crate) struct ProviderInstance {
     pub(crate) value: BoxedComponent,
 }
 
+/// One bound configuration value, plus the property path that selects it. The
+/// runtime-string path is why configs need their own store rather than reusing the
+/// `&'static str`-keyed trait-provider map.
+pub(crate) struct ConfigInstance {
+    pub(crate) path: String,
+    pub(crate) value: BoxedComponent,
+}
+
 /// The instances and trait-providers held by one scope.
 ///
 /// Shared by both the under-construction [`ComponentConstructionContext`] and the
@@ -293,6 +308,10 @@ pub(crate) struct ProviderInstance {
 pub(crate) struct ScopeStore {
     pub(crate) components: HashMap<TypeId, BoxedComponent>,
     pub(crate) providers: HashMap<TypeId, Vec<ProviderInstance>>,
+    /// Bound config values keyed by their concrete `TypeId`, each carrying the
+    /// property path it was bound at. Mirrors `providers` but keyed by a runtime
+    /// path string and holding the concrete `Cfg<T>` handle (no trait erasure).
+    pub(crate) configs: HashMap<TypeId, Vec<ConfigInstance>>,
 }
 
 impl ScopeStore {
@@ -350,9 +369,37 @@ impl ScopeStore {
             .collect()
     }
 
+    /// Path-selected single config, scope-local.
+    pub(crate) fn resolve_config_local<H: Injectable>(&self, path: &str) -> Option<H> {
+        let entries = self.configs.get(&TypeId::of::<H::Target>())?;
+        let found = entries.iter().find(|entry| entry.path == path)?;
+
+        found.value.value.downcast_ref::<H>().cloned()
+    }
+
+    /// The sole config of this type, scope-local — the type-only shorthand. `None`
+    /// when zero or more than one binding of the type exists.
+    pub(crate) fn resolve_config_sole_local<H: Injectable>(&self) -> Option<H> {
+        let entries = self.configs.get(&TypeId::of::<H::Target>())?;
+
+        match entries.as_slice() {
+            [only] => only.value.value.downcast_ref::<H>().cloned(),
+            _ => None,
+        }
+    }
+
     pub(crate) fn insert(&mut self, component: BoxedComponent) {
         let type_id = (component.ty.type_id)();
         self.components.insert(type_id, component);
+    }
+
+    pub(crate) fn insert_config(&mut self, path: String, value: BoxedComponent) {
+        let type_id = (value.ty.type_id)();
+
+        self.configs
+            .entry(type_id)
+            .or_default()
+            .push(ConfigInstance { path, value });
     }
 
     /// Erases an already-constructed concrete component as `Arc<dyn Trait>` and
@@ -441,6 +488,25 @@ impl ComponentConstructionContext {
             .and_then(|parent| parent.resolve_qualified_built::<H>(qualifier))
     }
 
+    /// Path-selected config binding, this scope then parents.
+    pub async fn resolve_config<H: Injectable>(&self, path: &str) -> Option<H> {
+        if let Some(handle) = self.store.resolve_config_local::<H>(path) {
+            return Some(handle);
+        }
+
+        self.parent.as_ref()?.resolve_config_built::<H>(path)
+    }
+
+    /// Sole config binding of `H::Target` (the type-only shorthand), this scope then
+    /// parents.
+    pub async fn resolve_config_sole<H: Injectable>(&self) -> Option<H> {
+        if let Some(handle) = self.store.resolve_config_sole_local::<H>() {
+            return Some(handle);
+        }
+
+        self.parent.as_ref()?.resolve_config_sole_built::<H>()
+    }
+
     /// Every provider of the trait `H::Target` across this scope and its parents.
     pub async fn resolve_all<H: Injectable>(&self) -> Vec<H> {
         let mut all = self.store.collect_all_local::<H>();
@@ -467,6 +533,10 @@ impl ComponentConstructionContext {
 
     pub(crate) fn insert(&mut self, component: BoxedComponent) {
         self.store.insert(component);
+    }
+
+    pub(crate) fn insert_config(&mut self, path: String, value: BoxedComponent) {
+        self.store.insert_config(path, value);
     }
 
     pub(crate) fn register_provider(&mut self, provider: &ProviderDescriptor) {

@@ -289,7 +289,8 @@ struct ComponentArgs {
 
 impl ComponentArgs {
     fn from_attr(attr: &Attribute) -> Self {
-        attr.parse_args_with(parse_component_args).unwrap_or_default()
+        attr.parse_args_with(parse_component_args)
+            .unwrap_or_default()
     }
 }
 

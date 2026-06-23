@@ -5,10 +5,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseer::{Dynamic, Payload, handlers, service};
+use overseer::{Cfg, Payload, handlers, service};
 use serde::{Deserialize, Serialize};
 
-use crate::components::{Config, Db};
+use crate::components::{Config, Db, DbConfig};
 use crate::notifiers::Notifier;
 
 #[derive(Serialize, Deserialize)]
@@ -21,14 +21,22 @@ pub struct NotifyResponse {
     pub greeting: String,
     pub delivered_to: Vec<String>,
     pub query_count: u64,
+    pub reader_pool: u16,
+    pub writer_pool: u16,
 }
 
 /// Each field shows a different injection shape resolved from the container.
 #[service(id = "notifications", version = "0.1")]
 pub struct Notifications {
-    /// Runtime-provided (via `with_component`), so it is exempt from build-time
-    /// validation and resolved dynamically.
-    config: Dynamic<Arc<Config>>,
+    /// A config value bound at `app.greet`, injected by property path as `Cfg<T>`.
+    #[config("app.greet")]
+    config: Cfg<Config>,
+    /// The same `DbConfig` type bound at two paths — selected here by path, proving
+    /// configs key on the path rather than the type.
+    #[config("app.db.reader")]
+    reader: Cfg<DbConfig>,
+    #[config("app.db.writer")]
+    writer: Cfg<DbConfig>,
     /// Injected by value — `Db`, not `Arc<Db>`.
     db: Db,
     /// The primary `dyn Notifier` (`Email`).
@@ -47,16 +55,23 @@ impl Notifications {
     async fn notify(&self, Payload(req): Payload<NotifyRequest>) -> NotifyResponse {
         let count = self.db.record_query();
 
-        let mut delivered: Vec<String> =
-            self.all.iter().map(|n| n.channel().to_string()).collect();
+        let mut delivered: Vec<String> = self.all.iter().map(|n| n.channel().to_string()).collect();
         delivered.sort_unstable();
 
-        let _ = (&self.default, &self.by_channel, &req.message);
+        let _ = (
+            &self.default,
+            &self.by_channel,
+            &req.message,
+            &self.reader.url,
+            &self.writer.url,
+        );
 
         NotifyResponse {
             greeting: self.config.greeting.clone(),
             delivered_to: delivered,
             query_count: count,
+            reader_pool: self.reader.pool_size,
+            writer_pool: self.writer.pool_size,
         }
     }
 }

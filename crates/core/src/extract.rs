@@ -227,7 +227,7 @@ impl ErrorResponse {
 /// such type: it maps its variants to categories via [`Error::status_code`](crate::Error::status_code).
 pub trait ResponseError {
     type Body: Serialize;
-    
+
     /// The status code for this error. Defaults to `Internal`.
     fn status_code(&self) -> StatusCode {
         StatusCode::from(PredefinedCode::Internal)
@@ -243,7 +243,7 @@ where
     E: Serialize,
 {
     type Body = E;
-    
+
     fn error_response(self) -> ErrorResponse {
         ErrorResponse::with_serialized_body(self.status_code(), &self)
     }

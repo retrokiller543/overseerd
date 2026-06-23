@@ -214,7 +214,10 @@ fn duplicate_rpc_paths(model: &Model, diagnostics: &mut Vec<Diagnostic>) {
     let mut seen: HashSet<String> = HashSet::new();
 
     for group in &model.impls {
-        let service = display.get(group.self_name.as_str()).copied().unwrap_or(group.self_name.as_str());
+        let service = display
+            .get(group.self_name.as_str())
+            .copied()
+            .unwrap_or(group.self_name.as_str());
 
         for rpc in &group.rpcs {
             let path = format!("{service}.{}", rpc.name);
@@ -242,7 +245,10 @@ fn dependency_cycles(
     let mut location: HashMap<&str, (&std::path::Path, usize)> = HashMap::new();
 
     for item in resolved {
-        location.insert(&item.component.name, (&item.component.file, item.component.line));
+        location.insert(
+            &item.component.name,
+            (&item.component.file, item.component.line),
+        );
         let targets = edges.entry(&item.component.name).or_default();
 
         for dep in item.deps {
@@ -306,7 +312,15 @@ fn visit<'a>(
                 });
             }
         } else {
-            visit(next, edges, location, visited, on_stack, reported, diagnostics);
+            visit(
+                next,
+                edges,
+                location,
+                visited,
+                on_stack,
+                reported,
+                diagnostics,
+            );
         }
     }
 

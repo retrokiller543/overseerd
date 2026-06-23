@@ -409,7 +409,13 @@ fn expand_method(
         resp_item,
         stream_err,
     };
-    let client = client_method(self_ident, method_ident, &param_types, &method.sig.output, &stream_types);
+    let client = client_method(
+        self_ident,
+        method_ident,
+        &param_types,
+        &method.sig.output,
+        &stream_types,
+    );
 
     Ok((wrapper, descriptor, client))
 }
@@ -803,6 +809,7 @@ fn generate_init(
                 optional: false,
                 dynamic: false,
                 qualifier: ::core::option::Option::None,
+                config: false,
             }
         }
     });
