@@ -169,6 +169,7 @@ impl DaemonBuilder {
             scopes: scope_registry,
             connection_order: Arc::new(scopes.connection_order),
             request_order: Arc::new(scopes.request_order),
+            needs_peer: scopes.needs_peer,
             router,
             shutdown,
         })
@@ -181,6 +182,13 @@ struct ScopePlan {
     connection_order: Vec<ComponentDescriptor>,
     request_order: Vec<ComponentDescriptor>,
     transient: std::collections::HashMap<TypeId, ComponentDescriptor>,
+    /// Whether any component depends on the framework-seeded `PeerInfo`. When
+    /// false (and no connection components exist), the connection scope holds
+    /// nothing and is skipped — handlers still reach the peer via the [`Peer`]
+    /// extractor, which reads it off the call context rather than the scope chain.
+    ///
+    /// [`Peer`]: crate::extract::Peer
+    needs_peer: bool,
 }
 
 impl ScopePlan {
@@ -219,6 +227,13 @@ impl ScopePlan {
             singletons.iter().map(|c| (c.ty.type_id)()).collect();
         conn_prebuilt.insert(peer_id);
 
+        // Does any real component depend on the peer? If not, the connection scope
+        // need not exist solely to hold it.
+        let needs_peer = resolved.iter().any(|c| {
+            (c.ty.type_id)() != peer_id
+                && c.dependencies.iter().any(|d| (d.ty.type_id)() == peer_id)
+        });
+
         let connection_order = topological_sort(&connection_components, &conn_prebuilt, providers)?
             .into_iter()
             .copied()
@@ -239,6 +254,7 @@ impl ScopePlan {
             connection_order,
             request_order,
             transient,
+            needs_peer,
         })
     }
 }
@@ -251,6 +267,7 @@ pub struct Daemon {
     scopes: Arc<ScopeRegistry>,
     connection_order: Arc<Vec<ComponentDescriptor>>,
     request_order: Arc<Vec<ComponentDescriptor>>,
+    needs_peer: bool,
     router: RpcRouter,
     shutdown: ShutdownSignal,
 }
@@ -309,6 +326,7 @@ impl Daemon {
         let scopes = self.scopes;
         let connection_order = self.connection_order;
         let request_order = self.request_order;
+        let needs_peer = self.needs_peer;
         let mut shutdown = self.shutdown;
 
         loop {
@@ -323,10 +341,10 @@ impl Daemon {
                             let scopes = Arc::clone(&scopes);
                             let connection_order = Arc::clone(&connection_order);
                             let request_order = Arc::clone(&request_order);
-
                             tokio::spawn(async move {
                                 serve_connection(
                                     conn, router, root, scopes, connection_order, request_order,
+                                    needs_peer,
                                 )
                                 .await;
                             });
@@ -382,16 +400,23 @@ async fn serve_connection<C: Connection>(
     scopes: Arc<ScopeRegistry>,
     connection_order: Arc<Vec<ComponentDescriptor>>,
     request_order: Arc<Vec<ComponentDescriptor>>,
+    needs_peer: bool,
 ) {
     debug!("connection established");
 
-    // Seed the peer (by value — the framework's connection-scoped injectable) and
-    // build the connection scope (e.g. authenticated session, checked-out DB
-    // handle). A failed factory closes the connection.
+    // Build the connection scope (e.g. authenticated session, checked-out DB
+    // handle). The peer (by value — the framework's connection-scoped injectable)
+    // is seeded only when a component depends on it; handlers reach it through the
+    // `Peer` extractor regardless, so an otherwise-empty connection scope is
+    // skipped entirely. A failed factory closes the connection.
     let peer = conn.peer().clone();
-    let seed = BoxedComponent {
-        ty: TypeDescriptor::of::<PeerInfo>("PeerInfo"),
-        value: Box::new(peer),
+    let seeds = if needs_peer {
+        vec![BoxedComponent {
+            ty: TypeDescriptor::of::<PeerInfo>("PeerInfo"),
+            value: Box::new(peer.clone()),
+        }]
+    } else {
+        Vec::new()
     };
 
     let connection_scope = match ScopeContainer::open_child(
@@ -399,7 +424,7 @@ async fn serve_connection<C: Connection>(
         root,
         Arc::clone(&scopes),
         &connection_order,
-        vec![seed],
+        seeds,
     )
     .await
     {
@@ -423,6 +448,7 @@ async fn serve_connection<C: Connection>(
                 let connection_scope = Arc::clone(&connection_scope);
                 let scopes = Arc::clone(&scopes);
                 let request_order = Arc::clone(&request_order);
+                let peer = peer.clone();
 
                 debug!(%path, "dispatching call");
 
@@ -431,6 +457,7 @@ async fn serve_connection<C: Connection>(
                     call.payload,
                     call.requests,
                     call.cancel,
+                    peer,
                     connection_scope,
                     scopes,
                     request_order,
@@ -468,6 +495,7 @@ async fn drive_call<R>(
     payload: Vec<u8>,
     requests: Option<mpsc::Receiver<Vec<u8>>>,
     cancel: CancellationToken,
+    peer: PeerInfo,
     connection_scope: Arc<ScopeContainer>,
     scopes: Arc<ScopeRegistry>,
     request_order: Arc<Vec<ComponentDescriptor>>,
@@ -501,7 +529,7 @@ async fn drive_call<R>(
         }
     };
 
-    let ctx = RpcCallContext::new(payload, request_scope, requests, cancel);
+    let ctx = RpcCallContext::new(payload, peer, request_scope, requests, cancel);
 
     match router.dispatch(&path, ctx).await {
         Ok(RpcOutcome::Unary(RpcResponse { payload })) => {

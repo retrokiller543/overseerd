@@ -59,7 +59,7 @@ pub use overseer_core::{
     ComponentScope, Daemon, DaemonBuilder,
     DependencyDescriptor, DescriptorRegistry, Dynamic, Error, ErrorResponse,
     FallibleHandler, Flags, FromContext, Handler, Inject, Injectable, OperationKind,
-    ParameterDescriptor, ParameterKind, Payload, PredefinedCode, Provide, ProviderDescriptor,
+    ParameterDescriptor, ParameterKind, Payload, Peer, PredefinedCode, Provide, ProviderDescriptor,
     RequestStream, Responder, ResponseError, ResponseStream, Result, RpcCallContext, RpcDescriptor,
     RpcGroup, RpcHandler, RpcOutcome,
     RpcResponse, RpcRouter, ScopeContainer, ServiceComponent, ServiceDescriptor, ShutdownHandle,

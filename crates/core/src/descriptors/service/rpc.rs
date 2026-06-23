@@ -56,6 +56,10 @@ pub struct ParameterDescriptor {
 pub struct RpcCallContext {
     pub payload: Vec<u8>,
     pub(crate) scope: std::sync::Arc<crate::container::ScopeContainer>,
+    /// The remote peer, carried directly so the `Peer` extractor reaches it
+    /// without a connection-scope container — letting an otherwise-empty
+    /// connection scope be skipped.
+    pub(crate) peer: overseer_transport::PeerInfo,
     /// `Mutex<Option<_>>` because extractors borrow `&ctx`; the `Streaming<T>`
     /// extractor takes the receiver out exactly once.
     pub(crate) requests: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
@@ -68,6 +72,7 @@ impl RpcCallContext {
     /// cancellation token.
     pub fn new(
         payload: Vec<u8>,
+        peer: overseer_transport::PeerInfo,
         scope: std::sync::Arc<crate::container::ScopeContainer>,
         requests: Option<mpsc::Receiver<Vec<u8>>>,
         cancel: CancellationToken,
@@ -75,6 +80,7 @@ impl RpcCallContext {
         Self {
             payload,
             scope,
+            peer,
             requests: Mutex::new(requests),
             cancel,
         }
@@ -83,6 +89,11 @@ impl RpcCallContext {
     /// The call's request scope, for resolving scoped components.
     pub(crate) fn scope(&self) -> &std::sync::Arc<crate::container::ScopeContainer> {
         &self.scope
+    }
+
+    /// The remote peer for this call.
+    pub(crate) fn peer(&self) -> &overseer_transport::PeerInfo {
+        &self.peer
     }
 
     /// Resolves the component of type `T` (e.g. the stateful service singleton) as
