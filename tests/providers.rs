@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseer::{Daemon, component, injectable};
+use overseerd::{Daemon, component, injectable};
 
 /// A trait two components provide. The `Send + Sync` supertraits make the bare
 /// `dyn Animal` shareable, so no use site needs to write `+ Send + Sync`.

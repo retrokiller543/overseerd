@@ -24,9 +24,9 @@ trait IntoErrorResponse {
 - Both methods have defaults, so an implementor can override *just* the status
   code, *just* the body, or both — incremental opt-in (FR-005).
 - A blanket impl for `E: Into<Error>` is retained: any error convertible to
-  `overseer_core::Error` satisfies the trait with the default (Internal) code,
+  `overseerd_core::Error` satisfies the trait with the default (Internal) code,
   so existing `Result<T, E>` handlers compile unchanged (FR-006).
-- `overseer_core::Error` overrides `status_code` to map its variants onto the
+- `overseerd_core::Error` overrides `status_code` to map its variants onto the
   predefined catalog (`InvalidPayload`/`NotStreaming` → `BadInput`,
   `RouteNotFound` → `NotFound`, others → `Internal`).
 - If body serialization fails, `error_response` MUST still return a well-formed

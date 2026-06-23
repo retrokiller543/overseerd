@@ -1,4 +1,4 @@
-//! Build-time validation of an Overseer dependency graph.
+//! Build-time validation of an Overseerd dependency graph.
 //!
 //! Call [`validate_crate`] from a `build.rs` to fail `cargo build` (in CI,
 //! before deployment) on dependency-graph errors that the runtime would
@@ -7,7 +7,7 @@
 //! ```ignore
 //! // build.rs
 //! fn main() {
-//!     overseer_analyze::report(overseer_analyze::validate_crate("src"));
+//!     overseerd_analyze::report(overseerd_analyze::validate_crate("src"));
 //! }
 //! ```
 //!
@@ -72,7 +72,7 @@ pub fn report(result: Result<(), Vec<Diagnostic>>) {
     }
 
     panic!(
-        "overseer: dependency validation failed with {} error(s)",
+        "overseerd: dependency validation failed with {} error(s)",
         diagnostics.len()
     );
 }

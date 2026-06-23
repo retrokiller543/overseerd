@@ -48,7 +48,7 @@ signals don't require a width change.
 bitflag constants, and the `PredefinedCode` catalog live in **`crates/transport`**
 (`status.rs`). `ErrorResponse { code, body }` and the refactored
 `IntoErrorResponse` trait live in **`crates/core`** (`extract.rs`). `core`
-re-exports `StatusCode` so handler authors import everything from `overseer_core`.
+re-exports `StatusCode` so handler authors import everything from `overseerd_core`.
 
 **Rationale**: The status code is the on-the-wire contract; transport already owns
 `WireOutcome` and `CallResult`, so the canonical definition belongs beside them.

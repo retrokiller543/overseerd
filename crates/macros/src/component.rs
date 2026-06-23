@@ -11,7 +11,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{ItemStruct, LitStr};
 
-use crate::{attr::ServiceArgs, di, handle, inject, paths::overseer_path, provide};
+use crate::{attr::ServiceArgs, di, handle, inject, paths::overseerd_path, provide};
 
 pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStream> {
     let self_ident = item.ident.clone();
@@ -33,7 +33,7 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         .clone()
         .unwrap_or_else(|| syn::Ident::new("Singleton", self_ident.span()));
     let factory = inject::field_injection_component(&mut item, &id, &name, false, &scope_variant);
-    let component = overseer_path("Component");
+    let component = overseerd_path("Component");
 
     Ok(quote! {
         #item

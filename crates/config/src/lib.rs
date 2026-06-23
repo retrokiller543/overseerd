@@ -1,6 +1,6 @@
 //! Type-safe configuration value substitution.
 //!
-//! This crate is the format-agnostic core of Overseer's config system: a normalized
+//! This crate is the format-agnostic core of Overseerd's config system: a normalized
 //! [`ConfigValue`] tree, a placeholder grammar (`${KEY}` / `${KEY:default}`), a
 //! [`Resolver`] chain, and a custom [`from_value`] deserializer that resolves
 //! placeholders *while* deserializing — so a leaf that is entirely `${VAR}` can become

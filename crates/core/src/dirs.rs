@@ -68,19 +68,19 @@ macro_rules! dir_kinds {
 
 dir_kinds! {
     /// Configuration files (`application.toml`, …).
-    Config => "config", "overseer:dir:config", |d| d.config_dir().to_path_buf();
+    Config => "config", "overseerd:dir:config", |d| d.config_dir().to_path_buf();
     /// Persistent application data.
-    Data => "data", "overseer:dir:data", |d| d.data_dir().to_path_buf();
+    Data => "data", "overseerd:dir:data", |d| d.data_dir().to_path_buf();
     /// Discardable cached data.
-    Cache => "cache", "overseer:dir:cache", |d| d.cache_dir().to_path_buf();
+    Cache => "cache", "overseerd:dir:cache", |d| d.cache_dir().to_path_buf();
     /// State that should persist but is not user data (logs, history).
-    State => "state", "overseer:dir:state",
+    State => "state", "overseerd:dir:state",
         |d| d.state_dir().unwrap_or_else(|| d.data_dir()).to_path_buf();
     /// Runtime files (sockets, pid files); falls back to the cache dir.
-    Runtime => "runtime", "overseer:dir:runtime",
+    Runtime => "runtime", "overseerd:dir:runtime",
         |d| d.runtime_dir().map(Path::to_path_buf).unwrap_or_else(|| d.cache_dir().to_path_buf());
     /// The system temporary directory (shared, not app-scoped).
-    Tmp => "tmp", "overseer:dir:tmp", |_| std::env::temp_dir();
+    Tmp => "tmp", "overseerd:dir:tmp", |_| std::env::temp_dir();
 }
 
 /// A resolved application directory of kind `K`, injectable by value.
@@ -209,7 +209,7 @@ impl DirectoriesManager {
 }
 
 impl Component for DirectoriesManager {
-    const ID: &'static str = "overseer:directories";
+    const ID: &'static str = "overseerd:directories";
     const NAME: &'static str = "DirectoriesManager";
     type Handle = DirectoriesManager;
 

@@ -220,7 +220,7 @@ pub fn is_payload_param(ty: &Type) -> bool {
 
 /// The logical response *body* type, for descriptor metadata only.
 ///
-/// Handlers may return any [`Responder`](overseer_core::Responder): a bare value,
+/// Handlers may return any [`Responder`](overseerd_core::Responder): a bare value,
 /// `Result<T, E>`, `ResponseStream<T>`, `Result<ResponseStream<T>, E>`, `()`,
 /// etc. This peels the `Result` and `ResponseStream` wrappers to the body type,
 /// and reports `()` for an absent return. It never fails: dispatch is uniform
@@ -319,7 +319,7 @@ pub fn streaming_inner(ty: &Type) -> Option<Type> {
 }
 
 /// If `output` is `Result<Ok, Err?>`, returns `(Ok, Err)`. `Err` is `None` for a
-/// one-argument alias such as `overseer::Result<T>` (whose error is the framework
+/// one-argument alias such as `overseerd::Result<T>` (whose error is the framework
 /// `Error`, opaque to the client and surfaced as a raw body).
 pub fn result_type_args(output: &ReturnType) -> Option<(Type, Option<Type>)> {
     let ReturnType::Type(_, ty) = output else {

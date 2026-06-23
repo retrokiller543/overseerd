@@ -328,21 +328,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
-name = "overseer"
+name = "overseerd"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
- "overseer-core",
- "overseer-macros",
- "overseer-transport",
+ "overseerd-core",
+ "overseerd-macros",
+ "overseerd-transport",
  "postcard",
  "serde",
  "tokio",
 ]
 
 [[package]]
-name = "overseer-analyze"
+name = "overseerd-analyze"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -350,7 +350,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseer-config"
+name = "overseerd-config"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -360,15 +360,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseer-core"
+name = "overseerd-core"
 version = "0.1.0"
 dependencies = [
  "directories",
  "futures",
  "linkme",
- "overseer-config",
- "overseer-macros",
- "overseer-transport",
+ "overseerd-config",
+ "overseerd-macros",
+ "overseerd-transport",
  "postcard",
  "serde",
  "thiserror",
@@ -379,17 +379,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseer-example-daemon"
+name = "overseerd-example-daemon"
 version = "0.1.0"
 dependencies = [
- "overseer",
- "overseer-analyze",
+ "overseerd",
+ "overseerd-analyze",
  "serde",
  "tokio",
 ]
 
 [[package]]
-name = "overseer-macros"
+name = "overseerd-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -398,7 +398,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseer-transport"
+name = "overseerd-transport"
 version = "0.1.0"
 dependencies = [
  "bitflags",

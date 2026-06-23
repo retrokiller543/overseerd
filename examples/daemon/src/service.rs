@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseer::{Cfg, Payload, handlers, service};
+use overseerd::{Cfg, Payload, handlers, service};
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Config, Db, DbConfig};

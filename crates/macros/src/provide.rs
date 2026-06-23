@@ -10,7 +10,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 use syn::{Ident, LitStr};
 
-use crate::{attr::ServiceArgs, paths::overseer_path};
+use crate::{attr::ServiceArgs, paths::overseerd_path};
 
 /// Emits the provider registrations for `self_ident` given the parsed args.
 /// Empty when the component provides nothing.
@@ -20,12 +20,12 @@ pub fn generate_providers(self_ident: &Ident, args: &ServiceArgs) -> TokenStream
     }
 
     let self_name = LitStr::new(&self_ident.to_string(), self_ident.span());
-    let boxed_component = overseer_path("BoxedComponent");
-    let distributed_slice = overseer_path("linkme::distributed_slice");
-    let linkme_crate = overseer_path("linkme");
-    let provider_descriptor = overseer_path("ProviderDescriptor");
-    let providers_slice = overseer_path("PROVIDERS");
-    let type_descriptor = overseer_path("TypeDescriptor");
+    let boxed_component = overseerd_path("BoxedComponent");
+    let distributed_slice = overseerd_path("linkme::distributed_slice");
+    let linkme_crate = overseerd_path("linkme");
+    let provider_descriptor = overseerd_path("ProviderDescriptor");
+    let providers_slice = overseerd_path("PROVIDERS");
+    let type_descriptor = overseerd_path("TypeDescriptor");
 
     // Qualifier defaults to the component's id (explicit `id`, else lowercased
     // type name), overridable with `qualifier = ".."`.
@@ -43,8 +43,8 @@ pub fn generate_providers(self_ident: &Ident, args: &ServiceArgs) -> TokenStream
         // shared across threads); otherwise the erase fn's `Box<dyn Any + Send +
         // Sync>` storage fails to compile, pointing the author at the missing bound.
         let trait_name = LitStr::new(&dyn_ty.to_token_stream().to_string(), Span::call_site());
-        let erase_ident = format_ident!("__overseer_erase_{}", i);
-        let provider_ident = format_ident!("__OVERSEER_PROVIDER_{}", i);
+        let erase_ident = format_ident!("__overseerd_erase_{}", i);
+        let provider_ident = format_ident!("__OVERSEERD_PROVIDER_{}", i);
 
         quote! {
             fn #erase_ident(__concrete: &#boxed_component) -> #boxed_component {

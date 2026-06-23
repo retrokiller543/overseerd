@@ -61,8 +61,8 @@ impl<T: ?Sized + Send + Sync + 'static> Injectable for Arc<T> {
 /// injectable: every daemon provides it in each connection scope (and below, via
 /// the parent chain), so a connection/request/transient component depends on it
 /// directly as `peer: PeerInfo` — no `Arc`. `PeerInfo` is cheap to clone.
-impl Injectable for overseer_transport::PeerInfo {
-    type Target = overseer_transport::PeerInfo;
+impl Injectable for overseerd_transport::PeerInfo {
+    type Target = overseerd_transport::PeerInfo;
 }
 
 /// Field wrapper marking a dependency as **runtime-provided**.
@@ -92,7 +92,7 @@ impl<H: Injectable> AsRef<H> for Dynamic<H> {
 /// in scope provides `T`. Under the `di-check` feature, the macros emit
 /// `impl Provide<Self> for Wiring` for every component and a bound per concrete
 /// dependency, so a missing provider is a `cargo check` error — a type-checked
-/// alternative to the source-level [`build.rs` analyzer](overseer_analyze) that
+/// alternative to the source-level [`build.rs` analyzer](overseerd_analyze) that
 /// catches what source parsing can't (real types, `cfg`, generics).
 #[diagnostic::on_unimplemented(
     message = "no component provides `{T}`",
@@ -110,12 +110,12 @@ pub struct Wiring;
 /// *singleton* depending on it (a connection-scoped value outliving the daemon
 /// would be a scope violation).
 #[cfg(feature = "di-check")]
-impl Provide<overseer_transport::PeerInfo> for Wiring {}
+impl Provide<overseerd_transport::PeerInfo> for Wiring {}
 
 /// Marker that all of a component's dependencies are provided. Under `di-check`
 /// the macros emit `impl Wired for T where Wiring: Provide<Dep>, ..` carrying
 /// *every* single dependency (concrete and trait-object) as a lazy bound. The
-/// [`app!`](overseer_macros::daemon) macro asserts `T: Wired` for its listed types,
+/// [`app!`](overseerd_macros::daemon) macro asserts `T: Wired` for its listed types,
 /// discharging the whole set at the binary — where every `Provide` impl (across
 /// crates) is visible, so it catches the cross-crate and trait-object cases the
 /// per-component asserts cannot.

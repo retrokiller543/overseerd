@@ -10,7 +10,7 @@
 
 ## Overview
 
-Today an Overseer RPC error is a bare string: a handler error collapses to its
+Today an Overseerd RPC error is a bare string: a handler error collapses to its
 display text and travels back as an undifferentiated `Err(String)`. A client
 cannot tell *what kind* of failure occurred, cannot branch on it (retry vs.
 give up vs. surface to the user), and cannot receive any structured detail
@@ -20,7 +20,7 @@ beyond the message. This feature gives error responses a machine-readable
 code and the payload that reaches the caller.
 
 The "users" of this feature are the developers building services on top of
-Overseer (defining error types and handlers) and the developers consuming those
+Overseerd (defining error types and handlers) and the developers consuming those
 services (handling the responses). Scope is **error responses only** for this
 increment; successful responses keep their current shape.
 

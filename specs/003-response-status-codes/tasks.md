@@ -78,7 +78,7 @@ T006–T017 restore it.
 ### Verification for User Story 1 ⚠️
 
 - [X] T018 [P] [US1] Integration test in `tests/status_codes.rs`: a handler returning a custom error type produces `WireOutcome::Err { code, body }`; the client decodes the exact `PredefinedCode` and deserializes the exact body (drive via `MemoryTransport`, mirroring `tests/streaming.rs`). (SC-001)
-- [X] T019 [P] [US1] Integration test in `tests/status_codes.rs`: a handler returning `Result<T, overseer_core::Error>` still compiles and maps to its mapped predefined category (regression). (SC-003)
+- [X] T019 [P] [US1] Integration test in `tests/status_codes.rs`: a handler returning `Result<T, overseerd_core::Error>` still compiles and maps to its mapped predefined category (regression). (SC-003)
 - [X] T020 [P] [US1] Unit test in `crates/core/src/extract.rs` (`#[cfg(test)]`): when the body fails to serialize, `error_response`/`drive_call` still yields the intended `code` with a fallback body and logs the failure. (FR-011)
 - [X] T021 [P] [US1] Unit test in `crates/transport/src/status.rs` (`#[cfg(test)]`): decoding a `StatusCode` whose predefined byte is unrecognized yields `PredefinedCode::Unknown(u8)`, never a parse error. (FR-009)
 

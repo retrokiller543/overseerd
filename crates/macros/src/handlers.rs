@@ -18,7 +18,7 @@ use syn::{
     spanned::Spanned,
 };
 
-use crate::{attr, attr::HandlersArgs, paths::overseer_path};
+use crate::{attr, attr::HandlersArgs, paths::overseerd_path};
 
 pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream> {
     let self_ty = (*item.self_ty).clone();
@@ -70,23 +70,23 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
         quote!()
     } else {
         let count = descriptors.len();
-        let distributed_slice = overseer_path("linkme::distributed_slice");
-        let linkme_crate = overseer_path("linkme");
-        let rpc_descriptor = overseer_path("RpcDescriptor");
-        let rpc_group = overseer_path("RpcGroup");
-        let rpc_groups_slice = overseer_path("RPC_GROUPS");
-        let type_descriptor = overseer_path("TypeDescriptor");
+        let distributed_slice = overseerd_path("linkme::distributed_slice");
+        let linkme_crate = overseerd_path("linkme");
+        let rpc_descriptor = overseerd_path("RpcDescriptor");
+        let rpc_group = overseerd_path("RpcGroup");
+        let rpc_groups_slice = overseerd_path("RPC_GROUPS");
+        let type_descriptor = overseerd_path("TypeDescriptor");
 
         quote! {
-            static __OVERSEER_RPCS: [#rpc_descriptor; #count] = [
+            static __OVERSEERD_RPCS: [#rpc_descriptor; #count] = [
                 #(#descriptors),*
             ];
 
             #[#distributed_slice(#rpc_groups_slice)]
             #[linkme(crate = #linkme_crate)]
-            static __OVERSEER_RPC_GROUP: #rpc_group = #rpc_group {
+            static __OVERSEERD_RPC_GROUP: #rpc_group = #rpc_group {
                 service: #type_descriptor::of::<#self_ty>(#self_name),
-                rpcs: &__OVERSEER_RPCS,
+                rpcs: &__OVERSEERD_RPCS,
             };
         }
     };
@@ -208,8 +208,8 @@ fn expand_method(
         .collect();
 
     let generics = &method.sig.generics;
-    let streaming = overseer_path("Streaming");
-    let request_stream = overseer_path("RequestStream");
+    let streaming = overseerd_path("Streaming");
+    let request_stream = overseerd_path("RequestStream");
 
     // Resolve each parameter into the concrete extractor type the dispatch
     // closure declares (so it always flows through `FromContext`), and detect the
@@ -302,7 +302,7 @@ fn expand_method(
         // A concrete return the macro cannot introspect: serialize each item as-is,
         // and recover the wire item type by projecting through the `Stream` trait so
         // the client stays well-typed (`<ReturnType as Stream>::Item`).
-        let stream_trait = overseer_path("__Stream");
+        let stream_trait = overseerd_path("__Stream");
         let item = return_ty.map(|ty| syn::parse_quote!(<#ty as #stream_trait>::Item));
 
         (true, OutputWrap::Items, item, None)
@@ -326,7 +326,7 @@ fn expand_method(
     let output_name = LitStr::new(&output_ty.to_token_stream().to_string(), output_ty.span());
 
     let wrapper_ident = format_ident!(
-        "__overseer_rpc_{}_{}",
+        "__overseerd_rpc_{}_{}",
         self_ident.to_string().to_lowercase(),
         method_ident
     );
@@ -335,16 +335,16 @@ fn expand_method(
     // `E: ResponseError`); any other `Responder` return goes through `Handler`.
     // Both erase to the same `RpcHandler` fn pointer.
     let dispatch = if attr::returns_result(&method.sig.output) {
-        overseer_path("dispatch_fallible")
+        overseerd_path("dispatch_fallible")
     } else {
-        overseer_path("dispatch_with")
+        overseerd_path("dispatch_with")
     };
-    let error = overseer_path("Error");
-    let operation_kind = overseer_path("OperationKind");
-    let response_stream = overseer_path("ResponseStream");
-    let rpc_call_context = overseer_path("RpcCallContext");
-    let rpc_descriptor = overseer_path("RpcDescriptor");
-    let type_descriptor = overseer_path("TypeDescriptor");
+    let error = overseerd_path("Error");
+    let operation_kind = overseerd_path("OperationKind");
+    let response_stream = overseerd_path("ResponseStream");
+    let rpc_call_context = overseerd_path("RpcCallContext");
+    let rpc_descriptor = overseerd_path("RpcDescriptor");
+    let type_descriptor = overseerd_path("TypeDescriptor");
     let ret = handler_return_type();
 
     let wrap = |inner: TokenStream| match output_wrap {
@@ -462,10 +462,10 @@ fn client_method(
         &format!("{}.{}", self_ident, method_ident),
         method_ident.span(),
     );
-    let client_error = overseer_path("transport::ClientError");
-    let client_transport = overseer_path("transport::ClientTransport");
-    let response_error = overseer_path("ResponseError");
-    let raw = overseer_path("transport::Raw");
+    let client_error = overseerd_path("transport::ClientError");
+    let client_transport = overseerd_path("transport::ClientTransport");
+    let response_error = overseerd_path("ResponseError");
+    let raw = overseerd_path("transport::Raw");
 
     let payload_ty = param_types.iter().find_map(|ty| attr::payload_inner(ty));
     let (result_ok, result_err) = match attr::result_type_args(output) {
@@ -513,7 +513,7 @@ fn client_method(
         }
 
         (false, true) => {
-            let server_stream = overseer_path("transport::ServerStream");
+            let server_stream = overseerd_path("transport::ServerStream");
             let args = quote!(&self #req_arg);
             let ret = quote! {
                 ::core::result::Result<
@@ -530,8 +530,8 @@ fn client_method(
         // response. The inherent client accepts any `impl Stream`; the trait client
         // takes a boxed `StreamArg<T>` to stay object-safe.
         (true, false) => {
-            let stream_trait = overseer_path("__Stream");
-            let stream_arg = overseer_path("StreamArg");
+            let stream_trait = overseerd_path("__Stream");
+            let stream_arg = overseerd_path("StreamArg");
             let ret = quote!(::core::result::Result<#success_ty, #client_error<#err_ty>>);
             let body = quote! {
                 self.conn
@@ -551,9 +551,9 @@ fn client_method(
         // concurrently. The caller's input stream is their sink (push to a channel
         // for cause-and-effect); the returned stream is read independently.
         (true, true) => {
-            let stream_trait = overseer_path("__Stream");
-            let stream_arg = overseer_path("StreamArg");
-            let bidi_responses = overseer_path("transport::BidiResponses");
+            let stream_trait = overseerd_path("__Stream");
+            let stream_arg = overseerd_path("StreamArg");
+            let bidi_responses = overseerd_path("transport::BidiResponses");
             let ret = quote! {
                 ::core::result::Result<
                     #bidi_responses<<T as #client_transport>::Call, #resp_item_ty, #err_ty>,
@@ -598,8 +598,8 @@ fn generate_client(
     }
 
     let client_ident = format_ident!("{}Client", self_ident);
-    let client_connection = overseer_path("transport::ClientConnection");
-    let client_transport = overseer_path("transport::ClientTransport");
+    let client_connection = overseerd_path("transport::ClientConnection");
+    let client_transport = overseerd_path("transport::ClientTransport");
 
     let scaffold = quote! {
         pub struct #client_ident<T: #client_transport> {
@@ -642,7 +642,7 @@ fn generate_client(
         }
 
         Some(trait_ident) => {
-            let async_trait = overseer_path("async_trait::async_trait");
+            let async_trait = overseerd_path("async_trait::async_trait");
             let signatures = methods.iter().map(|m| {
                 let ClientMethod {
                     ident,
@@ -733,18 +733,18 @@ fn generate_init(
     info: &InitInfo,
 ) -> (TokenStream, TokenStream) {
     let marked = &info.ident;
-    let boxed_component = overseer_path("BoxedComponent");
-    let component_trait = overseer_path("Component");
-    let component_construction_context = overseer_path("ComponentConstructionContext");
-    let component_descriptor = overseer_path("ComponentDescriptor");
-    let component_scope = overseer_path("ComponentScope");
-    let components_slice = overseer_path("COMPONENTS");
-    let dependency_descriptor = overseer_path("DependencyDescriptor");
-    let distributed_slice = overseer_path("linkme::distributed_slice");
-    let linkme_crate = overseer_path("linkme");
-    let error = overseer_path("Error");
-    let result = overseer_path("Result");
-    let type_descriptor = overseer_path("TypeDescriptor");
+    let boxed_component = overseerd_path("BoxedComponent");
+    let component_trait = overseerd_path("Component");
+    let component_construction_context = overseerd_path("ComponentConstructionContext");
+    let component_descriptor = overseerd_path("ComponentDescriptor");
+    let component_scope = overseerd_path("ComponentScope");
+    let components_slice = overseerd_path("COMPONENTS");
+    let dependency_descriptor = overseerd_path("DependencyDescriptor");
+    let distributed_slice = overseerd_path("linkme::distributed_slice");
+    let linkme_crate = overseerd_path("linkme");
+    let error = overseerd_path("Error");
+    let result = overseerd_path("Result");
+    let type_descriptor = overseerd_path("TypeDescriptor");
 
     // The fixed `init` name is the compile-time uniqueness guard. If the marked
     // method is already named `init`, it is its own marker and needs no wrapper.
@@ -797,7 +797,7 @@ fn generate_init(
         call = quote!(#call?);
     }
 
-    let cardinality = overseer_path("Cardinality");
+    let cardinality = overseerd_path("Cardinality");
     let dependency_descriptors = info.dep_types.iter().map(|t| {
         let dep_name = LitStr::new(&t.to_token_stream().to_string(), t.span());
 
@@ -817,7 +817,7 @@ fn generate_init(
 
     let component = quote! {
         #[allow(unused_variables)]
-        fn __overseer_init_factory(
+        fn __overseerd_init_factory(
             cx: &mut #component_construction_context,
         ) -> ::core::pin::Pin<
             ::std::boxed::Box<
@@ -838,20 +838,20 @@ fn generate_init(
             })
         }
 
-        static __OVERSEER_INIT_DEPS: [#dependency_descriptor; #dependency_count] = [
+        static __OVERSEERD_INIT_DEPS: [#dependency_descriptor; #dependency_count] = [
             #(#dependency_descriptors),*
         ];
 
         #[#distributed_slice(#components_slice)]
         #[linkme(crate = #linkme_crate)]
-        static __OVERSEER_INIT_COMPONENT: #component_descriptor =
+        static __OVERSEERD_INIT_COMPONENT: #component_descriptor =
             #component_descriptor {
                 id: #self_name,
                 name: #self_name,
                 ty: #type_descriptor::of::<#self_ty>(#self_name),
                 scope: #component_scope::Singleton,
-                dependencies: &__OVERSEER_INIT_DEPS,
-                factory: ::core::option::Option::Some(__overseer_init_factory),
+                dependencies: &__OVERSEERD_INIT_DEPS,
+                factory: ::core::option::Option::Some(__overseerd_init_factory),
                 default_factory: false,
             };
     };
@@ -873,8 +873,8 @@ fn generate_init(
 
 /// The erased `RpcHandler` return type, repeated by both wrapper forms.
 fn handler_return_type() -> TokenStream {
-    let error_response = overseer_path("ErrorResponse");
-    let rpc_outcome = overseer_path("RpcOutcome");
+    let error_response = overseerd_path("ErrorResponse");
+    let rpc_outcome = overseerd_path("RpcOutcome");
 
     quote! {
         ::core::pin::Pin<

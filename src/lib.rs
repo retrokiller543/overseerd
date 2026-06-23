@@ -1,8 +1,8 @@
-//! # Overseer
+//! # Overseerd
 //!
 //! A component- and service-oriented RPC framework. Depend on this single crate;
-//! it re-exports everything from the implementation crates (`overseer-core` and
-//! `overseer-transport`) plus the procedural macros.
+//! it re-exports everything from the implementation crates (`overseerd-core` and
+//! `overseerd-transport`) plus the procedural macros.
 //!
 //! ## Concepts
 //!
@@ -17,7 +17,7 @@
 //! ## Example
 //!
 //! ```ignore
-//! use overseer::prelude::*;
+//! use overseerd::prelude::*;
 //! use serde::{Deserialize, Serialize};
 //! use std::sync::Arc;
 //!
@@ -53,7 +53,7 @@
 // ---------------------------------------------------------------------------
 // Core: descriptors, registry, container, daemon, extractors, macros.
 // ---------------------------------------------------------------------------
-pub use overseer_core::{
+pub use overseerd_core::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cancel, Cardinality, Cfg, Component,
     ComponentConstructionContext, ComponentContainer, ComponentDescriptor, ComponentFactory,
     ComponentScope, ConfigBinding, ConfigBindingDescriptor, ConfigError, ConfigManager,
@@ -72,7 +72,7 @@ pub use overseer_core::{
 /// attribute through the facade crate without user crates depending on `linkme`
 /// directly.
 #[doc(hidden)]
-pub use overseer_core::linkme;
+pub use overseerd_core::linkme;
 
 /// Re-exported so generated client traits can be annotated `#[async_trait]`
 /// (for `dyn`-compatibility) without user crates depending on `async-trait`.
@@ -89,9 +89,9 @@ pub use futures::Stream as __Stream;
 // ---------------------------------------------------------------------------
 // Transport: server endpoints, client wire protocol, custom-transport traits.
 // `Error`/`Result` are intentionally not lifted to the root (the core ones win);
-// reach transport's via `overseer::transport`.
+// reach transport's via `overseerd::transport`.
 // ---------------------------------------------------------------------------
-pub use overseer_transport::{
+pub use overseerd_transport::{
     CallId, CallResult, Connection, IncomingCall, MemoryCall, MemoryClient, MemoryConnection,
     MemoryConnectionHandle, MemoryResponder, MemoryTransport, PeerInfo, Respond, RespondStream,
     ResponseSink, ServerEvent, StreamDecode, StreamDecodeError, StreamEncode, StreamEncodeError,
@@ -99,13 +99,13 @@ pub use overseer_transport::{
 };
 
 #[cfg(unix)]
-pub use overseer_transport::UnixTransport;
+pub use overseerd_transport::UnixTransport;
 
 /// Client SDK runtime: the substrate-agnostic [`ClientTransport`] abstraction,
 /// the byte-stream implementation, and the typed [`ClientConnection`] the
 /// generated clients build on. Gated behind the `client` feature.
 #[cfg(feature = "client")]
-pub use overseer_transport::{
+pub use overseerd_transport::{
     BidiResponses, CallSink, CallSource, ClientCall, ClientConnection, ClientError,
     ClientTransport, ErrorBody, Raw, Reply, ServerStream, StreamArg, StreamCall, StreamCallSink,
     StreamClientTransport, StreamSource,
@@ -114,40 +114,40 @@ pub use overseer_transport::{
 /// The full transport layer, including the framing codec (`transport::protocol::codec`)
 /// and connection/responder types for building clients or custom transports.
 pub mod transport {
-    pub use overseer_transport::*;
+    pub use overseerd_transport::*;
 }
 
 /// Application directory kinds (`Config`, `Data`, `Cache`, `State`, `Runtime`,
 /// `Tmp`), the typed [`Dir`] wrapper, and the [`DirectoriesManager`] that resolves
 /// them. Inject `Dir<dirs::Config>` and friends.
 pub mod dirs {
-    pub use overseer_core::dirs::*;
+    pub use overseerd_core::dirs::*;
 }
 
 /// Config source-format markers for `ConfigManager<F>`: [`Toml`], [`Yaml`], and the
 /// format-erased [`Dynamic`] (which tries every enabled format).
 ///
-/// [`Toml`]: overseer_core::config::Toml
-/// [`Yaml`]: overseer_core::config::Yaml
-/// [`Dynamic`]: overseer_core::config::Dynamic
+/// [`Toml`]: overseerd_core::config::Toml
+/// [`Yaml`]: overseerd_core::config::Yaml
+/// [`Dynamic`]: overseerd_core::config::Dynamic
 pub mod config {
-    pub use overseer_core::config::{Dynamic, Format, FormatId, Toml};
+    pub use overseerd_core::config::{Dynamic, Format, FormatId, Toml};
 
     #[cfg(feature = "yaml")]
-    pub use overseer_core::config::Yaml;
+    pub use overseerd_core::config::Yaml;
 }
 
-/// The common imports for building a daemon: `use overseer::prelude::*;`.
+/// The common imports for building a daemon: `use overseerd::prelude::*;`.
 pub mod prelude {
     pub use crate::{
         Cfg, Component, ConfigManager, ConfigProperties, Daemon, Handler, Inject, Payload, Result,
         ServiceComponent, component, handlers, rpc, service,
     };
 
-    pub use overseer_transport::TcpTransport;
+    pub use overseerd_transport::TcpTransport;
 
     #[cfg(unix)]
-    pub use overseer_transport::UnixTransport;
+    pub use overseerd_transport::UnixTransport;
 }
 
 #[cfg(test)]

@@ -30,7 +30,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Expr, Ident, LitStr, Token, Type, braced, bracketed};
 
-use crate::{di, paths::overseer_path};
+use crate::{di, paths::overseerd_path};
 
 /// Parsed `daemon! { name: .., services: [..], components: [..], configs: [..] }`.
 pub struct DaemonInput {
@@ -189,19 +189,19 @@ pub fn expand(input: DaemonInput) -> TokenStream {
     let config_tys = configs.iter().map(|entry| &entry.ty);
     let config_paths = configs.iter().map(|entry| &entry.path);
 
-    let daemon = overseer_path("Daemon");
+    let daemon = overseerd_path("Daemon");
 
     // Under `di-check`, assert each listed service's whole graph is satisfied —
     // discharged here at the use site, where every `Provide` impl is visible.
     let assertion = if di::enabled() && !services.is_empty() {
-        let wired = overseer_path("Wired");
+        let wired = overseerd_path("Wired");
 
         quote! {
             const _: () = {
-                fn __overseer_assert_wired<T: #wired>() {}
+                fn __overseerd_assert_wired<T: #wired>() {}
 
-                fn __overseer_daemon_check() {
-                    #(__overseer_assert_wired::<#services>();)*
+                fn __overseerd_daemon_check() {
+                    #(__overseerd_assert_wired::<#services>();)*
                 }
             };
         }

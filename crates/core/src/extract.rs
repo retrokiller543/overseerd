@@ -31,7 +31,7 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
-use overseer_transport::{
+use overseerd_transport::{
     PeerInfo, PredefinedCode, StatusCode, StreamDecode, StreamEncode, StreamEncodeError,
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -470,7 +470,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use overseer_transport::PredefinedCode;
+    use overseerd_transport::PredefinedCode;
     use serde::Serializer;
     use serde::ser::Error as _;
 

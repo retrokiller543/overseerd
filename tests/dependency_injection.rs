@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use overseer::{Component, Daemon, Dynamic, component};
+use overseerd::{Component, Daemon, Dynamic, component};
 
 /// A plain dependency, provided as an instance at build time.
 #[derive(Component)]

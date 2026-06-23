@@ -1,7 +1,7 @@
 use std::{any::TypeId, collections::HashSet, fmt, sync::Arc};
 
 use futures::StreamExt;
-use overseer_transport::{
+use overseerd_transport::{
     CallResult, Connection, PeerInfo, Respond, RespondStream, ResponseSink, Transport,
 };
 use tokio::{sync::mpsc, task::JoinSet};
@@ -29,7 +29,7 @@ use crate::{
 /// connection-scoped component can depend on `Arc<PeerInfo>` (e.g. to authenticate
 /// in its constructor) — the DI-native replacement for the old `on_connect` hook.
 static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor {
-    id: "__overseer_peer_info",
+    id: "__overseerd_peer_info",
     name: "PeerInfo",
     ty: TypeDescriptor::of::<PeerInfo>("PeerInfo"),
     scope: ComponentScope::Connection,
@@ -143,14 +143,14 @@ impl DaemonBuilder {
 
     /// Manually register a component descriptor for construction during build.
     /// Prefer [`with_component`](Self::with_component) for instances, or the
-    /// [`component`](overseer_macros::component) macro to generate the descriptor.
+    /// [`component`](overseerd_macros::component) macro to generate the descriptor.
     pub fn component(mut self, descriptor: &'static ComponentDescriptor) -> Self {
         self.registry.components.push(*descriptor);
 
         self
     }
 
-    /// Manually register a service header (prefer the [`service`](overseer_macros::service) macro).
+    /// Manually register a service header (prefer the [`service`](overseerd_macros::service) macro).
     pub fn service(mut self, descriptor: &'static ServiceDescriptor) -> Self {
         self.registry.services.push(*descriptor);
 

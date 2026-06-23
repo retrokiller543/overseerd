@@ -1,4 +1,4 @@
-//! A small but complete Overseer daemon, demonstrating the dependency-injection
+//! A small but complete Overseerd daemon, demonstrating the dependency-injection
 //! surface across modules — including config bound from a merged tree — and
 //! validated at build time by `build.rs`.
 //!
@@ -6,7 +6,7 @@
 //! their dependencies, services, and RPCs):
 //!
 //! ```text
-//! cargo run -p overseer-example-daemon
+//! cargo run -p overseerd-example-daemon
 //! ```
 
 mod components;
@@ -15,11 +15,11 @@ mod service;
 
 use crate::components::{AppServer, DbConfig};
 use crate::service::Notifications;
-use overseer::config::Toml;
-use overseer::{ConfigManager, DirectoriesManager, daemon};
+use overseerd::config::Toml;
+use overseerd::{ConfigManager, DirectoriesManager, daemon};
 
 #[tokio::main]
-async fn main() -> overseer::Result<()> {
+async fn main() -> overseerd::Result<()> {
     const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
 
     let dir_manager = DirectoriesManager::from_path(CRATE_PATH.into());

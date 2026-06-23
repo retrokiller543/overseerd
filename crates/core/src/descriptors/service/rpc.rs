@@ -59,7 +59,7 @@ pub struct RpcCallContext {
     /// The remote peer, carried directly so the `Peer` extractor reaches it
     /// without a connection-scope container — letting an otherwise-empty
     /// connection scope be skipped.
-    pub(crate) peer: overseer_transport::PeerInfo,
+    pub(crate) peer: overseerd_transport::PeerInfo,
     /// `Mutex<Option<_>>` because extractors borrow `&ctx`; the `Streaming<T>`
     /// extractor takes the receiver out exactly once.
     pub(crate) requests: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
@@ -72,7 +72,7 @@ impl RpcCallContext {
     /// cancellation token.
     pub fn new(
         payload: Vec<u8>,
-        peer: overseer_transport::PeerInfo,
+        peer: overseerd_transport::PeerInfo,
         scope: std::sync::Arc<crate::container::ScopeContainer>,
         requests: Option<mpsc::Receiver<Vec<u8>>>,
         cancel: CancellationToken,
@@ -92,7 +92,7 @@ impl RpcCallContext {
     }
 
     /// The remote peer for this call.
-    pub(crate) fn peer(&self) -> &overseer_transport::PeerInfo {
+    pub(crate) fn peer(&self) -> &overseerd_transport::PeerInfo {
         &self.peer
     }
 

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use overseer::{ConfigProperties, component};
+use overseerd::{ConfigProperties, component};
 use serde::Deserialize;
 
 #[allow(dead_code)]

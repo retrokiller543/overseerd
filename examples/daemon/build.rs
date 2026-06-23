@@ -5,5 +5,5 @@
 fn main() {
     println!("cargo::rerun-if-changed=src");
 
-    /*overseer_analyze::report(overseer_analyze::validate_crate("src"));*/
+    /*overseerd_analyze::report(overseerd_analyze::validate_crate("src"));*/
 }

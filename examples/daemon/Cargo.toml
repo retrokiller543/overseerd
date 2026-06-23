@@ -1,5 +1,5 @@
 [package]
-name = "overseer-example-daemon"
+name = "overseerd-example-daemon"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,11 +7,11 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-overseer = { path = "../.." }
+overseerd = { path = "../.." }
 tokio = { workspace = true }
 serde = { workspace = true }
 
 # Build-time dependency-graph validation: the build script fails `cargo build`
 # if the DI graph is unsatisfiable, so CI catches it before deployment.
 [build-dependencies]
-overseer-analyze = { path = "../../crates/analyze" }
+overseerd-analyze = { path = "../../crates/analyze" }

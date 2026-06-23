@@ -1,6 +1,6 @@
-//! Procedural macros for the Overseer framework.
+//! Procedural macros for the Overseerd framework.
 //!
-//! These are re-exported from the `overseer` facade crate; depend on that rather
+//! These are re-exported from the `overseerd` facade crate; depend on that rather
 //! than this crate directly. They span three subsystems — components (dependency
 //! injection), services (RPC), and configuration.
 //!
@@ -102,7 +102,7 @@ use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// # Example
 ///
 /// ```ignore
-/// use overseer::prelude::*;
+/// use overseerd::prelude::*;
 /// use std::sync::Arc;
 ///
 /// #[derive(Component)]
@@ -160,7 +160,7 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```ignore
-/// use overseer::prelude::*;
+/// use overseerd::prelude::*;
 ///
 /// #[derive(Component)]
 /// struct Config { greeting: String }
@@ -236,7 +236,7 @@ pub fn derive_config_properties(item: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```ignore
-/// use overseer::prelude::*;
+/// use overseerd::prelude::*;
 /// use std::sync::Arc;
 ///
 /// #[derive(Component)]
@@ -277,7 +277,7 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # `#[rpc]` methods
 ///
 /// Each `#[rpc]` method must be `async` and return `Result<R, E>` where `R:
-/// Serialize` and `E: Into<overseer::Error>`. Parameters are *extractors* drawn
+/// Serialize` and `E: Into<overseerd::Error>`. Parameters are *extractors* drawn
 /// from the call context:
 /// - `Payload<T>` — the deserialized request body;
 /// - `Inject<H>` — a component resolved from the call scope (a connection- or
@@ -308,7 +308,7 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Example
 ///
 /// ```ignore
-/// use overseer::prelude::*;
+/// use overseerd::prelude::*;
 /// use std::sync::Arc;
 ///
 /// #[handlers]
@@ -392,13 +392,13 @@ pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `configs` binds the same config type at several property paths; a type with a
 ///   baked-in `#[config(path = "..")]` auto-registers and needs no entry.
 /// - `managers` hands in instances built earlier in `main`: `config: <binding>` a
-///   [`ConfigManager`](overseer_core::ConfigManager), `directories: <binding>` a
-///   [`DirectoriesManager`](overseer_core::DirectoriesManager). Both are optional —
+///   [`ConfigManager`](overseerd_core::ConfigManager), `directories: <binding>` a
+///   [`DirectoriesManager`](overseerd_core::DirectoriesManager). Both are optional —
 ///   omitted, the builder constructs defaults (config loaded from the `Dir<Config>`
 ///   directory, directories derived from the daemon name).
 ///
 /// The listed `services` are additionally required to be
-/// [`Wired`](overseer_core::Wired) under the `di-check` feature, asserting their
+/// [`Wired`](overseerd_core::Wired) under the `di-check` feature, asserting their
 /// whole dependency graph (including trait-object and `#[service]` field
 /// dependencies, across crates) at compile time. The same declaration that wires the
 /// daemon validates it — there is no separate list to maintain.

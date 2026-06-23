@@ -9,7 +9,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{DeriveInput, LitStr};
 
-use crate::{attr::ServiceArgs, di, handle, paths::overseer_path};
+use crate::{attr::ServiceArgs, di, handle, paths::overseerd_path};
 
 pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let ident = &input.ident;
@@ -28,7 +28,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = overrides
         .name
         .unwrap_or_else(|| LitStr::new(&ident.to_string(), ident.span()));
-    let component = overseer_path("Component");
+    let component = overseerd_path("Component");
     let handle = handle::handle_impl(ident, overrides.by_value);
     let handle_items = &handle.items;
     let injectable = &handle.injectable;

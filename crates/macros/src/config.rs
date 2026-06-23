@@ -14,7 +14,7 @@ use syn::{
     parse::{Parse, ParseStream},
 };
 
-use crate::paths::overseer_path;
+use crate::paths::overseerd_path;
 
 /// Arguments of the `#[config(...)]` helper attribute on a config struct.
 #[derive(Default)]
@@ -65,12 +65,12 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let name = args
         .name
         .unwrap_or_else(|| LitStr::new(&ident.to_string(), ident.span()));
-    let config_properties = overseer_path("ConfigProperties");
-    let config_binding_descriptor = overseer_path("ConfigBindingDescriptor");
-    let config_bindings = overseer_path("CONFIG_BINDINGS");
-    let distributed_slice = overseer_path("linkme::distributed_slice");
-    let linkme_crate = overseer_path("linkme");
-    let type_descriptor = overseer_path("TypeDescriptor");
+    let config_properties = overseerd_path("ConfigProperties");
+    let config_binding_descriptor = overseerd_path("ConfigBindingDescriptor");
+    let config_bindings = overseerd_path("CONFIG_BINDINGS");
+    let distributed_slice = overseerd_path("linkme::distributed_slice");
+    let linkme_crate = overseerd_path("linkme");
+    let type_descriptor = overseerd_path("TypeDescriptor");
 
     // A baked-in path auto-registers the binding; without one the binding is made
     // explicitly at the builder (the multi-path case).
@@ -79,7 +79,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             const _: () = {
                 #[#distributed_slice(#config_bindings)]
                 #[linkme(crate = #linkme_crate)]
-                static __OVERSEER_CONFIG_BINDING: #config_binding_descriptor =
+                static __OVERSEERD_CONFIG_BINDING: #config_binding_descriptor =
                     #config_binding_descriptor {
                         ty: #type_descriptor::of::<#ident>(#name),
                         path: #path,

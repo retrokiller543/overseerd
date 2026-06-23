@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use overseer_config::{
+use overseerd_config::{
     ConfigError, ConfigErrorKind, ConfigStr, ConfigValue, MapResolver, ResolverChain, from_value,
 };
 use serde::Deserialize;
@@ -65,7 +65,7 @@ fn full_placeholder_coerces_to_target_scalar_type() {
         ("FLAG", "true"),
         ("PORT", "8080"),
         ("RATIO", "0.5"),
-        ("NAME", "overseer"),
+        ("NAME", "overseerd"),
     ]);
 
     let cfg: Cfg = from_value(&tree, &chain).unwrap();
@@ -73,7 +73,7 @@ fn full_placeholder_coerces_to_target_scalar_type() {
     assert!(cfg.flag);
     assert_eq!(cfg.port, 8080);
     assert_eq!(cfg.ratio, 0.5);
-    assert_eq!(cfg.name, "overseer");
+    assert_eq!(cfg.name, "overseerd");
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn absolute_path_resolves_against_full_root_from_subtree() {
     let chain = resolvers(&[]);
 
     let subtree = root.get_path("app.server").unwrap();
-    let cfg: Server = overseer_config::from_value_in(&root, subtree, &chain).unwrap();
+    let cfg: Server = overseerd_config::from_value_in(&root, subtree, &chain).unwrap();
 
     assert_eq!(cfg.addr, "127.0.0.1:9000");
 }

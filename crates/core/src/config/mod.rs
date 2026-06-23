@@ -34,7 +34,7 @@ pub enum ConfigError {
     Parse {
         path: PathBuf,
         #[source]
-        source: overseer_config::ConfigError,
+        source: overseerd_config::ConfigError,
     },
 
     #[error("no configuration found at path '{path}'")]
@@ -44,7 +44,7 @@ pub enum ConfigError {
     Substitution {
         path: String,
         #[source]
-        source: overseer_config::ConfigError,
+        source: overseerd_config::ConfigError,
     },
 }
 

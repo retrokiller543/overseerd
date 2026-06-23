@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use overseer_config::{ConfigValue, ResolverChain, from_value_in};
+use overseerd_config::{ConfigValue, ResolverChain, from_value_in};
 use serde::de::DeserializeOwned;
 
 use crate::dirs::{Config, Dir};
@@ -9,7 +9,7 @@ use crate::dirs::{Config, Dir};
 use super::ConfigError;
 
 /// A parser from source text to the normalized config tree.
-type Parser = fn(&str) -> Result<ConfigValue, overseer_config::ConfigError>;
+type Parser = fn(&str) -> Result<ConfigValue, overseerd_config::ConfigError>;
 
 /// Which source format(s) a [`ConfigManager`] reads. Retained as runtime data so the
 /// daemon knows how to re-read on reload even after the `Format` type is erased.
@@ -39,7 +39,7 @@ impl Format for Toml {
     const ID: FormatId = FormatId::Toml;
 
     fn parsers() -> Vec<(&'static str, Parser)> {
-        vec![("toml", overseer_config::format::toml::from_str)]
+        vec![("toml", overseerd_config::format::toml::from_str)]
     }
 }
 
@@ -53,8 +53,8 @@ impl Format for Yaml {
 
     fn parsers() -> Vec<(&'static str, Parser)> {
         vec![
-            ("yaml", overseer_config::format::yaml::from_str),
-            ("yml", overseer_config::format::yaml::from_str),
+            ("yaml", overseerd_config::format::yaml::from_str),
+            ("yml", overseerd_config::format::yaml::from_str),
         ]
     }
 }
@@ -68,12 +68,12 @@ impl Format for Dynamic {
     fn parsers() -> Vec<(&'static str, Parser)> {
         #[allow(unused_mut)]
         let mut parsers: Vec<(&'static str, Parser)> =
-            vec![("toml", overseer_config::format::toml::from_str)];
+            vec![("toml", overseerd_config::format::toml::from_str)];
 
         #[cfg(feature = "yaml")]
         {
-            parsers.push(("yaml", overseer_config::format::yaml::from_str));
-            parsers.push(("yml", overseer_config::format::yaml::from_str));
+            parsers.push(("yaml", overseerd_config::format::yaml::from_str));
+            parsers.push(("yml", overseerd_config::format::yaml::from_str));
         }
 
         parsers
@@ -128,7 +128,7 @@ impl<F: Format> ConfigManager<F> {
     ///
     /// The base `application.<ext>` underlies the per-profile overlays
     /// `application-<profile>.<ext>`, each overriding the previous. Profiles come from
-    /// `OVERSEER_PROFILES` (comma-separated) first, then `profiles`. A missing file is
+    /// `OVERSEERD_PROFILES` (comma-separated) first, then `profiles`. A missing file is
     /// skipped; a malformed one is an error.
     pub fn load_in(dir: &Dir<Config>, profiles: &[String]) -> Result<Self, ConfigError> {
         let parsers = F::parsers();
@@ -211,12 +211,12 @@ impl<F> ConfigManager<F> {
     }
 }
 
-/// Combines `OVERSEER_PROFILES` (consulted first) with the explicitly supplied
+/// Combines `OVERSEERD_PROFILES` (consulted first) with the explicitly supplied
 /// profiles, preserving order.
 fn resolve_profiles(explicit: &[String]) -> Vec<String> {
     let mut profiles = Vec::new();
 
-    if let Ok(env) = std::env::var("OVERSEER_PROFILES") {
+    if let Ok(env) = std::env::var("OVERSEERD_PROFILES") {
         let from_env = env
             .split(',')
             .map(|s| s.trim().to_string())

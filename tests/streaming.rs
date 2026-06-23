@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 
-use overseer::{
+use overseerd::{
     CallResult, Cancel, Daemon, MemoryClient, MemoryConnectionHandle, Payload, ResponseStream,
     ServerEvent, StreamDecode, StreamDecodeError, StreamEncode, StreamEncodeError, Streaming,
     handlers, service,
@@ -42,13 +42,13 @@ impl StreamSvc {
     }
 
     #[rpc]
-    async fn fallible_ok() -> overseer::Result<u32> {
+    async fn fallible_ok() -> overseerd::Result<u32> {
         Ok(1)
     }
 
     #[rpc]
-    async fn fallible_err() -> overseer::Result<u32> {
-        Err(overseer::Error::InvalidPayload("nope".to_string()))
+    async fn fallible_err() -> overseerd::Result<u32> {
+        Err(overseerd::Error::InvalidPayload("nope".to_string()))
     }
 
     // --- Server streaming: one request, many responses ---
@@ -63,7 +63,7 @@ impl StreamSvc {
         ResponseStream::new(futures::stream::iter(vec![
             Ok(0),
             Ok(1),
-            Err(overseer::Error::InvalidPayload("boom".to_string())),
+            Err(overseerd::Error::InvalidPayload("boom".to_string())),
         ]))
     }
 
@@ -88,7 +88,7 @@ impl StreamSvc {
     // --- Client streaming: many requests, one response ---
 
     #[rpc]
-    async fn sum(mut input: Streaming<u32>) -> overseer::Result<u32> {
+    async fn sum(mut input: Streaming<u32>) -> overseerd::Result<u32> {
         let mut total = 0;
 
         while let Some(item) = input.next().await {
@@ -225,7 +225,7 @@ fn dec<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
 
 /// Drains a streaming call into its items, returning whether it ended cleanly
 /// (`true` = `StreamEnd`, `false` = `StreamError`).
-async fn drain(call: &mut overseer::MemoryCall) -> (Vec<u32>, bool) {
+async fn drain(call: &mut overseerd::MemoryCall) -> (Vec<u32>, bool) {
     let mut items = Vec::new();
 
     loop {

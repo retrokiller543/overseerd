@@ -12,8 +12,9 @@
 12. [ ] Native daemon support, i.e. integrate with things like systemd on linux and launchd on macos to send ready signals, handle shutdown signals, and generally be a good citizen on the platform. This would be one of the biggest selling points of this outside of the DI complexity being managed for you.
 13. [ ] Health checks to systemd, launchd, etc that can be based on user defined health checks in the code. (Built directly on native daemon support (7).)
 14. [ ] Multi-frame messages, see large payloads and handle reading it up to a configurable max frame size or infinity (should be configurable by the user). (Codec hardening; transparent to the SDK, so do when large payloads become a real need.)
-15. [ ] Add TLS support for transports. (Prerequisite for QUIC (11) and independently valuable; pull earlier if secure deployments are needed sooner.)
-16. [ ] Add quic transport. (Removes the streaming head-of-line blocking; one transport stream per call. Requires TLS (10).)
-17. [ ] Add h3 transport. (Runs on top of QUIC (11).)
-18. [ ] Support custom protocols (what is sent over the wire, hard to do but can be powerful). (Deferred — design the pluggable wire format from real examples like status codes (3) and multi-frame (9) rather than speculatively; riskiest item.)
-19. [ ] Feature gate things like inventory for platforms or devs that dont want DI to happen via auto-discovery, this would disable just that flow and optimize generated code for manual registration instead. (Build-flexibility polish, low urgency.)
+15. [ ] Write propper documentation and wiki for the entire project. Both high level but also low level implementation details.
+16. [ ] Add TLS support for transports. (Prerequisite for QUIC (11) and independently valuable; pull earlier if secure deployments are needed sooner.)
+17. [ ] Add quic transport. (Removes the streaming head-of-line blocking; one transport stream per call. Requires TLS (10).)
+18. [ ] Add h3 transport. (Runs on top of QUIC (11).)
+19. [ ] Support custom protocols (what is sent over the wire, hard to do but can be powerful). (Deferred — design the pluggable wire format from real examples like status codes (3) and multi-frame (9) rather than speculatively; riskiest item.)
+20. [ ] Feature gate things like inventory for platforms or devs that dont want DI to happen via auto-discovery, this would disable just that flow and optimize generated code for manual registration instead. (Build-flexibility polish, low urgency.)

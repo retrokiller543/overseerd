@@ -1,15 +1,15 @@
 [package]
-name = "overseer-core"
+name = "overseerd-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [features]
-client = ["overseer-transport/client"]
+client = ["overseerd-transport/client"]
 di-check = []
 # Enable YAML config sources (`application.yaml`) in addition to the default TOML.
-yaml = ["overseer-config/yaml"]
+yaml = ["overseerd-config/yaml"]
 
 [dependencies]
 linkme = { workspace = true }
@@ -22,6 +22,6 @@ futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 tracing = { workspace = true }
-overseer-config = { workspace = true }
-overseer-transport = { workspace = true }
-overseer-macros = { workspace = true }
+overseerd-config = { workspace = true }
+overseerd-transport = { workspace = true }
+overseerd-macros = { workspace = true }

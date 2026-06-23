@@ -18,10 +18,10 @@ authors = ["Emil Schütt <emil.schutt@gmail.com>"]
 
 [workspace.dependencies]
 # Workspace member crates
-overseer-config = { path = "crates/config" }
-overseer-core = { path = "crates/core" }
-overseer-macros = { path = "crates/macros" }
-overseer-transport = { path = "crates/transport" }
+overseerd-config = { path = "crates/config" }
+overseerd-core = { path = "crates/core" }
+overseerd-macros = { path = "crates/macros" }
+overseerd-transport = { path = "crates/transport" }
 
 # Common dependencies
 bitflags = "2"
@@ -43,7 +43,7 @@ quote = "1"
 proc-macro2 = "1"
 
 [package]
-name = "overseer"
+name = "overseerd"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -53,25 +53,25 @@ authors.workspace = true
 default = ["di-check"]
 
 # Compile the generated client SDK and the client-side transport. Opt in via
-# `overseer = { features = ["client"] }`; no feature is needed in the user crate.
+# `overseerd = { features = ["client"] }`; no feature is needed in the user crate.
 client = [
-    "overseer-macros/client",
-    "overseer-core/client",
-    "overseer-transport/client",
+    "overseerd-macros/client",
+    "overseerd-core/client",
+    "overseerd-transport/client",
     "dep:async-trait",
 ]
 
 # Emit compile-time dependency-injection checks (a `Wiring: Provide<Dep>` bound
 # per concrete dependency). A missing provider becomes a `cargo check` error.
-di-check = ["overseer-macros/di-check", "overseer-core/di-check"]
+di-check = ["overseerd-macros/di-check", "overseerd-core/di-check"]
 
 # Enable YAML config sources (`application.yaml`) alongside the default TOML.
-yaml = ["overseer-core/yaml"]
+yaml = ["overseerd-core/yaml"]
 
 [dependencies]
-overseer-core = { workspace = true }
-overseer-transport = { workspace = true }
-overseer-macros = { workspace = true }
+overseerd-core = { workspace = true }
+overseerd-transport = { workspace = true }
+overseerd-macros = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }

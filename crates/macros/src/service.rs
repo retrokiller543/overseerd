@@ -13,7 +13,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemStruct, LitStr};
 
-use crate::{attr::ServiceArgs, di, handle, inject, paths::overseer_path, provide};
+use crate::{attr::ServiceArgs, di, handle, inject, paths::overseerd_path, provide};
 
 pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStream> {
     let self_ident = item.ident.clone();
@@ -49,16 +49,16 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         inject::field_injection_component(&mut item, &id, &name, true, &singleton);
 
     let service_static = format_ident!(
-        "__OVERSEER_SERVICE_{}",
+        "__OVERSEERD_SERVICE_{}",
         self_ident.to_string().to_uppercase()
     );
-    let component = overseer_path("Component");
-    let distributed_slice = overseer_path("linkme::distributed_slice");
-    let linkme_crate = overseer_path("linkme");
-    let service_component = overseer_path("ServiceComponent");
-    let service_descriptor = overseer_path("ServiceDescriptor");
-    let services_slice = overseer_path("SERVICES");
-    let type_descriptor = overseer_path("TypeDescriptor");
+    let component = overseerd_path("Component");
+    let distributed_slice = overseerd_path("linkme::distributed_slice");
+    let linkme_crate = overseerd_path("linkme");
+    let service_component = overseerd_path("ServiceComponent");
+    let service_descriptor = overseerd_path("ServiceDescriptor");
+    let services_slice = overseerd_path("SERVICES");
+    let type_descriptor = overseerd_path("TypeDescriptor");
 
     Ok(quote! {
         #item

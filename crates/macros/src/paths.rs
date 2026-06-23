@@ -4,8 +4,8 @@
 //! not the implementation crates. If the facade crate name changes, update this
 //! constant and the expansions stay in sync.
 
-pub(crate) const OVERSEER_CRATE: &str = "overseer";
+pub(crate) const OVERSEERD_CRATE: &str = "overseerd";
 
-pub(crate) fn overseer_path(item: &str) -> syn::Path {
-    syn::parse_str(&format!("::{OVERSEER_CRATE}::{item}")).expect("valid overseer facade item path")
+pub(crate) fn overseerd_path(item: &str) -> syn::Path {
+    syn::parse_str(&format!("::{OVERSEERD_CRATE}::{item}")).expect("valid overseerd facade item path")
 }

@@ -1,19 +1,19 @@
-# Overseer
-Overseer is a Rust framework for building long-running daemon services using strongly typed components, services, and generated infrastructure.
+# Overseerd
+Overseerd is a Rust framework for building long-running daemon services using strongly typed components, services, and generated infrastructure.
 
-The goal is to make daemon development feel like writing ordinary Rust business logic while Overseer handles service discovery, dependency wiring, RPC registration, lifecycle management, and operational concerns.
+The goal is to make daemon development feel like writing ordinary Rust business logic while Overseerd handles service discovery, dependency wiring, RPC registration, lifecycle management, and operational concerns.
 
-Unlike fully convention-driven frameworks, Overseer does not take ownership of your application entrypoint or runtime configuration. Developers remain in control of process startup, runtime construction, and deployment decisions while benefiting from generated infrastructure and convention-assisted wiring.
+Unlike fully convention-driven frameworks, Overseerd does not take ownership of your application entrypoint or runtime configuration. Developers remain in control of process startup, runtime construction, and deployment decisions while benefiting from generated infrastructure and convention-assisted wiring.
 
 ## Philosophy
 
-Overseer is built around a simple idea:
+Overseerd is built around a simple idea:
 
 > Boilerplate should be generated. Ownership should remain explicit.
 
 The framework embraces code generation and metadata discovery to reduce repetitive daemon infrastructure while preserving the ability to inspect, customize, and override behavior when necessary.
 
-Overseer aims to sit between minimal frameworks and fully managed application containers:
+Overseerd aims to sit between minimal frameworks and fully managed application containers:
 
 * More automation than low-level runtime libraries
 * More explicitness than large convention-driven frameworks
@@ -50,7 +50,7 @@ impl BackupService {
 }
 ```
 
-Overseer automatically discovers and registers metadata describing those services, dependencies, and RPC endpoints.
+Overseerd automatically discovers and registers metadata describing those services, dependencies, and RPC endpoints.
 
 The runtime then consumes that metadata to construct a runnable daemon.
 
@@ -73,7 +73,7 @@ fn main() -> anyhow::Result<()> {
 
 ### User-Owned Runtime
 
-Overseer should never require ownership of `main`.
+Overseerd should never require ownership of `main`.
 
 Users must remain free to:
 
@@ -83,7 +83,7 @@ Users must remain free to:
 * Perform startup validation
 * Integrate with external tooling
 
-Overseer provides runtime helpers and convenience macros, but they should remain optional.
+Overseerd provides runtime helpers and convenience macros, but they should remain optional.
 
 ### Convention-Assisted Discovery
 
@@ -111,11 +111,11 @@ Developers should be able to inspect:
 * Generated API contracts
 * Active transports
 
-Overseer should make generated behavior easy to understand and debug.
+Overseerd should make generated behavior easy to understand and debug.
 
 ### Metadata First
 
-Overseer's procedural macros primarily generate metadata and descriptors rather than runtime behavior.
+Overseerd's procedural macros primarily generate metadata and descriptors rather than runtime behavior.
 
 Examples include:
 
@@ -137,7 +137,7 @@ This architecture enables future capabilities such as:
 
 ## Initial Goals
 
-The first versions of Overseer should focus on a coherent daemon foundation:
+The first versions of Overseerd should focus on a coherent daemon foundation:
 
 * Component registration and dependency injection
 * Service registration
@@ -167,7 +167,7 @@ These features should build upon the same metadata model rather than introducing
 
 ## Non-Goals
 
-Overseer is not intended to:
+Overseerd is not intended to:
 
 * Replace Tokio
 * Replace existing observability ecosystems
@@ -178,7 +178,7 @@ Overseer is not intended to:
 
 ## Project Status
 
-Overseer is currently in the design and foundation phase.
+Overseerd is currently in the design and foundation phase.
 
 Public APIs, macro syntax, dependency injection semantics, and runtime architecture are expected to evolve as real-world daemon implementations are built on top of the framework.
 

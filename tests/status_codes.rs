@@ -2,7 +2,7 @@
 //! in-memory transport so they are fast and deterministic. Each test maps to a
 //! user story / success criterion from `specs/003-response-status-codes/`.
 
-use overseer::{
+use overseerd::{
     CallResult, Daemon, ErrorResponse, Flags, MemoryClient, MemoryConnectionHandle, PredefinedCode,
     ResponseError, ResponseStream, ServerEvent, StatusCode, handlers, service,
 };
@@ -63,8 +63,8 @@ impl StatusSvc {
 
     /// An unchanged framework-error handler, mapped to its category.
     #[rpc]
-    async fn framework_error() -> overseer::Result<u32> {
-        Err(overseer::Error::InvalidPayload("nope".to_string()))
+    async fn framework_error() -> overseerd::Result<u32> {
+        Err(overseerd::Error::InvalidPayload("nope".to_string()))
     }
 
     /// A server stream that yields items then fails, terminating with the same
@@ -74,7 +74,7 @@ impl StatusSvc {
         ResponseStream::new(futures::stream::iter(vec![
             Ok(0u32),
             Ok(1u32),
-            Err(overseer::Error::InvalidPayload("mid-stream".to_string())),
+            Err(overseerd::Error::InvalidPayload("mid-stream".to_string())),
         ]))
     }
 }
@@ -140,7 +140,7 @@ async fn custom_error_carries_code_and_body() {
 
 #[tokio::test]
 async fn framework_error_handler_maps_to_category() {
-    // SC-003: an unchanged `Result<T, overseer::Error>` handler still works and
+    // SC-003: an unchanged `Result<T, overseerd::Error>` handler still works and
     // maps to its predefined category (InvalidPayload -> BadInput).
     let conn = start().await;
 

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use overseer::{Daemon, component};
+use overseerd::{Daemon, component};
 
 /// Internally `Arc`, so cloning is cheap and shares the counter. `#[default]`
 /// keeps the field as owned state rather than an injected dependency.

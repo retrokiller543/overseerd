@@ -14,13 +14,13 @@
 //! Each dependency is keyed under `<H as Injectable>::Target`, so a blanket
 //! `Arc<T>` keys by `T` while a by-value handle keys by itself.
 //!
-//! [`Injectable`]: overseer_core::Injectable
+//! [`Injectable`]: overseerd_core::Injectable
 
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{Expr, ExprLit, Field, Fields, ItemStruct, Lit, LitStr, Meta, spanned::Spanned};
 
-use crate::{attr, paths::overseer_path};
+use crate::{attr, paths::overseerd_path};
 
 pub fn field_injection_component(
     item: &mut ItemStruct,
@@ -30,17 +30,17 @@ pub fn field_injection_component(
     scope_variant: &syn::Ident,
 ) -> TokenStream {
     let self_ident = item.ident.clone();
-    let boxed_component = overseer_path("BoxedComponent");
-    let component_construction_context = overseer_path("ComponentConstructionContext");
-    let component_descriptor = overseer_path("ComponentDescriptor");
-    let component_scope = overseer_path("ComponentScope");
-    let components_slice = overseer_path("COMPONENTS");
-    let dependency_descriptor = overseer_path("DependencyDescriptor");
-    let component = overseer_path("Component");
-    let distributed_slice = overseer_path("linkme::distributed_slice");
-    let linkme_crate = overseer_path("linkme");
-    let result = overseer_path("Result");
-    let type_descriptor = overseer_path("TypeDescriptor");
+    let boxed_component = overseerd_path("BoxedComponent");
+    let component_construction_context = overseerd_path("ComponentConstructionContext");
+    let component_descriptor = overseerd_path("ComponentDescriptor");
+    let component_scope = overseerd_path("ComponentScope");
+    let components_slice = overseerd_path("COMPONENTS");
+    let dependency_descriptor = overseerd_path("DependencyDescriptor");
+    let component = overseerd_path("Component");
+    let distributed_slice = overseerd_path("linkme::distributed_slice");
+    let linkme_crate = overseerd_path("linkme");
+    let result = overseerd_path("Result");
+    let type_descriptor = overseerd_path("TypeDescriptor");
 
     let mut inits = Vec::new();
     let mut dep_descriptors = Vec::new();
@@ -113,7 +113,7 @@ pub fn field_injection_component(
         #wired
 
         #[allow(unused_variables)]
-        fn __overseer_factory(
+        fn __overseerd_factory(
             cx: &mut #component_construction_context,
         ) -> ::core::pin::Pin<
             ::std::boxed::Box<
@@ -134,20 +134,20 @@ pub fn field_injection_component(
             })
         }
 
-        static __OVERSEER_DEPS: [#dependency_descriptor; #dependency_count] = [
+        static __OVERSEERD_DEPS: [#dependency_descriptor; #dependency_count] = [
             #(#dep_descriptors),*
         ];
 
         #[#distributed_slice(#components_slice)]
         #[linkme(crate = #linkme_crate)]
-        static __OVERSEER_COMPONENT: #component_descriptor =
+        static __OVERSEERD_COMPONENT: #component_descriptor =
             #component_descriptor {
                 id: #id,
                 name: #name,
                 ty: #type_descriptor::of::<#self_ident>(#name),
                 scope: #component_scope::#scope_variant,
-                dependencies: &__OVERSEER_DEPS,
-                factory: ::core::option::Option::Some(__overseer_factory),
+                dependencies: &__OVERSEERD_DEPS,
+                factory: ::core::option::Option::Some(__overseerd_factory),
                 default_factory: #default_factory,
             };
     }
@@ -208,12 +208,12 @@ fn plan_field(field: &mut Field) -> FieldPlan {
     });
     field.attrs.retain(|a| !a.path().is_ident("config"));
 
-    let cardinality = overseer_path("Cardinality");
-    let dynamic_ty = overseer_path("Dynamic");
-    let error = overseer_path("Error");
-    let injectable = overseer_path("Injectable");
-    let type_descriptor = overseer_path("TypeDescriptor");
-    let dependency_descriptor = overseer_path("DependencyDescriptor");
+    let cardinality = overseerd_path("Cardinality");
+    let dynamic_ty = overseerd_path("Dynamic");
+    let error = overseerd_path("Error");
+    let injectable = overseerd_path("Injectable");
+    let type_descriptor = overseerd_path("TypeDescriptor");
+    let dependency_descriptor = overseerd_path("DependencyDescriptor");
 
     let dep = |handle: &syn::Type,
                kind: TokenStream,

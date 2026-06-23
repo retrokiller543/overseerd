@@ -283,7 +283,7 @@ Today: one enum `Descriptor { Component | Service | Rpcs }` collected via `inven
 macros emitting `inventory::submit!` and `DescriptorRegistry::collect()` matching on the variant
 (`crates/core/src/descriptors/mod.rs`, `registry/mod.rs:33`).
 
-Target: one `#[distributed_slice]` per descriptor kind, declared in `overseer-core` and re-exported
+Target: one `#[distributed_slice]` per descriptor kind, declared in `overseerd-core` and re-exported
 through the facade so macro-generated code references a stable path:
 
 ```rust
@@ -309,8 +309,8 @@ slice homogeneous and independently reasoned about. Benefits aligned with this p
   linkers need care. Confirm on the project's Linux + macOS targets.
 - `#[distributed_slice]` elements must be `const`/`'static` (descriptors already are — they are
   `Copy` statics today).
-- The macro crate must emit `#[overseer::COMPONENTS]`-style element attributes referencing the
-  facade path; `paths::overseer_path` already centralises this.
+- The macro crate must emit `#[overseerd::COMPONENTS]`-style element attributes referencing the
+  facade path; `paths::overseerd_path` already centralises this.
 - `inventory` and `linkme` can coexist during migration, so it can land behind the others without a
   flag day.
 

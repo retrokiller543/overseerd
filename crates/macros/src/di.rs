@@ -13,7 +13,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
 
-use crate::paths::overseer_path;
+use crate::paths::overseerd_path;
 
 /// Whether compile-time DI checking is enabled for this build.
 pub fn enabled() -> bool {
@@ -27,8 +27,8 @@ pub fn provide_impl(self_ident: &Ident) -> TokenStream {
         return quote!();
     }
 
-    let provide = overseer_path("Provide");
-    let wiring = overseer_path("Wiring");
+    let provide = overseerd_path("Provide");
+    let wiring = overseerd_path("Wiring");
 
     quote! {
         impl #provide<#self_ident> for #wiring {}
@@ -44,9 +44,9 @@ pub fn wired_impl(self_ident: &Ident, targets: &[TokenStream]) -> TokenStream {
         return quote!();
     }
 
-    let wired = overseer_path("Wired");
-    let provide = overseer_path("Provide");
-    let wiring = overseer_path("Wiring");
+    let wired = overseerd_path("Wired");
+    let provide = overseerd_path("Provide");
+    let wiring = overseerd_path("Wiring");
 
     if targets.is_empty() {
         quote! {
@@ -73,8 +73,8 @@ pub fn injectable_impl(trait_ident: &Ident) -> TokenStream {
         return quote!();
     }
 
-    let provide = overseer_path("Provide");
-    let wiring = overseer_path("Wiring");
+    let provide = overseerd_path("Provide");
+    let wiring = overseerd_path("Wiring");
 
     quote! {
         impl #provide<dyn #trait_ident> for #wiring {}
@@ -90,12 +90,12 @@ pub fn assert(targets: &[TokenStream]) -> TokenStream {
         return quote!();
     }
 
-    let provide = overseer_path("Provide");
-    let wiring = overseer_path("Wiring");
+    let provide = overseerd_path("Provide");
+    let wiring = overseerd_path("Wiring");
 
     quote! {
         const _: () = {
-            fn __overseer_assert_di()
+            fn __overseerd_assert_di()
             where
                 #wiring: #(#provide<#targets>)+*,
             {

@@ -13,7 +13,7 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf};
 
-use overseer::{
+use overseerd::{
     ClientConnection, ClientError, Daemon, ErrorResponse, Payload, ResponseError, ResponseStream,
     StreamArg, StreamClientTransport, Streaming, handlers, service,
     transport::{PeerInfo, StreamConnection, Transport},
@@ -86,7 +86,7 @@ impl Calc {
     }
 
     #[rpc]
-    async fn sum(mut input: Streaming<u32>) -> overseer::Result<u32> {
+    async fn sum(mut input: Streaming<u32>) -> overseerd::Result<u32> {
         let mut total = 0;
 
         while let Some(item) = input.next().await {
@@ -119,7 +119,7 @@ struct OnceTransport {
 impl Transport for OnceTransport {
     type Connection = ServerConn;
 
-    async fn accept(&mut self) -> overseer::transport::Result<Self::Connection> {
+    async fn accept(&mut self) -> overseerd::transport::Result<Self::Connection> {
         match self.conn.take() {
             Some(conn) => Ok(conn),
 

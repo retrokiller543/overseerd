@@ -1,8 +1,8 @@
 use crate::{ErrorResponse, ResponseError};
-use overseer_transport::{PredefinedCode, StatusCode};
+use overseerd_transport::{PredefinedCode, StatusCode};
 use thiserror::Error;
 
-/// Errors emitted by the Overseer framework during registry validation and operation.
+/// Errors emitted by the Overseerd framework during registry validation and operation.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("duplicate component id: {0}")]
@@ -45,7 +45,7 @@ pub enum Error {
     RouteNotFound(String),
 
     #[error("transport error: {0}")]
-    Transport(#[from] overseer_transport::Error),
+    Transport(#[from] overseerd_transport::Error),
 
     #[error("invalid request payload: {0}")]
     InvalidPayload(String),

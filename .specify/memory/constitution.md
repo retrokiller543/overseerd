@@ -21,7 +21,7 @@ Templates requiring updates:
 - ✅ reviewed AGENTS.md
 Follow-up TODOs: None
 -->
-# Overseer Constitution
+# Overseerd Constitution
 
 ## Core Principles
 
@@ -33,7 +33,7 @@ assumptions, and measurable success criteria. Implementation plans and task list
 MUST trace back to the approved specification. Work that changes behavior without
 updating the relevant specification, plan, or task artifact is non-compliant.
 
-Rationale: Overseer development depends on explicit intent so implementation,
+Rationale: Overseerd development depends on explicit intent so implementation,
 review, and verification can stay aligned across sessions and contributors.
 
 ### II. Minimal Scoped Changes
@@ -78,7 +78,7 @@ data MUST NOT be logged or embedded in generated artifacts. User-facing failures
 MUST provide actionable errors without exposing secrets. Any new persistence,
 network, credential, or permission boundary MUST be reviewed in the plan.
 
-Rationale: Overseer must remain diagnosable and safe when running unattended or
+Rationale: Overseerd must remain diagnosable and safe when running unattended or
 interacting with user data and external systems.
 
 ## Engineering Constraints

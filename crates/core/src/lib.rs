@@ -1,7 +1,7 @@
-//! Core of the Overseer framework: descriptors, dependency-injection container,
+//! Core of the Overseerd framework: descriptors, dependency-injection container,
 //! RPC router, extractors, and the daemon runtime.
 //!
-//! Most users should depend on the `overseer` facade crate rather than this one
+//! Most users should depend on the `overseerd` facade crate rather than this one
 //! directly; the facade re-exports this API alongside the transports and macros.
 //!
 //! The split that runs through the crate: **declarations** live in the
@@ -25,12 +25,12 @@ pub use extract::{
     RequestStream, Responder, ResponseError, ResponseStream, Streaming, dispatch_fallible,
     dispatch_with,
 };
-pub use overseer_macros::{
+pub use overseerd_macros::{
     Component, ConfigProperties, component, daemon, handlers, injectable, rpc, service,
 };
 /// Wire-contract status types and stream item codecs, re-exported from
-/// `overseer-transport` so handler authors import everything from `overseer_core`.
-pub use overseer_transport::{
+/// `overseerd-transport` so handler authors import everything from `overseerd_core`.
+pub use overseerd_transport::{
     Flags, PredefinedCode, StatusCode, StreamDecode, StreamDecodeError, StreamEncode,
     StreamEncodeError,
 };
