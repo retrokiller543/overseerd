@@ -16,7 +16,7 @@ mod service;
 use crate::components::{AppServer, DbConfig};
 use crate::service::Notifications;
 use overseerd::config::Toml;
-use overseerd::{ConfigManager, DirectoriesManager, ServerConfig, daemon};
+use overseerd::{ConfigManager, DirectoriesManager, ServerConfig, TcpTransport, daemon};
 
 #[tokio::main]
 async fn main() -> overseerd::Result<()> {
@@ -52,7 +52,11 @@ async fn main() -> overseerd::Result<()> {
     .build()
     .await?;
 
+    let transport = TcpTransport::bind(server.addr).await?;
+
     println!("{daemon}");
+
+    daemon.serve(transport).await?;
 
     Ok(())
 }

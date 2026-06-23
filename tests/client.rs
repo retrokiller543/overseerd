@@ -15,7 +15,7 @@ use tokio::io::{DuplexStream, ReadHalf, WriteHalf};
 
 use overseerd::{
     ClientConnection, ClientError, Daemon, ErrorResponse, Payload, ResponseError, ResponseStream,
-    StreamArg, StreamClientTransport, Streaming, handlers, service,
+    StreamClientTransport, Streaming, handlers, service,
     transport::{PeerInfo, StreamConnection, Transport},
 };
 

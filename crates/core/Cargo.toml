@@ -20,6 +20,7 @@ directories = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 tokio-util = { workspace = true }
+tower = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }

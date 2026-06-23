@@ -91,8 +91,9 @@ impl RpcCallContext {
         &self.scope
     }
 
-    /// The remote peer for this call.
-    pub(crate) fn peer(&self) -> &overseerd_transport::PeerInfo {
+    /// The remote peer for this call. Public so guards and middleware can make
+    /// admit/reject decisions on the peer without a handler extractor.
+    pub fn peer(&self) -> &overseerd_transport::PeerInfo {
         &self.peer
     }
 

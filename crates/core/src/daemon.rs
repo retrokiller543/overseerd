@@ -6,6 +6,7 @@ use overseerd_transport::{
 };
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::sync::CancellationToken;
+use tower::{Layer, Service, ServiceExt};
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
@@ -19,9 +20,15 @@ use crate::{
     dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp},
     extract::ErrorResponse,
     lifecycle::{ShutdownHandle, ShutdownSignal},
+    middleware::{ErrorHandler, Guard, GuardLayer, RouterService, RpcRequest, RpcService},
     registry::DescriptorRegistry,
     router::RpcRouter,
 };
+
+/// A registered middleware step: wraps the current dispatch service in one more
+/// layer, returning the re-erased service. Collected in registration order and
+/// applied outermost-first when the daemon is built.
+type LayerApplier = Box<dyn FnOnce(RpcService) -> RpcService + Send>;
 
 /// The framework-provided connection-scoped injectable for the remote peer.
 ///
@@ -61,6 +68,8 @@ pub struct DaemonBuilder {
     instances: Vec<BoxedComponent>,
     config_source: Option<ConfigManager>,
     dirs: Option<DirectoriesManager>,
+    layers: Vec<LayerApplier>,
+    error_handler: Option<Arc<dyn ErrorHandler>>,
 }
 
 impl DaemonBuilder {
@@ -71,6 +80,8 @@ impl DaemonBuilder {
             instances: Vec::new(),
             config_source: None,
             dirs: None,
+            layers: Vec::new(),
+            error_handler: None,
         }
     }
 
@@ -180,6 +191,40 @@ impl DaemonBuilder {
         self
     }
 
+    /// Wraps the dispatch path in a [`tower::Layer`], running on every call. Any
+    /// protocol-agnostic tower layer (timeout, rate-limit, …) or a framework layer
+    /// works. The first layer registered is the outermost (it sees the request
+    /// first and the response last).
+    pub fn middleware<L>(mut self, layer: L) -> Self
+    where
+        L: Layer<RpcService> + Send + 'static,
+        L::Service: Service<RpcRequest, Response = RpcOutcome, Error = ErrorResponse>
+            + Clone
+            + Send
+            + 'static,
+        <L::Service as Service<RpcRequest>>::Future: Send + 'static,
+    {
+        self.layers
+            .push(Box::new(move |inner| RpcService::new(layer.layer(inner))));
+
+        self
+    }
+
+    /// Registers a [`Guard`] as a pre-handler admit/reject check, adapted onto the
+    /// middleware stack. Equivalent to a [`middleware`](Self::middleware) of a
+    /// [`GuardLayer`], ordered like any other layer.
+    pub fn guard<G: Guard>(self, guard: G) -> Self {
+        self.middleware(GuardLayer::new(Arc::new(guard)))
+    }
+
+    /// Sets the single global [`ErrorHandler`] applied to every error response
+    /// before it reaches the caller. A later call replaces an earlier one.
+    pub fn error_handler<H: ErrorHandler>(mut self, handler: H) -> Self {
+        self.error_handler = Some(Arc::new(handler));
+
+        self
+    }
+
     /// Validates the registry, resolves all components, partitions them by scope,
     /// and builds a ready-to-run Daemon.
     pub async fn build(self) -> crate::Result<Daemon> {
@@ -252,7 +297,16 @@ impl DaemonBuilder {
             Arc::clone(&scope_registry),
         )
         .await?;
-        let router = RpcRouter::from_registry(&registry);
+        let router = Arc::new(RpcRouter::from_registry(&registry));
+
+        // Fold the registered layers onto the terminal router service. Appliers
+        // are pushed in registration order, so applying them in reverse makes the
+        // first-registered layer the outermost wrapper.
+        let mut service: RpcService = RpcService::new(RouterService::new(Arc::clone(&router)));
+
+        for applier in self.layers.into_iter().rev() {
+            service = applier(service);
+        }
 
         info!(
             daemon = %self.name,
@@ -270,6 +324,8 @@ impl DaemonBuilder {
             request_order: Arc::new(scopes.request_order),
             needs_peer: scopes.needs_peer,
             router,
+            service,
+            error_handler: self.error_handler,
             shutdown,
         })
     }
@@ -424,7 +480,9 @@ pub struct Daemon {
     connection_order: Arc<Vec<ComponentDescriptor>>,
     request_order: Arc<Vec<ComponentDescriptor>>,
     needs_peer: bool,
-    router: RpcRouter,
+    router: Arc<RpcRouter>,
+    service: RpcService,
+    error_handler: Option<Arc<dyn ErrorHandler>>,
     shutdown: ShutdownSignal,
 }
 
@@ -477,7 +535,8 @@ impl Daemon {
 
         info!(daemon = %self.name, transport = transport_name, "serve starting");
 
-        let router = Arc::new(self.router);
+        let service = self.service;
+        let error_handler = self.error_handler;
         let root = self.root;
         let scopes = self.scopes;
         let connection_order = self.connection_order;
@@ -492,15 +551,16 @@ impl Daemon {
                         Ok(conn) => {
                             debug!(peer = ?conn.peer().addr, "connection accepted, spawning task");
 
-                            let router = Arc::clone(&router);
+                            let service = service.clone();
+                            let error_handler = error_handler.clone();
                             let root = Arc::clone(&root);
                             let scopes = Arc::clone(&scopes);
                             let connection_order = Arc::clone(&connection_order);
                             let request_order = Arc::clone(&request_order);
                             tokio::spawn(async move {
                                 serve_connection(
-                                    conn, router, root, scopes, connection_order, request_order,
-                                    needs_peer,
+                                    conn, service, error_handler, root, scopes, connection_order,
+                                    request_order, needs_peer,
                                 )
                                 .await;
                             });
@@ -549,9 +609,11 @@ impl Daemon {
     fields(peer = ?conn.peer().addr),
     name = "connection"
 )]
+#[allow(clippy::too_many_arguments)]
 async fn serve_connection<C: Connection>(
     mut conn: C,
-    router: Arc<RpcRouter>,
+    service: RpcService,
+    error_handler: Option<Arc<dyn ErrorHandler>>,
     root: Arc<ScopeContainer>,
     scopes: Arc<ScopeRegistry>,
     connection_order: Arc<Vec<ComponentDescriptor>>,
@@ -600,7 +662,8 @@ async fn serve_connection<C: Connection>(
         match conn.recv().await {
             Ok(Some((call, responder))) => {
                 let path = call.path;
-                let router = Arc::clone(&router);
+                let service = service.clone();
+                let error_handler = error_handler.clone();
                 let connection_scope = Arc::clone(&connection_scope);
                 let scopes = Arc::clone(&scopes);
                 let request_order = Arc::clone(&request_order);
@@ -618,7 +681,8 @@ async fn serve_connection<C: Connection>(
                     scopes,
                     request_order,
                     responder,
-                    router,
+                    service,
+                    error_handler,
                 ));
             }
 
@@ -656,7 +720,8 @@ async fn drive_call<R>(
     scopes: Arc<ScopeRegistry>,
     request_order: Arc<Vec<ComponentDescriptor>>,
     responder: R,
-    router: Arc<RpcRouter>,
+    mut service: RpcService,
+    error_handler: Option<Arc<dyn ErrorHandler>>,
 ) where
     R: Respond + RespondStream + Send + 'static,
 {
@@ -673,7 +738,7 @@ async fn drive_call<R>(
 
         Err(e) => {
             error!(%path, error = %e, "request scope build failed");
-            let response = ErrorResponse::from(e);
+            let response = apply_error_handler(&error_handler, &path, ErrorResponse::from(e)).await;
             let _ = responder
                 .respond(CallResult::Err {
                     code: response.code,
@@ -686,8 +751,17 @@ async fn drive_call<R>(
     };
 
     let ctx = RpcCallContext::new(payload, peer, request_scope, requests, cancel);
+    let request = RpcRequest::new(path.clone(), ctx);
 
-    match router.dispatch(&path, ctx).await {
+    // Drive the request through the middleware stack; its terminal service is the
+    // router. `ready` honours the tower contract for layers that exert backpressure.
+    let outcome = match service.ready().await {
+        Ok(svc) => svc.call(request).await,
+
+        Err(e) => Err(e),
+    };
+
+    match outcome {
         Ok(RpcOutcome::Unary(RpcResponse { payload })) => {
             debug!(%path, "call succeeded");
 
@@ -713,6 +787,7 @@ async fn drive_call<R>(
 
                     Some(Err(e)) => {
                         warn!(%path, code = ?e.code, "stream handler errored");
+                        let e = apply_error_handler(&error_handler, &path, e).await;
                         let _ = sink.error(e.code, e.body).await;
 
                         return;
@@ -729,6 +804,7 @@ async fn drive_call<R>(
 
         Err(e) => {
             warn!(%path, code = ?e.code, "call returned error");
+            let e = apply_error_handler(&error_handler, &path, e).await;
 
             if let Err(e) = responder
                 .respond(CallResult::Err {
@@ -740,5 +816,19 @@ async fn drive_call<R>(
                 warn!(%path, error = %e, "failed to send error response");
             }
         }
+    }
+}
+
+/// Applies the global [`ErrorHandler`] to an outgoing error, or passes it through
+/// unchanged when none is registered.
+async fn apply_error_handler(
+    handler: &Option<Arc<dyn ErrorHandler>>,
+    path: &str,
+    error: ErrorResponse,
+) -> ErrorResponse {
+    match handler {
+        Some(handler) => handler.handle(path, error).await,
+
+        None => error,
     }
 }

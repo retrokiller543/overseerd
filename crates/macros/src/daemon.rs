@@ -39,6 +39,9 @@ pub struct DaemonInput {
     components: Vec<Expr>,
     configs: Vec<ConfigEntry>,
     managers: HashSet<ManagerInstance>,
+    middleware: Vec<Expr>,
+    guards: Vec<Expr>,
+    error_handler: Option<Expr>,
 }
 
 /// Parses <manager>: <ident>
@@ -121,6 +124,9 @@ impl Parse for DaemonInput {
         let mut components = Vec::new();
         let mut configs = Vec::new();
         let mut managers = HashSet::new();
+        let mut middleware = Vec::new();
+        let mut guards = Vec::new();
+        let mut error_handler = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -132,12 +138,16 @@ impl Parse for DaemonInput {
                 "components" => components = bracketed_list::<Expr>(input)?,
                 "configs" => configs = bracketed_list::<ConfigEntry>(input)?,
                 "managers" => managers = braced::<ManagerInstance>(input)?.collect(),
+                "middleware" => middleware = bracketed_list::<Expr>(input)?,
+                "guards" => guards = bracketed_list::<Expr>(input)?,
+                "error_handler" => error_handler = Some(input.parse()?),
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
                             "unknown `daemon!` key `{other}`, expected `name`, `services`, \
-                             `components`, or `configs`"
+                             `components`, `configs`, `managers`, `middleware`, `guards`, or \
+                             `error_handler`"
                         ),
                     ));
                 }
@@ -156,6 +166,9 @@ impl Parse for DaemonInput {
             components,
             configs,
             managers,
+            middleware,
+            guards,
+            error_handler,
         })
     }
 }
@@ -184,6 +197,9 @@ pub fn expand(input: DaemonInput) -> TokenStream {
         components,
         configs,
         managers,
+        middleware,
+        guards,
+        error_handler,
     } = input;
 
     let config_tys = configs.iter().map(|entry| &entry.ty);
@@ -214,6 +230,8 @@ pub fn expand(input: DaemonInput) -> TokenStream {
         .get(&ManagerInstance::Directories(None))
         .into_iter();
 
+    let error_handler = error_handler.into_iter();
+
     quote! {
         {
             #assertion
@@ -224,6 +242,9 @@ pub fn expand(input: DaemonInput) -> TokenStream {
                 #(.config::<#config_tys>(#config_paths))*
                 #(.config_source(#config_manager))*
                 #(.directories(#directories_manager))*
+                #(.middleware(#middleware))*
+                #(.guard(#guards))*
+                #(.error_handler(#error_handler))*
         }
     }
 }
