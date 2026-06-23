@@ -16,7 +16,7 @@ mod service;
 use crate::components::{AppServer, DbConfig};
 use crate::service::Notifications;
 use overseerd::config::Toml;
-use overseerd::{ConfigManager, DirectoriesManager, daemon};
+use overseerd::{ConfigManager, DirectoriesManager, ServerConfig, daemon};
 
 #[tokio::main]
 async fn main() -> overseerd::Result<()> {
@@ -34,13 +34,15 @@ async fn main() -> overseerd::Result<()> {
 
     // `app.greet` auto-registers via its `#[config(path = "app.greet")]`; the two
     // `DbConfig` bindings share one type at different paths, so they are listed
-    // explicitly. The supplied config source backs both.
+    // explicitly. The framework `ServerConfig` builtin carries no auto-binding, so
+    // it is bound here at `app.server`. The supplied config source backs them all.
     let daemon = daemon! {
         name: "example-daemon",
         services: [Notifications],
         configs: [
             DbConfig => "app.db.reader",
             DbConfig => "app.db.writer",
+            ServerConfig => "app.server",
         ],
         managers: {
             config: config,

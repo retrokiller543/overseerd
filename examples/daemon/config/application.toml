@@ -9,6 +9,7 @@ greeting = "Hello, ${USER:world}"
 [app.server]
 port = "${PORT:9000}"
 addr = "127.0.0.1:${app.server.port}"
+bind = "${BIND:127.0.0.1}"
 
 [app.db.reader]
 url = "postgres://${DB_HOST:localhost}:5432/app"

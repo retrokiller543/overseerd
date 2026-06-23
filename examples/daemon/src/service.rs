@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseerd::{Cfg, Payload, handlers, service};
+use overseerd::{Cfg, Payload, ServerConfig, ShutdownHandle, handlers, service};
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Config, Db, DbConfig};
@@ -45,6 +45,11 @@ pub struct Notifications {
     all: Vec<Arc<dyn Notifier>>,
     /// Providers keyed by qualifier (`"email"`, `"sms"`, `"push"`).
     by_channel: HashMap<String, Arc<dyn Notifier>>,
+    /// The framework [`ServerConfig`] builtin, bound explicitly at `app.server`.
+    #[config("app.server")]
+    server: Cfg<ServerConfig>,
+    /// The framework-seeded shutdown handle, injected by value.
+    shutdown: ShutdownHandle,
 }
 
 #[handlers]
@@ -64,6 +69,9 @@ impl Notifications {
             &req.message,
             &self.reader.url,
             &self.writer.url,
+            &self.shutdown,
+            &self.server.bind,
+            self.server.port,
         );
 
         NotifyResponse {
