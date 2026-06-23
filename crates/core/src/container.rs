@@ -122,6 +122,12 @@ impl ScopeContainer {
     /// (a dependency order precomputed at daemon build). Every scope — the four
     /// built-ins and any future user-defined one — is created through this single
     /// primitive.
+    ///
+    /// An **empty** scope (nothing to construct, nothing to seed) holds no state of
+    /// its own, so resolution through it would only pass through to `parent`. Rather
+    /// than allocate a redundant container, this returns `parent` directly — the
+    /// child's would-be children parent onto it instead. A pure-singleton daemon
+    /// therefore allocates no per-connection or per-call scope at all.
     pub async fn open_child(
         scope: ComponentScope,
         parent: Arc<ScopeContainer>,
@@ -129,6 +135,10 @@ impl ScopeContainer {
         order: &[ComponentDescriptor],
         seeds: Vec<BoxedComponent>,
     ) -> crate::Result<Arc<ScopeContainer>> {
+        if order.is_empty() && seeds.is_empty() {
+            return Ok(parent);
+        }
+
         Self::build(scope, Some(parent), registry, order, seeds).await
     }
 
@@ -351,5 +361,70 @@ fn dep_ready(
     match cardinality {
         Cardinality::One => is_built(dep_type_id),
         Cardinality::Collection | Cardinality::Keyed => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::TypeDescriptor;
+
+    fn registry() -> Arc<ScopeRegistry> {
+        Arc::new(ScopeRegistry::new(HashMap::new(), Vec::new()))
+    }
+
+    async fn root() -> Arc<ScopeContainer> {
+        ScopeContainer::build_root(&[], Vec::new(), registry())
+            .await
+            .expect("root builds")
+    }
+
+    #[tokio::test]
+    async fn empty_child_scope_is_skipped() {
+        // A scope with nothing to construct and nothing to seed reuses its parent
+        // rather than allocating a redundant container.
+        let root = root().await;
+
+        let child = ScopeContainer::open_child(
+            ComponentScope::Request,
+            Arc::clone(&root),
+            registry(),
+            &[],
+            Vec::new(),
+        )
+        .await
+        .expect("open child");
+
+        assert!(
+            Arc::ptr_eq(&root, &child),
+            "empty child scope should reuse the parent container"
+        );
+    }
+
+    #[tokio::test]
+    async fn child_scope_with_a_seed_is_built() {
+        // A non-empty scope (here, one seed) gets its own container.
+        let root = root().await;
+
+        let seed = BoxedComponent {
+            ty: TypeDescriptor::of::<u8>("u8"),
+            value: Box::new(7u8),
+        };
+
+        let child = ScopeContainer::open_child(
+            ComponentScope::Connection,
+            Arc::clone(&root),
+            registry(),
+            &[],
+            vec![seed],
+        )
+        .await
+        .expect("open child");
+
+        assert!(
+            !Arc::ptr_eq(&root, &child),
+            "a seeded scope should allocate its own container"
+        );
+        assert_eq!(child.scope(), ComponentScope::Connection);
     }
 }

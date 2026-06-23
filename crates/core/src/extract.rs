@@ -32,7 +32,7 @@ use std::{
 
 use futures::{Stream, StreamExt};
 use overseer_transport::{
-    PredefinedCode, StatusCode, StreamDecode, StreamEncode, StreamEncodeError,
+    PeerInfo, PredefinedCode, StatusCode, StreamDecode, StreamEncode, StreamEncodeError,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use tokio_stream::wrappers::ReceiverStream;
@@ -65,6 +65,19 @@ where
             postcard::from_bytes(&ctx.payload).map_err(|e| Error::InvalidPayload(e.to_string()))?;
 
         Ok(Payload(value))
+    }
+}
+
+/// The remote peer for this call.
+///
+/// Reads the peer directly off the call context (not the scope chain), so it works
+/// whether or not a connection-scoped container exists. A connection-scoped
+/// *component* may instead depend on `PeerInfo` by field injection.
+pub struct Peer(pub PeerInfo);
+
+impl FromContext for Peer {
+    async fn from_context(ctx: &RpcCallContext) -> crate::Result<Self> {
+        Ok(Peer(ctx.peer().clone()))
     }
 }
 

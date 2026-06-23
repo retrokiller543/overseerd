@@ -19,7 +19,7 @@ pub mod registry;
 pub mod router;
 
 pub use extract::{
-    Cancel, ErrorResponse, FallibleHandler, FromContext, Handler, Inject, Payload,
+    Cancel, ErrorResponse, FallibleHandler, FromContext, Handler, Inject, Payload, Peer,
     RequestStream, Responder, ResponseError, ResponseStream, Streaming, dispatch_fallible,
     dispatch_with,
 };
