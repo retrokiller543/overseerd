@@ -38,6 +38,7 @@ postcard = { version = "1", features = ["use-std"] }
 async-trait = "0.1"
 linkme = "0.3"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi", "json"] }
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
@@ -67,6 +68,9 @@ di-check = ["overseerd-macros/di-check", "overseerd-core/di-check"]
 
 # Enable YAML config sources (`application.yaml`) alongside the default TOML.
 yaml = ["overseerd-core/yaml"]
+
+# Provide the `init_tracing` helper, pulling in `tracing-subscriber`.
+tracing-subscriber = ["overseerd-core/tracing-subscriber"]
 
 [dependencies]
 overseerd-core = { workspace = true }

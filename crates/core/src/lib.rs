@@ -9,6 +9,7 @@
 //! instances** live in the [`ComponentContainer`]. [`Daemon`] ties them together
 //! with a [`router::RpcRouter`] and a transport.
 
+pub mod builtins;
 pub mod config;
 pub mod container;
 pub mod daemon;
@@ -35,6 +36,7 @@ pub use overseerd_transport::{
     StreamEncodeError,
 };
 
+pub use builtins::{LoggingConfig, ServerConfig};
 pub use config::{
     Cfg, ConfigBinding, ConfigBindingDescriptor, ConfigError, ConfigManager, ConfigProperties,
 };

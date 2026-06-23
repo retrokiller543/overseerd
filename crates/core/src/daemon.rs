@@ -38,6 +38,22 @@ static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor {
     default_factory: false,
 };
 
+/// The framework-provided singleton injectable for triggering graceful shutdown.
+///
+/// Seeded into the root scope with the daemon's own [`ShutdownHandle`] (a by-value,
+/// `Arc`-backed clone), so any component or handler can inject it and call
+/// `shutdown()`. The receiving [`ShutdownSignal`] is consumed by `serve`/`run` and
+/// is never exposed through DI.
+static SHUTDOWN_HANDLE_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor {
+    id: crate::builtins::shutdown::SHUTDOWN_HANDLE_ID,
+    name: crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME,
+    ty: TypeDescriptor::of::<ShutdownHandle>(crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME),
+    scope: ComponentScope::Singleton,
+    dependencies: &[],
+    factory: None,
+    default_factory: false,
+};
+
 /// Assembles a Daemon from an explicit set of components and services.
 pub struct DaemonBuilder {
     name: String,
@@ -172,6 +188,11 @@ impl DaemonBuilder {
         let mut registry = self.registry;
         let mut instances = self.instances;
 
+        // Created before the singleton seeding so its handle can be seeded as a
+        // framework injectable. The signal itself (the receiver half) is consumed
+        // by `serve`/`run` and never exposed through DI.
+        let shutdown = ShutdownSignal::new();
+
         // The peer is a framework-provided connection-scoped injectable; declare it
         // so dependencies on it validate and it partitions into the connection scope.
         registry.components.push(PEER_INFO_DESCRIPTOR);
@@ -183,6 +204,10 @@ impl DaemonBuilder {
             .dirs
             .unwrap_or_else(|| DirectoriesManager::for_app(&self.name));
         seed_directories(&dirs, &mut registry, &mut instances);
+
+        // Other framework singletons (the shutdown handle) are seeded alongside the
+        // directories so any component can inject them.
+        seed_builtins(&shutdown, &mut registry, &mut instances);
 
         registry.validate()?;
 
@@ -228,7 +253,6 @@ impl DaemonBuilder {
         )
         .await?;
         let router = RpcRouter::from_registry(&registry);
-        let shutdown = ShutdownSignal::new();
 
         info!(
             daemon = %self.name,
@@ -276,6 +300,20 @@ fn seed_directories(
         dirs; registry; instances;
         Config, Data, Cache, State, Runtime, Tmp
     );
+}
+
+/// Seeds the framework builtin singletons — currently the [`ShutdownHandle`] — as
+/// by-value singleton instances with their factory-less descriptors.
+fn seed_builtins(
+    shutdown: &ShutdownSignal,
+    registry: &mut DescriptorRegistry,
+    instances: &mut Vec<BoxedComponent>,
+) {
+    registry.components.push(SHUTDOWN_HANDLE_DESCRIPTOR);
+    instances.push(BoxedComponent {
+        ty: TypeDescriptor::of::<ShutdownHandle>(<ShutdownHandle as Component>::NAME),
+        value: Box::new(shutdown.handle()),
+    });
 }
 
 /// Seeds one `Dir<K>` as a singleton instance with its factory-less descriptor.
