@@ -4,6 +4,11 @@ use std::collections::HashMap;
 use crate::error::{ConfigError, ConfigErrorKind};
 use crate::value::{ConfigStr, ConfigValue, Placeholder, Segment, lookup_path};
 
+/// Maximum nesting depth for transitive placeholder resolution. Cycle detection
+/// catches references that repeat; this caps a non-repeating *linear* chain so it
+/// fails with a clear error instead of overflowing the stack.
+const MAX_RESOLUTION_DEPTH: usize = 64;
+
 /// Resolves a placeholder key to a raw string from one source (environment, an
 /// in-memory overlay, ...).
 ///
@@ -72,6 +77,13 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
     /// dotted-path / uppercase-heuristic precedence, the inline default, and finally
     /// a missing-value error.
     pub(crate) fn resolve_placeholder(&mut self, p: &Placeholder) -> Result<String, ConfigError> {
+        if self.in_flight.len() >= MAX_RESOLUTION_DEPTH {
+            return Err(ConfigErrorKind::ResolutionDepthExceeded {
+                limit: MAX_RESOLUTION_DEPTH,
+            }
+            .into());
+        }
+
         if self.in_flight.iter().any(|key| key == &p.key) {
             return Err(ConfigErrorKind::ResolutionCycle {
                 chain: self.in_flight.clone(),

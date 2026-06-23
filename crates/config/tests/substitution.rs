@@ -228,6 +228,38 @@ fn resolution_cycle_is_detected() {
 }
 
 #[test]
+fn long_linear_chain_fails_with_depth_error_not_overflow() {
+    #[derive(Debug, Deserialize)]
+    struct Cfg {
+        value: String,
+    }
+
+    // A non-repeating chain k0 -> k1 -> ... -> k199. Cycle detection never fires
+    // (no key repeats), so without a depth cap this would recurse 200 deep. The cap
+    // must turn that into a clean error rather than a stack overflow.
+    let mut entries: Vec<(String, ConfigValue)> = (0..200)
+        .map(|i| (format!("k{i}"), s(&format!("${{k{}}}", i + 1))))
+        .collect();
+    entries.push(("k200".to_string(), s("done")));
+    entries.push(("value".to_string(), s("${k0}")));
+
+    let owned = table(
+        entries
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.clone()))
+            .collect(),
+    );
+    let chain = resolvers(&[]);
+
+    let error = from_value::<Cfg>(&owned, &chain).unwrap_err();
+
+    assert!(matches!(
+        kind(&error),
+        ConfigErrorKind::ResolutionDepthExceeded { .. }
+    ));
+}
+
+#[test]
 fn absolute_path_resolves_against_full_root_from_subtree() {
     // Deserializing the `app.server` subtree must still resolve the absolute path
     // `${app.server.port}` against the whole tree, not the subtree.
