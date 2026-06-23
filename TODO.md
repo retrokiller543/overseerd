@@ -9,12 +9,13 @@
 9. [x] Rename to `overseerd`.
 10. [ ] Add builtin components, config structs and more. Only rule is that it should either be common enough to be builtin, or it should be gated behind a feature flag. Things that can be included here is framework primitives for the internal connection, utilities that are seen commonly used or potentially will be used, etc.
 11. [ ] Middleware, dedicated error handler flow (like GlobalExceptionHandler), guards and more request flow management.
-12. [ ] Native daemon support, i.e. integrate with things like systemd on linux and launchd on macos to send ready signals, handle shutdown signals, and generally be a good citizen on the platform. This would be one of the biggest selling points of this outside of the DI complexity being managed for you.
-13. [ ] Health checks to systemd, launchd, etc that can be based on user defined health checks in the code. (Built directly on native daemon support (7).)
-14. [ ] Multi-frame messages, see large payloads and handle reading it up to a configurable max frame size or infinity (should be configurable by the user). (Codec hardening; transparent to the SDK, so do when large payloads become a real need.)
-15. [ ] Write propper documentation and wiki for the entire project. Both high level but also low level implementation details.
-16. [ ] Add TLS support for transports. (Prerequisite for QUIC (11) and independently valuable; pull earlier if secure deployments are needed sooner.)
-17. [ ] Add quic transport. (Removes the streaming head-of-line blocking; one transport stream per call. Requires TLS (10).)
-18. [ ] Add h3 transport. (Runs on top of QUIC (11).)
-19. [ ] Support custom protocols (what is sent over the wire, hard to do but can be powerful). (Deferred — design the pluggable wire format from real examples like status codes (3) and multi-frame (9) rather than speculatively; riskiest item.)
-20. [ ] Feature gate things like inventory for platforms or devs that dont want DI to happen via auto-discovery, this would disable just that flow and optimize generated code for manual registration instead. (Build-flexibility polish, low urgency.)
+12. [ ] Add default_factory = false support to component and service macros, with this also add a factory = SomeService::init instead that then becomes required for auto registration to work, if the factory attr is not present we will just not register this dep automatically and assume that the user wants to construct it manually.
+13. [ ] Native daemon support, i.e. integrate with things like systemd on linux and launchd on macos to send ready signals, handle shutdown signals, and generally be a good citizen on the platform. This would be one of the biggest selling points of this outside of the DI complexity being managed for you.
+14. [ ] Health checks to systemd, launchd, etc that can be based on user defined health checks in the code. (Built directly on native daemon support (7).)
+15. [ ] Multi-frame messages, see large payloads and handle reading it up to a configurable max frame size or infinity (should be configurable by the user). (Codec hardening; transparent to the SDK, so do when large payloads become a real need.)
+16. [ ] Write propper documentation and wiki for the entire project. Both high level but also low level implementation details.
+17. [ ] Add TLS support for transports. (Prerequisite for QUIC (11) and independently valuable; pull earlier if secure deployments are needed sooner.)
+18. [ ] Add quic transport. (Removes the streaming head-of-line blocking; one transport stream per call. Requires TLS (10).)
+19. [ ] Add h3 transport. (Runs on top of QUIC (11).)
+20. [ ] Support custom protocols (what is sent over the wire, hard to do but can be powerful). (Deferred — design the pluggable wire format from real examples like status codes (3) and multi-frame (9) rather than speculatively; riskiest item.)
+21. [ ] Feature gate things like inventory for platforms or devs that dont want DI to happen via auto-discovery, this would disable just that flow and optimize generated code for manual registration instead. (Build-flexibility polish, low urgency.)
