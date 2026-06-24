@@ -41,6 +41,7 @@ pub fn field_injection_component(
     let linkme_crate = overseerd_path("linkme");
     let result = overseerd_path("Result");
     let type_descriptor = overseerd_path("TypeDescriptor");
+    let descriptor_trait = overseerd_path("Descriptor");
 
     let mut inits = Vec::new();
     let mut dep_descriptors = Vec::new();
@@ -138,9 +139,7 @@ pub fn field_injection_component(
             #(#dep_descriptors),*
         ];
 
-        #[#distributed_slice(#components_slice)]
-        #[linkme(crate = #linkme_crate)]
-        static __OVERSEERD_COMPONENT: #component_descriptor =
+        const __OVERSEERD_COMPONENT_DESCRIPTOR: #component_descriptor =
             #component_descriptor {
                 id: #id,
                 name: #name,
@@ -150,6 +149,14 @@ pub fn field_injection_component(
                 factory: ::core::option::Option::Some(__overseerd_factory),
                 default_factory: #default_factory,
             };
+
+        impl #descriptor_trait<#component_descriptor> for #self_ident {
+            const DESCRIPTOR: #component_descriptor = __OVERSEERD_COMPONENT_DESCRIPTOR;
+        }
+
+        #[#distributed_slice(#components_slice)]
+        #[linkme(crate = #linkme_crate)]
+        static __OVERSEERD_COMPONENT: #component_descriptor = __OVERSEERD_COMPONENT_DESCRIPTOR;
     }
 }
 

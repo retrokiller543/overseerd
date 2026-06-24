@@ -57,17 +57,16 @@ pub use overseerd_core::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cancel, Cardinality, Cfg, Component,
     ComponentConstructionContext, ComponentContainer, ComponentDescriptor, ComponentFactory,
     ComponentScope, ConfigBinding, ConfigBindingDescriptor, ConfigError, ConfigManager,
-    ConfigProperties, Daemon, DaemonBuilder, DependencyDescriptor, DescriptorRegistry, Dir,
-    DirKind, DirectoriesManager, Dynamic, Error, ErrorHandler, ErrorResponse, FallibleHandler,
+    ConfigProperties, Daemon, DaemonBuilder, DependencyDescriptor, Descriptor, DescriptorRegistry,
+    Dir, DirKind, DirectoriesManager, Dynamic, Error, ErrorHandler, ErrorResponse, FallibleHandler,
     Flags, FromContext, Guard, GuardLayer, GuardService, Handler, Inject, Injectable, LoggingConfig,
     OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Payload, Peer, PredefinedCode,
     Provide, ProviderDescriptor, RPC_GROUPS, RequestStream, Responder, ResponseError,
     ResponseStream, Result, RouterService, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler,
     RpcOutcome, RpcRequest, RpcResponse, RpcRouter, RpcService, SERVICES, ScopeContainer,
-    ServerConfig, ServiceComponent, ServiceDescriptor, ShutdownHandle, ShutdownSignal, StatusCode,
-    Streaming,
-    TypeDescriptor, Wired, Wiring, component, daemon, dispatch_fallible, dispatch_with, handlers,
-    injectable, rpc, service, type_id_of,
+    ServerConfig, ServiceComponent, ServiceDescriptor, ServiceRpcs, ShutdownHandle, ShutdownSignal,
+    StatusCode, Streaming, TypeDescriptor, Wired, Wiring, component, daemon, dispatch_fallible,
+    dispatch_with, handlers, injectable, rpc, service, type_id_of,
 };
 
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`

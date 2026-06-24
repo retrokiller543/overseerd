@@ -14,8 +14,8 @@ use crate::{
     config::{ConfigBinding, ConfigManager, ConfigProperties},
     container::{ScopeContainer, ScopeRegistry, topological_sort},
     descriptors::{
-        BoxedComponent, Component, ComponentDescriptor, ComponentScope, RpcCallContext, RpcGroup,
-        RpcOutcome, RpcResponse, ServiceDescriptor, TypeDescriptor,
+        BoxedComponent, Component, ComponentDescriptor, ComponentScope, Descriptor, RpcCallContext,
+        RpcGroup, RpcOutcome, RpcResponse, ServiceDescriptor, ServiceRpcs, TypeDescriptor,
     },
     dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp},
     extract::ErrorResponse,
@@ -168,24 +168,75 @@ impl DaemonBuilder {
         self.with_component(value)
     }
 
-    /// Manually register a component descriptor for construction during build.
-    /// Prefer [`with_component`](Self::with_component) for instances, or the
-    /// [`component`](overseerd_macros::component) macro to generate the descriptor.
-    pub fn component(mut self, descriptor: &'static ComponentDescriptor) -> Self {
+    /// Registers component type `T` for construction from its statically-known
+    /// descriptor (its `#[component]`/`#[service]` factory), without auto-discovery.
+    /// For a type built outside the DI scope, supply the value via
+    /// [`with_component`](Self::with_component) instead.
+    pub fn component<T>(mut self) -> Self
+    where
+        T: Descriptor<ComponentDescriptor>,
+    {
+        self.registry
+            .components
+            .push(<T as Descriptor<ComponentDescriptor>>::DESCRIPTOR);
+
+        self
+    }
+
+    /// Registers service type `T` by type: its identity header, its construction
+    /// factory, and every RPC group contributed to it across `#[handlers]` blocks.
+    /// The complete by-type counterpart to [`auto_discover`](Self::auto_discover) —
+    /// do not also auto-discover the same service or its header registers twice.
+    pub fn service<T>(mut self) -> Self
+    where
+        T: Descriptor<ServiceDescriptor> + Descriptor<ComponentDescriptor> + ServiceRpcs,
+    {
+        self.registry
+            .services
+            .push(<T as Descriptor<ServiceDescriptor>>::DESCRIPTOR);
+        self.registry
+            .components
+            .push(<T as Descriptor<ComponentDescriptor>>::DESCRIPTOR);
+
+        for group in <T as ServiceRpcs>::rpc_groups() {
+            self.registry.rpc_groups.push(*group);
+        }
+
+        self
+    }
+
+    /// Registers every RPC group owned by service type `T` (across all its
+    /// `#[handlers]` blocks). Pair with [`with_service`](Self::with_service) when the
+    /// service instance is supplied by hand.
+    pub fn rpcs<T>(mut self) -> Self
+    where
+        T: ServiceRpcs,
+    {
+        for group in <T as ServiceRpcs>::rpc_groups() {
+            self.registry.rpc_groups.push(*group);
+        }
+
+        self
+    }
+
+    /// Manually register a raw component descriptor for construction during build.
+    /// Prefer [`component`](Self::component) (by type), [`with_component`](Self::with_component)
+    /// for instances, or the [`component`](overseerd_macros::component) macro.
+    pub fn component_descriptor(mut self, descriptor: &'static ComponentDescriptor) -> Self {
         self.registry.components.push(*descriptor);
 
         self
     }
 
-    /// Manually register a service header (prefer the [`service`](overseerd_macros::service) macro).
-    pub fn service(mut self, descriptor: &'static ServiceDescriptor) -> Self {
+    /// Manually register a raw service header (prefer [`service`](Self::service) by type).
+    pub fn service_descriptor(mut self, descriptor: &'static ServiceDescriptor) -> Self {
         self.registry.services.push(*descriptor);
 
         self
     }
 
-    /// Registers a group of RPCs contributed to the service of a matching type.
-    pub fn rpcs(mut self, group: &'static RpcGroup) -> Self {
+    /// Manually register a single raw [`RpcGroup`] (prefer [`rpcs`](Self::rpcs) by type).
+    pub fn rpc_group(mut self, group: &'static RpcGroup) -> Self {
         self.registry.rpc_groups.push(*group);
 
         self

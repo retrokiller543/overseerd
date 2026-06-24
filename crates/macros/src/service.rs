@@ -53,6 +53,7 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         self_ident.to_string().to_uppercase()
     );
     let component = overseerd_path("Component");
+    let descriptor_trait = overseerd_path("Descriptor");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
     let service_component = overseerd_path("ServiceComponent");
@@ -80,15 +81,21 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         const _: () = {
             #default_component
 
-            #[#distributed_slice(#services_slice)]
-            #[linkme(crate = #linkme_crate)]
-            static #service_static: #service_descriptor =
+            const __OVERSEERD_SERVICE_DESCRIPTOR: #service_descriptor =
                 #service_descriptor {
                     id: #id,
                     name: #name,
                     ty: #type_descriptor::of::<#self_ident>(#self_name),
                     version: #version,
                 };
+
+            impl #descriptor_trait<#service_descriptor> for #self_ident {
+                const DESCRIPTOR: #service_descriptor = __OVERSEERD_SERVICE_DESCRIPTOR;
+            }
+
+            #[#distributed_slice(#services_slice)]
+            #[linkme(crate = #linkme_crate)]
+            static #service_static: #service_descriptor = __OVERSEERD_SERVICE_DESCRIPTOR;
 
             #providers
         };
