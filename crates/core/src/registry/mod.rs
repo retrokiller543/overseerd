@@ -3,7 +3,7 @@ use crate::{
     config::ConfigBinding,
     descriptors::{
         COMPONENTS, CONFIG_BINDINGS, Cardinality, ComponentDescriptor, ComponentScope, PROVIDERS,
-        ProviderDescriptor, RPC_GROUPS, RpcGroup, SERVICES, ServiceDescriptor,
+        ProviderDescriptor, SERVICES, ServiceDescriptor,
     },
     error::Error,
 };
@@ -23,14 +23,13 @@ use std::{collections::HashSet, fmt};
 pub struct DescriptorRegistry {
     pub components: Vec<ComponentDescriptor>,
     pub services: Vec<ServiceDescriptor>,
-    pub rpc_groups: Vec<RpcGroup>,
     pub providers: Vec<ProviderDescriptor>,
     /// Config bindings (a config type bound to a property path). Populated from the
     /// auto-discovered [`CONFIG_BINDINGS`] slice and from explicit builder bindings.
     pub config_bindings: Vec<ConfigBinding>,
 }
 
-/// A service header with its RPCs assembled from every matching `RpcGroup`.
+/// A service header with its RPCs, drawn from the service's own per-service slice.
 pub struct ResolvedService {
     pub descriptor: ServiceDescriptor,
     pub rpcs: Vec<&'static RpcDescriptor>,
@@ -42,22 +41,23 @@ impl DescriptorRegistry {
         Self {
             components: COMPONENTS.iter().copied().collect(),
             services: SERVICES.iter().copied().collect(),
-            rpc_groups: RPC_GROUPS.iter().copied().collect(),
             providers: PROVIDERS.iter().copied().collect(),
             config_bindings: CONFIG_BINDINGS.iter().map(|d| d.to_binding()).collect(),
         }
     }
 
-    /// Assembles each service header with the RPCs contributed to its type.
+    /// Assembles each service header with the RPCs it owns. Services are deduped by
+    /// type, so registering a service both manually and via auto-discovery yields a
+    /// single resolved service (its RPCs come from its own slice, never doubled).
     pub fn resolved_services(&self) -> Vec<ResolvedService> {
+        let mut seen = HashSet::new();
+
         self.services
             .iter()
+            .filter(|descriptor| seen.insert((descriptor.ty.type_id)()))
             .map(|descriptor| {
-                let service_ty = (descriptor.ty.type_id)();
-                let rpcs = self
-                    .rpc_groups
+                let rpcs = (descriptor.rpcs)()
                     .iter()
-                    .filter(|group| (group.service.type_id)() == service_ty)
                     .flat_map(|group| group.rpcs.iter())
                     .collect();
 
@@ -106,7 +106,6 @@ impl DescriptorRegistry {
         let components = self.resolved_components()?;
 
         self.validate_component_ids(&components)?;
-        self.validate_rpc_groups()?;
         self.validate_services()?;
         self.validate_dependencies(&components)?;
         self.validate_scopes(&components)?;
@@ -227,19 +226,6 @@ impl DescriptorRegistry {
         for c in components {
             if !seen.insert(c.id) {
                 return Err(Error::DuplicateComponentId(c.id.to_string()));
-            }
-        }
-
-        Ok(())
-    }
-
-    fn validate_rpc_groups(&self) -> crate::Result<()> {
-        let service_types: HashSet<TypeId> =
-            self.services.iter().map(|s| (s.ty.type_id)()).collect();
-
-        for group in &self.rpc_groups {
-            if !service_types.contains(&(group.service.type_id)()) {
-                return Err(Error::OrphanRpcs((group.service.type_name)().to_string()));
             }
         }
 
@@ -542,16 +528,21 @@ mod tests {
         },
     ];
 
+    static BACKUP_GROUPS: [RpcGroup; 1] = [RpcGroup {
+        service: TypeDescriptor::of::<i32>("BackupService"),
+        rpcs: &BACKUP_SERVICE_RPCS,
+    }];
+
+    fn backup_rpcs() -> &'static [RpcGroup] {
+        &BACKUP_GROUPS
+    }
+
     static BACKUP_SERVICE: ServiceDescriptor = ServiceDescriptor {
         id: "backup_service",
         name: "BackupService",
         ty: TypeDescriptor::of::<i32>("BackupService"),
         version: Some("1.0"),
-    };
-
-    static BACKUP_RPCS_GROUP: RpcGroup = RpcGroup {
-        service: TypeDescriptor::of::<i32>("BackupService"),
-        rpcs: &BACKUP_SERVICE_RPCS,
+        rpcs: backup_rpcs,
     };
 
     // i8 = stand-in type for a manually-registered service.
@@ -563,12 +554,24 @@ mod tests {
         handler: fake_handler,
     }];
 
+    static MANUAL_GROUPS: [RpcGroup; 1] = [RpcGroup {
+        service: TypeDescriptor::of::<i8>("Manual"),
+        rpcs: &MANUAL_RPCS,
+    }];
+
+    fn manual_rpcs() -> &'static [RpcGroup] {
+        &MANUAL_GROUPS
+    }
+
+    fn no_rpcs() -> &'static [RpcGroup] {
+        &[]
+    }
+
     #[test]
     fn describe_groups_rpcs_under_service() {
         let registry = DescriptorRegistry {
             components: vec![BACKUP_REPO, PG_POOL],
             services: vec![BACKUP_SERVICE],
-            rpc_groups: vec![BACKUP_RPCS_GROUP],
             ..Default::default()
         };
         let description = registry.to_string();
@@ -607,7 +610,6 @@ mod tests {
         let registry = DescriptorRegistry {
             components: vec![BACKUP_REPO, PG_POOL],
             services: vec![BACKUP_SERVICE],
-            rpc_groups: vec![BACKUP_RPCS_GROUP],
             ..Default::default()
         };
 
@@ -672,6 +674,7 @@ mod tests {
             name: "Manual",
             ty: TypeDescriptor::of::<i8>("Manual"),
             version: Some("1.0"),
+            rpcs: manual_rpcs,
         };
         let component = ComponentDescriptor {
             id: "manual",
@@ -682,15 +685,10 @@ mod tests {
             factory: None,
             default_factory: false,
         };
-        let group = RpcGroup {
-            service: TypeDescriptor::of::<i8>("Manual"),
-            rpcs: &MANUAL_RPCS,
-        };
 
         let registry = DescriptorRegistry {
             components: vec![component],
             services: vec![service],
-            rpc_groups: vec![group],
             ..Default::default()
         };
 
@@ -705,6 +703,7 @@ mod tests {
             name: "EmptyService",
             ty: TypeDescriptor::of::<i64>("EmptyService"),
             version: None,
+            rpcs: no_rpcs,
         };
 
         let registry = DescriptorRegistry {

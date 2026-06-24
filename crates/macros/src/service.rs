@@ -2,7 +2,11 @@
 //!
 //! Declares a service's identity, tied to the struct's type, and registers it
 //! into the `SERVICES` slice. Implements `Component` + `ServiceComponent`
-//! (carrying the version on the type). It also emits a **default** field-injection
+//! (carrying the version on the type). It also declares the service's own
+//! `{Service}Rpcs` distributed slice — the slice each `#[handlers]` block appends
+//! its `RpcGroup` to — and an `impl ServiceRpcs` returning it, then points the
+//! `ServiceDescriptor.rpcs` fn pointer at that impl so the service owns its RPC
+//! surface. It also emits a **default** field-injection
 //! singleton factory — each field is injected unless marked `#[default]` (local
 //! state built via `Default`) — overridable by an `#[init]` in a `#[handlers]`
 //! impl. A field whose type is not an `Injectable` handle and is not `#[default]`
@@ -52,12 +56,18 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         "__OVERSEERD_SERVICE_{}",
         self_ident.to_string().to_uppercase()
     );
+    let rpcs_slice = args
+        .rpc_slice
+        .clone()
+        .unwrap_or_else(|| format_ident!("{}Rpcs", self_ident));
     let component = overseerd_path("Component");
     let descriptor_trait = overseerd_path("Descriptor");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
+    let rpc_group = overseerd_path("RpcGroup");
     let service_component = overseerd_path("ServiceComponent");
     let service_descriptor = overseerd_path("ServiceDescriptor");
+    let service_rpcs = overseerd_path("ServiceRpcs");
     let services_slice = overseerd_path("SERVICES");
     let type_descriptor = overseerd_path("TypeDescriptor");
 
@@ -78,6 +88,17 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
             const VERSION: ::core::option::Option<&'static str> = #version;
         }
 
+        #[#distributed_slice]
+        #[linkme(crate = #linkme_crate)]
+        #[allow(non_upper_case_globals)]
+        pub static #rpcs_slice: [#rpc_group];
+
+        impl #service_rpcs for #self_ident {
+            fn rpc_groups() -> &'static [#rpc_group] {
+                &#rpcs_slice
+            }
+        }
+
         const _: () = {
             #default_component
 
@@ -87,6 +108,7 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
                     name: #name,
                     ty: #type_descriptor::of::<#self_ident>(#self_name),
                     version: #version,
+                    rpcs: <#self_ident as #service_rpcs>::rpc_groups,
                 };
 
             impl #descriptor_trait<#service_descriptor> for #self_ident {

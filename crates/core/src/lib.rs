@@ -47,7 +47,7 @@ pub use descriptors::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cardinality, Component,
     ComponentConstructionContext, ComponentDescriptor, ComponentFactory, ComponentScope,
     DependencyDescriptor, Descriptor, Dynamic, Injectable, OperationKind, PROVIDERS,
-    ParameterDescriptor, ParameterKind, Provide, ProviderDescriptor, RPC_GROUPS, RpcCallContext,
+    ParameterDescriptor, ParameterKind, Provide, ProviderDescriptor, RpcCallContext,
     RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcResponse, SERVICES, ServiceComponent,
     ServiceDescriptor, ServiceRpcs, TypeDescriptor, Wired, Wiring, type_id_of,
 };

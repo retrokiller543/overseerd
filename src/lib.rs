@@ -61,7 +61,7 @@ pub use overseerd_core::{
     Dir, DirKind, DirectoriesManager, Dynamic, Error, ErrorHandler, ErrorResponse, FallibleHandler,
     Flags, FromContext, Guard, GuardLayer, GuardService, Handler, Inject, Injectable, LoggingConfig,
     OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Payload, Peer, PredefinedCode,
-    Provide, ProviderDescriptor, RPC_GROUPS, RequestStream, Responder, ResponseError,
+    Provide, ProviderDescriptor, RequestStream, Responder, ResponseError,
     ResponseStream, Result, RouterService, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler,
     RpcOutcome, RpcRequest, RpcResponse, RpcRouter, RpcService, SERVICES, ScopeContainer,
     ServerConfig, ServiceComponent, ServiceDescriptor, ServiceRpcs, ShutdownHandle, ShutdownSignal,

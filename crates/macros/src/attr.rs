@@ -39,6 +39,11 @@ pub struct ServiceArgs {
     /// `Transient`) parsed from `scope = ..`, ready to splice after
     /// `ComponentScope::`. `None` means the default (singleton).
     pub scope: Option<Ident>,
+    /// Overrides the generated per-service RPC slice name (`rpc_slice = Ident`).
+    /// `None` defaults to `{Service}Rpcs`. An escape hatch when that name collides
+    /// with something already in scope; a `#[handlers]` block for the service must
+    /// then pass the same `rpc_slice = ..`.
+    pub rpc_slice: Option<Ident>,
 }
 
 impl Parse for ServiceArgs {
@@ -55,6 +60,10 @@ impl Parse for ServiceArgs {
                 "qualifier" => args.qualifier = Some(parse_value(input)?),
                 "primary" => args.primary = true,
                 "by_value" => args.by_value = true,
+                "rpc_slice" => {
+                    input.parse::<Token![=]>()?;
+                    args.rpc_slice = Some(input.parse()?);
+                }
                 "scope" => {
                     input.parse::<Token![=]>()?;
                     let value: Ident = input.parse()?;
@@ -95,7 +104,8 @@ impl Parse for ServiceArgs {
                         key.span(),
                         format!(
                             "unknown argument `{other}`, expected `id`, `name`, `version`, \
-                             `provide`, `qualifier`, `primary`, `by_value`, or `scope`"
+                             `provide`, `qualifier`, `primary`, `by_value`, `scope`, or \
+                             `rpc_slice`"
                         ),
                     ));
                 }
@@ -142,27 +152,37 @@ impl Parse for ProvidedTrait {
 /// plus its impl (mockable, `dyn`-compatible); when absent, as a plain inherent impl.
 pub struct HandlersArgs {
     pub client_trait: Option<Ident>,
+    /// Overrides the per-service RPC slice this block appends to (`rpc_slice = Ident`).
+    /// Must match the `rpc_slice` passed to the owning `#[service]`. `None` defaults
+    /// to `{Service}Rpcs`.
+    pub rpc_slice: Option<Ident>,
 }
 
 impl Parse for HandlersArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut client_trait = None;
+        let mut rpc_slice = None;
 
         let args = Punctuated::<HandlersArg, Token![,]>::parse_terminated(input)?;
 
         for arg in args {
             match arg {
                 HandlersArg::ClientTrait(ident) => client_trait = Some(ident),
+                HandlersArg::RpcSlice(ident) => rpc_slice = Some(ident),
             }
         }
 
-        Ok(HandlersArgs { client_trait })
+        Ok(HandlersArgs {
+            client_trait,
+            rpc_slice,
+        })
     }
 }
 
 /// A single recognized `#[handlers(...)]` argument.
 enum HandlersArg {
     ClientTrait(Ident),
+    RpcSlice(Ident),
 }
 
 impl Parse for HandlersArg {
@@ -176,9 +196,16 @@ impl Parse for HandlersArg {
 
                 Ok(HandlersArg::ClientTrait(value))
             }
+            "rpc_slice" => {
+                let value: Ident = input.parse()?;
+
+                Ok(HandlersArg::RpcSlice(value))
+            }
             other => Err(syn::Error::new(
                 key.span(),
-                format!("unknown handlers argument `{other}`, expected `client_trait`"),
+                format!(
+                    "unknown handlers argument `{other}`, expected `client_trait` or `rpc_slice`"
+                ),
             )),
         }
     }

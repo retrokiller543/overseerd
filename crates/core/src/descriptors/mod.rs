@@ -26,54 +26,40 @@ pub use types::{TypeDescriptor, type_id_of};
 ///
 /// RPC groups are deliberately *not* expressed this way: a single service may span
 /// several `#[handlers]` blocks, so the relationship is one-to-many. Reach them via
-/// [`ServiceRpcs::rpc_groups`] instead, which selects them from [`RPC_GROUPS`] by
-/// owning type.
+/// [`ServiceRpcs::rpc_groups`] instead.
 pub trait Descriptor<D> {
     const DESCRIPTOR: D;
 }
 
-/// A service type's runtime access to the [`RpcGroup`]s contributed to it.
+/// A service type's own RPC groups.
 ///
-/// Blanket-implemented for every type carrying a [`Descriptor<ServiceDescriptor>`],
-/// so any `#[service]` gets it for free. Because RPC groups are one-to-many per
-/// service (one per `#[handlers]` block, possibly across modules) they cannot be a
-/// single `Descriptor` const; instead [`rpc_groups`](Self::rpc_groups) selects every
-/// group whose owning service is `Self` from the link-time [`RPC_GROUPS`] set —
-/// `group.service` already records the owning type, so multiple blocks compose with
-/// no macro coordination.
-pub trait ServiceRpcs: Descriptor<ServiceDescriptor> + 'static {
-    /// The RPC groups owned by this service type, across all of its `#[handlers]`
-    /// blocks.
-    fn rpc_groups() -> impl Iterator<Item = &'static RpcGroup> {
-        let ty = type_id_of::<Self>();
-
-        RPC_GROUPS
-            .iter()
-            .filter(move |group| (group.service.type_id)() == ty)
-    }
+/// Implemented for each `#[service]` by the macro to return that service's
+/// `{Service}Rpcs` distributed slice — the slice every one of its `#[handlers]`
+/// blocks appends to, so multiple blocks compose into the single returned slice.
+/// The owning [`ServiceDescriptor`] stores this method as a fn pointer
+/// (`rpcs: <T as ServiceRpcs>::rpc_groups`), so the type-erased registry can reach a
+/// service's groups without holding its type.
+pub trait ServiceRpcs {
+    /// Every RPC group contributed to this service across its `#[handlers]` blocks.
+    fn rpc_groups() -> &'static [RpcGroup];
 }
-
-impl<T: Descriptor<ServiceDescriptor> + 'static> ServiceRpcs for T {}
 
 /// Link-time descriptor registries, one homogeneous slice per descriptor kind.
 ///
 /// Proc macros register one element each via `#[linkme::distributed_slice(..)]`:
 /// a `#[component]`/`#[service]` factory (and an `#[init]` constructor) into
-/// [`COMPONENTS`], a `#[service]` header into [`SERVICES`], and each `#[handlers]`
-/// block's methods into [`RPC_GROUPS`] (so one service may span several impls).
+/// [`COMPONENTS`] and a `#[service]` header into [`SERVICES`].
 /// [`DescriptorRegistry::collect`] reads the assembled slices. Unlike a single
 /// tagged-enum stream, each slice is homogeneous and assembled at link time with
-/// no per-startup registration walk.
+/// no per-startup registration walk. RPC groups are *not* collected globally: each
+/// service owns a `{Service}Rpcs` slice its `#[handlers]` blocks append to, reached
+/// through [`ServiceDescriptor::rpcs`].
 #[linkme::distributed_slice]
 pub static COMPONENTS: [ComponentDescriptor];
 
 /// Link-time registry of every discovered [`ServiceDescriptor`]. See [`COMPONENTS`].
 #[linkme::distributed_slice]
 pub static SERVICES: [ServiceDescriptor];
-
-/// Link-time registry of every discovered [`RpcGroup`]. See [`COMPONENTS`].
-#[linkme::distributed_slice]
-pub static RPC_GROUPS: [RpcGroup];
 
 /// Link-time registry of every discovered [`ProviderDescriptor`] (a component
 /// declaring `provide = dyn Trait`). See [`COMPONENTS`].

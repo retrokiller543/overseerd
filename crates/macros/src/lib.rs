@@ -216,6 +216,9 @@ pub fn derive_config_properties(item: TokenStream) -> TokenStream {
 /// - `name` — display name; also the RPC path prefix (`Name.method`). Defaults to
 ///   the type name.
 /// - `version` — e.g. `"0.1"`. Defaults to none.
+/// - `rpc_slice` — overrides the generated per-service RPC slice name (default
+///   `{Service}Rpcs`); an escape hatch for a name collision. Each `#[handlers]`
+///   block for the service must then pass the same `rpc_slice = ..`.
 ///
 /// ```ignore
 /// #[service(id = "greeter", version = "0.1")]
@@ -226,7 +229,12 @@ pub fn derive_config_properties(item: TokenStream) -> TokenStream {
 ///
 /// - `impl Component for T` and `impl ServiceComponent for T` (the latter carries
 ///   `VERSION`, enabling `DaemonBuilder::with_service`);
-/// - a `ServiceDescriptor` header registered into the `SERVICES` slice;
+/// - a public `{Service}Rpcs` distributed slice (e.g. `GreeterRpcs`) that the
+///   service's `#[handlers]` blocks append their RPC groups to, plus an
+///   `impl ServiceRpcs for T` returning it;
+/// - a `ServiceDescriptor` header registered into the `SERVICES` slice, whose
+///   `rpcs` field points at `ServiceRpcs::rpc_groups` — so the service *owns* its
+///   RPC surface and registering the service registers its methods;
 /// - a default field-injection factory (`default_factory: true`), overridable by
 ///   an `#[init]` constructor.
 ///
@@ -268,11 +276,13 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Contributes the `#[rpc]` methods (and an optional `#[init]` constructor) of an
 /// inherent `impl` block to the service of `Self`.
 ///
-/// Several `#[handlers] impl T` blocks may target the same service — their RPCs
-/// are merged (matched by type), so you can split a service across modules. The
-/// owning `#[service]` declaration is what gives these RPCs their identity; a
-/// `#[handlers]` impl for a type that has no `#[service]` is a registration-time
-/// error.
+/// Several `#[handlers] impl T` blocks may target the same service — each appends
+/// its RPC group to the service's `{Service}Rpcs` slice (declared by `#[service]`),
+/// so the blocks merge with no coordination. A block in the **same module** as the
+/// `#[service]` just works; a block in a **different module** must bring the slice
+/// into scope first: `use path::{Service}Rpcs;`. A `#[handlers]` impl for a type
+/// with no `#[service]` fails to compile — the slice it would append to does not
+/// exist.
 ///
 /// # `#[rpc]` methods
 ///
@@ -301,9 +311,16 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// # What it generates
 ///
-/// - one erased handler wrapper per `#[rpc]` method, plus an `RpcGroup` registered
-///   into the `RPC_GROUPS` slice;
+/// - one erased handler wrapper per `#[rpc]` method, plus an `RpcGroup` appended to
+///   the service's `{Service}Rpcs` slice;
 /// - if an `#[init]` is present, a component factory (and the `init` marker).
+///
+/// # Arguments
+///
+/// All optional: `client_trait = Name` (emit the generated client as a trait), and
+/// `rpc_slice = Ident` — the per-service slice to append to, matching the owning
+/// `#[service]`'s `rpc_slice` (only needed if the default `{Service}Rpcs` name was
+/// overridden there, or this block lives in another module and you renamed it).
 ///
 /// # Example
 ///

@@ -1,7 +1,10 @@
 //! `#[handlers]` expansion (impl).
 //!
-//! Contributes the impl's `#[rpc]` methods to the service of `Self` (as an
-//! `RpcGroup` keyed by type, so multiple impls merge into one service), and
+//! Contributes the impl's `#[rpc]` methods to the service of `Self` as an
+//! `RpcGroup` appended to the service's `{Service}Rpcs` slice (the one `#[service]`
+//! declares), so multiple impl blocks merge into one service with no coordination.
+//! A block in another module than its `#[service]` brings the slice into scope with
+//! `use path::{Service}Rpcs;` (or both pass a matching `rpc_slice = ..`). It also
 //! turns an optional `#[init]` constructor into an explicit singleton factory.
 //!
 //! The `#[init]` constructor (any name) gets a fixed-name `init` associated fn
@@ -74,15 +77,18 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
         let linkme_crate = overseerd_path("linkme");
         let rpc_descriptor = overseerd_path("RpcDescriptor");
         let rpc_group = overseerd_path("RpcGroup");
-        let rpc_groups_slice = overseerd_path("RPC_GROUPS");
+        let rpcs_slice = args
+            .rpc_slice
+            .clone()
+            .unwrap_or_else(|| format_ident!("{}Rpcs", self_ident));
         let type_descriptor = overseerd_path("TypeDescriptor");
 
         quote! {
             static __OVERSEERD_RPCS: [#rpc_descriptor; #count] = [
                 #(#descriptors),*
             ];
-
-            #[#distributed_slice(#rpc_groups_slice)]
+            
+            #[#distributed_slice(#rpcs_slice)]
             #[linkme(crate = #linkme_crate)]
             static __OVERSEERD_RPC_GROUP: #rpc_group = #rpc_group {
                 service: #type_descriptor::of::<#self_ty>(#self_name),

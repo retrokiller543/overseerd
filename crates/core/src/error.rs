@@ -11,9 +11,6 @@ pub enum Error {
     #[error("multiple explicit constructors registered for component type: {0}")]
     DuplicateComponentType(String),
 
-    #[error("#[handlers] impl for type '{0}' has no matching #[service] declaration")]
-    OrphanRpcs(String),
-
     #[error("duplicate service id: {0}")]
     DuplicateServiceId(String),
 

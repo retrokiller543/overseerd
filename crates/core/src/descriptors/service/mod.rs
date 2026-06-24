@@ -5,32 +5,26 @@ pub use rpc::{
     RpcOutcome, RpcResponse,
 };
 
-use crate::ServiceComponent;
 use crate::descriptors::types::TypeDescriptor;
 
-/// Identity of a service, tied to its implementing type.
+/// Identity of a service, tied to its implementing type, carrying a handle to its
+/// own RPC surface.
 ///
-/// RPCs are contributed separately via [`RpcGroup`]s (one per `#[handlers]`
-/// impl block) and assembled against this descriptor by matching `ty`, so a
-/// single service may span several impl blocks. `Copy` so the registry can own
-/// a flat `Vec`, mixing link-time-collected and runtime-registered headers.
+/// `rpcs` points at [`ServiceRpcs::rpc_groups`](crate::descriptors::ServiceRpcs::rpc_groups)
+/// for the service's type — which returns the `{Service}Rpcs` slice every one of its
+/// `#[handlers]` blocks appends to. The service thus *owns* its methods: registering
+/// it registers its RPCs, with no separate global RPC registry to double-count. It is
+/// a fn pointer (not a `&'static [RpcGroup]`) because the macro-emitted descriptor is
+/// a `const`, which cannot reference the `static` slice directly. `Copy` so the
+/// registry can own a flat `Vec`, mixing link-time-collected and runtime-registered
+/// headers.
 #[derive(Clone, Copy, Debug)]
 pub struct ServiceDescriptor {
     pub id: &'static str,
     pub name: &'static str,
     pub ty: TypeDescriptor,
     pub version: Option<&'static str>,
-}
-
-impl ServiceDescriptor {
-    pub const fn of<T: ServiceComponent>() -> Self {
-        Self {
-            id: T::ID,
-            name: T::NAME,
-            ty: TypeDescriptor::of::<T>(T::NAME),
-            version: T::VERSION,
-        }
-    }
+    pub rpcs: fn() -> &'static [RpcGroup],
 }
 
 /// A set of RPCs contributed to the service of type `service` by one impl block.

@@ -15,7 +15,7 @@ use crate::{
     container::{ScopeContainer, ScopeRegistry, topological_sort},
     descriptors::{
         BoxedComponent, Component, ComponentDescriptor, ComponentScope, Descriptor, RpcCallContext,
-        RpcGroup, RpcOutcome, RpcResponse, ServiceDescriptor, ServiceRpcs, TypeDescriptor,
+        RpcOutcome, RpcResponse, ServiceDescriptor, TypeDescriptor,
     },
     dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp},
     extract::ErrorResponse,
@@ -146,7 +146,6 @@ impl DaemonBuilder {
 
         self.registry.components.extend(discovered.components);
         self.registry.services.extend(discovered.services);
-        self.registry.rpc_groups.extend(discovered.rpc_groups);
         self.registry.providers.extend(discovered.providers);
         self.registry
             .config_bindings
@@ -155,16 +154,22 @@ impl DaemonBuilder {
         self
     }
 
-    /// Registers a pre-built service singleton and its header.
+    /// Registers a pre-built service singleton: its identity header (which carries
+    /// the service's own RPC surface) and the instance itself (like
+    /// [`with_component`](Self::with_component)).
     ///
-    /// Synthesizes the [`ServiceDescriptor`] from the type's `ServiceComponent`
-    /// impl (id, name, version) and registers the instance like
-    /// [`with_component`](Self::with_component). Pair with `#[handlers]` +
-    /// [`auto_discover`](Self::auto_discover) or explicit [`rpcs`](Self::rpcs)
-    /// to supply the methods; do not also auto-discover the same service or its
-    /// header is registered twice.
-    pub fn with_service<T: ServiceComponent>(mut self, value: T) -> Self {
-        self.registry.services.push(ServiceDescriptor::of::<T>());
+    /// Reads the header straight from the type via [`Descriptor`], so it brings the
+    /// service's RPCs with it — no separate registration. Safe to combine with
+    /// [`auto_discover`](Self::auto_discover): services dedup by type at build, so a
+    /// service registered both ways resolves once.
+    pub fn with_service<T: ServiceComponent + Descriptor<ServiceDescriptor>>(
+        mut self,
+        value: T,
+    ) -> Self {
+        self.registry
+            .services
+            .push(<T as Descriptor<ServiceDescriptor>>::DESCRIPTOR);
+
         self.with_component(value)
     }
 
@@ -183,13 +188,13 @@ impl DaemonBuilder {
         self
     }
 
-    /// Registers service type `T` by type: its identity header, its construction
-    /// factory, and every RPC group contributed to it across `#[handlers]` blocks.
-    /// The complete by-type counterpart to [`auto_discover`](Self::auto_discover) —
-    /// do not also auto-discover the same service or its header registers twice.
+    /// Registers service type `T` by type: its identity header (carrying its RPC
+    /// surface) and its construction factory. The complete by-type counterpart to
+    /// [`auto_discover`](Self::auto_discover); safe to combine with it (services dedup
+    /// by type at build).
     pub fn service<T>(mut self) -> Self
     where
-        T: Descriptor<ServiceDescriptor> + Descriptor<ComponentDescriptor> + ServiceRpcs,
+        T: Descriptor<ServiceDescriptor> + Descriptor<ComponentDescriptor>,
     {
         self.registry
             .services
@@ -197,24 +202,6 @@ impl DaemonBuilder {
         self.registry
             .components
             .push(<T as Descriptor<ComponentDescriptor>>::DESCRIPTOR);
-
-        for group in <T as ServiceRpcs>::rpc_groups() {
-            self.registry.rpc_groups.push(*group);
-        }
-
-        self
-    }
-
-    /// Registers every RPC group owned by service type `T` (across all its
-    /// `#[handlers]` blocks). Pair with [`with_service`](Self::with_service) when the
-    /// service instance is supplied by hand.
-    pub fn rpcs<T>(mut self) -> Self
-    where
-        T: ServiceRpcs,
-    {
-        for group in <T as ServiceRpcs>::rpc_groups() {
-            self.registry.rpc_groups.push(*group);
-        }
 
         self
     }
@@ -229,15 +216,9 @@ impl DaemonBuilder {
     }
 
     /// Manually register a raw service header (prefer [`service`](Self::service) by type).
+    /// The descriptor's `rpcs` pointer carries the service's RPC surface.
     pub fn service_descriptor(mut self, descriptor: &'static ServiceDescriptor) -> Self {
         self.registry.services.push(*descriptor);
-
-        self
-    }
-
-    /// Manually register a single raw [`RpcGroup`] (prefer [`rpcs`](Self::rpcs) by type).
-    pub fn rpc_group(mut self, group: &'static RpcGroup) -> Self {
-        self.registry.rpc_groups.push(*group);
 
         self
     }
