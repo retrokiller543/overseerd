@@ -67,7 +67,7 @@ pub static SERVICES: [ServiceDescriptor];
 pub static PROVIDERS: [ProviderDescriptor];
 
 /// Link-time registry of every auto-registered config binding (a
-/// `#[derive(ConfigProperties)]` type with a `#[config(path = "..")]`). See
+/// `#[config(path = "..")]` type). See
 /// [`COMPONENTS`].
 #[linkme::distributed_slice]
 pub static CONFIG_BINDINGS: [crate::config::ConfigBindingDescriptor];

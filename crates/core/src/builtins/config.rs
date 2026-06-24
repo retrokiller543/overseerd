@@ -1,9 +1,9 @@
 //! Framework-provided configuration property structs.
 //!
-//! These derive [`ConfigProperties`](crate::config::ConfigProperties) and serde
-//! `Deserialize` but carry **no** `#[config(path = "..")]` auto-binding — binding a
-//! missing subtree is a hard build error, so they are opt-in. A user binds them
-//! explicitly, e.g. `DaemonBuilder::config::<ServerConfig>("server")` (or the
+//! These implement [`ConfigProperties`](crate::config::ConfigProperties) and derive
+//! serde `Deserialize` but carry **no** `#[config(path = "..")]` auto-binding —
+//! binding a missing subtree is a hard build error, so they are opt-in. A user binds
+//! them explicitly, e.g. `DaemonBuilder::config::<ServerConfig>("server")` (or the
 //! `configs:` key of the `daemon!{}` macro), and injects them as
 //! [`Cfg<ServerConfig>`](crate::config::Cfg).
 
@@ -14,9 +14,10 @@ use crate::config::ConfigProperties;
 /// Network binding settings for a daemon's transport, bound from a config subtree
 /// and injected as [`Cfg<ServerConfig>`](crate::config::Cfg).
 ///
-/// `ConfigProperties` is implemented by hand (not via the derive) because the derive
-/// emits facade-crate paths the implementation crate cannot reference, and because
-/// the builtin carries no `#[config(path = "..")]` auto-binding by design.
+/// `ConfigProperties` is implemented by hand (not via the `#[config]` attribute)
+/// because the attribute emits facade-crate paths the implementation crate cannot
+/// reference, and because the builtin carries no `#[config(path = "..")]`
+/// auto-binding by design.
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
     /// The host or IP address the daemon binds its listener to.

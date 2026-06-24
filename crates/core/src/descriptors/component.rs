@@ -208,7 +208,7 @@ pub struct DependencyDescriptor {
     /// `config` edge it carries the property path (`#[config("..")]`), or `None` for
     /// the sole-binding shorthand.
     pub qualifier: Option<&'static str>,
-    /// Whether this edge resolves a `#[derive(ConfigProperties)]` binding (a `Cfg<T>`
+    /// Whether this edge resolves a `#[config]` binding (a `Cfg<T>`
     /// keyed by property path) rather than a component or trait provider. Config
     /// edges are validated against the registered config bindings, not the component
     /// graph, so they are exempt from the standard dependency/scope checks.

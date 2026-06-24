@@ -109,7 +109,7 @@ impl DaemonBuilder {
     /// Binds config type `T` to the subtree at `path`, injectable as `Cfg<T>`
     /// selected by that path. The same type may be bound at several paths. This is
     /// the explicit counterpart to auto-registration via
-    /// `#[derive(ConfigProperties)]` with `#[config(path = "..")]`.
+    /// `#[config(path = "..")]`.
     pub fn config<T: ConfigProperties>(mut self, path: impl Into<String>) -> Self {
         self.registry.config_bindings.push(ConfigBinding {
             ty: TypeDescriptor::of::<T>(T::NAME),

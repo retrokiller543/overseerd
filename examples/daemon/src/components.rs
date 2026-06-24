@@ -4,12 +4,12 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use overseerd::{ConfigProperties, component};
+use overseerd::{component, config};
 use serde::Deserialize;
 
 #[allow(dead_code)]
-#[derive(ConfigProperties, Deserialize)]
 #[config(path = "app.server")]
+#[derive(Deserialize)]
 pub struct AppServer {
     pub port: u16,
     pub addr: String,
@@ -18,17 +18,18 @@ pub struct AppServer {
 /// Greeting configuration, deserialized from the `app.greet` subtree and injected
 /// as `Cfg<Config>`. `#[config(path = "..")]` auto-registers the binding, so
 /// `auto_discover` picks it up — no explicit `configs:` entry needed.
-#[derive(ConfigProperties, Deserialize)]
 #[config(path = "app.greet")]
+#[derive(Deserialize)]
 pub struct Config {
     pub greeting: String,
 }
 
 /// Database connection settings. The same type is bound at two paths
 /// (`app.db.reader` / `app.db.writer`) — identical shape, different usage — so it is
-/// registered explicitly per path (no baked-in `#[config(path)]`) and selected at
-/// the injection site by property path.
-#[derive(ConfigProperties, Deserialize)]
+/// registered explicitly per path (bare `#[config]`, no baked-in path) and selected
+/// at the injection site by property path.
+#[config]
+#[derive(Deserialize)]
 pub struct DbConfig {
     pub url: String,
     pub pool_size: u16,

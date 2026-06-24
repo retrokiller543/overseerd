@@ -28,7 +28,7 @@ pub use extract::{
     dispatch_with,
 };
 pub use overseerd_macros::{
-    Component, ConfigProperties, component, daemon, handlers, injectable, rpc, service,
+    Component, component, config, daemon, handlers, injectable, rpc, service,
 };
 /// Wire-contract status types and stream item codecs, re-exported from
 /// `overseerd-transport` so handler authors import everything from `overseerd_core`.

@@ -1,6 +1,6 @@
-//! `#[derive(ConfigProperties)]` — implements the `ConfigProperties` trait for a
-//! config struct and, when given `#[config(path = "..")]`, auto-registers a binding
-//! into the `CONFIG_BINDINGS` slice so `auto_discover` picks it up.
+//! `#[config]` — implements the `ConfigProperties` trait for a config struct and,
+//! when given `#[config(path = "..")]`, auto-registers a binding into the
+//! `CONFIG_BINDINGS` slice so `auto_discover` picks it up.
 //!
 //! `NAME` defaults to the type name (override with `#[config(name = "..")]`). The
 //! type must also be `Deserialize`. Omitting `path` leaves binding to an explicit
@@ -10,15 +10,15 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
-    DeriveInput, Ident, LitStr, Token,
+    Ident, ItemStruct, LitStr, Token,
     parse::{Parse, ParseStream},
 };
 
 use crate::paths::overseerd_path;
 
-/// Arguments of the `#[config(...)]` helper attribute on a config struct.
+/// Arguments of the `#[config(...)]` attribute on a config struct.
 #[derive(Default)]
-struct ConfigArgs {
+pub struct ConfigArgs {
     name: Option<LitStr>,
     path: Option<LitStr>,
 }
@@ -51,16 +51,8 @@ impl Parse for ConfigArgs {
     }
 }
 
-pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
-    let ident = &input.ident;
-
-    let mut args = ConfigArgs::default();
-
-    for attr in &input.attrs {
-        if attr.path().is_ident("config") {
-            args = attr.parse_args::<ConfigArgs>()?;
-        }
-    }
+pub fn expand(args: ConfigArgs, item: ItemStruct) -> syn::Result<TokenStream> {
+    let ident = &item.ident;
 
     let name = args
         .name
@@ -92,6 +84,8 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     };
 
     Ok(quote! {
+        #item
+
         impl #config_properties for #ident {
             const NAME: &'static str = #name;
         }

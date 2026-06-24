@@ -76,7 +76,7 @@ impl<T: Send + Sync + 'static> Injectable for Cfg<T> {
 
 /// A struct bindable from a configuration subtree, injectable as [`Cfg<Self>`].
 ///
-/// Implemented by `#[derive(ConfigProperties)]`; the type must also be
+/// Implemented by `#[config]`; the type must also be
 /// `Deserialize`. The default [`bind`](Self::bind) deserializes the subtree and wraps
 /// it, so the builder can construct the value without naming the concrete type.
 pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
@@ -115,7 +115,7 @@ impl std::fmt::Debug for ConfigBinding {
 }
 
 /// The link-time form of a [`ConfigBinding`]: a config type with a fixed property
-/// path, registered by `#[derive(ConfigProperties)]` with `#[config(path = "..")]`
+/// path, registered by `#[config(path = "..")]`
 /// so it is picked up by [`DaemonBuilder::auto_discover`](crate::DaemonBuilder::auto_discover).
 /// The same type may still be bound at extra paths explicitly via
 /// [`DaemonBuilder::config`](crate::DaemonBuilder::config).

@@ -12,7 +12,7 @@
 //! | `#[handlers]`               | impl block | RPC handlers + RPC group; optional `#[init]` constructor |
 //! | `#[rpc]` / `#[init]`        | method     | markers consumed by `#[handlers]` |
 //! | `#[injectable]`             | trait      | `Provide<dyn Trait>` impl (under `di-check`) |
-//! | `#[derive(ConfigProperties)]`| struct   | `ConfigProperties` impl; auto-registers a binding when given `#[config(path = "..")]` |
+//! | `#[config]`                 | struct     | `ConfigProperties` impl; auto-registers a binding when given `#[config(path = "..")]` |
 //!
 //! # Components: two ways to provide one
 //!
@@ -185,16 +185,21 @@ pub fn derive_component(item: TokenStream) -> TokenStream {
 /// explicitly with `DaemonBuilder::config::<T>(path)` — needed when the same type is
 /// bound at several paths. `#[config(name = "..")]` overrides the display name.
 ///
+/// Distinct from the **field-level** `#[config("path")]` inside a `#[component]` /
+/// `#[service]` struct, which marks a `Cfg<T>` injection site (consumed by that
+/// macro's expansion); this struct-level form declares the config type itself.
+///
 /// ```ignore
-/// #[derive(ConfigProperties, Deserialize)]
 /// #[config(path = "app.server")]
+/// #[derive(Deserialize)]
 /// struct ServerConfig { addr: String, port: u16 }
 /// ```
-#[proc_macro_derive(ConfigProperties, attributes(config))]
-pub fn derive_config_properties(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
+#[proc_macro_attribute]
+pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as config::ConfigArgs);
+    let item = parse_macro_input!(item as ItemStruct);
 
-    config::expand(input)
+    config::expand(args, item)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

@@ -69,6 +69,12 @@ pub use overseerd_core::{
     dispatch_with, handlers, injectable, rpc, service, type_id_of,
 };
 
+/// The `#[config]` attribute macro. Re-exported straight from `overseerd_macros`
+/// (where the name is unambiguously the macro) so it coexists with the [`config`]
+/// module rather than colliding with it through `overseerd_core`'s dual-namespace
+/// `config` name.
+pub use overseerd_macros::config;
+
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
 /// attribute through the facade crate without user crates depending on `linkme`
 /// directly.
