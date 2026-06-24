@@ -59,6 +59,7 @@ pub fn field_injection_component(
     defer_di_assert: bool,
     scope_variant: &syn::Ident,
     factories_slice: &syn::Ident,
+    emit_default_factory: bool,
 ) -> TokenStream {
     let self_ident = item.ident.clone();
     let boxed_component = overseerd_path("BoxedComponent");
@@ -125,61 +126,76 @@ pub fn field_injection_component(
         Fields::Unit => quote!(#self_ident),
     };
 
-    // Assert deps eagerly only when the field-injection factory is the real one.
-    // A `#[service]` (and any type whose construction an `#[init]` may override)
-    // defers to the `#[init]` path and the source analyzer, so its field deps are
-    // not necessarily the real ones.
-    let di_assert = if defer_di_assert {
-        quote!()
+    // The field-injection default factory — its dep assertions, construction fn,
+    // and slice entry. Suppressed for a manual component (`default_factory = false`),
+    // which is provided as an instance rather than built.
+    let default_factory = if emit_default_factory {
+        // Assert deps eagerly only when the field-injection factory is the real one.
+        // A `#[service]` (and any type whose construction an `#[init]` may override)
+        // defers to the `#[init]` path and the source analyzer, so its field deps are
+        // not necessarily the real ones.
+        let di_assert = if defer_di_assert {
+            quote!()
+        } else {
+            crate::di::assert(&checks)
+        };
+
+        // The lazy `Wired` predicate — every single dep, incl. trait objects —
+        // checked when `app!` demands `T: Wired`.
+        let wired = crate::di::wired_impl(&self_ident, &wired_targets);
+
+        quote! {
+            #di_assert
+
+            #wired
+
+            #[allow(unused_variables)]
+            fn __overseerd_factory(
+                cx: &mut #component_construction_context,
+            ) -> ::core::pin::Pin<
+                ::std::boxed::Box<
+                    dyn ::core::future::Future<
+                        Output = #result<#boxed_component>,
+                    > + ::core::marker::Send + '_,
+                >,
+            > {
+                ::std::boxed::Box::pin(async move {
+                    let __instance = #construct;
+
+                    ::core::result::Result::Ok(#boxed_component {
+                        ty: #type_descriptor::of::<#self_ident>(#name),
+                        value: ::std::boxed::Box::new(
+                            <#self_ident as #component>::into_handle(__instance),
+                        ),
+                    })
+                })
+            }
+
+            fn __overseerd_deps() -> ::std::vec::Vec<#dependency_descriptor> {
+                ::std::vec![ #(#dep_descriptors),* ]
+            }
+
+            // The field-injection default, appended to the type's factory slice. Used
+            // only when no explicit (`#[init]` / `factory = ..`) factory is present.
+            #[#distributed_slice(#factories_slice)]
+            #[linkme(crate = #linkme_crate)]
+            static __OVERSEERD_DEFAULT_FACTORY: #component_factory_descriptor =
+                #component_factory_descriptor {
+                    construct: __overseerd_factory,
+                    dependencies: __overseerd_deps,
+                    default: true,
+                };
+        }
     } else {
-        crate::di::assert(&checks)
+        // A manual component still strips field attrs (done above) but builds
+        // nothing. It is trivially `Wired` — it has no constructed dependencies.
+        let _ = (&construct, &dep_descriptors, &checks, &wired_targets);
+
+        crate::di::wired_impl(&self_ident, &[])
     };
 
-    // The lazy `Wired` predicate — every single dep, incl. trait objects —
-    // checked when `app!` demands `T: Wired`.
-    let wired = crate::di::wired_impl(&self_ident, &wired_targets);
-
     quote! {
-        #di_assert
-
-        #wired
-
-        #[allow(unused_variables)]
-        fn __overseerd_factory(
-            cx: &mut #component_construction_context,
-        ) -> ::core::pin::Pin<
-            ::std::boxed::Box<
-                dyn ::core::future::Future<
-                    Output = #result<#boxed_component>,
-                > + ::core::marker::Send + '_,
-            >,
-        > {
-            ::std::boxed::Box::pin(async move {
-                let __instance = #construct;
-
-                ::core::result::Result::Ok(#boxed_component {
-                    ty: #type_descriptor::of::<#self_ident>(#name),
-                    value: ::std::boxed::Box::new(
-                        <#self_ident as #component>::into_handle(__instance),
-                    ),
-                })
-            })
-        }
-
-        fn __overseerd_deps() -> ::std::vec::Vec<#dependency_descriptor> {
-            ::std::vec![ #(#dep_descriptors),* ]
-        }
-
-        // The field-injection default, appended to the type's factory slice. Used
-        // only when no explicit (`#[init]` / `factory = ..`) factory is present.
-        #[#distributed_slice(#factories_slice)]
-        #[linkme(crate = #linkme_crate)]
-        static __OVERSEERD_DEFAULT_FACTORY: #component_factory_descriptor =
-            #component_factory_descriptor {
-                construct: __overseerd_factory,
-                dependencies: __overseerd_deps,
-                default: true,
-            };
+        #default_factory
 
         const __OVERSEERD_COMPONENT_DESCRIPTOR: #component_descriptor =
             #component_descriptor {
@@ -197,6 +213,51 @@ pub fn field_injection_component(
         #[#distributed_slice(#components_slice)]
         #[linkme(crate = #linkme_crate)]
         static __OVERSEERD_COMPONENT: #component_descriptor = __OVERSEERD_COMPONENT_DESCRIPTOR;
+    }
+}
+
+/// Emits an explicit `factory = path` factory entry: it appends a non-default
+/// [`ComponentFactoryDescriptor`] to the type's factory slice, driving the given
+/// async factory through the build-time `Factory` machinery (so the path's
+/// signature need not be visible — its deps come from its parameters' `FromContainer`
+/// impls). Overrides the field-injection default.
+pub fn explicit_factory(factory_path: &syn::Path, factories_slice: &syn::Ident) -> TokenStream {
+    let component_construction_context = overseerd_path("ComponentConstructionContext");
+    let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
+    let dependency_descriptor = overseerd_path("DependencyDescriptor");
+    let dispatch_factory = overseerd_path("dispatch_factory");
+    let factory_dependencies = overseerd_path("factory_dependencies");
+    let boxed_component = overseerd_path("BoxedComponent");
+    let distributed_slice = overseerd_path("linkme::distributed_slice");
+    let linkme_crate = overseerd_path("linkme");
+    let result = overseerd_path("Result");
+
+    quote! {
+        fn __overseerd_explicit_deps() -> ::std::vec::Vec<#dependency_descriptor> {
+            #factory_dependencies(#factory_path)
+        }
+
+        #[allow(unused_variables)]
+        fn __overseerd_explicit_factory(
+            cx: &mut #component_construction_context,
+        ) -> ::core::pin::Pin<
+            ::std::boxed::Box<
+                dyn ::core::future::Future<
+                    Output = #result<#boxed_component>,
+                > + ::core::marker::Send + '_,
+            >,
+        > {
+            #dispatch_factory(#factory_path, cx)
+        }
+
+        #[#distributed_slice(#factories_slice)]
+        #[linkme(crate = #linkme_crate)]
+        static __OVERSEERD_EXPLICIT_FACTORY: #component_factory_descriptor =
+            #component_factory_descriptor {
+                construct: __overseerd_explicit_factory,
+                dependencies: __overseerd_explicit_deps,
+                default: false,
+            };
     }
 }
 

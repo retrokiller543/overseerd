@@ -118,7 +118,7 @@ impl DaemonBuilder {
     /// constructed by hand). Synthesizes a `factory: None` descriptor in the
     /// registry (so the declaration is visible and dependencies validate) and
     /// holds the instance until the container is built. The type's identity
-    /// comes from its `Component` impl (`#[derive(Component)]` / `#[service]`).
+    /// comes from its `Component` impl (`#[component]` / `#[service]`).
     pub fn with_component<T: Component>(mut self, value: T) -> Self {
         self.registry
             .components

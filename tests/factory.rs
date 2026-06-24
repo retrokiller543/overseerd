@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use overseerd::{
-    CallResult, Cfg, Daemon, MemoryClient, MemoryConnectionHandle, Payload, component, config,
-    handlers, methods, service,
+    CallResult, Cfg, Daemon, Inject, MemoryClient, MemoryConnectionHandle, Payload, component,
+    config, handlers, methods, service,
 };
 
 #[config]
@@ -53,6 +53,41 @@ impl FactorySvc {
     async fn total(&self, Payload(_): Payload<()>) -> u32 {
         self.total
     }
+
+    /// Returns the `factory = ..`-built component's label.
+    #[rpc]
+    async fn label(Inject(tagged): Inject<Arc<Tagged>>, Payload(_): Payload<()>) -> String {
+        tagged.label.clone()
+    }
+
+    /// Returns the manually-provided component's note.
+    #[rpc]
+    async fn note(Inject(manual): Inject<Arc<Manual>>, Payload(_): Payload<()>) -> String {
+        manual.note.clone()
+    }
+}
+
+/// Built by an explicit async `factory = path` (not field injection); its `label`
+/// field is a plain `String`, which compiles only because no default factory is
+/// emitted when `factory = ..` is set.
+#[component(factory = Tagged::make)]
+struct Tagged {
+    label: String,
+}
+
+impl Tagged {
+    async fn make(counter: Arc<Counter>) -> Self {
+        Self {
+            label: format!("tagged-{}", counter.base),
+        }
+    }
+}
+
+/// A manual component: no factory is emitted, so it must be provided via
+/// `with_component`. Its field is a plain `String` the framework never injects.
+#[component(default_factory = false)]
+struct Manual {
+    note: String,
 }
 
 async fn start() -> MemoryConnectionHandle {
@@ -67,6 +102,9 @@ async fn start() -> MemoryConnectionHandle {
         .auto_discover()
         .config::<FactoryCfg>("factory")
         .config_source(config)
+        .with_component(Manual {
+            note: "manual-note".to_string(),
+        })
         .build()
         .await
         .expect("build daemon");
@@ -95,6 +133,33 @@ async fn init_factory_resolves_component_and_config_params() {
     match result {
         // Counter.base defaults to 0; cfg.seed = 100 → total = 100.
         CallResult::Ok(body) => assert_eq!(dec::<u32>(&body), 100),
+
+        other => panic!("expected ok, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn explicit_factory_path_constructs() {
+    let conn = start().await;
+
+    let result = conn.call("FactorySvc.label", enc(&())).await.unwrap();
+
+    match result {
+        // Tagged::make ran with its injected Counter (base 0).
+        CallResult::Ok(body) => assert_eq!(dec::<String>(&body), "tagged-0"),
+
+        other => panic!("expected ok, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn manual_component_is_provided_not_built() {
+    let conn = start().await;
+
+    let result = conn.call("FactorySvc.note", enc(&())).await.unwrap();
+
+    match result {
+        CallResult::Ok(body) => assert_eq!(dec::<String>(&body), "manual-note"),
 
         other => panic!("expected ok, got {other:?}"),
     }

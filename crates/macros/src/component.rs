@@ -37,8 +37,23 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         .clone()
         .unwrap_or_else(|| inject::factories_slice_ident(&self_ident));
     let factories_infra = inject::factories_infrastructure(&self_ident, &factories_slice);
-    let factory =
-        inject::field_injection_component(&mut item, &id, &name, false, &scope_variant, &factories_slice);
+
+    // An explicit `factory = path` replaces the field-injection default; so does
+    // `default_factory = false` (the manual case). Otherwise the default is emitted.
+    let explicit = args
+        .factory
+        .as_ref()
+        .map(|path| inject::explicit_factory(path, &factories_slice));
+    let emit_default = explicit.is_none() && !args.no_default_factory;
+    let factory = inject::field_injection_component(
+        &mut item,
+        &id,
+        &name,
+        false,
+        &scope_variant,
+        &factories_slice,
+        emit_default,
+    );
     let component = overseerd_path("Component");
 
     Ok(quote! {
@@ -58,6 +73,8 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
 
         const _: () = {
             #factory
+
+            #explicit
 
             #providers
         };

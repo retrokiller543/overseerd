@@ -113,18 +113,16 @@ impl Model {
     }
 }
 
-/// How a struct participates: a field-injected `#[component]` or `#[service]`,
-/// or a metadata-only `#[derive(Component)]` (manually provided, not injected).
+/// How a struct participates: a `#[component]` or a `#[service]`. Whether it is
+/// field-injected or manually provided is read from its arguments (`manual`).
 enum Kind {
     Component,
     Service,
-    DeriveOnly,
 }
 
 fn struct_of(item: &ItemStruct, kind: Kind, file: &Path) -> Struct {
     let name = item.ident.to_string();
     let is_service = matches!(kind, Kind::Service);
-    let injected = matches!(kind, Kind::Component | Kind::Service);
 
     let attr_name = if is_service { "service" } else { "component" };
     let args = item
@@ -133,6 +131,10 @@ fn struct_of(item: &ItemStruct, kind: Kind, file: &Path) -> Struct {
         .find(|a| a.path().is_ident(attr_name))
         .map(ComponentArgs::from_attr)
         .unwrap_or_default();
+
+    // A manual / explicit-factory component does not field-inject: its struct fields
+    // are not the injected dependencies.
+    let injected = !args.manual;
 
     let id = args.id.clone().unwrap_or_else(|| name.to_lowercase());
     let display_name = args.display_name.clone().unwrap_or_else(|| name.clone());
@@ -285,6 +287,9 @@ struct ComponentArgs {
     qualifier: Option<String>,
     primary: bool,
     provide: Vec<String>,
+    /// Opts out of field injection — `default_factory = false` (a manual instance)
+    /// or an explicit `factory = path` (deps come from the factory's parameters).
+    manual: bool,
 }
 
 impl ComponentArgs {
@@ -310,6 +315,20 @@ fn parse_component_args(input: syn::parse::ParseStream) -> syn::Result<Component
             }
             "primary" => args.primary = true,
             "by_value" => {}
+            "factory" => {
+                input.parse::<Token![=]>()?;
+                let _ = input.parse::<syn::Path>()?;
+                args.manual = true;
+            }
+            "default_factory" => {
+                input.parse::<Token![=]>()?;
+                let value: syn::LitBool = input.parse()?;
+                args.manual = !value.value;
+            }
+            "scope" | "rpc_slice" | "factory_slice" => {
+                input.parse::<Token![=]>()?;
+                let _ = input.parse::<syn::Ident>()?;
+            }
             "provide" => {
                 input.parse::<Token![=]>()?;
 
@@ -353,22 +372,6 @@ fn component_kind(attrs: &[Attribute]) -> Option<Kind> {
 
         if attr.path().is_ident("component") {
             return Some(Kind::Component);
-        }
-
-        if attr.path().is_ident("derive") {
-            let mut derives_component = false;
-
-            let _ = attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("Component") {
-                    derives_component = true;
-                }
-
-                Ok(())
-            });
-
-            if derives_component {
-                return Some(Kind::DeriveOnly);
-            }
         }
     }
 

@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn accepts_a_satisfied_graph() {
         let source = r#"
-            #[derive(Component)]
+            #[component(default_factory = false)]
             struct Config { url: String }
 
             #[component]
@@ -263,7 +263,7 @@ mod tests {
         // The struct field is `Arc<Missing>`, but `#[init]` constructs from
         // `Arc<Present>` — so `Missing` is not actually a dependency.
         let source = r#"
-            #[derive(Component)]
+            #[component(default_factory = false)]
             struct Present;
 
             #[service]

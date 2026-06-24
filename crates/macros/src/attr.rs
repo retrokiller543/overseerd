@@ -49,6 +49,14 @@ pub struct ServiceArgs {
     /// `#[methods]` block contributing an `#[init]` to this type must then pass the
     /// same `factory_slice = ..`.
     pub factory_slice: Option<Ident>,
+    /// An explicit async factory path (`factory = path::to::fn`). When set, that
+    /// function (a [`Factory`](overseerd_core::Factory)) is registered as the
+    /// component's constructor instead of (or alongside) field injection.
+    pub factory: Option<syn::Path>,
+    /// Suppresses the field-injection default factory (`default_factory = false`).
+    /// With no other factory this makes the component **manual** — provided via
+    /// `DaemonBuilder::with_component` rather than constructed.
+    pub no_default_factory: bool,
 }
 
 impl Parse for ServiceArgs {
@@ -72,6 +80,15 @@ impl Parse for ServiceArgs {
                 "factory_slice" => {
                     input.parse::<Token![=]>()?;
                     args.factory_slice = Some(input.parse()?);
+                }
+                "factory" => {
+                    input.parse::<Token![=]>()?;
+                    args.factory = Some(input.parse()?);
+                }
+                "default_factory" => {
+                    input.parse::<Token![=]>()?;
+                    let value: syn::LitBool = input.parse()?;
+                    args.no_default_factory = !value.value;
                 }
                 "scope" => {
                     input.parse::<Token![=]>()?;
@@ -114,7 +131,7 @@ impl Parse for ServiceArgs {
                         format!(
                             "unknown argument `{other}`, expected `id`, `name`, `version`, \
                              `provide`, `qualifier`, `primary`, `by_value`, `scope`, \
-                             `rpc_slice`, or `factory_slice`"
+                             `rpc_slice`, `factory_slice`, `factory`, or `default_factory`"
                         ),
                     ));
                 }

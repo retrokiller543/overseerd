@@ -1,6 +1,5 @@
 //! Shared codegen for a component's storage handle (`Component::Handle` +
-//! `into_handle`), used by `#[derive(Component)]`, `#[component]`, and
-//! `#[service]`.
+//! `into_handle`), used by `#[component]` and `#[service]`.
 //!
 //! The default wraps the component in `Arc<Self>` (auto-wrapped, the common
 //! case). `#[component(by_value)]` instead stores it as `Self` and emits the

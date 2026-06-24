@@ -6,11 +6,11 @@
 //!
 //! | Macro                       | Applies to | Produces |
 //! |-----------------------------|------------|----------|
-//! | `#[derive(Component)]`      | struct/enum| `Component` impl only (metadata) |
-//! | `#[component]`              | struct     | `Component` impl + a registered, system-built factory |
-//! | `#[service]`                | struct     | `Component` + `ServiceComponent` impls + a service header + default factory |
-//! | `#[handlers]`               | impl block | RPC handlers + RPC group; optional `#[init]` constructor |
-//! | `#[rpc]` / `#[init]`        | method     | markers consumed by `#[handlers]` |
+//! | `#[component]`              | struct     | `Component` impl + a factory (field-injection default, `factory = path`, or `default_factory = false` for a manual instance) |
+//! | `#[service]`                | struct     | `Component` + `ServiceComponent` impls + a service header + a factory |
+//! | `#[handlers]`               | impl block | RPC handlers + RPC group |
+//! | `#[methods]`                | impl block | lifecycle methods — an `#[init]` constructor (an explicit factory) |
+//! | `#[rpc]` / `#[init]`        | method     | markers consumed by `#[handlers]` / `#[methods]` |
 //! | `#[injectable]`             | trait      | `Provide<dyn Trait>` impl (under `di-check`) |
 //! | `#[config]`                 | struct     | `ConfigProperties` impl; auto-registers a binding when given `#[config(path = "..")]` |
 //!
@@ -23,8 +23,9 @@
 //!    stateful `#[service]`). The macro registers a factory; the container builds
 //!    the instance from its dependencies during startup.
 //! 2. **Manually provided** — construct the instance yourself and hand it to
-//!    `DaemonBuilder::with_component`. The type only needs a `Component` impl,
-//!    which `#[derive(Component)]` supplies.
+//!    `DaemonBuilder::with_component`. Annotate the type
+//!    `#[component(default_factory = false)]`, which emits the `Component` metadata
+//!    with no factory.
 //!
 //! Both forms register a descriptor in the `DescriptorRegistry`; the difference
 //! is whether the descriptor carries a factory or expects a provided instance.
@@ -57,7 +58,6 @@ mod attr;
 mod component;
 mod config;
 mod daemon;
-mod derive;
 mod di;
 mod handle;
 mod handlers;
@@ -70,7 +70,7 @@ mod rpc;
 mod service;
 
 use proc_macro::TokenStream;
-use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
+use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 
 /// Declares a **system-constructed singleton component** on a struct.
 ///
@@ -80,25 +80,34 @@ use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// carries `#[default]`, which makes it owned state built with `Default::default()`.
 /// Use this for dependencies the system can assemble itself (pools, clients composed
 /// from other components, …). For an instance you must build yourself, use
-/// `DaemonBuilder::with_component` with a `#[derive(Component)]` type instead.
+/// `#[component(default_factory = false)]` and provide it via
+/// `DaemonBuilder::with_component`.
 ///
 /// # Arguments
 ///
-/// Both optional:
+/// All optional:
 /// - `id` — unique component id. Defaults to the lowercased type name.
 /// - `name` — display name. Defaults to the type name.
+/// - `factory = path` — register `path` (an async `Factory`) as the constructor
+///   instead of field injection; its parameters are its dependencies.
+/// - `default_factory = false` — emit no factory (a **manual** instance, provided
+///   via `DaemonBuilder::with_component`).
+/// - `factory_slice = Ident` — override the generated `{Type}Factories` slice name.
 ///
 /// ```ignore
-/// #[component]                         // id = "dbpool", name = "DbPool"
-/// #[component(id = "db", name = "Db")] // explicit
+/// #[component]                          // id = "dbpool", name = "DbPool"
+/// #[component(id = "db", name = "Db")]  // explicit
+/// #[component(factory = Db::connect)]   // explicit async factory
+/// #[component(default_factory = false)] // manual, via with_component
 /// ```
 ///
 /// # What it generates
 ///
 /// - `impl Component for T` (carrying `ID`/`NAME`);
-/// - a field-injection factory and a `ComponentDescriptor` (with
-///   `default_factory: false`), registered into the `COMPONENTS` slice and
-///   picked up by `auto_discover`.
+/// - a `ComponentDescriptor` registered into the `COMPONENTS` slice (picked up by
+///   `auto_discover`), pointing at the type's `{Type}Factories` slice — which holds
+///   the field-injection default (unless suppressed) plus any `factory =` / `#[init]`
+///   entry.
 ///
 /// # Example
 ///
@@ -106,7 +115,7 @@ use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// use overseerd::prelude::*;
 /// use std::sync::Arc;
 ///
-/// #[derive(Component)]
+/// #[component(default_factory = false)]
 /// struct Config { url: String }
 ///
 /// /// Built from `Config` (resolved) plus owned state (`#[default]`).
@@ -123,57 +132,21 @@ use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// Emits a `compile_error!` if applied to anything but a struct. If a `#[default]`
 /// field doesn't implement `Default`, the *generated* factory fails to compile.
 ///
+/// A component the system should *build* uses field injection by default; for one
+/// you construct yourself, `#[component(default_factory = false)]` emits the
+/// metadata with no factory (provide it via `DaemonBuilder::with_component`), and
+/// `#[component(factory = path)]` registers an explicit async factory.
+///
 /// # See also
 ///
-/// `#[service]` (a component that also exposes RPCs and a version) and
-/// `#[derive(Component)]` (metadata only, for manually-provided instances).
+/// `#[service]` (a component that also exposes RPCs and a version) and `#[methods]`
+/// (an `#[init]` constructor for any component).
 #[proc_macro_attribute]
 pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as attr::ServiceArgs);
     let item = parse_macro_input!(item as ItemStruct);
 
     component::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
-}
-
-/// Implements the `Component` metadata trait (`ID`, `NAME`) for a type.
-///
-/// This generates **only** the trait impl — no factory, no registration. Use it
-/// for a type you construct yourself and register at runtime via
-/// `DaemonBuilder::with_component` (typically config or other data a factory
-/// can't assemble). For a component the system should *build*, use the
-/// `#[component]` attribute macro instead.
-///
-/// # Arguments
-///
-/// Override the defaults with a `#[component(...)]` helper attribute (both
-/// optional):
-/// - `id` — defaults to the lowercased type name.
-/// - `name` — defaults to the type name.
-///
-/// ```ignore
-/// #[derive(Component)]
-/// #[component(id = "app_config", name = "AppConfig")]
-/// struct Config { /* ... */ }
-/// ```
-///
-/// # Example
-///
-/// ```ignore
-/// use overseerd::prelude::*;
-///
-/// #[derive(Component)]
-/// struct Config { greeting: String }
-///
-/// // ...later, at startup:
-/// // Daemon::builder("app").with_component(Config { greeting: "Hi".into() })
-/// ```
-#[proc_macro_derive(Component, attributes(component))]
-pub fn derive_component(item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
-
-    derive::expand(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }
@@ -253,7 +226,7 @@ pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// use overseerd::prelude::*;
 /// use std::sync::Arc;
 ///
-/// #[derive(Component)]
+/// #[component(default_factory = false)]
 /// struct Config { greeting: String }
 ///
 /// #[service(id = "greeter", version = "0.1")]

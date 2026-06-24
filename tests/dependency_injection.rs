@@ -5,10 +5,10 @@
 
 use std::sync::Arc;
 
-use overseerd::{Component, Daemon, Dynamic, component};
+use overseerd::{Daemon, Dynamic, component};
 
-/// A plain dependency, provided as an instance at build time.
-#[derive(Component)]
+/// A plain dependency, provided as an instance at build time (manual — no factory).
+#[component(default_factory = false)]
 struct Settings {
     name: String,
 }

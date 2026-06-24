@@ -13,7 +13,7 @@ use std::{
 ///
 /// Supplies the runtime identity used to synthesize a descriptor for a
 /// manually-provided instance (`DaemonBuilder::with_component`). Implemented by
-/// `#[derive(Component)]`, `#[component]`, and `#[service]`.
+/// `#[component]` and `#[service]`.
 pub trait Component: Any + Send + Sync + 'static {
     const ID: &'static str;
     const NAME: &'static str;

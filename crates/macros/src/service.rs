@@ -54,8 +54,23 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         .clone()
         .unwrap_or_else(|| inject::factories_slice_ident(&self_ident));
     let factories_infra = inject::factories_infrastructure(&self_ident, &factories_slice);
-    let default_component =
-        inject::field_injection_component(&mut item, &id, &name, true, &singleton, &factories_slice);
+
+    // An explicit `factory = path` replaces the field-injection default; so does
+    // `default_factory = false` (an `#[init]`-only or manual service).
+    let explicit = args
+        .factory
+        .as_ref()
+        .map(|path| inject::explicit_factory(path, &factories_slice));
+    let emit_default = explicit.is_none() && !args.no_default_factory;
+    let default_component = inject::field_injection_component(
+        &mut item,
+        &id,
+        &name,
+        true,
+        &singleton,
+        &factories_slice,
+        emit_default,
+    );
 
     let service_static = format_ident!(
         "__OVERSEERD_SERVICE_{}",
@@ -108,6 +123,8 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
 
         const _: () = {
             #default_component
+
+            #explicit
 
             const __OVERSEERD_SERVICE_DESCRIPTOR: #service_descriptor =
                 #service_descriptor {

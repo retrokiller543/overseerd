@@ -21,7 +21,7 @@
 //! use serde::{Deserialize, Serialize};
 //! use std::sync::Arc;
 //!
-//! #[derive(Component)]
+//! #[component(default_factory = false)]
 //! struct Config { greeting: String }
 //!
 //! #[service(id = "greeter", version = "0.1")]
