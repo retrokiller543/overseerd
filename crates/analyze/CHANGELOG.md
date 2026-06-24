@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/retrokiller543/overseerd/compare/overseerd-analyze-v0.1.0...overseerd-analyze-v0.1.1) - 2026-06-24
+
+### Added
+
+- *(macros)* factory = path, default_factory = false; sunset #[derive(Component)]
+
+### Other
+
+- release v0.1.0
+- add crate metadata and internal dep versions for publishing
+- renamed the project to overseerd
+- Add configuration system and application directories
+- Add example daemon crate and extend build-time validation (v2)
+- Add overseer-analyze: build-time DI validation (v1)
+
 ## [0.1.0](https://github.com/retrokiller543/overseerd/releases/tag/overseerd-analyze-v0.1.0) - 2026-06-24
 
 ### Added
