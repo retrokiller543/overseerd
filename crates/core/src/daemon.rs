@@ -35,15 +35,12 @@ type LayerApplier = Box<dyn FnOnce(RpcService) -> RpcService + Send>;
 /// Seeded into every connection scope with the actual `PeerInfo`, so a
 /// connection-scoped component can depend on `Arc<PeerInfo>` (e.g. to authenticate
 /// in its constructor) — the DI-native replacement for the old `on_connect` hook.
-static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor {
-    id: "__overseerd_peer_info",
-    name: "PeerInfo",
-    ty: TypeDescriptor::of::<PeerInfo>("PeerInfo"),
-    scope: ComponentScope::Connection,
-    dependencies: &[],
-    factory: None,
-    default_factory: false,
-};
+static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    "__overseerd_peer_info",
+    "PeerInfo",
+    TypeDescriptor::of::<PeerInfo>("PeerInfo"),
+    ComponentScope::Connection,
+);
 
 /// The framework-provided singleton injectable for triggering graceful shutdown.
 ///
@@ -51,15 +48,12 @@ static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor {
 /// `Arc`-backed clone), so any component or handler can inject it and call
 /// `shutdown()`. The receiving [`ShutdownSignal`] is consumed by `serve`/`run` and
 /// is never exposed through DI.
-static SHUTDOWN_HANDLE_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor {
-    id: crate::builtins::shutdown::SHUTDOWN_HANDLE_ID,
-    name: crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME,
-    ty: TypeDescriptor::of::<ShutdownHandle>(crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME),
-    scope: ComponentScope::Singleton,
-    dependencies: &[],
-    factory: None,
-    default_factory: false,
-};
+static SHUTDOWN_HANDLE_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    crate::builtins::shutdown::SHUTDOWN_HANDLE_ID,
+    crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME,
+    TypeDescriptor::of::<ShutdownHandle>(crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME),
+    ComponentScope::Singleton,
+);
 
 /// Assembles a Daemon from an explicit set of components and services.
 pub struct DaemonBuilder {
@@ -449,13 +443,15 @@ impl ScopePlan {
         let mut transient = std::collections::HashMap::new();
 
         for c in resolved {
+            // A manually-seeded instance (no factory) — e.g. the framework's PeerInfo
+            // — is seeded into its scope, not constructed.
+            let constructable = c.effective_factory()?.is_some();
+
             match c.scope {
                 ComponentScope::Singleton => singletons.push(*c),
-                // A connection-scoped manual instance (factory None) — only the
-                // framework's PeerInfo — is seeded per connection, not constructed.
-                ComponentScope::Connection if c.factory.is_some() => connection_components.push(*c),
+                ComponentScope::Connection if constructable => connection_components.push(*c),
                 ComponentScope::Connection => {}
-                ComponentScope::Request if c.factory.is_some() => request_components.push(*c),
+                ComponentScope::Request if constructable => request_components.push(*c),
                 ComponentScope::Request => {}
                 ComponentScope::Transient => {
                     transient.insert((c.ty.type_id)(), *c);
@@ -475,7 +471,7 @@ impl ScopePlan {
         // need not exist solely to hold it.
         let needs_peer = resolved.iter().any(|c| {
             (c.ty.type_id)() != peer_id
-                && c.dependencies.iter().any(|d| (d.ty.type_id)() == peer_id)
+                && c.dependencies().iter().any(|d| (d.ty.type_id)() == peer_id)
         });
 
         let connection_order = topological_sort(&connection_components, &conn_prebuilt, providers)?

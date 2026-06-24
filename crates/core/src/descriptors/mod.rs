@@ -4,8 +4,8 @@ pub mod types;
 
 pub use component::{
     BoxedComponent, Cardinality, Component, ComponentConstructionContext, ComponentDescriptor,
-    ComponentFactory, ComponentScope, DependencyDescriptor, Dynamic, Injectable, Provide,
-    ProviderDescriptor, ServiceComponent, Wired, Wiring,
+    ComponentFactory, ComponentFactoryDescriptor, ComponentScope, DependencyDescriptor, Dynamic,
+    Injectable, Provide, ProviderDescriptor, ServiceComponent, Wired, Wiring,
 };
 pub use service::{
     OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor, RpcGroup,
@@ -29,6 +29,19 @@ pub use types::{TypeDescriptor, type_id_of};
 /// [`ServiceRpcs::rpc_groups`] instead.
 pub trait Descriptor<D> {
     const DESCRIPTOR: D;
+}
+
+/// A component type's own construction factories.
+///
+/// Implemented for each `#[component]`/`#[service]` by the macro to return that
+/// type's `{Type}Factories` distributed slice — the field-injection default plus any
+/// `#[init]` / `factory = ..` contributions, which each append to it. The owning
+/// [`ComponentDescriptor`] stores this as a fn pointer
+/// (`factories: <T as ComponentFactories>::factories`), so the type-erased registry
+/// reaches a type's factories without holding its type. Mirrors [`ServiceRpcs`].
+pub trait ComponentFactories {
+    /// Every factory contributed to this component type.
+    fn factories() -> &'static [ComponentFactoryDescriptor];
 }
 
 /// A service type's own RPC groups.

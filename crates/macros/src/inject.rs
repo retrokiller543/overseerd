@@ -17,22 +17,55 @@
 //! [`Injectable`]: overseerd_core::Injectable
 
 use proc_macro2::TokenStream;
-use quote::{ToTokens, quote};
+use quote::{ToTokens, format_ident, quote};
 use syn::{Expr, ExprLit, Field, Fields, ItemStruct, Lit, LitStr, Meta, spanned::Spanned};
 
 use crate::{attr, paths::overseerd_path};
+
+/// The per-type factory slice identifier, `{Type}Factories`. The `#[component]` /
+/// `#[service]` macro declares it; each `#[init]` / `factory = ..` appends to it.
+pub fn factories_slice_ident(self_ident: &syn::Ident) -> syn::Ident {
+    format_ident!("{}Factories", self_ident)
+}
+
+/// Declares the module-level `{Type}Factories` distributed slice and the
+/// `ComponentFactories` impl returning it. Module-level (and `pub`) so a `#[methods]`
+/// / `#[handlers]` block in another module can append to it via `use`. Mirrors the
+/// `{Service}Rpcs` slice + `ServiceRpcs` impl.
+pub fn factories_infrastructure(self_ident: &syn::Ident, slice: &syn::Ident) -> TokenStream {
+    let component_factories = overseerd_path("ComponentFactories");
+    let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
+    let distributed_slice = overseerd_path("linkme::distributed_slice");
+    let linkme_crate = overseerd_path("linkme");
+
+    quote! {
+        #[#distributed_slice]
+        #[linkme(crate = #linkme_crate)]
+        #[allow(non_upper_case_globals)]
+        pub static #slice: [#component_factory_descriptor];
+
+        impl #component_factories for #self_ident {
+            fn factories() -> &'static [#component_factory_descriptor] {
+                &#slice
+            }
+        }
+    }
+}
 
 pub fn field_injection_component(
     item: &mut ItemStruct,
     id: &LitStr,
     name: &LitStr,
-    default_factory: bool,
+    defer_di_assert: bool,
     scope_variant: &syn::Ident,
+    factories_slice: &syn::Ident,
 ) -> TokenStream {
     let self_ident = item.ident.clone();
     let boxed_component = overseerd_path("BoxedComponent");
     let component_construction_context = overseerd_path("ComponentConstructionContext");
     let component_descriptor = overseerd_path("ComponentDescriptor");
+    let component_factories = overseerd_path("ComponentFactories");
+    let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
     let component_scope = overseerd_path("ComponentScope");
     let components_slice = overseerd_path("COMPONENTS");
     let dependency_descriptor = overseerd_path("DependencyDescriptor");
@@ -94,11 +127,11 @@ pub fn field_injection_component(
 
     let dependency_count = dep_descriptors.len();
 
-    // Assert deps only for a real (non-default) field-injection factory — a
-    // `#[component]`. A `#[service]`'s default factory may be overridden by an
-    // `#[init]`, so its field deps are not necessarily the real ones; the
-    // `#[init]` path and the source analyzer cover those.
-    let di_assert = if default_factory {
+    // Assert deps eagerly only when the field-injection factory is the real one.
+    // A `#[service]` (and any type whose construction an `#[init]` may override)
+    // defers to the `#[init]` path and the source analyzer, so its field deps are
+    // not necessarily the real ones.
+    let di_assert = if defer_di_assert {
         quote!()
     } else {
         crate::di::assert(&checks)
@@ -139,15 +172,24 @@ pub fn field_injection_component(
             #(#dep_descriptors),*
         ];
 
+        // The field-injection default, appended to the type's factory slice. Used
+        // only when no explicit (`#[init]` / `factory = ..`) factory is present.
+        #[#distributed_slice(#factories_slice)]
+        #[linkme(crate = #linkme_crate)]
+        static __OVERSEERD_DEFAULT_FACTORY: #component_factory_descriptor =
+            #component_factory_descriptor {
+                construct: __overseerd_factory,
+                dependencies: &__OVERSEERD_DEPS,
+                default: true,
+            };
+
         const __OVERSEERD_COMPONENT_DESCRIPTOR: #component_descriptor =
             #component_descriptor {
                 id: #id,
                 name: #name,
                 ty: #type_descriptor::of::<#self_ident>(#name),
                 scope: #component_scope::#scope_variant,
-                dependencies: &__OVERSEERD_DEPS,
-                factory: ::core::option::Option::Some(__overseerd_factory),
-                default_factory: #default_factory,
+                factories: <#self_ident as #component_factories>::factories,
             };
 
         impl #descriptor_trait<#component_descriptor> for #self_ident {

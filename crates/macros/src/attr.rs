@@ -44,6 +44,11 @@ pub struct ServiceArgs {
     /// with something already in scope; a `#[handlers]` block for the service must
     /// then pass the same `rpc_slice = ..`.
     pub rpc_slice: Option<Ident>,
+    /// Overrides the generated per-type factory slice name (`factory_slice = Ident`).
+    /// `None` defaults to `{Type}Factories`. An escape hatch for a name collision; a
+    /// `#[methods]` block contributing an `#[init]` to this type must then pass the
+    /// same `factory_slice = ..`.
+    pub factory_slice: Option<Ident>,
 }
 
 impl Parse for ServiceArgs {
@@ -63,6 +68,10 @@ impl Parse for ServiceArgs {
                 "rpc_slice" => {
                     input.parse::<Token![=]>()?;
                     args.rpc_slice = Some(input.parse()?);
+                }
+                "factory_slice" => {
+                    input.parse::<Token![=]>()?;
+                    args.factory_slice = Some(input.parse()?);
                 }
                 "scope" => {
                     input.parse::<Token![=]>()?;
@@ -104,8 +113,8 @@ impl Parse for ServiceArgs {
                         key.span(),
                         format!(
                             "unknown argument `{other}`, expected `id`, `name`, `version`, \
-                             `provide`, `qualifier`, `primary`, `by_value`, `scope`, or \
-                             `rpc_slice`"
+                             `provide`, `qualifier`, `primary`, `by_value`, `scope`, \
+                             `rpc_slice`, or `factory_slice`"
                         ),
                     ));
                 }

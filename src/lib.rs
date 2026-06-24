@@ -55,8 +55,9 @@
 // ---------------------------------------------------------------------------
 pub use overseerd_core::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cancel, Cardinality, Cfg, Component,
-    ComponentConstructionContext, ComponentContainer, ComponentDescriptor, ComponentFactory,
-    ComponentScope, ConfigBinding, ConfigBindingDescriptor, ConfigError, ConfigManager,
+    ComponentConstructionContext, ComponentContainer, ComponentDescriptor, ComponentFactories,
+    ComponentFactory, ComponentFactoryDescriptor, ComponentScope, ConfigBinding,
+    ConfigBindingDescriptor, ConfigError, ConfigManager,
     ConfigProperties, Daemon, DaemonBuilder, DependencyDescriptor, Descriptor, DescriptorRegistry,
     Dir, DirKind, DirectoriesManager, Dynamic, Error, ErrorHandler, ErrorResponse, FallibleHandler,
     Flags, FromContext, Guard, GuardLayer, GuardService, Handler, Inject, Injectable, LoggingConfig,

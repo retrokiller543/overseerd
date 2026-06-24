@@ -69,14 +69,20 @@ impl DescriptorRegistry {
             .collect()
     }
 
-    /// Selects the effective component per type: an explicit factory (`#[init]`
-    /// or a hand-written descriptor) overrides a default field-injection one.
-    /// Two explicit factories for the same type is an error.
+    /// Collapses the registered descriptors to one per type. There is normally a
+    /// single `ComponentDescriptor` per type (the macro-emitted one, possibly
+    /// collected both via `auto_discover` and by-type registration — identical, so
+    /// deduped). A manually-provided instance (`with_component`, an empty-factory
+    /// descriptor) **overrides** an auto-constructed one for the same type, so an
+    /// app can supply a hand-built instance and still auto-discover the rest. The
+    /// per-type factory ambiguity check (an `#[init]` *and* a `factory = ..`) runs
+    /// here via [`ComponentDescriptor::effective_factory`].
     pub fn resolved_components(&self) -> crate::Result<Vec<ComponentDescriptor>> {
         let mut chosen: HashMap<TypeId, ComponentDescriptor> = HashMap::new();
 
         for component in &self.components {
             let type_id = (component.ty.type_id)();
+            let new_manual = component.effective_factory()?.is_none();
 
             match chosen.get(&type_id) {
                 None => {
@@ -84,9 +90,14 @@ impl DescriptorRegistry {
                 }
 
                 Some(existing) => {
-                    if existing.default_factory && !component.default_factory {
+                    let existing_manual = existing.effective_factory()?.is_none();
+
+                    // A provided instance (manual) overrides auto-construction.
+                    if new_manual && !existing_manual {
                         chosen.insert(type_id, *component);
-                    } else if !existing.default_factory && !component.default_factory {
+                    } else if new_manual == existing_manual && existing.id != component.id {
+                        // Two distinct constructable (or two distinct manual)
+                        // descriptors for one type — genuinely ambiguous.
                         return Err(Error::DuplicateComponentType(
                             (component.ty.type_name)().to_string(),
                         ));
@@ -128,7 +139,7 @@ impl DescriptorRegistry {
         }
 
         for c in components {
-            for dep in c.dependencies.iter().filter(|dep| dep.config) {
+            for dep in c.dependencies().iter().filter(|dep| dep.config) {
                 let dep_id = (dep.ty.type_id)();
                 let paths = bound.get(&dep_id);
 
@@ -179,7 +190,7 @@ impl DescriptorRegistry {
             .collect();
 
         for c in components {
-            for dep in c.dependencies {
+            for dep in c.dependencies() {
                 // Config edges resolve against singleton bindings (validated in
                 // `validate_configs`), so they never violate the scope rule.
                 if dep.dynamic || dep.config {
@@ -279,7 +290,7 @@ impl DescriptorRegistry {
         }
 
         for c in components {
-            for dep in c.dependencies {
+            for dep in c.dependencies() {
                 // Config edges are validated against bindings in `validate_configs`,
                 // not against the component/provider graph.
                 if dep.config {
@@ -352,8 +363,10 @@ impl DescriptorRegistry {
         for c in &components {
             writeln!(f, "  {}", c.name)?;
 
-            if !c.dependencies.is_empty() {
-                Self::write_dependency(f, c.dependencies.iter())?
+            let deps = c.dependencies();
+
+            if !deps.is_empty() {
+                Self::write_dependency(f, deps.iter())?
             }
         }
 
@@ -454,14 +467,41 @@ mod tests {
     use super::*;
     use crate::descriptors::{
         BoxedComponent, Cardinality, ComponentConstructionContext, ComponentDescriptor,
-        ComponentScope, DependencyDescriptor, OperationKind, RpcCallContext, RpcDescriptor,
-        RpcGroup, RpcOutcome, ServiceDescriptor, TypeDescriptor,
+        ComponentFactoryDescriptor, ComponentScope, DependencyDescriptor, OperationKind,
+        RpcCallContext, RpcDescriptor, RpcGroup, RpcOutcome, ServiceDescriptor, TypeDescriptor,
     };
 
     fn fake_factory<'a>(
         _: &'a mut ComponentConstructionContext,
     ) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + 'a>> {
         Box::pin(async { todo!() })
+    }
+
+    /// Builds a one-dependency component descriptor at `$scope` whose single
+    /// (explicit) factory carries `$dep`. A macro, not a fn, so each call site gets
+    /// its own block-local `static` factory slice and a real fn pointer for
+    /// `factories`. Argument order mirrors the former `scoped` fn:
+    /// `scoped!(name, scope, dep, ty)`.
+    macro_rules! scoped {
+        ($name:expr, $scope:expr, $dep:expr, $ty:expr $(,)?) => {{
+            static FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+                construct: fake_factory,
+                dependencies: $dep,
+                default: false,
+            }];
+
+            fn factories() -> &'static [ComponentFactoryDescriptor] {
+                &FACTORIES
+            }
+
+            ComponentDescriptor {
+                id: $name,
+                name: $name,
+                ty: $ty,
+                scope: $scope,
+                factories,
+            }
+        }};
     }
 
     fn fake_handler(
@@ -481,14 +521,22 @@ mod tests {
 
     static PG_POOL_DEPS: [DependencyDescriptor; 0] = [];
 
+    static PG_POOL_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+        construct: fake_factory,
+        dependencies: &PG_POOL_DEPS,
+        default: false,
+    }];
+
+    fn pg_pool_factories() -> &'static [ComponentFactoryDescriptor] {
+        &PG_POOL_FACTORIES
+    }
+
     static PG_POOL: ComponentDescriptor = ComponentDescriptor {
         id: "pg_pool",
         name: "PgPool",
         ty: TypeDescriptor::of::<u16>("PgPool"),
         scope: ComponentScope::Singleton,
-        dependencies: &PG_POOL_DEPS,
-        factory: Some(fake_factory),
-        default_factory: false,
+        factories: pg_pool_factories,
     };
 
     static BACKUP_REPO_DEPS: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -501,14 +549,22 @@ mod tests {
         config: false,
     }];
 
+    static BACKUP_REPO_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+        construct: fake_factory,
+        dependencies: &BACKUP_REPO_DEPS,
+        default: false,
+    }];
+
+    fn backup_repo_factories() -> &'static [ComponentFactoryDescriptor] {
+        &BACKUP_REPO_FACTORIES
+    }
+
     static BACKUP_REPO: ComponentDescriptor = ComponentDescriptor {
         id: "backup_repo",
         name: "BackupRepository",
         ty: TypeDescriptor::of::<u8>("BackupRepository"),
         scope: ComponentScope::Singleton,
-        dependencies: &BACKUP_REPO_DEPS,
-        factory: Some(fake_factory),
-        default_factory: false,
+        factories: backup_repo_factories,
     };
 
     static BACKUP_SERVICE_RPCS: [RpcDescriptor; 2] = [
@@ -647,15 +703,12 @@ mod tests {
 
         assert!(without.validate().is_err());
 
-        let manual = ComponentDescriptor {
-            id: "pg_pool_manual",
-            name: "PgPool",
-            ty: TypeDescriptor::of::<u16>("PgPool"),
-            scope: ComponentScope::Singleton,
-            dependencies: &[],
-            factory: None,
-            default_factory: false,
-        };
+        let manual = ComponentDescriptor::manual(
+            "pg_pool_manual",
+            "PgPool",
+            TypeDescriptor::of::<u16>("PgPool"),
+            ComponentScope::Singleton,
+        );
         let with = DescriptorRegistry {
             components: vec![BACKUP_REPO, manual],
             ..Default::default()
@@ -676,15 +729,12 @@ mod tests {
             version: Some("1.0"),
             rpcs: manual_rpcs,
         };
-        let component = ComponentDescriptor {
-            id: "manual",
-            name: "Manual",
-            ty: TypeDescriptor::of::<i8>("Manual"),
-            scope: ComponentScope::Singleton,
-            dependencies: &[],
-            factory: None,
-            default_factory: false,
-        };
+        let component = ComponentDescriptor::manual(
+            "manual",
+            "Manual",
+            TypeDescriptor::of::<i8>("Manual"),
+            ComponentScope::Singleton,
+        );
 
         let registry = DescriptorRegistry {
             components: vec![component],
@@ -718,25 +768,6 @@ mod tests {
     //
     // Stand-in types per scope: i16 = singleton, i32 = connection, i64 = request.
 
-    /// Builds a one-dependency component descriptor at `scope` depending on the
-    /// concrete type behind `dep`.
-    fn scoped(
-        name: &'static str,
-        scope: ComponentScope,
-        dep: &'static [DependencyDescriptor],
-        ty: TypeDescriptor,
-    ) -> ComponentDescriptor {
-        ComponentDescriptor {
-            id: name,
-            name,
-            ty,
-            scope,
-            dependencies: dep,
-            factory: Some(fake_factory),
-            default_factory: false,
-        }
-    }
-
     static SINGLETON_DEP_ON_REQUEST: [DependencyDescriptor; 1] = [DependencyDescriptor {
         name: "ReqComp",
         ty: TypeDescriptor::of::<i64>("ReqComp"),
@@ -761,13 +792,13 @@ mod tests {
     fn validate_rejects_singleton_depending_on_request() {
         // A singleton outlives a request-scoped instance, so the captive-dependency
         // rule forbids holding one.
-        let request = scoped(
+        let request = scoped!(
             "ReqComp",
             ComponentScope::Request,
             &[],
             TypeDescriptor::of::<i64>("ReqComp"),
         );
-        let singleton = scoped(
+        let singleton = scoped!(
             "RootComp",
             ComponentScope::Singleton,
             &SINGLETON_DEP_ON_REQUEST,
@@ -790,13 +821,13 @@ mod tests {
     #[test]
     fn validate_allows_request_depending_on_connection() {
         // A request-scoped component may depend on a longer-lived connection one.
-        let connection = scoped(
+        let connection = scoped!(
             "ConnComp",
             ComponentScope::Connection,
             &[],
             TypeDescriptor::of::<i32>("ConnComp"),
         );
-        let request = scoped(
+        let request = scoped!(
             "ReqComp",
             ComponentScope::Request,
             &REQUEST_DEP_ON_CONNECTION,
@@ -852,7 +883,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_unbound_config_path() {
-        let consumer = scoped(
+        let consumer = scoped!(
             "Pools",
             ComponentScope::Singleton,
             &CONFIG_DEP_PATHED,
@@ -872,7 +903,7 @@ mod tests {
 
     #[test]
     fn validate_accepts_bound_config_path() {
-        let consumer = scoped(
+        let consumer = scoped!(
             "Pools",
             ComponentScope::Singleton,
             &CONFIG_DEP_PATHED,
@@ -892,7 +923,7 @@ mod tests {
     fn validate_rejects_ambiguous_config_shorthand() {
         // Two bindings of the same type with an unpathed `#[config]` edge is
         // ambiguous — the shorthand only works for a single binding.
-        let consumer = scoped(
+        let consumer = scoped!(
             "Pools",
             ComponentScope::Singleton,
             &CONFIG_DEP_SHORTHAND,
@@ -916,7 +947,7 @@ mod tests {
 
     #[test]
     fn validate_accepts_sole_config_shorthand() {
-        let consumer = scoped(
+        let consumer = scoped!(
             "Pools",
             ComponentScope::Singleton,
             &CONFIG_DEP_SHORTHAND,
@@ -936,13 +967,13 @@ mod tests {
     fn validate_rejects_transient_depending_on_connection() {
         // A transient may depend only on singletons in v1, so a connection-scoped
         // dependency is rejected.
-        let connection = scoped(
+        let connection = scoped!(
             "ConnComp",
             ComponentScope::Connection,
             &[],
             TypeDescriptor::of::<i32>("ConnComp"),
         );
-        let transient = scoped(
+        let transient = scoped!(
             "TransComp",
             ComponentScope::Transient,
             &REQUEST_DEP_ON_CONNECTION,

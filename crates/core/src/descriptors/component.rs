@@ -583,7 +583,38 @@ pub type ComponentFactory =
         &'a mut ComponentConstructionContext,
     ) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + 'a>>;
 
+/// One way to construct a component, carrying the dependencies *that constructor*
+/// needs (zero or many).
+///
+/// A component owns a slice of these (its `{Type}Factories` distributed slice): the
+/// `#[component]`/`#[service]` field-injection **default** (`default: true`) plus any
+/// explicit factories contributed by an `#[init]` (via `#[methods]`) or
+/// `factory = path` — each appending its own entry. The effective one is chosen by
+/// [`ComponentDescriptor::effective_factory`].
+#[derive(Clone, Copy)]
+pub struct ComponentFactoryDescriptor {
+    pub construct: ComponentFactory,
+    pub dependencies: &'static [DependencyDescriptor],
+    /// The field-injection default, used only when no explicit factory exists.
+    pub default: bool,
+}
+
+impl fmt::Debug for ComponentFactoryDescriptor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ComponentFactoryDescriptor")
+            .field("dependencies", &self.dependencies)
+            .field("default", &self.default)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Static metadata describing a component and how to construct it.
+///
+/// `factories` returns the component's `{Type}Factories` slice (the field-injection
+/// default plus any `#[init]`/`factory =` contributions); deps live on each factory,
+/// not here. There is exactly one `ComponentDescriptor` per type — in `COMPONENTS`
+/// and as the [`Descriptor`](crate::descriptors::Descriptor) const, both the same —
+/// so registering a type by-type and via auto-discovery resolves to one component.
 ///
 /// `Copy` so the registry can own a flat `Vec<ComponentDescriptor>` holding both
 /// link-time-collected descriptors and ones synthesized at runtime for
@@ -594,14 +625,13 @@ pub struct ComponentDescriptor {
     pub name: &'static str,
     pub ty: TypeDescriptor,
     pub scope: ComponentScope,
-    pub dependencies: &'static [DependencyDescriptor],
-    /// `None` for a manually-provided instance: there is nothing to construct,
-    /// the value is seeded into the container directly.
-    pub factory: Option<ComponentFactory>,
-    /// Whether this is a default (field-injection) factory that an explicit
-    /// `#[init]` constructor or a manual registration may override. Exactly one
-    /// non-default factory is allowed per type.
-    pub default_factory: bool,
+    pub factories: fn() -> &'static [ComponentFactoryDescriptor],
+}
+
+/// The empty factory slice for a manually-provided instance: nothing to construct,
+/// the value is seeded into the container directly.
+fn no_factories() -> &'static [ComponentFactoryDescriptor] {
+    &[]
 }
 
 impl ComponentDescriptor {
@@ -611,10 +641,62 @@ impl ComponentDescriptor {
             name: T::NAME,
             ty: TypeDescriptor::of::<T>(T::NAME),
             scope: ComponentScope::Singleton,
-            dependencies: &[],
-            factory: None,
-            default_factory: false,
+            factories: no_factories,
         }
+    }
+
+    /// A descriptor for a manually-provided instance (no factory): the value is
+    /// seeded into the container directly. Used for framework-seeded injectables
+    /// (the peer, the shutdown handle) that carry a non-singleton or custom identity
+    /// that [`of`](Self::of) does not express.
+    pub const fn manual(
+        id: &'static str,
+        name: &'static str,
+        ty: TypeDescriptor,
+        scope: ComponentScope,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            ty,
+            scope,
+            factories: no_factories,
+        }
+    }
+
+    /// The factory the container should use: an explicit one if present (the default
+    /// is its fallback), or `None` for a manually-provided instance (empty slice).
+    /// Errors if more than one explicit factory exists for the type (e.g. an `#[init]`
+    /// *and* a `factory = ..`) — that is genuinely ambiguous.
+    pub fn effective_factory(&self) -> crate::Result<Option<&'static ComponentFactoryDescriptor>> {
+        let factories = (self.factories)();
+
+        if factories.len() == 1 {
+            return Ok(factories.first())
+        }
+
+        let mut explicit = factories.iter().filter(|factory| !factory.default);
+        let first = explicit.next();
+
+        if first.is_some() && explicit.next().is_some() {
+            return Err(crate::Error::AmbiguousFactory(self.name.to_string()));
+        }
+
+        match first {
+            Some(factory) => Ok(Some(factory)),
+
+            None => Ok(factories.iter().find(|factory| factory.default)),
+        }
+    }
+
+    /// The dependencies of the effective factory (empty for a manual instance, or if
+    /// the factory choice is ambiguous — that is surfaced separately during validation).
+    pub fn dependencies(&self) -> &'static [DependencyDescriptor] {
+        self.effective_factory()
+            .ok()
+            .flatten()
+            .map(|factory| factory.dependencies)
+            .unwrap_or(&[])
     }
 }
 
@@ -625,8 +707,7 @@ impl fmt::Debug for ComponentDescriptor {
             .field("name", &self.name)
             .field("ty", &self.ty)
             .field("scope", &self.scope)
-            .field("dependencies", &self.dependencies)
-            .field("default_factory", &self.default_factory)
+            .field("dependencies", &self.dependencies())
             .finish_non_exhaustive()
     }
 }

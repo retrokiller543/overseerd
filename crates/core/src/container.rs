@@ -56,12 +56,12 @@ pub(crate) async fn construct_transient<H: Injectable>(
 ) -> Option<H> {
     let target = TypeId::of::<H::Target>();
     let descriptor = registry.transient(target)?;
-    let factory = descriptor.factory?;
+    let factory = descriptor.effective_factory().ok().flatten()?;
 
     let mut cx =
         ComponentConstructionContext::new(ComponentScope::Transient, parent, Arc::clone(registry));
 
-    match factory(&mut cx).await {
+    match (factory.construct)(&mut cx).await {
         Ok(boxed) => boxed.value.downcast_ref::<H>().cloned(),
 
         Err(e) => {
@@ -179,11 +179,11 @@ impl ScopeContainer {
         }
 
         for descriptor in order {
-            match descriptor.factory {
+            match descriptor.effective_factory()? {
                 Some(factory) => {
                     debug!(component = %descriptor.name, ?scope, "constructing component");
 
-                    let component = factory(&mut cx).await?;
+                    let component = (factory.construct)(&mut cx).await?;
 
                     cx.insert(component);
 
@@ -354,7 +354,7 @@ pub(crate) fn topological_sort<'a>(
             };
 
             let resolved = descriptor
-                .dependencies
+                .dependencies()
                 .iter()
                 // `optional`/`dynamic` edges impose no build-ordering constraint.
                 .filter(|dep| !dep.optional && !dep.dynamic)

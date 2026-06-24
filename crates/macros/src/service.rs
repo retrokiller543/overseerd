@@ -49,8 +49,13 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
     }
 
     let singleton = syn::Ident::new("Singleton", self_ident.span());
+    let factories_slice = args
+        .factory_slice
+        .clone()
+        .unwrap_or_else(|| inject::factories_slice_ident(&self_ident));
+    let factories_infra = inject::factories_infrastructure(&self_ident, &factories_slice);
     let default_component =
-        inject::field_injection_component(&mut item, &id, &name, true, &singleton);
+        inject::field_injection_component(&mut item, &id, &name, true, &singleton, &factories_slice);
 
     let service_static = format_ident!(
         "__OVERSEERD_SERVICE_{}",
@@ -98,6 +103,8 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
                 &#rpcs_slice
             }
         }
+
+        #factories_infra
 
         const _: () = {
             #default_component

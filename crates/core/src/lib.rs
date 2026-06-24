@@ -46,10 +46,11 @@ pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cardinality, Component,
     ComponentConstructionContext, ComponentDescriptor, ComponentFactory, ComponentScope,
-    DependencyDescriptor, Descriptor, Dynamic, Injectable, OperationKind, PROVIDERS,
-    ParameterDescriptor, ParameterKind, Provide, ProviderDescriptor, RpcCallContext,
-    RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcResponse, SERVICES, ServiceComponent,
-    ServiceDescriptor, ServiceRpcs, TypeDescriptor, Wired, Wiring, type_id_of,
+    ComponentFactories, ComponentFactoryDescriptor, DependencyDescriptor, Descriptor, Dynamic,
+    Injectable, OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Provide,
+    ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
+    RpcResponse, SERVICES, ServiceComponent, ServiceDescriptor, ServiceRpcs, TypeDescriptor,
+    Wired, Wiring, type_id_of,
 };
 pub use dirs::{Dir, DirKind, DirectoriesManager};
 pub use error::Error;

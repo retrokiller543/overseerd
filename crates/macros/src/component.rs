@@ -32,7 +32,13 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         .scope
         .clone()
         .unwrap_or_else(|| syn::Ident::new("Singleton", self_ident.span()));
-    let factory = inject::field_injection_component(&mut item, &id, &name, false, &scope_variant);
+    let factories_slice = args
+        .factory_slice
+        .clone()
+        .unwrap_or_else(|| inject::factories_slice_ident(&self_ident));
+    let factories_infra = inject::factories_infrastructure(&self_ident, &factories_slice);
+    let factory =
+        inject::field_injection_component(&mut item, &id, &name, false, &scope_variant, &factories_slice);
     let component = overseerd_path("Component");
 
     Ok(quote! {
@@ -47,6 +53,8 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         #injectable
 
         #provide_impl
+
+        #factories_infra
 
         const _: () = {
             #factory

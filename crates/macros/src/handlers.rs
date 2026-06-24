@@ -98,7 +98,11 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
     };
 
     let (init_marker, init_component) = match &init {
-        Some(info) => generate_init(&self_ty, &self_name, info),
+        Some(info) => {
+            let factories_slice = crate::inject::factories_slice_ident(&self_ident);
+
+            generate_init(&self_ty, &self_name, &factories_slice, info)
+        }
         None => (quote!(), quote!()),
     };
 
@@ -736,15 +740,14 @@ fn parse_init(method: &ImplItemFn) -> syn::Result<InitInfo> {
 fn generate_init(
     self_ty: &Type,
     self_name: &LitStr,
+    factories_slice: &syn::Ident,
     info: &InitInfo,
 ) -> (TokenStream, TokenStream) {
     let marked = &info.ident;
     let boxed_component = overseerd_path("BoxedComponent");
     let component_trait = overseerd_path("Component");
     let component_construction_context = overseerd_path("ComponentConstructionContext");
-    let component_descriptor = overseerd_path("ComponentDescriptor");
-    let component_scope = overseerd_path("ComponentScope");
-    let components_slice = overseerd_path("COMPONENTS");
+    let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
     let dependency_descriptor = overseerd_path("DependencyDescriptor");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
@@ -848,17 +851,15 @@ fn generate_init(
             #(#dependency_descriptors),*
         ];
 
-        #[#distributed_slice(#components_slice)]
+        // The explicit `#[init]` factory, appended to the type's factory slice; it
+        // overrides the field-injection default.
+        #[#distributed_slice(#factories_slice)]
         #[linkme(crate = #linkme_crate)]
-        static __OVERSEERD_INIT_COMPONENT: #component_descriptor =
-            #component_descriptor {
-                id: #self_name,
-                name: #self_name,
-                ty: #type_descriptor::of::<#self_ty>(#self_name),
-                scope: #component_scope::Singleton,
+        static __OVERSEERD_INIT_FACTORY: #component_factory_descriptor =
+            #component_factory_descriptor {
+                construct: __overseerd_init_factory,
                 dependencies: &__OVERSEERD_INIT_DEPS,
-                factory: ::core::option::Option::Some(__overseerd_init_factory),
-                default_factory: false,
+                default: false,
             };
     };
 
