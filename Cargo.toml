@@ -15,13 +15,18 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 authors = ["Emil Schütt <emil.schutt@gmail.com>"]
+repository = "https://github.com/retrokiller543/overseerd"
+homepage = "https://github.com/retrokiller543/overseerd"
+keywords = ["daemon", "rpc", "framework", "async", "ioc"]
+categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
-# Workspace member crates
-overseerd-config = { path = "crates/config" }
-overseerd-core = { path = "crates/core" }
-overseerd-macros = { path = "crates/macros" }
-overseerd-transport = { path = "crates/transport" }
+# Workspace member crates. The `version` is required for publishing: crates.io
+# strips the `path` and resolves the dependency by version instead.
+overseerd-config = { path = "crates/config", version = "0.1.0" }
+overseerd-core = { path = "crates/core", version = "0.1.0" }
+overseerd-macros = { path = "crates/macros", version = "0.1.0" }
+overseerd-transport = { path = "crates/transport", version = "0.1.0" }
 
 # Common dependencies
 bitflags = "2"
@@ -46,10 +51,15 @@ proc-macro2 = "1"
 
 [package]
 name = "overseerd"
+description = "An async daemon framework with compile-time dependency injection, typed RPC, and config — the all-in-one facade crate."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [features]
 default = ["di-check"]
