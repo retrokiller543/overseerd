@@ -59,6 +59,7 @@ pub use overseerd_core::{
     ComponentFactory, ComponentFactoryDescriptor, ComponentScope, ConfigBinding,
     ConfigBindingDescriptor, ConfigError, ConfigManager,
     ConfigProperties, Daemon, DaemonBuilder, DependencyDescriptor, Descriptor, DescriptorRegistry,
+    Factory, FactoryOutput, FromContainer, dispatch_factory, factory_dependencies,
     Dir, DirKind, DirectoriesManager, Dynamic, Error, ErrorHandler, ErrorResponse, FallibleHandler,
     Flags, FromContext, Guard, GuardLayer, GuardService, Handler, Inject, Injectable, LoggingConfig,
     OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Payload, Peer, PredefinedCode,
@@ -67,7 +68,7 @@ pub use overseerd_core::{
     RpcOutcome, RpcRequest, RpcResponse, RpcRouter, RpcService, SERVICES, ScopeContainer,
     ServerConfig, ServiceComponent, ServiceDescriptor, ServiceRpcs, ShutdownHandle, ShutdownSignal,
     StatusCode, Streaming, TypeDescriptor, Wired, Wiring, component, daemon, dispatch_fallible,
-    dispatch_with, handlers, injectable, rpc, service, type_id_of,
+    dispatch_with, handlers, injectable, methods, rpc, service, type_id_of,
 };
 
 /// The `#[config]` attribute macro. Re-exported straight from `overseerd_macros`

@@ -15,8 +15,9 @@ mod service;
 
 use crate::components::{AppServer, DbConfig};
 use crate::service::Notifications;
+use overseerd::builtins::init_tracing;
 use overseerd::config::Toml;
-use overseerd::{ConfigManager, DirectoriesManager, ServerConfig, TcpTransport, daemon};
+use overseerd::{daemon, ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig};
 
 #[tokio::main]
 async fn main() -> overseerd::Result<()> {
@@ -27,6 +28,8 @@ async fn main() -> overseerd::Result<()> {
     // Build the merged config first. Its `${VAR:default}` placeholders resolve
     // against the environment as each subtree is deserialized.
     let config = ConfigManager::<Toml>::load_in(&dir_manager.dir(), &[])?;
+
+    init_tracing(&config.get("logging")?).ok();
 
     // Configure the transport from config before the daemon is assembled.
     let server: AppServer = config.get("app.server")?;
@@ -43,6 +46,7 @@ async fn main() -> overseerd::Result<()> {
             DbConfig => "app.db.reader",
             DbConfig => "app.db.writer",
             ServerConfig => "app.server",
+            LoggingConfig => "logging"
         ],
         managers: {
             config: config,
@@ -52,11 +56,7 @@ async fn main() -> overseerd::Result<()> {
     .build()
     .await?;
 
-    let transport = TcpTransport::bind(server.addr).await?;
-
     println!("{daemon}");
-
-    daemon.serve(transport).await?;
 
     Ok(())
 }

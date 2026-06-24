@@ -63,6 +63,7 @@ mod handle;
 mod handlers;
 mod inject;
 mod injectable;
+mod methods;
 mod paths;
 mod provide;
 mod rpc;
@@ -364,6 +365,41 @@ pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemImpl);
 
     handlers::expand(args, item)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Registers a component's lifecycle methods from an inherent `impl` block.
+///
+/// Today that is the `#[init]` constructor — an explicit factory that overrides the
+/// field-injection default. Works on any component (`#[component]` or `#[service]`),
+/// so a plain component gets a full-flexibility constructor (sync or async, any
+/// injectable parameter — `Arc<T>`, `Cfg<T>`, `Vec<Arc<dyn Tr>>`, a by-value
+/// injectable) without the async-only `factory = ..` form.
+///
+/// The constructor's parameters are its dependencies (resolved from the container)
+/// and its return is `Self` or `Result<Self, E>`; a non-`async` constructor is
+/// wrapped to async. Two `#[init]`s on one type is a compile error.
+///
+/// # Arguments
+///
+/// Optional `factory_slice = Ident` — the per-type factory slice to append to,
+/// matching the owning `#[component]`/`#[service]`'s `factory_slice` when overridden
+/// (defaults to `{Type}Factories`).
+///
+/// ```ignore
+/// #[methods]
+/// impl Greeter {
+///     #[init]
+///     async fn new(config: Arc<Config>) -> Result<Self> { Ok(Self { config }) }
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(attr as attr::MethodsArgs);
+    let item = parse_macro_input!(item as ItemImpl);
+
+    methods::expand(args, item)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

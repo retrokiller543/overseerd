@@ -3,6 +3,11 @@
 # `${VAR}` leaf coerces to the target type; an embedded one (e.g. the addr below)
 # can only produce a string.
 
+[logging]
+level = "info,overseerd_core=trace"
+format = "full"
+ansi = true
+
 [app.greet]
 greeting = "Hello, ${USER:world}"
 

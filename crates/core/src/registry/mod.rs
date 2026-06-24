@@ -484,9 +484,13 @@ mod tests {
     /// `scoped!(name, scope, dep, ty)`.
     macro_rules! scoped {
         ($name:expr, $scope:expr, $dep:expr, $ty:expr $(,)?) => {{
+            fn deps() -> ::std::vec::Vec<DependencyDescriptor> {
+                $dep.to_vec()
+            }
+
             static FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
                 construct: fake_factory,
-                dependencies: $dep,
+                dependencies: deps,
                 default: false,
             }];
 
@@ -519,11 +523,13 @@ mod tests {
     // u16 = stand-in type for PgPool
     // u32, u64 = stand-in types for RPC output types
 
-    static PG_POOL_DEPS: [DependencyDescriptor; 0] = [];
+    fn pg_pool_deps() -> Vec<DependencyDescriptor> {
+        Vec::new()
+    }
 
     static PG_POOL_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
         construct: fake_factory,
-        dependencies: &PG_POOL_DEPS,
+        dependencies: pg_pool_deps,
         default: false,
     }];
 
@@ -539,19 +545,21 @@ mod tests {
         factories: pg_pool_factories,
     };
 
-    static BACKUP_REPO_DEPS: [DependencyDescriptor; 1] = [DependencyDescriptor {
-        name: "PgPool",
-        ty: TypeDescriptor::of::<u16>("PgPool"),
-        cardinality: Cardinality::One,
-        optional: false,
-        dynamic: false,
-        qualifier: None,
-        config: false,
-    }];
+    fn backup_repo_deps() -> Vec<DependencyDescriptor> {
+        vec![DependencyDescriptor {
+            name: "PgPool",
+            ty: TypeDescriptor::of::<u16>("PgPool"),
+            cardinality: Cardinality::One,
+            optional: false,
+            dynamic: false,
+            qualifier: None,
+            config: false,
+        }]
+    }
 
     static BACKUP_REPO_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
         construct: fake_factory,
-        dependencies: &BACKUP_REPO_DEPS,
+        dependencies: backup_repo_deps,
         default: false,
     }];
 

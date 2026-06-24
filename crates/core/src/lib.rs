@@ -11,6 +11,7 @@
 
 pub mod builtins;
 pub mod config;
+pub mod construct;
 pub mod container;
 pub mod daemon;
 pub mod descriptors;
@@ -22,13 +23,16 @@ pub mod middleware;
 pub mod registry;
 pub mod router;
 
+pub use construct::{
+    Factory, FactoryOutput, FromContainer, dispatch_factory, factory_dependencies,
+};
 pub use extract::{
     Cancel, ErrorResponse, FallibleHandler, FromContext, Handler, Inject, Payload, Peer,
     RequestStream, Responder, ResponseError, ResponseStream, Streaming, dispatch_fallible,
     dispatch_with,
 };
 pub use overseerd_macros::{
-    Component, component, config, daemon, handlers, injectable, rpc, service,
+    Component, component, config, daemon, handlers, injectable, methods, rpc, service,
 };
 /// Wire-contract status types and stream item codecs, re-exported from
 /// `overseerd-transport` so handler authors import everything from `overseerd_core`.

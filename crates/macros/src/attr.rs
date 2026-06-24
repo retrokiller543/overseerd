@@ -156,6 +156,43 @@ impl Parse for ProvidedTrait {
     }
 }
 
+/// Arguments of `#[methods(factory_slice = Ident)]`. The only key is the optional
+/// `factory_slice`, which must match the owning `#[component]`/`#[service]`'s
+/// `factory_slice` when it was overridden; `None` defaults to `{Type}Factories`.
+#[derive(Default)]
+pub struct MethodsArgs {
+    pub factory_slice: Option<Ident>,
+}
+
+impl Parse for MethodsArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut args = MethodsArgs::default();
+
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+
+            match key.to_string().as_str() {
+                "factory_slice" => {
+                    input.parse::<Token![=]>()?;
+                    args.factory_slice = Some(input.parse()?);
+                }
+                other => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        format!("unknown `methods` argument `{other}`, expected `factory_slice`"),
+                    ));
+                }
+            }
+
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+
+        Ok(args)
+    }
+}
+
 /// Arguments of `#[handlers(client_trait = Name)]`. The only key is the optional
 /// `client_trait`: when present the generated client is emitted as a trait `Name`
 /// plus its impl (mockable, `dyn`-compatible); when absent, as a plain inherent impl.

@@ -427,6 +427,7 @@ dependencies = [
  "overseerd-analyze",
  "serde",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

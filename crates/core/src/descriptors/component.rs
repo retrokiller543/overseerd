@@ -594,7 +594,9 @@ pub type ComponentFactory =
 #[derive(Clone, Copy)]
 pub struct ComponentFactoryDescriptor {
     pub construct: ComponentFactory,
-    pub dependencies: &'static [DependencyDescriptor],
+    /// The factory's dependency edges, reported at runtime (a type's name is needed
+    /// to build a descriptor and `type_name` is not const-stable). Read only at build.
+    pub dependencies: fn() -> Vec<DependencyDescriptor>,
     /// The field-injection default, used only when no explicit factory exists.
     pub default: bool,
 }
@@ -602,7 +604,7 @@ pub struct ComponentFactoryDescriptor {
 impl fmt::Debug for ComponentFactoryDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ComponentFactoryDescriptor")
-            .field("dependencies", &self.dependencies)
+            .field("dependencies", &(self.dependencies)())
             .field("default", &self.default)
             .finish_non_exhaustive()
     }
@@ -691,12 +693,12 @@ impl ComponentDescriptor {
 
     /// The dependencies of the effective factory (empty for a manual instance, or if
     /// the factory choice is ambiguous — that is surfaced separately during validation).
-    pub fn dependencies(&self) -> &'static [DependencyDescriptor] {
-        self.effective_factory()
-            .ok()
-            .flatten()
-            .map(|factory| factory.dependencies)
-            .unwrap_or(&[])
+    pub fn dependencies(&self) -> Vec<DependencyDescriptor> {
+        match self.effective_factory().ok().flatten() {
+            Some(factory) => (factory.dependencies)(),
+
+            None => Vec::new(),
+        }
     }
 }
 

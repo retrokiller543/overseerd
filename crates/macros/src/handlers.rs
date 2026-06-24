@@ -31,25 +31,17 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
     let mut wrappers = Vec::new();
     let mut descriptors = Vec::new();
     let mut client_methods = Vec::new();
-    let mut init: Option<InitInfo> = None;
 
     for impl_item in &mut item.items {
         let ImplItem::Fn(method) = impl_item else {
             continue;
         };
 
-        if let Some(pos) = method.attrs.iter().position(|a| a.path().is_ident("init")) {
-            method.attrs.remove(pos);
-
-            if init.is_some() {
-                return Err(syn::Error::new_spanned(
-                    &method.sig,
-                    "this impl block already has an #[init] constructor",
-                ));
-            }
-
-            init = Some(parse_init(method)?);
-            continue;
+        if method.attrs.iter().any(|a| a.path().is_ident("init")) {
+            return Err(syn::Error::new_spanned(
+                &method.sig,
+                "#[init] is a lifecycle method — put it in a #[methods] impl, not #[handlers]",
+            ));
         }
 
         let Some(pos) = method.attrs.iter().position(|a| a.path().is_ident("rpc")) else {
@@ -97,26 +89,13 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
         }
     };
 
-    let (init_marker, init_component) = match &init {
-        Some(info) => {
-            let factories_slice = crate::inject::factories_slice_ident(&self_ident);
-
-            generate_init(&self_ty, &self_name, &factories_slice, info)
-        }
-        None => (quote!(), quote!()),
-    };
-
     Ok(quote! {
         #item
-
-        #init_marker
 
         #client_code
 
         const _: () = {
             #(#wrappers)*
-
-            #init_component
 
             #rpc_registration
         };
@@ -694,188 +673,6 @@ fn generate_client(
             }
         }
     }
-}
-
-/// The `#[init]` constructor: its `Arc<T>` parameters are injected dependencies.
-struct InitInfo {
-    ident: syn::Ident,
-    is_async: bool,
-    fallible: bool,
-    param_types: Vec<Type>,
-    dep_types: Vec<Type>,
-    output: ReturnType,
-}
-
-fn parse_init(method: &ImplItemFn) -> syn::Result<InitInfo> {
-    let mut param_types = Vec::new();
-    let mut dep_types = Vec::new();
-
-    for arg in &method.sig.inputs {
-        match arg {
-            FnArg::Receiver(receiver) => {
-                return Err(syn::Error::new_spanned(
-                    receiver,
-                    "#[init] is a constructor and cannot take `self`",
-                ));
-            }
-            FnArg::Typed(typed) => {
-                param_types.push((*typed.ty).clone());
-                dep_types.push(attr::arc_inner_type(&typed.ty)?);
-            }
-        }
-    }
-
-    Ok(InitInfo {
-        ident: method.sig.ident.clone(),
-        is_async: method.sig.asyncness.is_some(),
-        fallible: attr::returns_result(&method.sig.output),
-        param_types,
-        dep_types,
-        output: method.sig.output.clone(),
-    })
-}
-
-/// Generates the fixed-name `init` marker/wrapper (module scope) and the
-/// singleton component factory (const-block scope).
-fn generate_init(
-    self_ty: &Type,
-    self_name: &LitStr,
-    factories_slice: &syn::Ident,
-    info: &InitInfo,
-) -> (TokenStream, TokenStream) {
-    let marked = &info.ident;
-    let boxed_component = overseerd_path("BoxedComponent");
-    let component_trait = overseerd_path("Component");
-    let component_construction_context = overseerd_path("ComponentConstructionContext");
-    let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
-    let dependency_descriptor = overseerd_path("DependencyDescriptor");
-    let distributed_slice = overseerd_path("linkme::distributed_slice");
-    let linkme_crate = overseerd_path("linkme");
-    let error = overseerd_path("Error");
-    let result = overseerd_path("Result");
-    let type_descriptor = overseerd_path("TypeDescriptor");
-
-    // The fixed `init` name is the compile-time uniqueness guard. If the marked
-    // method is already named `init`, it is its own marker and needs no wrapper.
-    let marker = if marked == "init" {
-        quote!()
-    } else {
-        let fresh: Vec<_> = (0..info.param_types.len())
-            .map(|i| format_ident!("__p{i}"))
-            .collect();
-        let param_types = &info.param_types;
-        let output = &info.output;
-        let asyncness = if info.is_async {
-            quote!(async)
-        } else {
-            quote!()
-        };
-        let dotawait = if info.is_async {
-            quote!(.await)
-        } else {
-            quote!()
-        };
-
-        quote! {
-            impl #self_ty {
-                #[doc(hidden)]
-                #asyncness fn init(#(#fresh: #param_types),*) #output {
-                    <#self_ty>::#marked(#(#fresh),*)#dotawait
-                }
-            }
-        }
-    };
-
-    let resolved = info.dep_types.iter().map(|t| {
-        let dep_name = LitStr::new(&t.to_token_stream().to_string(), t.span());
-
-        quote! {
-            cx.resolve::<::std::sync::Arc<#t>>()
-                .await
-                .ok_or(#error::MissingComponent(#dep_name))?
-        }
-    });
-
-    let mut call = quote!(<#self_ty>::init(#(#resolved),*));
-
-    if info.is_async {
-        call = quote!(#call.await);
-    }
-
-    if info.fallible {
-        call = quote!(#call?);
-    }
-
-    let cardinality = overseerd_path("Cardinality");
-    let dependency_descriptors = info.dep_types.iter().map(|t| {
-        let dep_name = LitStr::new(&t.to_token_stream().to_string(), t.span());
-
-        quote! {
-            #dependency_descriptor {
-                name: #dep_name,
-                ty: #type_descriptor::of::<#t>(#dep_name),
-                cardinality: #cardinality::One,
-                optional: false,
-                dynamic: false,
-                qualifier: ::core::option::Option::None,
-                config: false,
-            }
-        }
-    });
-    let dependency_count = info.dep_types.len();
-
-    let component = quote! {
-        #[allow(unused_variables)]
-        fn __overseerd_init_factory(
-            cx: &mut #component_construction_context,
-        ) -> ::core::pin::Pin<
-            ::std::boxed::Box<
-                dyn ::core::future::Future<
-                    Output = #result<#boxed_component>,
-                > + ::core::marker::Send + '_,
-            >,
-        > {
-            ::std::boxed::Box::pin(async move {
-                let __instance = #call;
-
-                ::core::result::Result::Ok(#boxed_component {
-                    ty: #type_descriptor::of::<#self_ty>(#self_name),
-                    value: ::std::boxed::Box::new(
-                        <#self_ty as #component_trait>::into_handle(__instance),
-                    ),
-                })
-            })
-        }
-
-        static __OVERSEERD_INIT_DEPS: [#dependency_descriptor; #dependency_count] = [
-            #(#dependency_descriptors),*
-        ];
-
-        // The explicit `#[init]` factory, appended to the type's factory slice; it
-        // overrides the field-injection default.
-        #[#distributed_slice(#factories_slice)]
-        #[linkme(crate = #linkme_crate)]
-        static __OVERSEERD_INIT_FACTORY: #component_factory_descriptor =
-            #component_factory_descriptor {
-                construct: __overseerd_init_factory,
-                dependencies: &__OVERSEERD_INIT_DEPS,
-                default: false,
-            };
-    };
-
-    // Assert that each concrete `#[init]` dependency is provided. These are the
-    // service's real deps (init overrides field injection), so the assert is
-    // emitted here rather than from the struct macro. Trait-object deps are
-    // skipped (the per-macro path does concrete only).
-    let di_targets: Vec<TokenStream> = info
-        .dep_types
-        .iter()
-        .filter(|t| !matches!(t, Type::TraitObject(_)))
-        .map(|t| quote!(#t))
-        .collect();
-    let di_assert = crate::di::assert(&di_targets);
-
-    (quote!(#marker #di_assert), component)
 }
 
 /// The erased `RpcHandler` return type, repeated by both wrapper forms.

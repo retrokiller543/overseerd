@@ -3,7 +3,7 @@ use std::{any::TypeId, fmt};
 /// Returns the TypeId of T. Used as a function pointer in TypeDescriptor.
 ///
 /// `?Sized` so trait-object keys (`dyn Trait`) can be used to look up providers.
-pub fn type_id_of<T: ?Sized + 'static>() -> TypeId {
+pub const fn type_id_of<T: ?Sized + 'static>() -> TypeId {
     TypeId::of::<T>()
 }
 

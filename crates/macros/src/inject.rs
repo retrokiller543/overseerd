@@ -125,8 +125,6 @@ pub fn field_injection_component(
         Fields::Unit => quote!(#self_ident),
     };
 
-    let dependency_count = dep_descriptors.len();
-
     // Assert deps eagerly only when the field-injection factory is the real one.
     // A `#[service]` (and any type whose construction an `#[init]` may override)
     // defers to the `#[init]` path and the source analyzer, so its field deps are
@@ -168,9 +166,9 @@ pub fn field_injection_component(
             })
         }
 
-        static __OVERSEERD_DEPS: [#dependency_descriptor; #dependency_count] = [
-            #(#dep_descriptors),*
-        ];
+        fn __overseerd_deps() -> ::std::vec::Vec<#dependency_descriptor> {
+            ::std::vec![ #(#dep_descriptors),* ]
+        }
 
         // The field-injection default, appended to the type's factory slice. Used
         // only when no explicit (`#[init]` / `factory = ..`) factory is present.
@@ -179,7 +177,7 @@ pub fn field_injection_component(
         static __OVERSEERD_DEFAULT_FACTORY: #component_factory_descriptor =
             #component_factory_descriptor {
                 construct: __overseerd_factory,
-                dependencies: &__OVERSEERD_DEPS,
+                dependencies: __overseerd_deps,
                 default: true,
             };
 

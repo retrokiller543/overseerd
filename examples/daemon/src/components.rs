@@ -2,9 +2,9 @@
 //! database config bound at two paths, and a by-value pool.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use overseerd::{component, config};
+use overseerd::{component, config, methods};
 use serde::Deserialize;
 
 #[allow(dead_code)]
@@ -42,13 +42,54 @@ pub struct DbConfig {
 #[derive(Clone)]
 pub struct Db {
     #[default]
+    connection: Arc<AtomicUsize>,
+
+    #[default]
     queries: Arc<AtomicU64>,
 }
 
 impl Db {
+    pub fn create_connection(&self) -> DbConnection {
+        let id = self.connection.fetch_add(1, Ordering::Relaxed);
+        let queries = self.queries.clone();
+
+        DbConnection::new(id, queries)
+    }
+
     /// Records a query and returns the running total. Shared across all clones
     /// of the handle, since the counter lives behind the internal `Arc`.
     pub fn record_query(&self) -> u64 {
         self.queries.fetch_add(1, Ordering::Relaxed) + 1
+    }
+}
+
+#[component(scope = request, by_value)]
+#[derive(Clone)]
+pub struct DbConnection {
+    #[default]
+    id: usize,
+    #[default]
+    queries: Arc<AtomicU64>,
+}
+
+impl DbConnection {
+    pub fn new(id: usize, queries: Arc<AtomicU64>) -> Self {
+        Self {
+            id,
+            queries
+        }
+    }
+
+    #[tracing::instrument(skip(self), fields(connection_id = self.id))]
+    pub fn record_query(&self) -> u64 {
+        self.queries.fetch_add(1, Ordering::Relaxed) + 1
+    }
+}
+
+#[methods]
+impl DbConnection {
+    #[init]
+    pub async fn init(db: Db) -> Self {
+        db.create_connection()
     }
 }

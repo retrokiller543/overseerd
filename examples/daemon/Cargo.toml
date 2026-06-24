@@ -7,9 +7,10 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-overseerd = { path = "../.." }
+overseerd = { path = "../..", features = ["tracing-subscriber"] }
 tokio = { workspace = true }
 serde = { workspace = true }
+tracing.workspace = true
 
 # Build-time dependency-graph validation: the build script fails `cargo build`
 # if the DI graph is unsatisfiable, so CI catches it before deployment.

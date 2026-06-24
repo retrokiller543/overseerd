@@ -5,11 +5,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseerd::{Cfg, Payload, ServerConfig, ShutdownHandle, handlers, service};
-use serde::{Deserialize, Serialize};
-
-use crate::components::{Config, Db, DbConfig};
+use crate::components::{Config, DbConfig, DbConnection};
 use crate::notifiers::Notifier;
+use overseerd::{handlers, service, Cfg, Inject, Payload, ServerConfig, ShutdownHandle};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct NotifyRequest {
@@ -37,8 +36,6 @@ pub struct Notifications {
     reader: Cfg<DbConfig>,
     #[config("app.db.writer")]
     writer: Cfg<DbConfig>,
-    /// Injected by value — `Db`, not `Arc<Db>`.
-    db: Db,
     /// The primary `dyn Notifier` (`Email`).
     default: Arc<dyn Notifier>,
     /// Every provider of `dyn Notifier`.
@@ -57,8 +54,8 @@ impl Notifications {
     /// Broadcasts to every channel, stamping the configured greeting and the
     /// running query count from the shared by-value pool.
     #[rpc]
-    async fn notify(&self, Payload(req): Payload<NotifyRequest>) -> NotifyResponse {
-        let count = self.db.record_query();
+    async fn notify(&self, Payload(req): Payload<NotifyRequest>, Inject(db): Inject<DbConnection>) -> NotifyResponse {
+        let count = db.record_query();
 
         let mut delivered: Vec<String> = self.all.iter().map(|n| n.channel().to_string()).collect();
         delivered.sort_unstable();
