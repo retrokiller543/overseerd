@@ -1,0 +1,112 @@
+name: CI
+
+# Checks for every pull request. Each job is a separately-named status check,
+# so branch protection on `master` can mark some as hard blockers and leave
+# others advisory ("this is broken, but you can still merge / cut a release").
+#
+# Release-plz PRs (branch prefix `release-plz-`) only bump versions and the
+# changelog, so the actual cargo work is skipped for them. The jobs still run
+# and report success, which keeps any required check satisfiable — otherwise a
+# skipped required check would make the release PR permanently unmergeable.
+on:
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same PR cancels the in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  # Formatting. Cheap; typically a hard blocker.
+  fmt:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - &checkout
+        name: Checkout repository
+        uses: actions/checkout@v6
+      - &cache
+        name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: cargo fmt
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo fmt --all --check
+
+  # Lints. Often a hard blocker, but easy to make advisory.
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - *checkout
+      - *cache
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: cargo clippy
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  # Per-crate build. One status check per crate (e.g. `Build (overseerd-core)`),
+  # so an individual crate can be a blocker or advisory on its own.
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - overseerd
+          - overseerd-config
+          - overseerd-core
+          - overseerd-macros
+          - overseerd-transport
+          - overseerd-analyze
+    steps:
+      - *checkout
+      - *cache
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo build -p ${{ matrix.crate }}
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo build -p ${{ matrix.crate }} --all-features --locked
+
+  # Full workspace test suite via nextest. Note: nextest does not run doctests.
+  test:
+    name: Test suite
+    runs-on: ubuntu-latest
+    steps:
+      - *checkout
+      - *cache
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
+      - name: cargo nextest run
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo nextest run --workspace --all-features --locked
+
+  # Example crates must still compile.
+  examples:
+    name: Examples
+    runs-on: ubuntu-latest
+    steps:
+      - *checkout
+      - *cache
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo build -p overseerd-example-daemon
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo build -p overseerd-example-daemon --locked
