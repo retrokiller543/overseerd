@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::components::{Config, DbConfig, DbConnection};
 use crate::notifiers::Notifier;
-use overseerd::{handlers, service, Cfg, Inject, Payload, ServerConfig, ShutdownHandle};
+use overseerd::{Cfg, Inject, Payload, ServerConfig, ShutdownHandle, handlers, service};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -54,7 +54,11 @@ impl Notifications {
     /// Broadcasts to every channel, stamping the configured greeting and the
     /// running query count from the shared by-value pool.
     #[rpc]
-    async fn notify(&self, Payload(req): Payload<NotifyRequest>, Inject(db): Inject<DbConnection>) -> NotifyResponse {
+    async fn notify(
+        &self,
+        Payload(req): Payload<NotifyRequest>,
+        Inject(db): Inject<DbConnection>,
+    ) -> NotifyResponse {
         let count = db.record_query();
 
         let mut delivered: Vec<String> = self.all.iter().map(|n| n.channel().to_string()).collect();

@@ -11,7 +11,9 @@ pub enum Error {
     #[error("multiple explicit constructors registered for component type: {0}")]
     DuplicateComponentType(String),
 
-    #[error("ambiguous factory for component '{0}': more than one explicit factory (e.g. an #[init] and a factory = ..)")]
+    #[error(
+        "ambiguous factory for component '{0}': more than one explicit factory (e.g. an #[init] and a factory = ..)"
+    )]
     AmbiguousFactory(String),
 
     #[error("duplicate service id: {0}")]

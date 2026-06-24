@@ -49,24 +49,24 @@ pub use container::{ComponentContainer, ScopeContainer};
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cardinality, Component,
-    ComponentConstructionContext, ComponentDescriptor, ComponentFactory, ComponentScope,
-    ComponentFactories, ComponentFactoryDescriptor, DependencyDescriptor, Descriptor, Dynamic,
+    ComponentConstructionContext, ComponentDescriptor, ComponentFactories, ComponentFactory,
+    ComponentFactoryDescriptor, ComponentScope, DependencyDescriptor, Descriptor, Dynamic,
     Injectable, OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Provide,
     ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
-    RpcResponse, SERVICES, ServiceComponent, ServiceDescriptor, ServiceRpcs, TypeDescriptor,
-    Wired, Wiring, type_id_of,
+    RpcResponse, SERVICES, ServiceComponent, ServiceDescriptor, ServiceRpcs, TypeDescriptor, Wired,
+    Wiring, type_id_of,
 };
 pub use dirs::{Dir, DirKind, DirectoriesManager};
 pub use error::Error;
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
-pub use middleware::{
-    ErrorHandler, Guard, GuardLayer, GuardService, RouterService, RpcRequest, RpcService,
-};
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
 /// attribute through a stable path without the user crate depending on `linkme`
 /// directly.
 #[doc(hidden)]
 pub use linkme;
+pub use middleware::{
+    ErrorHandler, Guard, GuardLayer, GuardService, RouterService, RpcRequest, RpcService,
+};
 pub use registry::DescriptorRegistry;
 pub use router::RpcRouter;
 /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`

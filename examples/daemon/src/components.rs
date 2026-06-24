@@ -74,10 +74,7 @@ pub struct DbConnection {
 
 impl DbConnection {
     pub fn new(id: usize, queries: Arc<AtomicU64>) -> Self {
-        Self {
-            id,
-            queries
-        }
+        Self { id, queries }
     }
 
     #[tracing::instrument(skip(self), fields(connection_id = self.id))]

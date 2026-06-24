@@ -674,7 +674,7 @@ impl ComponentDescriptor {
         let factories = (self.factories)();
 
         if factories.len() == 1 {
-            return Ok(factories.first())
+            return Ok(factories.first());
         }
 
         let mut explicit = factories.iter().filter(|factory| !factory.default);

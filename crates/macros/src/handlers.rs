@@ -79,7 +79,7 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
             static __OVERSEERD_RPCS: [#rpc_descriptor; #count] = [
                 #(#descriptors),*
             ];
-            
+
             #[#distributed_slice(#rpcs_slice)]
             #[linkme(crate = #linkme_crate)]
             static __OVERSEERD_RPC_GROUP: #rpc_group = #rpc_group {
