@@ -17,7 +17,7 @@ use crate::components::{AppServer, DbConfig};
 use crate::service::Notifications;
 use overseerd::builtins::init_tracing;
 use overseerd::config::Toml;
-use overseerd::{daemon, ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig};
+use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig, daemon};
 
 #[tokio::main]
 async fn main() -> overseerd::Result<()> {

@@ -7,5 +7,6 @@
 pub(crate) const OVERSEERD_CRATE: &str = "overseerd";
 
 pub(crate) fn overseerd_path(item: &str) -> syn::Path {
-    syn::parse_str(&format!("::{OVERSEERD_CRATE}::{item}")).expect("valid overseerd facade item path")
+    syn::parse_str(&format!("::{OVERSEERD_CRATE}::{item}"))
+        .expect("valid overseerd facade item path")
 }

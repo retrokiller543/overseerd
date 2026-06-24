@@ -93,10 +93,9 @@ struct Manual {
 async fn start() -> MemoryConnectionHandle {
     let (client, transport) = MemoryClient::pair();
 
-    let config = overseerd::ConfigManager::<overseerd::config::Toml>::from_str(
-        "[factory]\nseed = 100\n",
-    )
-    .expect("parse config");
+    let config =
+        overseerd::ConfigManager::<overseerd::config::Toml>::from_str("[factory]\nseed = 100\n")
+            .expect("parse config");
 
     let daemon = Daemon::builder("test")
         .auto_discover()
