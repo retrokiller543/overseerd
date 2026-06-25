@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use overseerd_config::{ConfigValue, DefaultSpec, Resolver, ResolverChain, from_value_in};
+use overseerd_config::{ConfigValue, Resolver, ResolverChain, from_value_in};
 use serde::de::DeserializeOwned;
 use tracing::{debug, info, instrument, trace};
 
@@ -221,13 +221,13 @@ impl<F> ConfigManager<F> {
     /// [`get`](Self::get).
     #[instrument(target = "overseerd::config", level = "debug", skip(self))]
     pub fn get_config<T: ConfigProperties>(&self, path: &str) -> Result<T, ConfigError> {
-        let defaults = T::defaults();
+        let defaults = T::DEFAULTS;
 
         let mut subtree = match self.root.get_path(path) {
             Some(node) => node.clone(),
 
             None => {
-                if matches!(defaults, DefaultSpec::None) {
+                if defaults.is_none() {
                     return Err(ConfigError::MissingPath {
                         path: path.to_string(),
                     });

@@ -17,6 +17,24 @@ use serde::de::DeserializeOwned;
 use crate::descriptors::{BoxedComponent, Injectable, TypeDescriptor};
 
 pub use overseerd_config::{DefaultSpec, EnumTag};
+
+/// Runtime, object-safe access to a config type's [`DefaultSpec`].
+///
+/// [`ConfigProperties`] exposes its defaults as the associated `const`
+/// [`DEFAULTS`](ConfigProperties::DEFAULTS), which is unreachable through a trait object (a
+/// `const` is not part of the vtable). This companion trait — blanket-implemented for every
+/// `ConfigProperties` — re-exposes that const through a `&self` method, so the spec can be
+/// read from a value or a `dyn ConfigDefaults`.
+pub trait ConfigDefaults {
+    /// This type's field defaults (its [`ConfigProperties::DEFAULTS`]).
+    fn defaults(&self) -> DefaultSpec;
+}
+
+impl<T: ConfigProperties> ConfigDefaults for T {
+    fn defaults(&self) -> DefaultSpec {
+        T::DEFAULTS
+    }
+}
 #[cfg(feature = "yaml")]
 pub use source::Yaml;
 pub use source::{ConfigManager, Dynamic, Format, FormatId, Toml};
@@ -84,18 +102,18 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
     /// A display name for the type, used in descriptors and error messages.
     const NAME: &'static str;
 
-    /// The type's `#[default = ".."]` field defaults, emitted by the `#[config]` macro.
+    /// The type's `#[default = ".."]` field defaults, emitted by the `#[config]` macro as a
+    /// compile-time constant.
     ///
     /// Defaults to [`DefaultSpec::None`](overseerd_config::DefaultSpec::None) — no fields
     /// carry a default. The values are template strings merged *under* the config so they
     /// resolve through the normal `${...}` pipeline (see
-    /// [`ConfigManager::get_config`](crate::ConfigManager::get_config)).
-    fn defaults() -> overseerd_config::DefaultSpec {
-        overseerd_config::DefaultSpec::none()
-    }
+    /// [`ConfigManager::get_config`](crate::ConfigManager::get_config)). For runtime access
+    /// through a value or trait object, use [`ConfigDefaults::defaults`].
+    const DEFAULTS: DefaultSpec = DefaultSpec::none();
 
     /// Deserializes this type from the subtree at `path` (filling missing fields from
-    /// [`defaults`](Self::defaults)) and wraps it as a stored `Cfg<Self>` handle.
+    /// [`DEFAULTS`](Self::DEFAULTS)) and wraps it as a stored `Cfg<Self>` handle.
     fn bind(tree: &ConfigManager, path: &str) -> Result<BoxedComponent, ConfigError> {
         let value: Self = tree.get_config::<Self>(path)?;
 

@@ -75,9 +75,9 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput) -> syn::Result<TokenStrea
     let type_descriptor = overseerd_path("TypeDescriptor");
 
     // Collect (and strip) the field-level `#[default = ".."]` attributes, then build the
-    // `defaults()` method. Stripping is required so the sibling `#[derive(Deserialize)]`
+    // `const DEFAULTS`. Stripping is required so the sibling `#[derive(Deserialize)]`
     // does not see the unknown attribute.
-    let defaults_method = build_defaults(&mut item)?;
+    let defaults_const = build_defaults(&mut item)?;
 
     // A baked-in path auto-registers the binding; without one the binding is made
     // explicitly at the builder (the multi-path case).
@@ -104,19 +104,21 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput) -> syn::Result<TokenStrea
         impl #config_properties for #ident {
             const NAME: &'static str = #name;
 
-            #defaults_method
+            #defaults_const
         }
 
         #registration
     })
 }
 
-/// Builds the `defaults()` method body from the type's field-level `#[default = ".."]`
-/// attributes, stripping each consumed attribute from `item`.
+/// Builds the `const DEFAULTS: DefaultSpec = ..` associated constant from the type's
+/// field-level `#[default = ".."]` attributes, stripping each consumed attribute from `item`.
 ///
-/// Returns an empty token stream (use the trait default — no defaults) when no field
-/// carries one. A struct yields `DefaultSpec::Fields`; an enum yields
-/// `DefaultSpec::Variants`, including only variants that have at least one defaulted field.
+/// Returns an empty token stream (so the trait default `DefaultSpec::None` stands) when no
+/// field carries one. Every value is a string literal, so the spec is `const`-constructible
+/// from `&'static` slices — no runtime allocation. A struct yields `DefaultSpec::Fields`; an
+/// enum yields `DefaultSpec::Variants`, including only variants that have at least one
+/// defaulted field.
 fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
     let default_spec = overseerd_path("DefaultSpec");
 
@@ -136,14 +138,10 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
                 return Ok(quote!());
             }
 
-            let entries = fields.iter().map(|(field, lit)| {
-                quote! { (::std::string::String::from(#field), ::std::string::String::from(#lit)) }
-            });
+            let entries = fields.iter().map(|(field, lit)| quote! { (#field, #lit) });
 
             Ok(quote! {
-                fn defaults() -> #default_spec {
-                    #default_spec::Fields(::std::vec![ #(#entries),* ])
-                }
+                const DEFAULTS: #default_spec = #default_spec::Fields(&[ #(#entries),* ]);
             })
         }
 
@@ -182,32 +180,25 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
 
             let default_tokens = match &default_variant {
                 Some((tag, is_unit)) => {
-                    quote! { ::std::option::Option::Some((::std::string::String::from(#tag), #is_unit)) }
+                    quote! { ::core::option::Option::Some((#tag, #is_unit)) }
                 }
 
-                None => quote! { ::std::option::Option::None },
+                None => quote! { ::core::option::Option::None },
             };
             let entries = variants.iter().map(|(variant, fields)| {
-                let field_entries = fields.iter().map(|(field, lit)| {
-                    quote! { (::std::string::String::from(#field), ::std::string::String::from(#lit)) }
-                });
+                let field_entries = fields.iter().map(|(field, lit)| quote! { (#field, #lit) });
 
                 quote! {
-                    (
-                        ::std::string::String::from(#variant),
-                        ::std::vec![ #(#field_entries),* ],
-                    )
+                    (#variant, &[ #(#field_entries),* ])
                 }
             });
 
             Ok(quote! {
-                fn defaults() -> #default_spec {
-                    #default_spec::Variants {
-                        tagging: #enum_tagging,
-                        default: #default_tokens,
-                        fields: ::std::vec![ #(#entries),* ],
-                    }
-                }
+                const DEFAULTS: #default_spec = #default_spec::Variants {
+                    tagging: #enum_tagging,
+                    default: #default_tokens,
+                    fields: &[ #(#entries),* ],
+                };
             })
         }
 
@@ -328,14 +319,11 @@ fn enum_tag_tokens(attrs: &[Attribute]) -> syn::Result<TokenStream> {
 
     let tokens = match (tag, content) {
         (Some(tag), Some(content)) => quote! {
-            #enum_tag::Adjacent {
-                tag: ::std::string::String::from(#tag),
-                content: ::std::string::String::from(#content),
-            }
+            #enum_tag::Adjacent { tag: #tag, content: #content }
         },
 
         (Some(tag), None) => quote! {
-            #enum_tag::Internal { tag: ::std::string::String::from(#tag) }
+            #enum_tag::Internal { tag: #tag }
         },
 
         _ => quote! { #enum_tag::External },
