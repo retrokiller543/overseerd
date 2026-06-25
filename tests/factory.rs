@@ -87,7 +87,9 @@ struct BoxedErrComp {
 #[methods]
 impl BoxedErrComp {
     #[init]
-    async fn create(cfg: Cfg<FactoryCfg>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+    async fn create(
+        cfg: Cfg<FactoryCfg>,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let parsed: u32 = "7".parse()?;
 
         Ok(Self {
