@@ -15,7 +15,8 @@ use crate::value::ConfigValue;
 ///
 /// Struct defaults fill every missing field; enum defaults fill only the fields of the
 /// variant actually present in the config, since variants are mutually exclusive and a
-/// phantom variant branch would confuse the deserializer.
+/// phantom variant branch would confuse the deserializer. An enum may also name a
+/// **default variant** (`#[default]` on a variant), used when the config selects none.
 #[derive(Debug, Clone, Default)]
 pub enum DefaultSpec {
     /// No field carries a default.
@@ -25,8 +26,17 @@ pub enum DefaultSpec {
     /// `(field, raw default template)` pairs for a struct.
     Fields(Vec<(String, String)>),
 
-    /// `(variant, [(field, raw default template)])` for an enum.
-    Variants(Vec<(String, Vec<(String, String)>)>),
+    /// Enum defaults.
+    Variants {
+        /// The `#[default]` variant's `(serde tag, is_unit)`, selected when the config
+        /// names no variant. `is_unit` chooses the synthesized shape: a bare tag string
+        /// for a unit variant, or a `{ tag: { ..defaults } }` table otherwise.
+        default: Option<(String, bool)>,
+
+        /// Per-variant field defaults, keyed by serde tag:
+        /// `(variant, [(field, raw default template)])`.
+        fields: Vec<(String, Vec<(String, String)>)>,
+    },
 }
 
 impl DefaultSpec {
@@ -41,12 +51,13 @@ impl DefaultSpec {
     /// For [`Fields`](DefaultSpec::Fields) the subtree is treated as a table and every
     /// missing field is filled. For [`Variants`](DefaultSpec::Variants) only the fields of
     /// the variant present in the subtree (a single-entry tag table or a bare unit string)
-    /// are filled; an absent variant is left untouched.
+    /// are filled; when no variant is present the `#[default]` variant (if any) is
+    /// synthesized.
     pub fn fill_missing(&self, subtree: &mut ConfigValue) -> Result<(), ConfigError> {
         match self {
             DefaultSpec::None => Ok(()),
             DefaultSpec::Fields(fields) => fill_fields(subtree, fields),
-            DefaultSpec::Variants(variants) => fill_variants(subtree, variants),
+            DefaultSpec::Variants { default, fields } => fill_variants(subtree, default, fields),
         }
     }
 }
@@ -71,24 +82,51 @@ fn fill_fields(subtree: &mut ConfigValue, fields: &[(String, String)]) -> Result
     Ok(())
 }
 
-/// Fills the fields of the present variant only. A unit-string subtree carries no fields, so
-/// it is left untouched; a single-entry tag table has its inner fields filled.
+/// Applies enum defaults.
+///
+/// When a variant is already selected — a single-entry tag table or a bare unit string —
+/// only that variant's fields are filled (an unselected variant is never materialized). When
+/// no variant is selected (an empty table, e.g. an absent or bare `[section]`), the
+/// `#[default]` variant is synthesized: a bare tag string for a unit variant, or a
+/// `{ tag: { ..defaults } }` table otherwise. With no default variant the subtree is left
+/// empty for the deserializer to reject.
 fn fill_variants(
     subtree: &mut ConfigValue,
-    variants: &[(String, Vec<(String, String)>)],
+    default: &Option<(String, bool)>,
+    fields: &[(String, Vec<(String, String)>)],
 ) -> Result<(), ConfigError> {
-    let ConfigValue::Table(entries) = subtree else {
+    let no_variant_selected = matches!(subtree, ConfigValue::Table(entries) if entries.is_empty());
+
+    if !no_variant_selected {
+        if let ConfigValue::Table(entries) = subtree {
+            for (tag, inner) in entries.iter_mut() {
+                if let Some((_, variant_fields)) = fields.iter().find(|(name, _)| name == tag) {
+                    fill_fields(inner, variant_fields)?;
+                }
+            }
+        }
+
         return Ok(());
+    }
+
+    let (tag, is_unit) = match default {
+        Some(default) => default,
+        None => return Ok(()),
     };
 
-    for (tag, inner) in entries.iter_mut() {
-        let fields = match variants.iter().find(|(name, _)| name == tag) {
-            Some((_, fields)) => fields,
-            None => continue,
-        };
+    if *is_unit {
+        *subtree = ConfigValue::parsed_str(tag)?;
 
-        fill_fields(inner, fields)?;
+        return Ok(());
     }
+
+    let mut inner = ConfigValue::Table(Vec::new());
+
+    if let Some((_, variant_fields)) = fields.iter().find(|(name, _)| name == tag) {
+        fill_fields(&mut inner, variant_fields)?;
+    }
+
+    *subtree = ConfigValue::Table(vec![(tag.clone(), inner)]);
 
     Ok(())
 }

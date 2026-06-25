@@ -150,3 +150,52 @@ fn enum_variant_and_field_renames_are_honored() {
         }
     );
 }
+
+#[config]
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum DefaultedStorage {
+    #[default]
+    InMemory,
+    OnDisk {
+        #[default = "${@data}/blobs"]
+        path: PathBuf,
+    },
+}
+
+#[test]
+fn enum_default_variant_used_when_section_is_empty() {
+    // `[store]` is present but names no variant, so the `#[default]` unit variant
+    // (`in_memory` after rename_all) is selected.
+    let config = manager("[store]\n");
+
+    let storage: DefaultedStorage = config.get_config::<DefaultedStorage>("store").unwrap();
+
+    assert_eq!(storage, DefaultedStorage::InMemory);
+}
+
+#[test]
+fn enum_default_variant_used_when_section_absent() {
+    // The path is entirely absent; the default variant still materializes the value.
+    let config = manager("");
+
+    let storage: DefaultedStorage = config.get_config::<DefaultedStorage>("store").unwrap();
+
+    assert_eq!(storage, DefaultedStorage::InMemory);
+}
+
+#[test]
+fn enum_default_variant_overridden_by_explicit_selection() {
+    // Explicitly choosing `on_disk` (path omitted → its field default) overrides the
+    // `#[default]` variant.
+    let config = manager("[store]\non_disk = {}\n");
+
+    let storage: DefaultedStorage = config.get_config::<DefaultedStorage>("store").unwrap();
+
+    assert_eq!(
+        storage,
+        DefaultedStorage::OnDisk {
+            path: PathBuf::from("/base/data/blobs"),
+        }
+    );
+}

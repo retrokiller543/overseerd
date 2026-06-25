@@ -166,7 +166,8 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// resolves through the normal `${..}` pipeline (env vars, `${other.path}` refs, and the
 /// `${@runtime}` directory namespace). Unlike a hand-written `Default`, the default keeps
 /// full templating power. On an enum, defaults may sit on variant fields and apply only to
-/// the variant present in the config.
+/// the variant present in the config, and a variant may be marked with a bare `#[default]`
+/// to select it when the config names no variant.
 ///
 /// Distinct from the **field-level** `#[config("path")]` inside a `#[component]` /
 /// `#[service]` struct, which marks a `Cfg<T>` injection site (consumed by that

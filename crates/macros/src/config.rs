@@ -10,7 +10,9 @@
 //! Applies to a `struct` or an `enum` (serde handles either). Fields may carry a
 //! field-level `#[default = ".."]` whose value is a template string merged under the
 //! config before deserialization, so a missing field falls back to a (possibly
-//! templated) default that resolves through the normal `${..}` pipeline.
+//! templated) default that resolves through the normal `${..}` pipeline. On an enum, a
+//! variant may be marked with a bare `#[default]` to select it when the config names no
+//! variant.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -144,23 +146,44 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
 
         Data::Enum(data) => {
             let mut variants = Vec::new();
+            let mut default_variant: Option<(String, bool)> = None;
 
             for variant in data.variants.iter_mut() {
+                let is_default = take_variant_default_marker(&mut variant.attrs)?;
                 let variant_key = variant_serde_name(variant, container_rename_all)?;
+                let is_unit = matches!(variant.fields, Fields::Unit);
                 // A variant's own `rename_all` wins over the enum's `rename_all_fields`.
                 let field_rule =
                     serde_rename_all(&variant.attrs, "rename_all")?.or(container_rename_all_fields);
                 let fields = take_field_defaults(&mut variant.fields, field_rule)?;
+
+                if is_default {
+                    if default_variant.is_some() {
+                        return Err(syn::Error::new_spanned(
+                            &variant.ident,
+                            "a `#[config]` enum may mark at most one variant `#[default]`",
+                        ));
+                    }
+
+                    default_variant = Some((variant_key.clone(), is_unit));
+                }
 
                 if !fields.is_empty() {
                     variants.push((variant_key, fields));
                 }
             }
 
-            if variants.is_empty() {
+            if default_variant.is_none() && variants.is_empty() {
                 return Ok(quote!());
             }
 
+            let default_tokens = match &default_variant {
+                Some((tag, is_unit)) => {
+                    quote! { ::std::option::Option::Some((::std::string::String::from(#tag), #is_unit)) }
+                }
+
+                None => quote! { ::std::option::Option::None },
+            };
             let entries = variants.iter().map(|(variant, fields)| {
                 let field_entries = fields.iter().map(|(field, lit)| {
                     quote! { (::std::string::String::from(#field), ::std::string::String::from(#lit)) }
@@ -176,7 +199,10 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
 
             Ok(quote! {
                 fn defaults() -> #default_spec {
-                    #default_spec::Variants(::std::vec![ #(#entries),* ])
+                    #default_spec::Variants {
+                        default: #default_tokens,
+                        fields: ::std::vec![ #(#entries),* ],
+                    }
                 }
             })
         }
@@ -369,4 +395,29 @@ fn take_default_attr(attrs: &mut Vec<Attribute>) -> syn::Result<Option<LitStr>> 
             "`#[config]` field default must be written `#[default = \"..\"]`",
         )),
     }
+}
+
+/// Removes a bare `#[default]` marker from an enum variant's attributes, reporting whether it
+/// was present. The marker selects the variant used when the config names none. Errors on the
+/// field form `#[default = ".."]`, which is meaningless on a variant.
+fn take_variant_default_marker(attrs: &mut Vec<Attribute>) -> syn::Result<bool> {
+    let position = attrs
+        .iter()
+        .position(|attr| attr.path().is_ident("default"));
+
+    let index = match position {
+        Some(index) => index,
+        None => return Ok(false),
+    };
+
+    if !matches!(attrs[index].meta, Meta::Path(_)) {
+        return Err(syn::Error::new_spanned(
+            &attrs[index].meta,
+            "a variant's `#[default]` marker takes no value; `#[default = \"..\"]` is for fields",
+        ));
+    }
+
+    attrs.remove(index);
+
+    Ok(true)
 }
