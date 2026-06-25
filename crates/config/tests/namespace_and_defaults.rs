@@ -172,13 +172,13 @@ fn enum_variant_default_applies_only_to_the_present_variant() {
     // The `Disk` variant is present with its `path` omitted, so the variant default
     // fills it. `Memory`'s (empty) default set is irrelevant.
     let mut subtree = table(vec![("Disk", ConfigValue::Table(Vec::new()))]);
-    let defaults = DefaultSpec::Variants(vec![
-        ("Memory".to_string(), vec![]),
-        (
+    let defaults = DefaultSpec::Variants {
+        default: None,
+        fields: vec![(
             "Disk".to_string(),
             vec![("path".to_string(), "${DATA}/blobs".to_string())],
-        ),
-    ]);
+        )],
+    };
 
     defaults.fill_missing(&mut subtree).unwrap();
 
@@ -203,10 +203,13 @@ fn enum_unit_variant_is_left_untouched_by_defaults() {
 
     // A bare-string unit variant carries no fields; fill_missing must be a no-op.
     let mut subtree = s("Memory");
-    let defaults = DefaultSpec::Variants(vec![(
-        "Disk".to_string(),
-        vec![("path".to_string(), "${DATA}/blobs".to_string())],
-    )]);
+    let defaults = DefaultSpec::Variants {
+        default: None,
+        fields: vec![(
+            "Disk".to_string(),
+            vec![("path".to_string(), "${DATA}/blobs".to_string())],
+        )],
+    };
 
     defaults.fill_missing(&mut subtree).unwrap();
 
@@ -214,6 +217,90 @@ fn enum_unit_variant_is_left_untouched_by_defaults() {
     let cfg: Storage = from_value(&subtree, &chain).unwrap();
 
     assert_eq!(cfg, Storage::Memory);
+}
+
+#[test]
+fn default_variant_synthesized_when_none_selected() {
+    #[derive(Debug, Deserialize, PartialEq)]
+    enum Storage {
+        Memory,
+        Disk { path: String },
+    }
+
+    // No variant named (empty table) and `Memory` is the default unit variant: it is
+    // synthesized as a bare tag string.
+    let mut subtree = ConfigValue::Table(Vec::new());
+    let defaults = DefaultSpec::Variants {
+        default: Some(("Memory".to_string(), true)),
+        fields: vec![],
+    };
+
+    defaults.fill_missing(&mut subtree).unwrap();
+
+    let chain = resolvers(&[]);
+    let cfg: Storage = from_value(&subtree, &chain).unwrap();
+
+    assert_eq!(cfg, Storage::Memory);
+}
+
+#[test]
+fn default_struct_variant_synthesized_with_its_field_defaults() {
+    #[derive(Debug, Deserialize, PartialEq)]
+    enum Storage {
+        Memory,
+        Disk { path: String },
+    }
+
+    // The default is a non-unit variant: it is synthesized as `{ Disk: { ..defaults } }`,
+    // and its own field defaults fill the missing `path`.
+    let mut subtree = ConfigValue::Table(Vec::new());
+    let defaults = DefaultSpec::Variants {
+        default: Some(("Disk".to_string(), false)),
+        fields: vec![(
+            "Disk".to_string(),
+            vec![("path".to_string(), "${DATA}/blobs".to_string())],
+        )],
+    };
+
+    defaults.fill_missing(&mut subtree).unwrap();
+
+    let chain = resolvers(&[("DATA", "/var/lib/app")]);
+    let cfg: Storage = from_value(&subtree, &chain).unwrap();
+
+    assert_eq!(
+        cfg,
+        Storage::Disk {
+            path: "/var/lib/app/blobs".to_string()
+        }
+    );
+}
+
+#[test]
+fn explicit_variant_wins_over_default() {
+    #[derive(Debug, Deserialize, PartialEq)]
+    enum Storage {
+        Memory,
+        Disk { path: String },
+    }
+
+    // `Disk` is explicitly selected, so the `Memory` default must not be synthesized.
+    let mut subtree = table(vec![("Disk", table(vec![("path", s("/explicit"))]))]);
+    let defaults = DefaultSpec::Variants {
+        default: Some(("Memory".to_string(), true)),
+        fields: vec![],
+    };
+
+    defaults.fill_missing(&mut subtree).unwrap();
+
+    let chain = resolvers(&[]);
+    let cfg: Storage = from_value(&subtree, &chain).unwrap();
+
+    assert_eq!(
+        cfg,
+        Storage::Disk {
+            path: "/explicit".to_string()
+        }
+    );
 }
 
 #[test]

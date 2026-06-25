@@ -26,14 +26,16 @@ pub struct AppServer {
 
 /// Storage backend selection, demonstrating `#[config]` on an **enum**. Externally
 /// tagged: the config selects the variant by key (`memory` or `disk`, lower-cased by
-/// `rename_all`). A default on a variant field applies only when that variant is the one
-/// present — here `disk`'s `path` falls back to a `${@data}`-rooted location when omitted,
-/// and keys correctly under the renamed variant tag.
+/// `rename_all`). `#[default]` marks `Memory` as the variant chosen when `[app.storage]`
+/// names none (or is absent entirely). A default on a variant field applies only when that
+/// variant is present — here `disk`'s `path` falls back to a `${@data}`-rooted location when
+/// omitted, and keys correctly under the renamed variant tag.
 #[allow(dead_code)]
 #[config(path = "app.storage")]
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Storage {
+    #[default]
     Memory,
     Disk {
         #[default = "${@data}/blobs"]
