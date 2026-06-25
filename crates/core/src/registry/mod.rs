@@ -866,6 +866,7 @@ mod tests {
             ty: TypeDescriptor::of::<u128>("DbConfig"),
             path: path.to_string(),
             bind: dummy_bind,
+            defaults: crate::config::DefaultSpec::None,
         }
     }
 

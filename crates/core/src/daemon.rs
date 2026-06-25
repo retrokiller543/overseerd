@@ -61,6 +61,9 @@ pub struct DaemonBuilder {
     registry: DescriptorRegistry,
     instances: Vec<BoxedComponent>,
     config_source: Option<ConfigManager>,
+    /// Whether `auto_discover` was called: config auto-registration is gated on it, so a
+    /// daemon assembled without `auto_discover` binds only its explicit `config::<T>` types.
+    auto_discover_configs: bool,
     dirs: Option<DirectoriesManager>,
     layers: Vec<LayerApplier>,
     error_handler: Option<Arc<dyn ErrorHandler>>,
@@ -73,6 +76,7 @@ impl DaemonBuilder {
             registry: DescriptorRegistry::default(),
             instances: Vec::new(),
             config_source: None,
+            auto_discover_configs: false,
             dirs: None,
             layers: Vec::new(),
             error_handler: None,
@@ -105,11 +109,9 @@ impl DaemonBuilder {
     /// the explicit counterpart to auto-registration via
     /// `#[config(path = "..")]`.
     pub fn config<T: ConfigProperties>(mut self, path: impl Into<String>) -> Self {
-        self.registry.config_bindings.push(ConfigBinding {
-            ty: TypeDescriptor::of::<T>(T::NAME),
-            path: path.into(),
-            bind: T::bind,
-        });
+        self.registry
+            .config_bindings
+            .push(ConfigBinding::of::<T>(path));
 
         self
     }
@@ -132,18 +134,23 @@ impl DaemonBuilder {
         self
     }
 
-    /// Merges every link-time-registered descriptor in the binary into the
-    /// registry, preserving anything already registered (manual components,
-    /// instances).
+    /// Merges every link-time-registered component, service, and provider descriptor in the
+    /// binary into the registry, preserving anything already registered (manual components,
+    /// instances), and enables config auto-discovery.
+    ///
+    /// Config bindings are *not* folded in here: they are owned by the [`ConfigManager`], so
+    /// this only records the intent (via a flag). At build the manager's
+    /// [`auto_discover`](ConfigManager::auto_discover) runs, which both registers the
+    /// `#[config(path = "..")]` types and seeds their defaults. A daemon built *without*
+    /// `auto_discover` therefore auto-registers no config types — only explicit
+    /// [`config::<T>`](Self::config) bindings.
     pub fn auto_discover(mut self) -> Self {
         let discovered = DescriptorRegistry::collect();
 
         self.registry.components.extend(discovered.components);
         self.registry.services.extend(discovered.services);
         self.registry.providers.extend(discovered.providers);
-        self.registry
-            .config_bindings
-            .extend(discovered.config_bindings);
+        self.auto_discover_configs = true;
 
         self
     }
@@ -280,6 +287,29 @@ impl DaemonBuilder {
         // directories so any component can inject them.
         seed_builtins(&shutdown, &mut registry, &mut instances);
 
+        // Finalize the config manager — it owns the config registry. Auto-discovery (gated on
+        // the builder's `auto_discover`, so a daemon without it auto-registers no configs)
+        // registers `#[config(path)]` types and seeds their defaults; explicit `config::<T>`
+        // bindings are folded in next. The directory namespace is wired so defaults and
+        // values may reference `${@runtime}` and friends. The registry then reads the bindings
+        // back for validation and `Cfg<T>` construction.
+        let explicit_bindings = std::mem::take(&mut registry.config_bindings);
+        let mut tree = match self.config_source {
+            Some(config) => config,
+            None => ConfigManager::load_in(&dirs.dir::<Config>(), &[])?,
+        }
+        .with_directories(&dirs);
+
+        if self.auto_discover_configs {
+            tree = tree.auto_discover();
+        }
+
+        for binding in explicit_bindings {
+            tree.register_binding(binding);
+        }
+
+        registry.config_bindings = tree.bindings().to_vec();
+
         registry.validate()?;
 
         // Collapse to the effective component set (explicit factories override
@@ -297,15 +327,6 @@ impl DaemonBuilder {
 
         let scopes = ScopePlan::partition(&resolved, &registry.providers, &config_type_ids)?;
 
-        // Use the supplied config, or load it from the config directory. Each binding
-        // is deserialized from the tree (a missing path is a clear build error). The
-        // directory namespace is wired in so DI-bound config can reference `${@runtime}`
-        // and friends even when `main` did not register it explicitly.
-        let tree = match self.config_source {
-            Some(config) => config,
-            None => ConfigManager::load_in(&dirs.dir::<Config>(), &[])?,
-        }
-        .with_directories(&dirs);
         let mut config_seeds: Vec<(String, BoxedComponent)> =
             Vec::with_capacity(registry.config_bindings.len());
 

@@ -27,9 +27,11 @@ async fn main() -> overseerd::Result<()> {
 
     // Build the merged config first. `load_from` loads from the manager's config dir and
     // registers the `${@kind}` directory namespace in one step, so config can reference,
-    // e.g., the runtime directory. (`${VAR:default}` placeholders resolve against the
-    // environment as each subtree is deserialized.)
-    let config = ConfigManager::<Toml>::load_from(&dir_manager, &[])?;
+    // e.g., the runtime directory. `auto_discover` registers every `#[config(path)]` type and
+    // seeds its defaults, so a default may reference another path even when that value is
+    // itself only a default. (`${VAR:default}` placeholders resolve against the environment as
+    // each subtree is deserialized.)
+    let config = ConfigManager::<Toml>::load_from(&dir_manager, &[])?.auto_discover();
 
     init_tracing(&config.get("logging")?).ok();
 

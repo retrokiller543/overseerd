@@ -70,6 +70,7 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput) -> syn::Result<TokenStrea
     let config_properties = overseerd_path("ConfigProperties");
     let config_binding_descriptor = overseerd_path("ConfigBindingDescriptor");
     let config_bindings = overseerd_path("CONFIG_BINDINGS");
+    let descriptor = overseerd_path("Descriptor");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
     let type_descriptor = overseerd_path("TypeDescriptor");
@@ -79,19 +80,26 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput) -> syn::Result<TokenStrea
     // does not see the unknown attribute.
     let defaults_const = build_defaults(&mut item)?;
 
-    // A baked-in path auto-registers the binding; without one the binding is made
-    // explicitly at the builder (the multi-path case).
+    // A baked-in path exposes the binding on the type as `Descriptor<ConfigBindingDescriptor>`
+    // and auto-registers it into the `CONFIG_BINDINGS` slice (picked up by
+    // `ConfigManager::auto_discover`). Without a path the binding is made explicitly at the
+    // manager/builder (the multi-path case), so no descriptor is emitted.
     let registration = match args.path {
         Some(path) => quote! {
+            impl #descriptor<#config_binding_descriptor> for #ident {
+                const DESCRIPTOR: #config_binding_descriptor = #config_binding_descriptor {
+                    ty: #type_descriptor::of::<#ident>(#name),
+                    path: #path,
+                    bind: <#ident as #config_properties>::bind,
+                    defaults: <#ident as #config_properties>::DEFAULTS,
+                };
+            }
+
             const _: () = {
                 #[#distributed_slice(#config_bindings)]
                 #[linkme(crate = #linkme_crate)]
                 static __OVERSEERD_CONFIG_BINDING: #config_binding_descriptor =
-                    #config_binding_descriptor {
-                        ty: #type_descriptor::of::<#ident>(#name),
-                        path: #path,
-                        bind: <#ident as #config_properties>::bind,
-                    };
+                    <#ident as #descriptor<#config_binding_descriptor>>::DESCRIPTOR;
             };
         },
 

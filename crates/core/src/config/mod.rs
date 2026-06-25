@@ -124,14 +124,30 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
     }
 }
 
-/// A requested binding of a config type to a property path, recorded at the builder
-/// and resolved against the merged tree at build. The same type may be bound at
-/// several paths; the `bind` thunk is monomorphized per type so the builder need not
-/// name it.
+/// A requested binding of a config type to a property path, registered on the
+/// [`ConfigManager`] and resolved against the merged tree at build. The same type may be
+/// bound at several paths; the `bind` thunk is monomorphized per type so the manager need not
+/// name it. `defaults` is the type's compile-time [`DefaultSpec`], carried so the manager can
+/// seed every bound type's defaults into the tree (enabling cross-path `${a.b.c}` references).
+#[derive(Clone)]
 pub struct ConfigBinding {
     pub ty: TypeDescriptor,
     pub path: String,
     pub bind: fn(&ConfigManager, &str) -> Result<BoxedComponent, ConfigError>,
+    pub defaults: DefaultSpec,
+}
+
+impl ConfigBinding {
+    /// Builds a binding for type `T` at `path`, capturing `T`'s `bind` thunk and
+    /// compile-time defaults.
+    pub fn of<T: ConfigProperties>(path: impl Into<String>) -> Self {
+        Self {
+            ty: TypeDescriptor::of::<T>(T::NAME),
+            path: path.into(),
+            bind: T::bind,
+            defaults: T::DEFAULTS,
+        }
+    }
 }
 
 impl std::fmt::Debug for ConfigBinding {
@@ -144,14 +160,16 @@ impl std::fmt::Debug for ConfigBinding {
 }
 
 /// The link-time form of a [`ConfigBinding`]: a config type with a fixed property
-/// path, registered by `#[config(path = "..")]`
-/// so it is picked up by [`DaemonBuilder::auto_discover`](crate::DaemonBuilder::auto_discover).
-/// The same type may still be bound at extra paths explicitly via
-/// [`DaemonBuilder::config`](crate::DaemonBuilder::config).
+/// path, registered by `#[config(path = "..")]` so it is picked up by
+/// [`ConfigManager::auto_discover`]. The same type may still be bound at extra paths
+/// explicitly via [`ConfigManager::with_config`] / [`DaemonBuilder::config`](crate::DaemonBuilder::config).
+/// It is also exposed on the type itself as
+/// [`Descriptor<ConfigBindingDescriptor>`](crate::Descriptor).
 pub struct ConfigBindingDescriptor {
     pub ty: TypeDescriptor,
     pub path: &'static str,
     pub bind: fn(&ConfigManager, &str) -> Result<BoxedComponent, ConfigError>,
+    pub defaults: DefaultSpec,
 }
 
 impl ConfigBindingDescriptor {
@@ -161,6 +179,7 @@ impl ConfigBindingDescriptor {
             ty: self.ty,
             path: self.path.to_string(),
             bind: self.bind,
+            defaults: self.defaults,
         }
     }
 }
