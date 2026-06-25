@@ -42,13 +42,13 @@ impl UnixTransport {
 
     fn ensure_path(path: &Path) -> Result<()> {
         if !path.exists() {
-            Self::create_socket_file(path)?
+            Self::create_dirs(path)?
         }
 
         Ok(())
     }
 
-    fn create_socket_file(path: &Path) -> Result<()> {
+    fn create_dirs(path: &Path) -> Result<()> {
         let parent = path.parent();
 
         if let Some(parent) = parent
@@ -56,8 +56,6 @@ impl UnixTransport {
         {
             create_dir_all(parent)?;
         }
-
-        File::create(path)?;
 
         Ok(())
     }
