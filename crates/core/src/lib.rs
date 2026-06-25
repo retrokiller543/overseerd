@@ -44,6 +44,7 @@ pub use overseerd_transport::{
 pub use builtins::{LoggingConfig, ServerConfig};
 pub use config::{
     Cfg, ConfigBinding, ConfigBindingDescriptor, ConfigError, ConfigManager, ConfigProperties,
+    DefaultSpec,
 };
 pub use container::{ComponentContainer, ScopeContainer};
 pub use daemon::{Daemon, DaemonBuilder};
@@ -56,7 +57,7 @@ pub use descriptors::{
     RpcResponse, SERVICES, ServiceComponent, ServiceDescriptor, ServiceRpcs, TypeDescriptor, Wired,
     Wiring, type_id_of,
 };
-pub use dirs::{Dir, DirKind, DirectoriesManager};
+pub use dirs::{Dir, DirKind, DirectoriesManager, DirectoriesResolver};
 pub use error::Error;
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`

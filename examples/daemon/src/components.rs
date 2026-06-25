@@ -1,6 +1,7 @@
 //! Config-bound and plain components: a greeting config (auto-registered), a
 //! database config bound at two paths, and a by-value pool.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
@@ -13,6 +14,31 @@ use serde::Deserialize;
 pub struct AppServer {
     pub port: u16,
     pub addr: String,
+
+    /// Omitted from `application.toml`, so it falls back to its templated default: the
+    /// `${@runtime}` directory namespace resolves to the platform runtime dir, giving a
+    /// socket path under it without hardcoding a location. The `#[serde(rename)]` proves
+    /// the default keys on the *serde* name (`socket_path`), not the Rust identifier.
+    #[serde(rename = "socket_path")]
+    #[default = "${@runtime}/example-daemon.sock"]
+    pub socket: PathBuf,
+}
+
+/// Storage backend selection, demonstrating `#[config]` on an **enum**. Externally
+/// tagged: the config selects the variant by key (`memory` or `disk`, lower-cased by
+/// `rename_all`). A default on a variant field applies only when that variant is the one
+/// present — here `disk`'s `path` falls back to a `${@data}`-rooted location when omitted,
+/// and keys correctly under the renamed variant tag.
+#[allow(dead_code)]
+#[config(path = "app.storage")]
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Storage {
+    Memory,
+    Disk {
+        #[default = "${@data}/blobs"]
+        path: PathBuf,
+    },
 }
 
 /// Greeting configuration, deserialized from the `app.greet` subtree and injected

@@ -9,6 +9,7 @@
 //! on top of [`from_value`].
 
 mod de;
+mod defaults;
 mod error;
 pub mod format;
 mod parse;
@@ -16,6 +17,7 @@ mod resolve;
 mod value;
 
 pub use de::{ValueDeserializer, from_value, from_value_in};
+pub use defaults::DefaultSpec;
 pub use error::{ConfigError, ConfigErrorKind};
 pub use resolve::{EnvResolver, MapResolver, ResolveCtx, Resolver, ResolverChain};
 pub use value::{ConfigStr, ConfigValue, Placeholder, Segment};

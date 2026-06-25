@@ -254,7 +254,7 @@ impl DaemonBuilder {
     /// Validates the registry, resolves all components, partitions them by scope,
     /// and builds a ready-to-run Daemon.
     pub async fn build(self) -> crate::Result<Daemon> {
-        debug!(daemon = %self.name, "building daemon");
+        debug!(target: "overseerd::daemon", daemon = %self.name, "building daemon");
 
         let mut registry = self.registry;
         let mut instances = self.instances;
@@ -298,11 +298,14 @@ impl DaemonBuilder {
         let scopes = ScopePlan::partition(&resolved, &registry.providers, &config_type_ids)?;
 
         // Use the supplied config, or load it from the config directory. Each binding
-        // is deserialized from the tree (a missing path is a clear build error).
+        // is deserialized from the tree (a missing path is a clear build error). The
+        // directory namespace is wired in so DI-bound config can reference `${@runtime}`
+        // and friends even when `main` did not register it explicitly.
         let tree = match self.config_source {
             Some(config) => config,
             None => ConfigManager::load_in(&dirs.dir::<Config>(), &[])?,
-        };
+        }
+        .with_directories(&dirs);
         let mut config_seeds: Vec<(String, BoxedComponent)> =
             Vec::with_capacity(registry.config_bindings.len());
 
@@ -334,7 +337,7 @@ impl DaemonBuilder {
             service = applier(service);
         }
 
-        info!(
+        info!(target: "overseerd::daemon",
             daemon = %self.name,
             components = registry.components.len(),
             services = registry.services.len(),
@@ -561,7 +564,7 @@ impl Daemon {
     {
         let transport_name = std::any::type_name::<T>();
 
-        info!(daemon = %self.name, transport = transport_name, "serve starting");
+        info!(target: "overseerd::daemon", daemon = %self.name, transport = transport_name, "serve starting");
 
         let service = self.service;
         let error_handler = self.error_handler;
@@ -577,7 +580,7 @@ impl Daemon {
                 result = transport.accept() => {
                     match result {
                         Ok(conn) => {
-                            debug!(peer = ?conn.peer().addr, "connection accepted, spawning task");
+                            debug!(target: "overseerd::daemon", peer = ?conn.peer().addr, "connection accepted, spawning task");
 
                             let service = service.clone();
                             let error_handler = error_handler.clone();
@@ -595,25 +598,25 @@ impl Daemon {
                         }
 
                         Err(e) => {
-                            error!(error = %e, "transport accept failed");
+                            error!(target: "overseerd::daemon", error = %e, "transport accept failed");
                             return Err(e.into());
                         }
                     }
                 }
 
                 _ = tokio::signal::ctrl_c() => {
-                    info!("ctrl-c received, shutting down");
+                    info!(target: "overseerd::daemon", "ctrl-c received, shutting down");
                     break;
                 }
 
                 _ = shutdown.wait() => {
-                    info!("shutdown signal received");
+                    info!(target: "overseerd::daemon", "shutdown signal received");
                     break;
                 }
             }
         }
 
-        info!(transport = transport_name, "serve stopped");
+        info!(target: "overseerd::daemon", transport = transport_name, "serve stopped");
 
         Ok(())
     }
@@ -632,6 +635,7 @@ impl Daemon {
 }
 
 #[instrument(
+    target = "overseerd::daemon",
     level = "debug",
     skip_all,
     fields(peer = ?conn.peer().addr),
@@ -648,7 +652,7 @@ async fn serve_connection<C: Connection>(
     request_order: Arc<Vec<ComponentDescriptor>>,
     needs_peer: bool,
 ) {
-    debug!("connection established");
+    debug!(target: "overseerd::daemon", "connection established");
 
     // Build the connection scope (e.g. authenticated session, checked-out DB
     // handle). The peer (by value — the framework's connection-scoped injectable)
@@ -677,14 +681,14 @@ async fn serve_connection<C: Connection>(
         Ok(scope) => scope,
 
         Err(e) => {
-            error!(error = %e, "connection scope build failed, closing");
+            error!(target: "overseerd::daemon", error = %e, "connection scope build failed, closing");
             return;
         }
     };
 
     let mut tasks: JoinSet<()> = JoinSet::new();
 
-    debug!("connection ready");
+    debug!(target: "overseerd::daemon", "connection ready");
 
     loop {
         match conn.recv().await {
@@ -697,7 +701,7 @@ async fn serve_connection<C: Connection>(
                 let request_order = Arc::clone(&request_order);
                 let peer = peer.clone();
 
-                debug!(%path, "dispatching call");
+                debug!(target: "overseerd::daemon", %path, "dispatching call");
 
                 tasks.spawn(drive_call(
                     path,
@@ -715,12 +719,12 @@ async fn serve_connection<C: Connection>(
             }
 
             Ok(None) => {
-                debug!("connection closed by peer");
+                debug!(target: "overseerd::daemon", "connection closed by peer");
                 break;
             }
 
             Err(e) => {
-                warn!(error = %e, "connection error");
+                warn!(target: "overseerd::daemon", error = %e, "connection error");
                 break;
             }
         }
@@ -730,7 +734,7 @@ async fn serve_connection<C: Connection>(
     // calls via their tokens; abort any handler tasks still winding down.
     tasks.abort_all();
 
-    debug!("connection ended");
+    debug!(target: "overseerd::daemon", "connection ended");
 }
 
 /// Drives one call to completion on its own task: build its request scope,
@@ -765,7 +769,7 @@ async fn drive_call<R>(
         Ok(scope) => scope,
 
         Err(e) => {
-            error!(%path, error = %e, "request scope build failed");
+            error!(target: "overseerd::daemon", %path, error = %e, "request scope build failed");
             let response = apply_error_handler(&error_handler, &path, ErrorResponse::from(e)).await;
             let _ = responder
                 .respond(CallResult::Err {
@@ -791,15 +795,15 @@ async fn drive_call<R>(
 
     match outcome {
         Ok(RpcOutcome::Unary(RpcResponse { payload })) => {
-            debug!(%path, "call succeeded");
+            debug!(target: "overseerd::daemon", %path, "call succeeded");
 
             if let Err(e) = responder.respond(CallResult::Ok(payload)).await {
-                warn!(%path, error = %e, "failed to send response");
+                warn!(target: "overseerd::daemon", %path, error = %e, "failed to send response");
             }
         }
 
         Ok(RpcOutcome::Stream(mut stream)) => {
-            debug!(%path, "streaming response");
+            debug!(target: "overseerd::daemon", %path, "streaming response");
 
             let mut sink = responder.into_sink();
 
@@ -807,14 +811,14 @@ async fn drive_call<R>(
                 match stream.next().await {
                     Some(Ok(item)) => {
                         if let Err(e) = sink.send(item).await {
-                            warn!(%path, error = %e, "failed to send stream item");
+                            warn!(target: "overseerd::daemon", %path, error = %e, "failed to send stream item");
 
                             return;
                         }
                     }
 
                     Some(Err(e)) => {
-                        warn!(%path, code = ?e.code, "stream handler errored");
+                        warn!(target: "overseerd::daemon", %path, code = ?e.code, "stream handler errored");
                         let e = apply_error_handler(&error_handler, &path, e).await;
                         let _ = sink.error(e.code, e.body).await;
 
@@ -826,12 +830,12 @@ async fn drive_call<R>(
             }
 
             if let Err(e) = sink.finish().await {
-                warn!(%path, error = %e, "failed to finish stream");
+                warn!(target: "overseerd::daemon", %path, error = %e, "failed to finish stream");
             }
         }
 
         Err(e) => {
-            warn!(%path, code = ?e.code, "call returned error");
+            warn!(target: "overseerd::daemon", %path, code = ?e.code, "call returned error");
             let e = apply_error_handler(&error_handler, &path, e).await;
 
             if let Err(e) = responder
@@ -841,7 +845,7 @@ async fn drive_call<R>(
                 })
                 .await
             {
-                warn!(%path, error = %e, "failed to send error response");
+                warn!(target: "overseerd::daemon", %path, error = %e, "failed to send error response");
             }
         }
     }

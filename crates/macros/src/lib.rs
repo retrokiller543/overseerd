@@ -12,7 +12,7 @@
 //! | `#[methods]`                | impl block | lifecycle methods — an `#[init]` constructor (an explicit factory) |
 //! | `#[rpc]` / `#[init]`        | method     | markers consumed by `#[handlers]` / `#[methods]` |
 //! | `#[injectable]`             | trait      | `Provide<dyn Trait>` impl (under `di-check`) |
-//! | `#[config]`                 | struct     | `ConfigProperties` impl; auto-registers a binding when given `#[config(path = "..")]` |
+//! | `#[config]`                 | struct/enum | `ConfigProperties` impl (with field `#[default = ".."]` templated defaults); auto-registers a binding when given `#[config(path = "..")]` |
 //!
 //! # Components: two ways to provide one
 //!
@@ -55,6 +55,7 @@
 extern crate proc_macro;
 
 mod attr;
+mod case;
 mod component;
 mod config;
 mod daemon;
@@ -151,13 +152,21 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Implements the `ConfigProperties` trait for a config struct, making it injectable
-/// as `Cfg<T>` from a property path.
+/// Implements the `ConfigProperties` trait for a config `struct` or `enum`, making it
+/// injectable as `Cfg<T>` from a property path.
 ///
-/// The type must also derive `Deserialize`. With `#[config(path = "..")]` the binding
-/// is auto-registered (picked up by `auto_discover`); without a path, bind it
+/// The type must also derive `Deserialize`, and `#[config]` must sit *above* the derive so
+/// it strips any field `#[default]` before the derive runs. With `#[config(path = "..")]`
+/// the binding is auto-registered (picked up by `auto_discover`); without a path, bind it
 /// explicitly with `DaemonBuilder::config::<T>(path)` — needed when the same type is
 /// bound at several paths. `#[config(name = "..")]` overrides the display name.
+///
+/// A named field may carry `#[default = ".."]`: the literal is a template string merged
+/// under the config before deserialization, so a missing field falls back to it and
+/// resolves through the normal `${..}` pipeline (env vars, `${other.path}` refs, and the
+/// `${@runtime}` directory namespace). Unlike a hand-written `Default`, the default keeps
+/// full templating power. On an enum, defaults may sit on variant fields and apply only to
+/// the variant present in the config.
 ///
 /// Distinct from the **field-level** `#[config("path")]` inside a `#[component]` /
 /// `#[service]` struct, which marks a `Cfg<T>` injection site (consumed by that
@@ -166,12 +175,15 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// #[config(path = "app.server")]
 /// #[derive(Deserialize)]
-/// struct ServerConfig { addr: String, port: u16 }
+/// struct ServerConfig {
+///     #[default = "${tcp.ip}:8080"]
+///     addr: SocketAddr,
+/// }
 /// ```
 #[proc_macro_attribute]
 pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as config::ConfigArgs);
-    let item = parse_macro_input!(item as ItemStruct);
+    let item = parse_macro_input!(item as syn::DeriveInput);
 
     config::expand(args, item)
         .unwrap_or_else(syn::Error::into_compile_error)

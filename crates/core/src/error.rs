@@ -95,6 +95,14 @@ pub enum Error {
         component_scope: crate::ComponentScope,
         dependency_scope: crate::ComponentScope,
     },
+
+    /// An application-defined error surfaced through the framework — typically from a
+    /// component's `#[init]` constructor or a custom factory. The `#[from]` lets app
+    /// authors use `?` with any `Error + Send + Sync` source (and makes a constructor
+    /// returning `Result<Self, Box<dyn Error + Send + Sync>>` satisfy the factory's
+    /// `E: Into<Error>` bound). Maps to `Internal` in the response status code.
+    #[error(transparent)]
+    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl Error {

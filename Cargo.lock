@@ -396,6 +396,7 @@ dependencies = [
  "serde_yaml_ng",
  "thiserror",
  "toml",
+ "tracing",
 ]
 
 [[package]]

@@ -35,6 +35,14 @@ impl ConfigValue {
         lookup_path(self, path)
     }
 
+    /// Builds a string leaf by parsing `raw` for `${...}` placeholders — the inverse of
+    /// rendering. Used to inject default values into the tree so a templated default such
+    /// as `${tcp.ip}:${tcp.port}` resolves through the same pipeline as a file value.
+    /// Errors only on a structurally invalid template (an unterminated `${`).
+    pub fn parsed_str(raw: &str) -> Result<ConfigValue, ConfigError> {
+        Ok(ConfigValue::Str(ConfigStr::parse(raw)?))
+    }
+
     /// A short type label used in mismatch error messages.
     pub(crate) fn type_label(&self) -> &'static str {
         match self {

@@ -1,10 +1,14 @@
 # Base configuration. `${VAR}` resolves an environment variable (uppercase) or a
 # config path (dotted/lowercase); `${VAR:default}` falls back when unset. A full
 # `${VAR}` leaf coerces to the target type; an embedded one (e.g. the addr below)
-# can only produce a string.
+# can only produce a string. `${@kind}` resolves an application directory
+# (`@config @data @cache @state @runtime @tmp`) from the DirectoriesManager.
 
+# A single `overseerd=<level>` knob now covers all framework logging (daemon, config,
+# dirs, …), since every framework log uses a target under the `overseerd::` root. Narrow
+# to one area with e.g. `overseerd::config=trace`.
 [logging]
-level = "info,overseerd_core=trace"
+level = "info,overseerd=trace"
 format = "full"
 ansi = true
 
@@ -15,6 +19,14 @@ greeting = "Hello, ${USER:world}"
 port = "${PORT:9000}"
 addr = "127.0.0.1:${app.server.port}"
 bind = "${BIND:127.0.0.1}"
+# `socket` is intentionally omitted — it falls back to its `#[default]`:
+# "${@runtime}/example-daemon.sock".
+
+# Selects the `disk` storage variant (snake_case via serde rename_all) but omits its
+# `path`, so the field falls back to its `#[default]` of "${@data}/blobs". Switch to
+# `memory = {}` for the unit variant.
+[app.storage]
+disk = {}
 
 [app.db.reader]
 url = "postgres://${DB_HOST:localhost}:5432/app"
