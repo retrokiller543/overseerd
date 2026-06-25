@@ -368,7 +368,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "overseerd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -382,7 +382,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-analyze"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "syn",
@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-config"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_yaml_ng",
@@ -401,7 +401,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "directories",
  "futures",
@@ -422,7 +422,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-example-daemon"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "overseerd",
  "overseerd-analyze",
@@ -433,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-macros"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -442,7 +442,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-transport"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bitflags",
  "futures",
