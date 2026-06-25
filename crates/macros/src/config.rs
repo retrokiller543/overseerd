@@ -11,8 +11,8 @@
 //! field-level `#[default = ".."]` whose value is a template string merged under the
 //! config before deserialization, so a missing field falls back to a (possibly
 //! templated) default that resolves through the normal `${..}` pipeline. On an enum, a
-//! variant may be marked with a bare `#[default]` to select it when the config names no
-//! variant.
+//! variant may be marked with a bare `#[default]` (or the cfg-gated
+//! `#[cfg_attr(PRED, default)]`) to select it when the config names no variant.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -20,6 +20,8 @@ use syn::{
     Attribute, Data, DeriveInput, Expr, ExprLit, Fields, Ident, Lit, LitStr, Meta, Token, Variant,
     meta::ParseNestedMeta,
     parse::{Parse, ParseStream},
+    parse_quote,
+    punctuated::Punctuated,
     token,
 };
 
@@ -451,27 +453,88 @@ fn take_default_attr(attrs: &mut Vec<Attribute>) -> syn::Result<Option<LitStr>> 
     }
 }
 
-/// Removes a bare `#[default]` marker from an enum variant's attributes, reporting whether it
-/// was present. The marker selects the variant used when the config names none. Errors on the
-/// field form `#[default = ".."]`, which is meaningless on a variant.
+/// Removes a `#[default]` marker from an enum variant's attributes, reporting whether it was
+/// present. The marker selects the variant used when the config names none. Both the direct
+/// `#[default]` and the cfg-gated `#[cfg_attr(PRED, default)]` form are recognized — the
+/// latter so a platform-specific variant (e.g. a Unix socket) can be the default on its
+/// platform. Errors on the field form `#[default = ".."]`, which is meaningless on a variant.
+///
+/// Note: the macro cannot evaluate the `cfg` predicate, so a `cfg_attr(PRED, default)` variant
+/// is treated as the default regardless of `PRED`. Pair it with a `#[cfg(PRED)]` on the
+/// variant itself (so the variant only exists where it is the default), as is conventional.
 fn take_variant_default_marker(attrs: &mut Vec<Attribute>) -> syn::Result<bool> {
-    let position = attrs
+    if let Some(index) = attrs
         .iter()
-        .position(|attr| attr.path().is_ident("default"));
+        .position(|attr| attr.path().is_ident("default"))
+    {
+        if !matches!(attrs[index].meta, Meta::Path(_)) {
+            return Err(syn::Error::new_spanned(
+                &attrs[index].meta,
+                "a variant's `#[default]` marker takes no value; `#[default = \"..\"]` is for fields",
+            ));
+        }
 
-    let index = match position {
-        Some(index) => index,
-        None => return Ok(false),
-    };
+        attrs.remove(index);
 
-    if !matches!(attrs[index].meta, Meta::Path(_)) {
-        return Err(syn::Error::new_spanned(
-            &attrs[index].meta,
-            "a variant's `#[default]` marker takes no value; `#[default = \"..\"]` is for fields",
-        ));
+        return Ok(true);
     }
 
-    attrs.remove(index);
+    for index in 0..attrs.len() {
+        if !attrs[index].path().is_ident("cfg_attr") {
+            continue;
+        }
 
-    Ok(true)
+        if let Some(rewritten) = take_default_from_cfg_attr(&attrs[index])? {
+            match rewritten {
+                Some(attr) => attrs[index] = attr,
+                None => {
+                    attrs.remove(index);
+                }
+            }
+
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+/// Looks for a bare `default` among a `#[cfg_attr(pred, ..)]`'s conditional attributes.
+///
+/// Returns `Ok(None)` when this cfg_attr carries no `default`. Otherwise returns
+/// `Ok(Some(rewritten))`: `Some(attr)` is the cfg_attr with `default` removed (other
+/// conditional attributes preserved), or `None` when `default` was the only one (so the whole
+/// cfg_attr is dropped). Stripping is required because, after the macro runs, the compiler
+/// would expand the surviving `default` into an unknown attribute.
+fn take_default_from_cfg_attr(attr: &Attribute) -> syn::Result<Option<Option<Attribute>>> {
+    let metas = attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+    let mut iter = metas.into_iter();
+
+    let predicate = match iter.next() {
+        Some(predicate) => predicate,
+        None => return Ok(None),
+    };
+
+    let mut remaining = Vec::new();
+    let mut found = false;
+
+    for meta in iter {
+        if matches!(&meta, Meta::Path(path) if path.is_ident("default")) {
+            found = true;
+        } else {
+            remaining.push(meta);
+        }
+    }
+
+    if !found {
+        return Ok(None);
+    }
+
+    if remaining.is_empty() {
+        return Ok(Some(None));
+    }
+
+    let rebuilt: Attribute = parse_quote! { #[cfg_attr(#predicate, #(#remaining),*)] };
+
+    Ok(Some(Some(rebuilt)))
 }
