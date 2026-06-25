@@ -89,6 +89,16 @@ impl ConfigStr {
             _ => None,
         }
     }
+
+    /// The plain literal text when this leaf has no placeholders, used to read an enum's
+    /// tag value (e.g. `kind = "unix"`) without resolving anything.
+    pub(crate) fn as_literal(&self) -> Option<&str> {
+        match (self.kind, self.segments.as_slice()) {
+            (StrKind::Literal, [Segment::Literal(text)]) => Some(text),
+            (StrKind::Literal, []) => Some(""),
+            _ => None,
+        }
+    }
 }
 
 /// One piece of a templated string.

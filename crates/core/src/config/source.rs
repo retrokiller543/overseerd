@@ -154,6 +154,24 @@ impl<F: Format> ConfigManager<F> {
         Ok(Self::wrap(root, sources))
     }
 
+    /// Loads and merges config from `directories`' config directory **with the `${@kind}`
+    /// directory namespace registered**, so values can reference `${@runtime}`, `${@data}`,
+    /// and friends.
+    ///
+    /// The one-call equivalent of
+    /// [`load_in`](Self::load_in)`(&directories.dir::<Config>(), profiles)` followed by
+    /// [`with_directories`](Self::with_directories)`(directories)`. Prefer this over
+    /// `load_in` whenever a [`DirectoriesManager`] is on hand — `load_in` only receives the
+    /// config directory, so it cannot wire the namespace itself.
+    pub fn load_from(
+        directories: &DirectoriesManager,
+        profiles: &[String],
+    ) -> Result<Self, ConfigError> {
+        let manager = Self::load_in(&directories.dir::<Config>(), profiles)?;
+
+        Ok(manager.with_directories(directories))
+    }
+
     fn wrap(root: ConfigValue, sources: Vec<PathBuf>) -> Self {
         Self {
             root,

@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use overseerd_config::{
-    ConfigError, ConfigErrorKind, ConfigStr, ConfigValue, DefaultSpec, MapResolver, ResolverChain,
-    from_value,
+    ConfigError, ConfigErrorKind, ConfigStr, ConfigValue, DefaultSpec, EnumTag, MapResolver,
+    ResolverChain, from_value,
 };
 use serde::Deserialize;
 
@@ -173,6 +173,7 @@ fn enum_variant_default_applies_only_to_the_present_variant() {
     // fills it. `Memory`'s (empty) default set is irrelevant.
     let mut subtree = table(vec![("Disk", ConfigValue::Table(Vec::new()))]);
     let defaults = DefaultSpec::Variants {
+        tagging: EnumTag::External,
         default: None,
         fields: vec![(
             "Disk".to_string(),
@@ -204,6 +205,7 @@ fn enum_unit_variant_is_left_untouched_by_defaults() {
     // A bare-string unit variant carries no fields; fill_missing must be a no-op.
     let mut subtree = s("Memory");
     let defaults = DefaultSpec::Variants {
+        tagging: EnumTag::External,
         default: None,
         fields: vec![(
             "Disk".to_string(),
@@ -231,6 +233,7 @@ fn default_variant_synthesized_when_none_selected() {
     // synthesized as a bare tag string.
     let mut subtree = ConfigValue::Table(Vec::new());
     let defaults = DefaultSpec::Variants {
+        tagging: EnumTag::External,
         default: Some(("Memory".to_string(), true)),
         fields: vec![],
     };
@@ -255,6 +258,7 @@ fn default_struct_variant_synthesized_with_its_field_defaults() {
     // and its own field defaults fill the missing `path`.
     let mut subtree = ConfigValue::Table(Vec::new());
     let defaults = DefaultSpec::Variants {
+        tagging: EnumTag::External,
         default: Some(("Disk".to_string(), false)),
         fields: vec![(
             "Disk".to_string(),
@@ -286,6 +290,7 @@ fn explicit_variant_wins_over_default() {
     // `Disk` is explicitly selected, so the `Memory` default must not be synthesized.
     let mut subtree = table(vec![("Disk", table(vec![("path", s("/explicit"))]))]);
     let defaults = DefaultSpec::Variants {
+        tagging: EnumTag::External,
         default: Some(("Memory".to_string(), true)),
         fields: vec![],
     };

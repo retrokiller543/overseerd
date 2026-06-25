@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 
 use crate::descriptors::{BoxedComponent, Injectable, TypeDescriptor};
 
-pub use overseerd_config::DefaultSpec;
+pub use overseerd_config::{DefaultSpec, EnumTag};
 #[cfg(feature = "yaml")]
 pub use source::Yaml;
 pub use source::{ConfigManager, Dynamic, Format, FormatId, Toml};

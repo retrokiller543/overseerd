@@ -22,11 +22,11 @@ bind = "${BIND:127.0.0.1}"
 # `socket` is intentionally omitted — it falls back to its `#[default]`:
 # "${@runtime}/example-daemon.sock".
 
-# Selects the `disk` storage variant (snake_case via serde rename_all) but omits its
-# `path`, so the field falls back to its `#[default]` of "${@data}/blobs". Switch to
-# `memory = {}` for the unit variant.
+# Internally tagged (`kind = ".."`): selects the `disk` variant but omits its `path`, so
+# the field falls back to its `#[default]` of "${@data}/blobs". Omit this section entirely
+# (or set `kind = "memory"`) to get the `#[default]` `Memory` variant.
 [app.storage]
-disk = {}
+kind = "disk"
 
 [app.db.reader]
 url = "postgres://${DB_HOST:localhost}:5432/app"

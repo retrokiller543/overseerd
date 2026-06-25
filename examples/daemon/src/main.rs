@@ -25,12 +25,11 @@ async fn main() -> overseerd::Result<()> {
 
     let dir_manager = DirectoriesManager::from_path(CRATE_PATH.into());
 
-    // Build the merged config first. Its `${VAR:default}` placeholders resolve
-    // against the environment as each subtree is deserialized; `with_directories`
-    // also wires the `${@kind}` directory namespace so config can reference, e.g.,
-    // the runtime directory.
-    let config =
-        ConfigManager::<Toml>::load_in(&dir_manager.dir(), &[])?.with_directories(&dir_manager);
+    // Build the merged config first. `load_from` loads from the manager's config dir and
+    // registers the `${@kind}` directory namespace in one step, so config can reference,
+    // e.g., the runtime directory. (`${VAR:default}` placeholders resolve against the
+    // environment as each subtree is deserialized.)
+    let config = ConfigManager::<Toml>::load_from(&dir_manager, &[])?;
 
     init_tracing(&config.get("logging")?).ok();
 

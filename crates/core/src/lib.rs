@@ -44,7 +44,7 @@ pub use overseerd_transport::{
 pub use builtins::{LoggingConfig, ServerConfig};
 pub use config::{
     Cfg, ConfigBinding, ConfigBindingDescriptor, ConfigError, ConfigManager, ConfigProperties,
-    DefaultSpec,
+    DefaultSpec, EnumTag,
 };
 pub use container::{ComponentContainer, ScopeContainer};
 pub use daemon::{Daemon, DaemonBuilder};

@@ -124,6 +124,9 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
     // enum's variant tags; `rename_all_fields` (enum only) renames fields inside variants.
     let container_rename_all = serde_rename_all(&item.attrs, "rename_all")?;
     let container_rename_all_fields = serde_rename_all(&item.attrs, "rename_all_fields")?;
+    // The enum's serde tagging, so the merge can synthesize the matching shape (unused for
+    // structs).
+    let enum_tagging = enum_tag_tokens(&item.attrs)?;
 
     match &mut item.data {
         Data::Struct(data) => {
@@ -200,6 +203,7 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
             Ok(quote! {
                 fn defaults() -> #default_spec {
                     #default_spec::Variants {
+                        tagging: #enum_tagging,
                         default: #default_tokens,
                         fields: ::std::vec![ #(#entries),* ],
                     }
@@ -307,6 +311,60 @@ fn serde_rename_all(attrs: &[Attribute], arg: &str) -> syn::Result<Option<Rename
     let value = serde_string_arg(attrs, arg)?;
 
     Ok(value.and_then(|rule| RenameRule::from_str(&rule)))
+}
+
+/// Builds the `EnumTag` literal describing the type's serde enum representation, so the merge
+/// can synthesize a default variant in the shape serde deserializes. Reads `#[serde(untagged)]`,
+/// `#[serde(tag = "..")]`, and `#[serde(tag = "..", content = "..")]`; otherwise external.
+fn enum_tag_tokens(attrs: &[Attribute]) -> syn::Result<TokenStream> {
+    let enum_tag = overseerd_path("EnumTag");
+
+    if serde_flag(attrs, "untagged")? {
+        return Ok(quote! { #enum_tag::Untagged });
+    }
+
+    let tag = serde_string_arg(attrs, "tag")?;
+    let content = serde_string_arg(attrs, "content")?;
+
+    let tokens = match (tag, content) {
+        (Some(tag), Some(content)) => quote! {
+            #enum_tag::Adjacent {
+                tag: ::std::string::String::from(#tag),
+                content: ::std::string::String::from(#content),
+            }
+        },
+
+        (Some(tag), None) => quote! {
+            #enum_tag::Internal { tag: ::std::string::String::from(#tag) }
+        },
+
+        _ => quote! { #enum_tag::External },
+    };
+
+    Ok(tokens)
+}
+
+/// Whether a bare `#[serde(<flag>)]` (e.g. `untagged`) is present on any serde attribute.
+fn serde_flag(attrs: &[Attribute], flag: &str) -> syn::Result<bool> {
+    let mut found = false;
+
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident(flag) {
+                found = true;
+
+                Ok(())
+            } else {
+                skip_meta_value(&meta)
+            }
+        })?;
+    }
+
+    Ok(found)
 }
 
 /// Extracts the deserialize-side string value of a serde argument `key`, scanning every
