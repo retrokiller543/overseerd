@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/retrokiller543/overseerd/compare/overseerd-config-v0.1.1...overseerd-config-v0.2.0) - 2026-06-25
+
+### Other
+
+- directory namespace, templated field defaults, enum support, app errors & unified logging ([#6](https://github.com/retrokiller543/overseerd/pull/6))
+
 ## [0.1.1](https://github.com/retrokiller543/overseerd/compare/overseerd-config-v0.1.0...overseerd-config-v0.1.1) - 2026-06-24
 
 ### Other
