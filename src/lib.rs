@@ -61,7 +61,7 @@ pub use overseerd_core::{
     DaemonBuilder, DefaultSpec, DependencyDescriptor, Descriptor, DescriptorRegistry, Dir, DirKind,
     DirectoriesManager, Dynamic, EnumTag, Error, ErrorHandler, ErrorResponse, Factory,
     FactoryOutput, FallibleHandler, Flags, FromContainer, FromContext, Guard, GuardLayer,
-    GuardService, Handler, Inject, Injectable, Dep, DepRef, Live, LoggingConfig, OperationKind, PROVIDERS,
+    GuardService, Handler, Inject, Injectable, Dep, Live, LiveRef, LoggingConfig, OperationKind, PROVIDERS,
     ParameterDescriptor, ParameterKind, Payload, Peer, PredefinedCode, Provide, ProviderDescriptor,
     RequestStream, Responder, ResponseError, ResponseStream, Result, RouterService, RpcCallContext,
     RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcRequest, RpcResponse, RpcRouter,

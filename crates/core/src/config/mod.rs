@@ -8,13 +8,12 @@
 
 mod source;
 
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 
-use crate::descriptors::{BoxedComponent, Injectable, TypeDescriptor};
+use crate::descriptors::{BoxedComponent, Injectable, Live, LiveRef, TypeDescriptor};
 
 pub use overseerd_config::{DefaultSpec, EnumTag};
 
@@ -69,23 +68,53 @@ pub enum ConfigError {
 
 /// An injected configuration value, bound from a property path.
 ///
-/// Wraps `Arc<T>` and derefs to it. The path is supplied at the injection site via
-/// `#[config("...")]` (or omitted for the sole-binding shorthand). Reads always go
-/// through `Cfg<T>` rather than a raw `Arc<T>`, which reserves the seam a future
-/// hot-reload needs without changing any injection site.
-pub struct Cfg<T>(pub Arc<T>);
+/// Backed by a shared [`Live<T>`] slot, so a config reload swaps the value in place
+/// and every holder observes it on the next read; snapshots taken earlier stay
+/// pinned. The path is supplied at the injection site via `#[config("...")]` (or
+/// omitted for the sole-binding shorthand). Read with [`get`](Self::get) (a guard)
+/// or [`snapshot`](Self::snapshot) (an owned `Arc`).
+pub struct Cfg<T> {
+    live: Live<T>,
+    path: Arc<str>,
+}
 
-impl<T> Clone for Cfg<T> {
-    fn clone(&self) -> Self {
-        Self(Arc::clone(&self.0))
+impl<T: Send + Sync + 'static> Cfg<T> {
+    /// Wraps a freshly bound value with the property path it was bound at.
+    pub(crate) fn new(value: T, path: impl Into<Arc<str>>) -> Self {
+        Self {
+            live: Live::new(Arc::new(value)),
+            path: path.into(),
+        }
+    }
+
+    /// A guard pinning the current value, dereferencing to `T`, for short reads.
+    pub fn get(&self) -> LiveRef<'_, T> {
+        self.live.get()
+    }
+
+    /// An owned `Arc` snapshot of the current value — stable once taken.
+    pub fn snapshot(&self) -> Arc<T> {
+        self.live.snapshot()
+    }
+
+    /// The property path this value was bound from.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Publishes a re-bound value into the slot. Used by a config reload at commit.
+    #[allow(dead_code)]
+    pub(crate) fn replace(&self, value: Arc<T>) {
+        self.live.replace(value);
     }
 }
 
-impl<T> Deref for Cfg<T> {
-    type Target = Arc<T>;
-
-    fn deref(&self) -> &Arc<T> {
-        &self.0
+impl<T: Send + Sync + 'static> Clone for Cfg<T> {
+    fn clone(&self) -> Self {
+        Self {
+            live: self.live.clone(),
+            path: Arc::clone(&self.path),
+        }
     }
 }
 
@@ -128,7 +157,7 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
 
         Ok(BoxedComponent {
             ty: TypeDescriptor::of::<Self>(Self::NAME),
-            value: Box::new(Cfg(Arc::new(value))),
+            value: Box::new(Cfg::new(value, path)),
         })
     }
 }

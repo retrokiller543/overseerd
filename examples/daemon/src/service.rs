@@ -60,6 +60,10 @@ impl Notifications {
         Inject(db): Inject<Dep<DbConnection>>,
     ) -> NotifyResponse {
         let count = db.get().record_query();
+        let config = self.config.snapshot();
+        let reader = self.reader.snapshot();
+        let writer = self.writer.snapshot();
+        let server = self.server.snapshot();
 
         let mut delivered: Vec<String> = self.all.iter().map(|n| n.channel().to_string()).collect();
         delivered.sort_unstable();
@@ -68,19 +72,19 @@ impl Notifications {
             &self.default,
             &self.by_channel,
             &req.message,
-            &self.reader.url,
-            &self.writer.url,
+            &reader.url,
+            &writer.url,
             &self.shutdown,
-            &self.server.bind,
-            self.server.port,
+            &server.bind,
+            server.port,
         );
 
         NotifyResponse {
-            greeting: self.config.greeting.clone(),
+            greeting: config.greeting.clone(),
             delivered_to: delivered,
             query_count: count,
-            reader_pool: self.reader.pool_size,
-            writer_pool: self.writer.pool_size,
+            reader_pool: reader.pool_size,
+            writer_pool: writer.pool_size,
         }
     }
 }

@@ -97,13 +97,13 @@ pub type Dep<T> = Live<T>;
 /// A guard pinning one generation of a [`Live<T>`], dereferencing to `T`. Holding it
 /// keeps observing the generation current when [`get`](Live::get) was called; it
 /// borrows the `Live`, discouraging holding it across a long await (which would pin
-/// the old instance and delay a reload).
-pub struct DepRef<'a, T: ?Sized> {
+/// the old instance and delay a reload). Returned by both [`Dep<T>`] and `Cfg<T>`.
+pub struct LiveRef<'a, T: ?Sized> {
     guard: Guard<Arc<Arc<T>>>,
     _marker: PhantomData<&'a Live<T>>,
 }
 
-impl<T: ?Sized> Deref for DepRef<'_, T> {
+impl<T: ?Sized> Deref for LiveRef<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -149,8 +149,8 @@ impl<T: ?Sized + Send + Sync + 'static> Live<T> {
 
     /// A guard pinning the current instance, dereferencing to `T`, for short
     /// synchronous reads.
-    pub fn get(&self) -> DepRef<'_, T> {
-        DepRef {
+    pub fn get(&self) -> LiveRef<'_, T> {
+        LiveRef {
             guard: self.inner.load(),
             _marker: PhantomData,
         }

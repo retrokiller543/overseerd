@@ -51,8 +51,8 @@ pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cardinality, Component,
     ComponentConstructionContext, ComponentDescriptor, ComponentFactories, ComponentFactory,
-    ComponentFactoryDescriptor, ComponentScope, Dep, DepRef, DependencyDescriptor, Descriptor,
-    Dynamic, Injectable, Live, OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Provide,
+    ComponentFactoryDescriptor, ComponentScope, Dep, DependencyDescriptor, Descriptor,
+    Dynamic, Injectable, Live, LiveRef, OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Provide,
     ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
     RpcResponse, SERVICES, ServiceComponent, ServiceDescriptor, ServiceRpcs, TypeDescriptor, Wired,
     Wiring, type_id_of,
