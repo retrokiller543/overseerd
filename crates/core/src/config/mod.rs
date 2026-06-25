@@ -6,6 +6,7 @@
 //! property path — the same type may appear at several paths — with a type-only
 //! shorthand that resolves only when exactly one binding of that type exists.
 
+mod reload;
 mod source;
 
 use std::path::PathBuf;
@@ -14,6 +15,12 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 
 use crate::descriptors::{BoxedComponent, Injectable, Live, LiveRef, TypeDescriptor};
+
+pub use reload::{
+    CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, ChangedBinding, ConfigReloadError,
+    ConfigReloadReport, ConfigReloader, ReloadableConfig,
+};
+use reload::ConfigSlot;
 
 pub use overseerd_config::{DefaultSpec, EnumTag};
 
@@ -160,6 +167,12 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
             value: Box::new(Cfg::new(value, path)),
         })
     }
+
+    /// Recovers a [`ReloadableConfig`] slot from a [`bind`](Self::bind) seed, sharing
+    /// its live cell so a reload can re-publish the value in place.
+    fn slot(seed: &BoxedComponent, path: &str) -> Option<Box<dyn ReloadableConfig>> {
+        ConfigSlot::<Self>::from_seed(seed, path)
+    }
 }
 
 /// A requested binding of a config type to a property path, registered on the
@@ -167,22 +180,28 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
 /// bound at several paths; the `bind` thunk is monomorphized per type so the manager need not
 /// name it. `defaults` is the type's compile-time [`DefaultSpec`], carried so the manager can
 /// seed every bound type's defaults into the tree (enabling cross-path `${a.b.c}` references).
+/// Monomorphized-per-type recovery of a [`ReloadableConfig`] from a bind seed, so the
+/// type-erased manager can build reload slots without naming the config type.
+pub type SlotThunk = fn(&BoxedComponent, &str) -> Option<Box<dyn ReloadableConfig>>;
+
 #[derive(Clone)]
 pub struct ConfigBinding {
     pub ty: TypeDescriptor,
     pub path: String,
     pub bind: fn(&ConfigManager, &str) -> Result<BoxedComponent, ConfigError>,
+    pub slot: SlotThunk,
     pub defaults: DefaultSpec,
 }
 
 impl ConfigBinding {
-    /// Builds a binding for type `T` at `path`, capturing `T`'s `bind` thunk and
-    /// compile-time defaults.
+    /// Builds a binding for type `T` at `path`, capturing `T`'s `bind`/`slot` thunks
+    /// and compile-time defaults.
     pub fn of<T: ConfigProperties>(path: impl Into<String>) -> Self {
         Self {
             ty: TypeDescriptor::of::<T>(T::NAME),
             path: path.into(),
             bind: T::bind,
+            slot: T::slot,
             defaults: T::DEFAULTS,
         }
     }
@@ -207,6 +226,7 @@ pub struct ConfigBindingDescriptor {
     pub ty: TypeDescriptor,
     pub path: &'static str,
     pub bind: fn(&ConfigManager, &str) -> Result<BoxedComponent, ConfigError>,
+    pub slot: SlotThunk,
     pub defaults: DefaultSpec,
 }
 
@@ -217,6 +237,7 @@ impl ConfigBindingDescriptor {
             ty: self.ty,
             path: self.path.to_string(),
             bind: self.bind,
+            slot: self.slot,
             defaults: self.defaults,
         }
     }

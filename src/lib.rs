@@ -56,8 +56,9 @@
 pub use overseerd_core::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cancel, Cardinality, Cfg, Component,
     ComponentConstructionContext, ComponentContainer, ComponentDescriptor, ComponentFactories,
-    ComponentFactory, ComponentFactoryDescriptor, ComponentScope, ConfigBinding,
-    ConfigBindingDescriptor, ConfigDefaults, ConfigError, ConfigManager, ConfigProperties, Daemon,
+    ComponentFactory, ComponentFactoryDescriptor, ComponentScope, ChangedBinding, ConfigBinding,
+    ConfigBindingDescriptor, ConfigDefaults, ConfigError, ConfigManager, ConfigProperties,
+    ConfigReloadError, ConfigReloadReport, ConfigReloader, ReloadableConfig, Daemon,
     DaemonBuilder, DefaultSpec, DependencyDescriptor, Descriptor, DescriptorRegistry, Dir, DirKind,
     DirectoriesManager, Dynamic, EnumTag, Error, ErrorHandler, ErrorResponse, Factory,
     FactoryOutput, FallibleHandler, Flags, FromContainer, FromContext, Guard, GuardLayer,

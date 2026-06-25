@@ -227,9 +227,20 @@ impl<F> ConfigManager<F> {
     /// [`get`](Self::get).
     #[instrument(target = "overseerd::config", level = "debug", skip(self))]
     pub fn get_config<T: ConfigProperties>(&self, path: &str) -> Result<T, ConfigError> {
+        self.get_config_in::<T>(&self.root, path)
+    }
+
+    /// [`get_config`](Self::get_config) against an explicit base tree rather than the
+    /// manager's current `root`. The reload path uses this to deserialize a binding
+    /// from a freshly re-read tree without first adopting it.
+    pub(crate) fn get_config_in<T: ConfigProperties>(
+        &self,
+        base: &ConfigValue,
+        path: &str,
+    ) -> Result<T, ConfigError> {
         let defaults = T::DEFAULTS;
 
-        let mut subtree = match self.root.get_path(path) {
+        let mut subtree = match base.get_path(path) {
             Some(node) => node.clone(),
 
             None => {
@@ -254,8 +265,8 @@ impl<F> ConfigManager<F> {
         // default referencing a sibling (`addr = "${app.server.port}"` where `port` is itself
         // only a default) resolves without relying on the manager having seeded it. Cross-
         // *type* references additionally require those types to be registered (`auto_discover`
-        // seeds them into `self.root`, which this clone preserves).
-        let mut root = self.root.clone();
+        // seeds them into the base tree, which this clone preserves).
+        let mut root = base.clone();
 
         if let Some(node) = ensure_path_mut(&mut root, path) {
             *node = subtree.clone();
@@ -380,28 +391,111 @@ impl<F> ConfigManager<F> {
     /// need not be wired yet). After seeding, a default's `${a.b.c}` reference resolves
     /// because `a.b.c`'s own default is now present in the tree.
     fn seed_defaults(&mut self) {
-        for binding in &self.bindings {
-            if binding.defaults.is_none() {
-                continue;
-            }
+        seed_defaults_into(&mut self.root, &self.bindings);
+    }
 
-            let Some(node) = ensure_path_mut(&mut self.root, &binding.path) else {
-                continue;
-            };
+    /// The merged subtree at `path` in the current tree (pre-substitution), or `None`
+    /// if absent. Reload compares this against the freshly re-read tree to swap only
+    /// the bindings whose source actually changed.
+    pub(crate) fn subtree(&self, path: &str) -> Option<&ConfigValue> {
+        self.root.get_path(path)
+    }
 
-            if let Err(error) = binding.defaults.fill_missing(node) {
-                // Defaults are compile-time literals, so this is unreachable for
-                // macro-emitted specs; a hand-built spec with a malformed template lands here
-                // and is left unseeded (the real error surfaces at the later typed read).
-                debug!(
-                    target: "overseerd::config",
-                    path = %binding.path,
-                    %error,
-                    "skipping unseedable default",
-                );
-            }
+    /// Re-reads every retained source from disk and rebuilds a fresh merged tree
+    /// (defaults seeded), **without** adopting it. Rebuilding from empty in the
+    /// original merge order preserves precedence: if profile `b` changed, `c` still
+    /// overrides `b` and `b` overrides `a`. Returns the new tree for diffing.
+    pub(crate) fn reread(&self) -> Result<ConfigValue, ConfigError> {
+        let parsers = parsers_for(self.format);
+
+        let mut root = ConfigValue::Table(Vec::new());
+
+        for source in &self.sources {
+            merge_file(&mut root, source, &parsers)?;
+        }
+
+        seed_defaults_into(&mut root, &self.bindings);
+
+        Ok(root)
+    }
+
+    /// Adopts a tree produced by [`reread`](Self::reread) as the current one, after a
+    /// reload has committed.
+    pub(crate) fn adopt(&mut self, root: ConfigValue) {
+        self.root = root;
+    }
+}
+
+/// Seeds every bound type's [`DefaultSpec`] into `root` at its path. See
+/// [`ConfigManager::seed_defaults`].
+fn seed_defaults_into(root: &mut ConfigValue, bindings: &[ConfigBinding]) {
+    for binding in bindings {
+        if binding.defaults.is_none() {
+            continue;
+        }
+
+        let Some(node) = ensure_path_mut(root, &binding.path) else {
+            continue;
+        };
+
+        if let Err(error) = binding.defaults.fill_missing(node) {
+            // Defaults are compile-time literals, so this is unreachable for
+            // macro-emitted specs; a hand-built spec with a malformed template lands here
+            // and is left unseeded (the real error surfaces at the later typed read).
+            debug!(
+                target: "overseerd::config",
+                path = %binding.path,
+                %error,
+                "skipping unseedable default",
+            );
         }
     }
+}
+
+/// The `(extension, parser)` pairs for a runtime [`FormatId`] — the reload-time
+/// counterpart of [`Format::parsers`], which is only reachable through the erased
+/// `Format` type at load.
+fn parsers_for(format: FormatId) -> Vec<(&'static str, Parser)> {
+    match format {
+        FormatId::Toml => Toml::parsers(),
+        #[cfg(feature = "yaml")]
+        FormatId::Yaml => Yaml::parsers(),
+        #[cfg(not(feature = "yaml"))]
+        FormatId::Yaml => vec![],
+        FormatId::Dynamic => Dynamic::parsers(),
+    }
+}
+
+/// Merges a single source file into `root`, selecting the parser by the file's
+/// extension. A source with no matching parser is skipped.
+fn merge_file(
+    root: &mut ConfigValue,
+    path: &Path,
+    parsers: &[(&'static str, Parser)],
+) -> Result<(), ConfigError> {
+    let extension = path.extension().and_then(|ext| ext.to_str());
+
+    let Some((_, parse)) = parsers
+        .iter()
+        .find(|(ext, _)| Some(*ext) == extension)
+    else {
+        trace!(target: "overseerd::config", path = %path.display(), "no parser for source extension, skipping");
+
+        return Ok(());
+    };
+
+    let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let parsed = parse(&text).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+
+    merge_into(root, parsed);
+
+    Ok(())
 }
 
 /// Navigates a dotted `path` through `root`, creating an empty table for each missing

@@ -861,11 +861,19 @@ mod tests {
         unreachable!("validation never binds")
     }
 
+    fn dummy_slot(
+        _: &BoxedComponent,
+        _: &str,
+    ) -> Option<Box<dyn crate::config::ReloadableConfig>> {
+        unreachable!("validation never builds reload slots")
+    }
+
     fn config_binding(path: &str) -> ConfigBinding {
         ConfigBinding {
             ty: TypeDescriptor::of::<u128>("DbConfig"),
             path: path.to_string(),
             bind: dummy_bind,
+            slot: dummy_slot,
             defaults: crate::config::DefaultSpec::None,
         }
     }

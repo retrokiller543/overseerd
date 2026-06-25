@@ -11,7 +11,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     ServiceComponent,
-    config::{ConfigBinding, ConfigManager, ConfigProperties},
+    config::{ConfigBinding, ConfigManager, ConfigProperties, ConfigReloader, ReloadableConfig},
     container::{ScopeContainer, ScopeRegistry, topological_sort},
     descriptors::{
         BoxedComponent, Component, ComponentDescriptor, ComponentScope, Descriptor, Injectable,
@@ -52,6 +52,18 @@ static SHUTDOWN_HANDLE_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::ma
     crate::builtins::shutdown::SHUTDOWN_HANDLE_ID,
     crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME,
     TypeDescriptor::of::<ShutdownHandle>(crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME),
+    ComponentScope::Singleton,
+);
+
+/// The framework-provided singleton injectable for triggering a config reload.
+///
+/// Seeded into the root scope with a [`ConfigReloader`] over the daemon's config
+/// manager and its bound slots, so any component or handler can inject it and call
+/// `reload()`.
+static CONFIG_RELOADER_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    crate::config::CONFIG_RELOADER_ID,
+    crate::config::CONFIG_RELOADER_NAME,
+    TypeDescriptor::of::<ConfigReloader>(crate::config::CONFIG_RELOADER_NAME),
     ComponentScope::Singleton,
 );
 
@@ -287,6 +299,10 @@ impl DaemonBuilder {
         // directories so any component can inject them.
         seed_builtins(&shutdown, &mut registry, &mut instances);
 
+        // The config reloader is always available; declare it now so it partitions as a
+        // singleton. Its instance is seeded below, once the config slots it swaps exist.
+        registry.components.push(CONFIG_RELOADER_DESCRIPTOR);
+
         // Finalize the config manager — it owns the config registry. Auto-discovery (gated on
         // the builder's `auto_discover`, so a daemon without it auto-registers no configs)
         // registers `#[config(path)]` types and seeds their defaults; explicit `config::<T>`
@@ -329,12 +345,26 @@ impl DaemonBuilder {
 
         let mut config_seeds: Vec<(String, BoxedComponent)> =
             Vec::with_capacity(registry.config_bindings.len());
+        let mut reload_slots: Vec<Box<dyn ReloadableConfig>> =
+            Vec::with_capacity(registry.config_bindings.len());
 
         for binding in &registry.config_bindings {
             let boxed = (binding.bind)(&tree, &binding.path)?;
 
+            if let Some(slot) = (binding.slot)(&boxed, &binding.path) {
+                reload_slots.push(slot);
+            }
+
             config_seeds.push((binding.path.clone(), boxed));
         }
+
+        // Build the reloader over the (now finalized) manager and the slots sharing the
+        // bound configs' live cells, then seed it as a framework singleton instance.
+        let reloader = ConfigReloader::new(tree, reload_slots);
+        instances.push(BoxedComponent {
+            ty: TypeDescriptor::of::<ConfigReloader>(crate::config::CONFIG_RELOADER_NAME),
+            value: Box::new(Injectable::into_stored(reloader.clone())),
+        });
 
         let scope_registry = Arc::new(ScopeRegistry::new(
             scopes.transient,
@@ -377,6 +407,7 @@ impl DaemonBuilder {
             service,
             error_handler: self.error_handler,
             shutdown,
+            reloader,
         })
     }
 }
@@ -536,6 +567,7 @@ pub struct Daemon {
     service: RpcService,
     error_handler: Option<Arc<dyn ErrorHandler>>,
     shutdown: ShutdownSignal,
+    reloader: ConfigReloader,
 }
 
 impl fmt::Debug for Daemon {
@@ -571,6 +603,12 @@ impl Daemon {
     /// Returns a handle that can trigger graceful shutdown from any spawned task.
     pub fn shutdown_handle(&self) -> ShutdownHandle {
         self.shutdown.handle()
+    }
+
+    /// A handle that re-reads configuration and re-publishes the changed bindings.
+    /// The same [`ConfigReloader`] is injectable into any component or handler.
+    pub fn config_reloader(&self) -> ConfigReloader {
+        self.reloader.clone()
     }
 
     /// Serves RPC calls from `transport` until ctrl-c or a shutdown signal.
