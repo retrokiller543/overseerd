@@ -1,4 +1,6 @@
 use super::types::TypeDescriptor;
+use arc_swap::{ArcSwap, Guard};
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::{
     any::{Any, TypeId},
@@ -42,19 +44,143 @@ pub trait ServiceComponent: Component {
 ///
 /// Every injectable *handle* implements this. `Target` is the type the instance
 /// is keyed under; cloning a handle happens on every resolution, so it must be
-/// cheap. The blanket impl covers the common case — every `Arc<T>` is injectable
-/// and keyed by `T`, so existing `Arc<T>` dependencies need no change. A type
-/// that is itself cheaply shareable (internally `Arc`, e.g. a pool) may instead
-/// implement `Injectable` for itself, so it is injected by value with no outer
-/// `Arc`.
+/// cheap.
+///
+/// A scope does not box the handle directly — it boxes [`Stored`](Self::Stored),
+/// the *slot* a handle is derived from. For `Arc<T>` and `Dep<T>` the slot is a
+/// shared [`Live<T>`]: an `Arc<T>` snapshots it (one fixed instance), a `Dep<T>`
+/// clones it (so a later swap is observed), and both find the *same* slot because
+/// they share `Target = T`. A by-value handle is its own slot (`Stored = Self`),
+/// so the round-trip is a plain clone. The container converts between slot and
+/// handle through [`into_stored`](Self::into_stored) (once, at construction) and
+/// [`from_stored`](Self::from_stored) (on every resolution).
 pub trait Injectable: Clone + Send + Sync + 'static {
     /// The type this handle is stored and looked up under. `?Sized` so a trait
     /// object (`dyn Trait + Send + Sync`) can key its providers.
     type Target: ?Sized + 'static;
+
+    /// The value actually held in a scope's box for this handle. `Arc<T>` and
+    /// `Dep<T>` both store a shared `Live<T>`, so they alias one swappable slot;
+    /// by-value handles store themselves.
+    type Stored: Clone + Send + Sync + 'static;
+
+    /// Wraps a freshly built handle into its stored slot. Called once, when the
+    /// instance is first inserted into a scope.
+    fn into_stored(self) -> Self::Stored;
+
+    /// Derives this handle from a stored slot. Called on every resolution — a
+    /// snapshot for `Arc<T>`, a shared clone for `Dep<T>`, a plain clone otherwise.
+    fn from_stored(stored: &Self::Stored) -> Self;
+}
+
+/// A shared, swappable cell holding the current `Arc<T>` instance — the interior
+/// mutability primitive behind [`Dep<T>`] (and, in a later step, `Cfg<T>`).
+///
+/// Backed by [`arc_swap`]: every clone shares one underlying `ArcSwap`, so a
+/// [`replace`](Self::replace) is observed by all clones, while [`snapshot`](Self::snapshot)
+/// and [`get`](Self::get) pin the generation current at the call. This is what lets a
+/// config reload swap a component (or config value) in place without recreating its
+/// consumers.
+pub struct Live<T: ?Sized> {
+    inner: Arc<ArcSwap<Arc<T>>>,
+}
+
+/// A reloadable dependency handle: a stable handle to a component slot whose
+/// instance may be swapped at runtime (e.g. by a config reload).
+///
+/// A `Dep<T>` field keeps working across a swap, observing the new instance on its
+/// next read; existing snapshots keep the old instance alive until dropped. It is
+/// the same primitive as [`Live<T>`] — an alias chosen at the injection site to opt
+/// into live, rather than fixed `Arc<T>`, semantics.
+pub type Dep<T> = Live<T>;
+
+/// A guard pinning one generation of a [`Live<T>`], dereferencing to `T`. Holding it
+/// keeps observing the generation current when [`get`](Live::get) was called; it
+/// borrows the `Live`, discouraging holding it across a long await (which would pin
+/// the old instance and delay a reload).
+pub struct DepRef<'a, T: ?Sized> {
+    guard: Guard<Arc<Arc<T>>>,
+    _marker: PhantomData<&'a Live<T>>,
+}
+
+impl<T: ?Sized> Deref for DepRef<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.guard
+    }
+}
+
+impl<T: ?Sized + Send + Sync + 'static> Clone for Live<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl<T: ?Sized + Send + Sync + 'static> fmt::Debug for Live<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Live").finish_non_exhaustive()
+    }
+}
+
+impl<T: ?Sized + Send + Sync + 'static> Live<T> {
+    /// Wraps an instance in a fresh slot. Each call creates an independent cell, so
+    /// this is the seam where a constructed instance becomes reloadable.
+    pub fn new(value: Arc<T>) -> Self {
+        Self {
+            inner: Arc::new(ArcSwap::new(Arc::new(value))),
+        }
+    }
+
+    /// Publishes a new instance into the slot. Every clone of this `Live` (every
+    /// `Dep<T>` derived from it) observes the new value on its next read — the
+    /// swap a config reload performs at commit.
+    pub fn replace(&self, value: Arc<T>) {
+        self.inner.store(Arc::new(value));
+    }
+
+    /// An owned `Arc` snapshot of the current instance — stable once taken. Prefer
+    /// this over [`get`](Self::get) for anything held across an `.await`.
+    pub fn snapshot(&self) -> Arc<T> {
+        self.inner.load_full().as_ref().clone()
+    }
+
+    /// A guard pinning the current instance, dereferencing to `T`, for short
+    /// synchronous reads.
+    pub fn get(&self) -> DepRef<'_, T> {
+        DepRef {
+            guard: self.inner.load(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<T: ?Sized + Send + Sync + 'static> Injectable for Dep<T> {
+    type Target = T;
+    type Stored = Live<T>;
+
+    fn into_stored(self) -> Live<T> {
+        self
+    }
+
+    fn from_stored(stored: &Live<T>) -> Self {
+        stored.clone()
+    }
 }
 
 impl<T: ?Sized + Send + Sync + 'static> Injectable for Arc<T> {
     type Target = T;
+    type Stored = Live<T>;
+
+    fn into_stored(self) -> Live<T> {
+        Live::new(self)
+    }
+
+    fn from_stored(stored: &Live<T>) -> Self {
+        stored.snapshot()
+    }
 }
 
 /// The remote peer is a framework-seeded, **by-value** connection-scoped
@@ -63,6 +189,15 @@ impl<T: ?Sized + Send + Sync + 'static> Injectable for Arc<T> {
 /// directly as `peer: PeerInfo` — no `Arc`. `PeerInfo` is cheap to clone.
 impl Injectable for overseerd_transport::PeerInfo {
     type Target = overseerd_transport::PeerInfo;
+    type Stored = Self;
+
+    fn into_stored(self) -> Self {
+        self
+    }
+
+    fn from_stored(stored: &Self) -> Self {
+        stored.clone()
+    }
 }
 
 /// Field wrapper marking a dependency as **runtime-provided**.
@@ -314,6 +449,19 @@ pub(crate) struct ScopeStore {
     pub(crate) configs: HashMap<TypeId, Vec<ConfigInstance>>,
 }
 
+/// Recovers handle `H` from a boxed slot: downcasts to its stored representation
+/// (`H::Stored`) and derives the handle. This is the single seam through which
+/// every resolution converts storage back into a handle — a snapshot for `Arc<T>`,
+/// a shared clone for `Dep<T>`, a plain clone for a by-value handle. `None` if the
+/// box holds a different stored type (e.g. asking for `Dep<T>` of a by-value
+/// component, whose slot is not a `Live<T>`).
+pub(crate) fn from_boxed<H: Injectable>(boxed: &BoxedComponent) -> Option<H> {
+    boxed
+        .value
+        .downcast_ref::<H::Stored>()
+        .map(H::from_stored)
+}
+
 impl ScopeStore {
     /// Single concrete-or-primary-provider lookup, scope-local. `None` if absent or
     /// ambiguous.
@@ -321,12 +469,12 @@ impl ScopeStore {
         let type_id = TypeId::of::<H::Target>();
 
         if let Some(component) = self.components.get(&type_id) {
-            return component.value.downcast_ref::<H>().cloned();
+            return from_boxed::<H>(component);
         }
 
         let chosen = pick_single(self.providers.get(&type_id)?)?;
 
-        chosen.value.value.downcast_ref::<H>().cloned()
+        from_boxed::<H>(&chosen.value)
     }
 
     /// Qualifier-selected single provider, scope-local.
@@ -338,7 +486,7 @@ impl ScopeStore {
             .iter()
             .find(|entry| entry.qualifier == qualifier)?;
 
-        entry.value.value.downcast_ref::<H>().cloned()
+        from_boxed::<H>(&entry.value)
     }
 
     /// Every scope-local provider of the trait `H::Target`.
@@ -349,7 +497,7 @@ impl ScopeStore {
             .get(&type_id)
             .into_iter()
             .flatten()
-            .filter_map(|entry| entry.value.downcast_ref::<H>().cloned())
+            .filter_map(|entry| from_boxed::<H>(&entry.value))
             .collect()
     }
 
@@ -362,7 +510,7 @@ impl ScopeStore {
             .into_iter()
             .flatten()
             .filter_map(|entry| {
-                let value = entry.value.downcast_ref::<H>().cloned()?;
+                let value = from_boxed::<H>(&entry.value)?;
 
                 Some((entry.qualifier.to_string(), value))
             })
@@ -374,7 +522,7 @@ impl ScopeStore {
         let entries = self.configs.get(&TypeId::of::<H::Target>())?;
         let found = entries.iter().find(|entry| entry.path == path)?;
 
-        found.value.value.downcast_ref::<H>().cloned()
+        from_boxed::<H>(&found.value)
     }
 
     /// The sole config of this type, scope-local — the type-only shorthand. `None`
@@ -383,7 +531,7 @@ impl ScopeStore {
         let entries = self.configs.get(&TypeId::of::<H::Target>())?;
 
         match entries.as_slice() {
-            [only] => only.value.value.downcast_ref::<H>().cloned(),
+            [only] => from_boxed::<H>(&only.value),
             _ => None,
         }
     }

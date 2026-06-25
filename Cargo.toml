@@ -29,6 +29,7 @@ overseerd-macros = { path = "crates/macros", version = "0.5.0" }
 overseerd-transport = { path = "crates/transport", version = "0.5.0" }
 
 # Common dependencies
+arc-swap = "1.9.1"
 bitflags = "2"
 thiserror = "2"
 toml = "1.1"

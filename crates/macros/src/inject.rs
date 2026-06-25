@@ -71,6 +71,7 @@ pub fn field_injection_component(
     let components_slice = overseerd_path("COMPONENTS");
     let dependency_descriptor = overseerd_path("DependencyDescriptor");
     let component = overseerd_path("Component");
+    let injectable = overseerd_path("Injectable");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
     let result = overseerd_path("Result");
@@ -165,7 +166,9 @@ pub fn field_injection_component(
                     ::core::result::Result::Ok(#boxed_component {
                         ty: #type_descriptor::of::<#self_ident>(#name),
                         value: ::std::boxed::Box::new(
-                            <#self_ident as #component>::into_handle(__instance),
+                            #injectable::into_stored(
+                                <#self_ident as #component>::into_handle(__instance),
+                            ),
                         ),
                     })
                 })

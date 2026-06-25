@@ -14,8 +14,8 @@ use crate::{
     config::{ConfigBinding, ConfigManager, ConfigProperties},
     container::{ScopeContainer, ScopeRegistry, topological_sort},
     descriptors::{
-        BoxedComponent, Component, ComponentDescriptor, ComponentScope, Descriptor, RpcCallContext,
-        RpcOutcome, RpcResponse, ServiceDescriptor, TypeDescriptor,
+        BoxedComponent, Component, ComponentDescriptor, ComponentScope, Descriptor, Injectable,
+        RpcCallContext, RpcOutcome, RpcResponse, ServiceDescriptor, TypeDescriptor,
     },
     dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp},
     extract::ErrorResponse,
@@ -128,7 +128,7 @@ impl DaemonBuilder {
 
         self.instances.push(BoxedComponent {
             ty: TypeDescriptor::of::<T>(T::NAME),
-            value: Box::new(value.into_handle()),
+            value: Box::new(Injectable::into_stored(value.into_handle())),
         });
 
         self

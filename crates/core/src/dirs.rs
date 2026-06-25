@@ -152,6 +152,15 @@ impl<K: DirKind> Component for Dir<K> {
 
 impl<K: DirKind> Injectable for Dir<K> {
     type Target = Dir<K>;
+    type Stored = Self;
+
+    fn into_stored(self) -> Self {
+        self
+    }
+
+    fn from_stored(stored: &Self) -> Self {
+        stored.clone()
+    }
 }
 
 /// Under `di-check`, every `Dir<K>` is framework-seeded, so it is always provided.
@@ -289,6 +298,15 @@ impl Component for DirectoriesManager {
 
 impl Injectable for DirectoriesManager {
     type Target = DirectoriesManager;
+    type Stored = Self;
+
+    fn into_stored(self) -> Self {
+        self
+    }
+
+    fn from_stored(stored: &Self) -> Self {
+        stored.clone()
+    }
 }
 
 /// Under `di-check`, the manager is framework-seeded, so it is always provided.

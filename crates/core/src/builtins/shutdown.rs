@@ -29,6 +29,15 @@ impl Component for ShutdownHandle {
 
 impl Injectable for ShutdownHandle {
     type Target = ShutdownHandle;
+    type Stored = Self;
+
+    fn into_stored(self) -> Self {
+        self
+    }
+
+    fn from_stored(stored: &Self) -> Self {
+        stored.clone()
+    }
 }
 
 /// Under `di-check`, the handle is framework-seeded, so it is always provided.

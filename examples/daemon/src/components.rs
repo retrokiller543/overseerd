@@ -91,8 +91,7 @@ impl Db {
     }
 }
 
-#[component(scope = request, by_value)]
-#[derive(Clone)]
+#[component(scope = request)]
 pub struct DbConnection {
     #[default]
     id: usize,

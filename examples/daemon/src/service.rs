@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::components::{Config, DbConfig, DbConnection};
 use crate::notifiers::Notifier;
-use overseerd::{Cfg, Inject, Payload, ServerConfig, ShutdownHandle, handlers, service};
+use overseerd::{Cfg, Inject, Payload, ServerConfig, ShutdownHandle, handlers, service, Dep};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -57,9 +57,9 @@ impl Notifications {
     async fn notify(
         &self,
         Payload(req): Payload<NotifyRequest>,
-        Inject(db): Inject<DbConnection>,
+        Inject(db): Inject<Dep<DbConnection>>,
     ) -> NotifyResponse {
-        let count = db.record_query();
+        let count = db.get().record_query();
 
         let mut delivered: Vec<String> = self.all.iter().map(|n| n.channel().to_string()).collect();
         delivered.sort_unstable();

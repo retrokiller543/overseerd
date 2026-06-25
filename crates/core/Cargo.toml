@@ -19,6 +19,7 @@ yaml = ["overseerd-config/yaml"]
 tracing-subscriber = ["dep:tracing-subscriber"]
 
 [dependencies]
+arc-swap.workspace = true
 linkme = { workspace = true }
 thiserror = { workspace = true }
 directories = { workspace = true }

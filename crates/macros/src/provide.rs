@@ -26,6 +26,7 @@ pub fn generate_providers(self_ident: &Ident, args: &ServiceArgs) -> TokenStream
     let provider_descriptor = overseerd_path("ProviderDescriptor");
     let providers_slice = overseerd_path("PROVIDERS");
     let type_descriptor = overseerd_path("TypeDescriptor");
+    let live = overseerd_path("Live");
 
     // Qualifier defaults to the component's id (explicit `id`, else lowercased
     // type name), overridable with `qualifier = ".."`.
@@ -50,14 +51,14 @@ pub fn generate_providers(self_ident: &Ident, args: &ServiceArgs) -> TokenStream
             fn #erase_ident(__concrete: &#boxed_component) -> #boxed_component {
                 let __arc = __concrete
                     .value
-                    .downcast_ref::<::std::sync::Arc<#self_ident>>()
+                    .downcast_ref::<#live<#self_ident>>()
                     .expect("provider concrete type mismatch")
-                    .clone();
+                    .snapshot();
                 let __erased: ::std::sync::Arc<#dyn_ty> = __arc;
 
                 #boxed_component {
                     ty: #type_descriptor::of::<#dyn_ty>(#trait_name),
-                    value: ::std::boxed::Box::new(__erased),
+                    value: ::std::boxed::Box::new(#live::new(__erased)),
                 }
             }
 

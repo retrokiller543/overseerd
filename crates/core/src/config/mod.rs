@@ -91,6 +91,15 @@ impl<T> Deref for Cfg<T> {
 
 impl<T: Send + Sync + 'static> Injectable for Cfg<T> {
     type Target = T;
+    type Stored = Self;
+
+    fn into_stored(self) -> Self {
+        self
+    }
+
+    fn from_stored(stored: &Self) -> Self {
+        stored.clone()
+    }
 }
 
 /// A struct bindable from a configuration subtree, injectable as [`Cfg<Self>`].
