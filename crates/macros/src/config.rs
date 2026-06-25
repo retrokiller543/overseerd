@@ -15,10 +15,13 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{
-    Attribute, Data, DeriveInput, Expr, ExprLit, Fields, Ident, Lit, LitStr, Meta, Token,
+    Attribute, Data, DeriveInput, Expr, ExprLit, Fields, Ident, Lit, LitStr, Meta, Token, Variant,
+    meta::ParseNestedMeta,
     parse::{Parse, ParseStream},
+    token,
 };
 
+use crate::case::RenameRule;
 use crate::paths::overseerd_path;
 
 /// Arguments of the `#[config(...)]` attribute on a config type.
@@ -115,9 +118,14 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput) -> syn::Result<TokenStrea
 fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
     let default_spec = overseerd_path("DefaultSpec");
 
+    // serde's container-level rename rules: `rename_all` renames a struct's fields or an
+    // enum's variant tags; `rename_all_fields` (enum only) renames fields inside variants.
+    let container_rename_all = serde_rename_all(&item.attrs, "rename_all")?;
+    let container_rename_all_fields = serde_rename_all(&item.attrs, "rename_all_fields")?;
+
     match &mut item.data {
         Data::Struct(data) => {
-            let fields = take_field_defaults(&mut data.fields)?;
+            let fields = take_field_defaults(&mut data.fields, container_rename_all)?;
 
             if fields.is_empty() {
                 return Ok(quote!());
@@ -138,11 +146,14 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
             let mut variants = Vec::new();
 
             for variant in data.variants.iter_mut() {
-                let variant_name = variant.ident.to_string();
-                let fields = take_field_defaults(&mut variant.fields)?;
+                let variant_key = variant_serde_name(variant, container_rename_all)?;
+                // A variant's own `rename_all` wins over the enum's `rename_all_fields`.
+                let field_rule =
+                    serde_rename_all(&variant.attrs, "rename_all")?.or(container_rename_all_fields);
+                let fields = take_field_defaults(&mut variant.fields, field_rule)?;
 
                 if !fields.is_empty() {
-                    variants.push((variant_name, fields));
+                    variants.push((variant_key, fields));
                 }
             }
 
@@ -178,22 +189,28 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
 }
 
 /// Pulls every `#[default = ".."]` off the named fields of `fields`, returning
-/// `(field name, template literal)` pairs and removing the consumed attributes.
+/// `(serde field name, template literal)` pairs and removing the consumed attributes.
 ///
-/// A default on an unnamed (tuple) field is rejected: there is no field name to key the
-/// merged value by.
-fn take_field_defaults(fields: &mut Fields) -> syn::Result<Vec<(String, LitStr)>> {
+/// The key is the name serde *deserializes* into — a field `#[serde(rename = "..")]` wins,
+/// otherwise `rule` (the applicable `rename_all`) transforms the identifier — so the default
+/// lands under the same key as the file value. A default on an unnamed (tuple) field is
+/// rejected: there is no field name to key the merged value by.
+fn take_field_defaults(
+    fields: &mut Fields,
+    rule: Option<RenameRule>,
+) -> syn::Result<Vec<(String, LitStr)>> {
     let mut defaults = Vec::new();
 
     match fields {
         Fields::Named(named) => {
             for field in named.named.iter_mut() {
                 if let Some(lit) = take_default_attr(&mut field.attrs)? {
-                    let key = field
+                    let ident = field
                         .ident
                         .as_ref()
                         .expect("named field has an identifier")
                         .to_string();
+                    let key = field_serde_name(&field.attrs, &ident, rule)?;
 
                     defaults.push((key, lit));
                 }
@@ -215,6 +232,110 @@ fn take_field_defaults(fields: &mut Fields) -> syn::Result<Vec<(String, LitStr)>
     }
 
     Ok(defaults)
+}
+
+/// The name serde deserializes a field into: an explicit `#[serde(rename = "..")]`, else the
+/// identifier transformed by the applicable `rename_all` rule, else the identifier itself.
+fn field_serde_name(
+    attrs: &[Attribute],
+    ident: &str,
+    rule: Option<RenameRule>,
+) -> syn::Result<String> {
+    if let Some(name) = serde_rename(attrs)? {
+        return Ok(name);
+    }
+
+    let name = match rule {
+        Some(rule) => rule.apply_to_field(ident),
+        None => ident.to_string(),
+    };
+
+    Ok(name)
+}
+
+/// The tag serde deserializes a variant from: an explicit `#[serde(rename = "..")]`, else the
+/// identifier transformed by the enum's `rename_all` rule, else the identifier itself.
+fn variant_serde_name(variant: &Variant, rule: Option<RenameRule>) -> syn::Result<String> {
+    if let Some(name) = serde_rename(&variant.attrs)? {
+        return Ok(name);
+    }
+
+    let ident = variant.ident.to_string();
+    let name = match rule {
+        Some(rule) => rule.apply_to_variant(&ident),
+        None => ident,
+    };
+
+    Ok(name)
+}
+
+/// The deserialize-side `#[serde(rename = "..")]` value, if any (also reads the granular
+/// `rename(deserialize = "..")` form).
+fn serde_rename(attrs: &[Attribute]) -> syn::Result<Option<String>> {
+    serde_string_arg(attrs, "rename")
+}
+
+/// The deserialize-side rename rule for the named serde argument (`rename_all` or
+/// `rename_all_fields`), if present and recognized.
+fn serde_rename_all(attrs: &[Attribute], arg: &str) -> syn::Result<Option<RenameRule>> {
+    let value = serde_string_arg(attrs, arg)?;
+
+    Ok(value.and_then(|rule| RenameRule::from_str(&rule)))
+}
+
+/// Extracts the deserialize-side string value of a serde argument `key`, scanning every
+/// `#[serde(..)]` attribute. Handles both `key = ".."` and the granular
+/// `key(deserialize = "..", serialize = "..")` form, and skips every other serde argument
+/// (whatever its shape) so unrelated attributes never derail parsing.
+fn serde_string_arg(attrs: &[Attribute], key: &str) -> syn::Result<Option<String>> {
+    let mut found = None;
+
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+
+        attr.parse_nested_meta(|meta| {
+            if !meta.path.is_ident(key) {
+                return skip_meta_value(&meta);
+            }
+
+            if let Ok(value) = meta.value() {
+                let lit: LitStr = value.parse()?;
+                found = Some(lit.value());
+            } else {
+                meta.parse_nested_meta(|inner| {
+                    let is_deserialize = inner.path.is_ident("deserialize");
+                    let lit: LitStr = inner.value()?.parse()?;
+
+                    if is_deserialize {
+                        found = Some(lit.value());
+                    }
+
+                    Ok(())
+                })?;
+            }
+
+            Ok(())
+        })?;
+    }
+
+    Ok(found)
+}
+
+/// Consumes an unrelated serde argument's payload — an `= value` or a balanced `(..)` group,
+/// or nothing for a bare flag — so `parse_nested_meta` can advance to the next argument.
+fn skip_meta_value(meta: &ParseNestedMeta) -> syn::Result<()> {
+    if meta.input.peek(Token![=]) {
+        let _: Token![=] = meta.input.parse()?;
+        let _: Expr = meta.input.parse()?;
+    } else if meta.input.peek(token::Paren) {
+        let content;
+        syn::parenthesized!(content in meta.input);
+        let _: TokenStream = content.parse()?;
+    }
+
+    Ok(())
 }
 
 /// Removes a single `#[default = ".."]` attribute from `attrs`, returning its string

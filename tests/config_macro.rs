@@ -87,3 +87,66 @@ fn enum_unit_variant_round_trips() {
 
     assert_eq!(storage, Storage::Memory);
 }
+
+#[config]
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RenamedCfg {
+    // `rename_all` makes the serde key `maxRetries`; the default must land there.
+    #[default = "3"]
+    max_retries: u16,
+
+    // An explicit field rename wins over `rename_all`.
+    #[serde(rename = "sock")]
+    #[default = "${@runtime}/x.sock"]
+    socket: PathBuf,
+}
+
+#[test]
+fn field_defaults_key_on_serde_renamed_names() {
+    // Empty subtree: both defaults must materialize under their serde names, proving the
+    // merge keys on `maxRetries` / `sock`, not the Rust identifiers.
+    let config = manager("renamed = {}\n");
+
+    let cfg: RenamedCfg = config.get_config::<RenamedCfg>("renamed").unwrap();
+
+    assert_eq!(cfg.max_retries, 3);
+    assert_eq!(cfg.socket, PathBuf::from("/base/runtime/x.sock"));
+}
+
+#[test]
+fn renamed_field_value_from_file_overrides_default() {
+    // The file supplies the serde-named key `maxRetries`; the default must not clobber it.
+    let config = manager("[renamed]\nmaxRetries = 9\n");
+
+    let cfg: RenamedCfg = config.get_config::<RenamedCfg>("renamed").unwrap();
+
+    assert_eq!(cfg.max_retries, 9);
+}
+
+#[config]
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case", rename_all_fields = "camelCase")]
+enum RenamedStorage {
+    InMemory,
+    OnDisk {
+        #[default = "${@data}/blobs"]
+        data_path: PathBuf,
+    },
+}
+
+#[test]
+fn enum_variant_and_field_renames_are_honored() {
+    // `rename_all = snake_case` makes the tag `on_disk`; `rename_all_fields = camelCase`
+    // makes the field `dataPath`. The default must key under both renamed names.
+    let config = manager("[storage]\non_disk = {}\n");
+
+    let storage: RenamedStorage = config.get_config::<RenamedStorage>("storage").unwrap();
+
+    assert_eq!(
+        storage,
+        RenamedStorage::OnDisk {
+            data_path: PathBuf::from("/base/data/blobs"),
+        }
+    );
+}

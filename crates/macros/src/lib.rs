@@ -55,6 +55,7 @@
 extern crate proc_macro;
 
 mod attr;
+mod case;
 mod component;
 mod config;
 mod daemon;
