@@ -1,13 +1,14 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use overseerd_config::{ConfigValue, DefaultSpec, Resolver, ResolverChain, from_value_in};
+use overseerd_config::{ConfigValue, Resolver, ResolverChain, from_value_in};
 use serde::de::DeserializeOwned;
 use tracing::{debug, info, instrument, trace};
 
+use crate::descriptors::CONFIG_BINDINGS;
 use crate::dirs::{Config, Dir, DirectoriesManager};
 
-use super::{ConfigError, ConfigProperties};
+use super::{ConfigBinding, ConfigError, ConfigProperties};
 
 /// A parser from source text to the normalized config tree.
 type Parser = fn(&str) -> Result<ConfigValue, overseerd_config::ConfigError>;
@@ -95,6 +96,10 @@ pub struct ConfigManager<F = Dynamic> {
     resolvers: ResolverChain,
     format: FormatId,
     sources: Vec<PathBuf>,
+    /// The config types bound to property paths (auto-discovered and/or explicit). The
+    /// manager owns this registry so it can seed every bound type's defaults into the tree —
+    /// the daemon reads it back at build to construct the `Cfg<T>` injectables.
+    bindings: Vec<ConfigBinding>,
     _marker: PhantomData<F>,
 }
 
@@ -178,6 +183,7 @@ impl<F: Format> ConfigManager<F> {
             resolvers: ResolverChain::env_default(),
             format: F::ID,
             sources,
+            bindings: Vec::new(),
             _marker: PhantomData,
         }
     }
@@ -221,13 +227,13 @@ impl<F> ConfigManager<F> {
     /// [`get`](Self::get).
     #[instrument(target = "overseerd::config", level = "debug", skip(self))]
     pub fn get_config<T: ConfigProperties>(&self, path: &str) -> Result<T, ConfigError> {
-        let defaults = T::defaults();
+        let defaults = T::DEFAULTS;
 
         let mut subtree = match self.root.get_path(path) {
             Some(node) => node.clone(),
 
             None => {
-                if matches!(defaults, DefaultSpec::None) {
+                if defaults.is_none() {
                     return Err(ConfigError::MissingPath {
                         path: path.to_string(),
                     });
@@ -244,7 +250,18 @@ impl<F> ConfigManager<F> {
                 source,
             })?;
 
-        let value = from_value_in(&self.root, &subtree, &self.resolvers).map_err(|source| {
+        // Resolve against a root that has this type's filled subtree placed at `path`, so a
+        // default referencing a sibling (`addr = "${app.server.port}"` where `port` is itself
+        // only a default) resolves without relying on the manager having seeded it. Cross-
+        // *type* references additionally require those types to be registered (`auto_discover`
+        // seeds them into `self.root`, which this clone preserves).
+        let mut root = self.root.clone();
+
+        if let Some(node) = ensure_path_mut(&mut root, path) {
+            *node = subtree.clone();
+        }
+
+        let value = from_value_in(&root, &subtree, &self.resolvers).map_err(|source| {
             ConfigError::Substitution {
                 path: path.to_string(),
                 source,
@@ -288,17 +305,131 @@ impl<F> ConfigManager<F> {
         &self.sources
     }
 
-    /// Erases the `Format` type, keeping the runtime format tag and sources. The DI
-    /// path stores managers in this form, since the tree is already parsed.
+    /// Erases the `Format` type, keeping the runtime format tag, sources, and bindings. The
+    /// DI path stores managers in this form, since the tree is already parsed.
     pub fn into_dynamic(self) -> ConfigManager<Dynamic> {
         ConfigManager {
             root: self.root,
             resolvers: self.resolvers,
             format: self.format,
             sources: self.sources,
+            bindings: self.bindings,
             _marker: PhantomData,
         }
     }
+
+    /// Registers every link-time `#[config(path = "..")]` type (the [`CONFIG_BINDINGS`]
+    /// slice), then seeds their defaults into the tree.
+    ///
+    /// This is where config auto-discovery lives — not the daemon. Call it on the manager
+    /// built in `main` so that values read *before* the daemon (transport setup) already see
+    /// every type's defaults, which is what lets one type's default reference another type's
+    /// path (`${a.b.c}` from a default at `x.y.z`).
+    pub fn auto_discover(mut self) -> Self {
+        for descriptor in CONFIG_BINDINGS {
+            self.push_binding(descriptor.to_binding());
+        }
+
+        self.seed_defaults();
+
+        self
+    }
+
+    /// Binds config type `T` to `path` (the explicit, multi-path counterpart to
+    /// `#[config(path = "..")]`), then re-seeds defaults. The same type may be bound at
+    /// several paths.
+    pub fn with_config<T: ConfigProperties>(mut self, path: impl Into<String>) -> Self {
+        self.push_binding(ConfigBinding::of::<T>(path));
+        self.seed_defaults();
+
+        self
+    }
+
+    /// Adds a pre-built binding (used by the daemon to fold in builder-registered configs),
+    /// then re-seeds.
+    pub fn register_binding(&mut self, binding: ConfigBinding) {
+        self.push_binding(binding);
+        self.seed_defaults();
+    }
+
+    /// Pushes a binding unless an identical one (same type at the same path) is already
+    /// registered, so auto-discovering a manager that `main` already auto-discovered (or
+    /// re-registering an explicit binding) does not double-bind. Distinct paths of the same
+    /// type are kept (the multi-path case).
+    fn push_binding(&mut self, binding: ConfigBinding) {
+        let duplicate = self.bindings.iter().any(|existing| {
+            (existing.ty.type_id)() == (binding.ty.type_id)() && existing.path == binding.path
+        });
+
+        if !duplicate {
+            self.bindings.push(binding);
+        }
+    }
+
+    /// The config bindings registered on this manager, in registration order.
+    pub fn bindings(&self) -> &[ConfigBinding] {
+        &self.bindings
+    }
+
+    /// Seeds every bound type's [`DefaultSpec`] into the tree at its path, creating the path
+    /// if absent.
+    ///
+    /// Idempotent: defaults only fill *missing* leaves, so a file value always wins and
+    /// re-seeding never clobbers. Seeding parses templates into string leaves without
+    /// resolving them, so it is independent of the resolver chain (the `${@dir}` namespace
+    /// need not be wired yet). After seeding, a default's `${a.b.c}` reference resolves
+    /// because `a.b.c`'s own default is now present in the tree.
+    fn seed_defaults(&mut self) {
+        for binding in &self.bindings {
+            if binding.defaults.is_none() {
+                continue;
+            }
+
+            let Some(node) = ensure_path_mut(&mut self.root, &binding.path) else {
+                continue;
+            };
+
+            if let Err(error) = binding.defaults.fill_missing(node) {
+                // Defaults are compile-time literals, so this is unreachable for
+                // macro-emitted specs; a hand-built spec with a malformed template lands here
+                // and is left unseeded (the real error surfaces at the later typed read).
+                debug!(
+                    target: "overseerd::config",
+                    path = %binding.path,
+                    %error,
+                    "skipping unseedable default",
+                );
+            }
+        }
+    }
+}
+
+/// Navigates a dotted `path` through `root`, creating an empty table for each missing
+/// segment, and returns a mutable reference to the node at that path. Returns `None` if a
+/// segment traverses a non-table (a conflicting scalar/array already occupies the path).
+fn ensure_path_mut<'a>(root: &'a mut ConfigValue, path: &str) -> Option<&'a mut ConfigValue> {
+    let mut current = root;
+
+    for segment in path.split('.') {
+        let entries = match current {
+            ConfigValue::Table(entries) => entries,
+            _ => return None,
+        };
+
+        let index = match entries.iter().position(|(key, _)| key == segment) {
+            Some(index) => index,
+
+            None => {
+                entries.push((segment.to_string(), ConfigValue::Table(Vec::new())));
+
+                entries.len() - 1
+            }
+        };
+
+        current = &mut entries[index].1;
+    }
+
+    Some(current)
 }
 
 /// Combines `OVERSEERD_PROFILES` (consulted first) with the explicitly supplied

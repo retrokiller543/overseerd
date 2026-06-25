@@ -11,8 +11,8 @@
 //! field-level `#[default = ".."]` whose value is a template string merged under the
 //! config before deserialization, so a missing field falls back to a (possibly
 //! templated) default that resolves through the normal `${..}` pipeline. On an enum, a
-//! variant may be marked with a bare `#[default]` to select it when the config names no
-//! variant.
+//! variant may be marked with a bare `#[default]` (or the cfg-gated
+//! `#[cfg_attr(PRED, default)]`) to select it when the config names no variant.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -20,6 +20,8 @@ use syn::{
     Attribute, Data, DeriveInput, Expr, ExprLit, Fields, Ident, Lit, LitStr, Meta, Token, Variant,
     meta::ParseNestedMeta,
     parse::{Parse, ParseStream},
+    parse_quote,
+    punctuated::Punctuated,
     token,
 };
 
@@ -70,28 +72,36 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput) -> syn::Result<TokenStrea
     let config_properties = overseerd_path("ConfigProperties");
     let config_binding_descriptor = overseerd_path("ConfigBindingDescriptor");
     let config_bindings = overseerd_path("CONFIG_BINDINGS");
+    let descriptor = overseerd_path("Descriptor");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
     let type_descriptor = overseerd_path("TypeDescriptor");
 
     // Collect (and strip) the field-level `#[default = ".."]` attributes, then build the
-    // `defaults()` method. Stripping is required so the sibling `#[derive(Deserialize)]`
+    // `const DEFAULTS`. Stripping is required so the sibling `#[derive(Deserialize)]`
     // does not see the unknown attribute.
-    let defaults_method = build_defaults(&mut item)?;
+    let defaults_const = build_defaults(&mut item)?;
 
-    // A baked-in path auto-registers the binding; without one the binding is made
-    // explicitly at the builder (the multi-path case).
+    // A baked-in path exposes the binding on the type as `Descriptor<ConfigBindingDescriptor>`
+    // and auto-registers it into the `CONFIG_BINDINGS` slice (picked up by
+    // `ConfigManager::auto_discover`). Without a path the binding is made explicitly at the
+    // manager/builder (the multi-path case), so no descriptor is emitted.
     let registration = match args.path {
         Some(path) => quote! {
+            impl #descriptor<#config_binding_descriptor> for #ident {
+                const DESCRIPTOR: #config_binding_descriptor = #config_binding_descriptor {
+                    ty: #type_descriptor::of::<#ident>(#name),
+                    path: #path,
+                    bind: <#ident as #config_properties>::bind,
+                    defaults: <#ident as #config_properties>::DEFAULTS,
+                };
+            }
+
             const _: () = {
                 #[#distributed_slice(#config_bindings)]
                 #[linkme(crate = #linkme_crate)]
                 static __OVERSEERD_CONFIG_BINDING: #config_binding_descriptor =
-                    #config_binding_descriptor {
-                        ty: #type_descriptor::of::<#ident>(#name),
-                        path: #path,
-                        bind: <#ident as #config_properties>::bind,
-                    };
+                    <#ident as #descriptor<#config_binding_descriptor>>::DESCRIPTOR;
             };
         },
 
@@ -104,19 +114,21 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput) -> syn::Result<TokenStrea
         impl #config_properties for #ident {
             const NAME: &'static str = #name;
 
-            #defaults_method
+            #defaults_const
         }
 
         #registration
     })
 }
 
-/// Builds the `defaults()` method body from the type's field-level `#[default = ".."]`
-/// attributes, stripping each consumed attribute from `item`.
+/// Builds the `const DEFAULTS: DefaultSpec = ..` associated constant from the type's
+/// field-level `#[default = ".."]` attributes, stripping each consumed attribute from `item`.
 ///
-/// Returns an empty token stream (use the trait default — no defaults) when no field
-/// carries one. A struct yields `DefaultSpec::Fields`; an enum yields
-/// `DefaultSpec::Variants`, including only variants that have at least one defaulted field.
+/// Returns an empty token stream (so the trait default `DefaultSpec::None` stands) when no
+/// field carries one. Every value is a string literal, so the spec is `const`-constructible
+/// from `&'static` slices — no runtime allocation. A struct yields `DefaultSpec::Fields`; an
+/// enum yields `DefaultSpec::Variants`, including only variants that have at least one
+/// defaulted field.
 fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
     let default_spec = overseerd_path("DefaultSpec");
 
@@ -136,14 +148,10 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
                 return Ok(quote!());
             }
 
-            let entries = fields.iter().map(|(field, lit)| {
-                quote! { (::std::string::String::from(#field), ::std::string::String::from(#lit)) }
-            });
+            let entries = fields.iter().map(|(field, lit)| quote! { (#field, #lit) });
 
             Ok(quote! {
-                fn defaults() -> #default_spec {
-                    #default_spec::Fields(::std::vec![ #(#entries),* ])
-                }
+                const DEFAULTS: #default_spec = #default_spec::Fields(&[ #(#entries),* ]);
             })
         }
 
@@ -182,32 +190,25 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
 
             let default_tokens = match &default_variant {
                 Some((tag, is_unit)) => {
-                    quote! { ::std::option::Option::Some((::std::string::String::from(#tag), #is_unit)) }
+                    quote! { ::core::option::Option::Some((#tag, #is_unit)) }
                 }
 
-                None => quote! { ::std::option::Option::None },
+                None => quote! { ::core::option::Option::None },
             };
             let entries = variants.iter().map(|(variant, fields)| {
-                let field_entries = fields.iter().map(|(field, lit)| {
-                    quote! { (::std::string::String::from(#field), ::std::string::String::from(#lit)) }
-                });
+                let field_entries = fields.iter().map(|(field, lit)| quote! { (#field, #lit) });
 
                 quote! {
-                    (
-                        ::std::string::String::from(#variant),
-                        ::std::vec![ #(#field_entries),* ],
-                    )
+                    (#variant, &[ #(#field_entries),* ])
                 }
             });
 
             Ok(quote! {
-                fn defaults() -> #default_spec {
-                    #default_spec::Variants {
-                        tagging: #enum_tagging,
-                        default: #default_tokens,
-                        fields: ::std::vec![ #(#entries),* ],
-                    }
-                }
+                const DEFAULTS: #default_spec = #default_spec::Variants {
+                    tagging: #enum_tagging,
+                    default: #default_tokens,
+                    fields: &[ #(#entries),* ],
+                };
             })
         }
 
@@ -328,14 +329,11 @@ fn enum_tag_tokens(attrs: &[Attribute]) -> syn::Result<TokenStream> {
 
     let tokens = match (tag, content) {
         (Some(tag), Some(content)) => quote! {
-            #enum_tag::Adjacent {
-                tag: ::std::string::String::from(#tag),
-                content: ::std::string::String::from(#content),
-            }
+            #enum_tag::Adjacent { tag: #tag, content: #content }
         },
 
         (Some(tag), None) => quote! {
-            #enum_tag::Internal { tag: ::std::string::String::from(#tag) }
+            #enum_tag::Internal { tag: #tag }
         },
 
         _ => quote! { #enum_tag::External },
@@ -455,27 +453,88 @@ fn take_default_attr(attrs: &mut Vec<Attribute>) -> syn::Result<Option<LitStr>> 
     }
 }
 
-/// Removes a bare `#[default]` marker from an enum variant's attributes, reporting whether it
-/// was present. The marker selects the variant used when the config names none. Errors on the
-/// field form `#[default = ".."]`, which is meaningless on a variant.
+/// Removes a `#[default]` marker from an enum variant's attributes, reporting whether it was
+/// present. The marker selects the variant used when the config names none. Both the direct
+/// `#[default]` and the cfg-gated `#[cfg_attr(PRED, default)]` form are recognized — the
+/// latter so a platform-specific variant (e.g. a Unix socket) can be the default on its
+/// platform. Errors on the field form `#[default = ".."]`, which is meaningless on a variant.
+///
+/// Note: the macro cannot evaluate the `cfg` predicate, so a `cfg_attr(PRED, default)` variant
+/// is treated as the default regardless of `PRED`. Pair it with a `#[cfg(PRED)]` on the
+/// variant itself (so the variant only exists where it is the default), as is conventional.
 fn take_variant_default_marker(attrs: &mut Vec<Attribute>) -> syn::Result<bool> {
-    let position = attrs
+    if let Some(index) = attrs
         .iter()
-        .position(|attr| attr.path().is_ident("default"));
+        .position(|attr| attr.path().is_ident("default"))
+    {
+        if !matches!(attrs[index].meta, Meta::Path(_)) {
+            return Err(syn::Error::new_spanned(
+                &attrs[index].meta,
+                "a variant's `#[default]` marker takes no value; `#[default = \"..\"]` is for fields",
+            ));
+        }
 
-    let index = match position {
-        Some(index) => index,
-        None => return Ok(false),
-    };
+        attrs.remove(index);
 
-    if !matches!(attrs[index].meta, Meta::Path(_)) {
-        return Err(syn::Error::new_spanned(
-            &attrs[index].meta,
-            "a variant's `#[default]` marker takes no value; `#[default = \"..\"]` is for fields",
-        ));
+        return Ok(true);
     }
 
-    attrs.remove(index);
+    for index in 0..attrs.len() {
+        if !attrs[index].path().is_ident("cfg_attr") {
+            continue;
+        }
 
-    Ok(true)
+        if let Some(rewritten) = take_default_from_cfg_attr(&attrs[index])? {
+            match rewritten {
+                Some(attr) => attrs[index] = attr,
+                None => {
+                    attrs.remove(index);
+                }
+            }
+
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+/// Looks for a bare `default` among a `#[cfg_attr(pred, ..)]`'s conditional attributes.
+///
+/// Returns `Ok(None)` when this cfg_attr carries no `default`. Otherwise returns
+/// `Ok(Some(rewritten))`: `Some(attr)` is the cfg_attr with `default` removed (other
+/// conditional attributes preserved), or `None` when `default` was the only one (so the whole
+/// cfg_attr is dropped). Stripping is required because, after the macro runs, the compiler
+/// would expand the surviving `default` into an unknown attribute.
+fn take_default_from_cfg_attr(attr: &Attribute) -> syn::Result<Option<Option<Attribute>>> {
+    let metas = attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)?;
+    let mut iter = metas.into_iter();
+
+    let predicate = match iter.next() {
+        Some(predicate) => predicate,
+        None => return Ok(None),
+    };
+
+    let mut remaining = Vec::new();
+    let mut found = false;
+
+    for meta in iter {
+        if matches!(&meta, Meta::Path(path) if path.is_ident("default")) {
+            found = true;
+        } else {
+            remaining.push(meta);
+        }
+    }
+
+    if !found {
+        return Ok(None);
+    }
+
+    if remaining.is_empty() {
+        return Ok(Some(None));
+    }
+
+    let rebuilt: Attribute = parse_quote! { #[cfg_attr(#predicate, #(#remaining),*)] };
+
+    Ok(Some(Some(rebuilt)))
 }

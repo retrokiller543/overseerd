@@ -17,6 +17,24 @@ use serde::de::DeserializeOwned;
 use crate::descriptors::{BoxedComponent, Injectable, TypeDescriptor};
 
 pub use overseerd_config::{DefaultSpec, EnumTag};
+
+/// Runtime, object-safe access to a config type's [`DefaultSpec`].
+///
+/// [`ConfigProperties`] exposes its defaults as the associated `const`
+/// [`DEFAULTS`](ConfigProperties::DEFAULTS), which is unreachable through a trait object (a
+/// `const` is not part of the vtable). This companion trait — blanket-implemented for every
+/// `ConfigProperties` — re-exposes that const through a `&self` method, so the spec can be
+/// read from a value or a `dyn ConfigDefaults`.
+pub trait ConfigDefaults {
+    /// This type's field defaults (its [`ConfigProperties::DEFAULTS`]).
+    fn defaults(&self) -> DefaultSpec;
+}
+
+impl<T: ConfigProperties> ConfigDefaults for T {
+    fn defaults(&self) -> DefaultSpec {
+        T::DEFAULTS
+    }
+}
 #[cfg(feature = "yaml")]
 pub use source::Yaml;
 pub use source::{ConfigManager, Dynamic, Format, FormatId, Toml};
@@ -84,18 +102,18 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
     /// A display name for the type, used in descriptors and error messages.
     const NAME: &'static str;
 
-    /// The type's `#[default = ".."]` field defaults, emitted by the `#[config]` macro.
+    /// The type's `#[default = ".."]` field defaults, emitted by the `#[config]` macro as a
+    /// compile-time constant.
     ///
     /// Defaults to [`DefaultSpec::None`](overseerd_config::DefaultSpec::None) — no fields
     /// carry a default. The values are template strings merged *under* the config so they
     /// resolve through the normal `${...}` pipeline (see
-    /// [`ConfigManager::get_config`](crate::ConfigManager::get_config)).
-    fn defaults() -> overseerd_config::DefaultSpec {
-        overseerd_config::DefaultSpec::none()
-    }
+    /// [`ConfigManager::get_config`](crate::ConfigManager::get_config)). For runtime access
+    /// through a value or trait object, use [`ConfigDefaults::defaults`].
+    const DEFAULTS: DefaultSpec = DefaultSpec::none();
 
     /// Deserializes this type from the subtree at `path` (filling missing fields from
-    /// [`defaults`](Self::defaults)) and wraps it as a stored `Cfg<Self>` handle.
+    /// [`DEFAULTS`](Self::DEFAULTS)) and wraps it as a stored `Cfg<Self>` handle.
     fn bind(tree: &ConfigManager, path: &str) -> Result<BoxedComponent, ConfigError> {
         let value: Self = tree.get_config::<Self>(path)?;
 
@@ -106,14 +124,30 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
     }
 }
 
-/// A requested binding of a config type to a property path, recorded at the builder
-/// and resolved against the merged tree at build. The same type may be bound at
-/// several paths; the `bind` thunk is monomorphized per type so the builder need not
-/// name it.
+/// A requested binding of a config type to a property path, registered on the
+/// [`ConfigManager`] and resolved against the merged tree at build. The same type may be
+/// bound at several paths; the `bind` thunk is monomorphized per type so the manager need not
+/// name it. `defaults` is the type's compile-time [`DefaultSpec`], carried so the manager can
+/// seed every bound type's defaults into the tree (enabling cross-path `${a.b.c}` references).
+#[derive(Clone)]
 pub struct ConfigBinding {
     pub ty: TypeDescriptor,
     pub path: String,
     pub bind: fn(&ConfigManager, &str) -> Result<BoxedComponent, ConfigError>,
+    pub defaults: DefaultSpec,
+}
+
+impl ConfigBinding {
+    /// Builds a binding for type `T` at `path`, capturing `T`'s `bind` thunk and
+    /// compile-time defaults.
+    pub fn of<T: ConfigProperties>(path: impl Into<String>) -> Self {
+        Self {
+            ty: TypeDescriptor::of::<T>(T::NAME),
+            path: path.into(),
+            bind: T::bind,
+            defaults: T::DEFAULTS,
+        }
+    }
 }
 
 impl std::fmt::Debug for ConfigBinding {
@@ -126,14 +160,16 @@ impl std::fmt::Debug for ConfigBinding {
 }
 
 /// The link-time form of a [`ConfigBinding`]: a config type with a fixed property
-/// path, registered by `#[config(path = "..")]`
-/// so it is picked up by [`DaemonBuilder::auto_discover`](crate::DaemonBuilder::auto_discover).
-/// The same type may still be bound at extra paths explicitly via
-/// [`DaemonBuilder::config`](crate::DaemonBuilder::config).
+/// path, registered by `#[config(path = "..")]` so it is picked up by
+/// [`ConfigManager::auto_discover`]. The same type may still be bound at extra paths
+/// explicitly via [`ConfigManager::with_config`] / [`DaemonBuilder::config`](crate::DaemonBuilder::config).
+/// It is also exposed on the type itself as
+/// [`Descriptor<ConfigBindingDescriptor>`](crate::Descriptor).
 pub struct ConfigBindingDescriptor {
     pub ty: TypeDescriptor,
     pub path: &'static str,
     pub bind: fn(&ConfigManager, &str) -> Result<BoxedComponent, ConfigError>,
+    pub defaults: DefaultSpec,
 }
 
 impl ConfigBindingDescriptor {
@@ -143,6 +179,7 @@ impl ConfigBindingDescriptor {
             ty: self.ty,
             path: self.path.to_string(),
             bind: self.bind,
+            defaults: self.defaults,
         }
     }
 }

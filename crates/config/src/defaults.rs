@@ -6,26 +6,39 @@
 //! parsed into config-string leaves and merged *under* the file values, so a missing field
 //! falls back to its default and resolves through the normal `${...}` pipeline, producing
 //! the real typed value.
+//!
+//! Every default is a string literal known at compile time, so a [`DefaultSpec`] is built
+//! entirely from `&'static` data and can live in a `const` — the `#[config]` macro emits one
+//! as an associated const, with no runtime allocation.
 
 use crate::error::ConfigError;
 use crate::value::{ConfigStr, ConfigValue};
+
+/// A `(field, raw default template)` pair.
+pub type FieldDefault = (&'static str, &'static str);
+
+/// A `(serde variant tag, that variant's field defaults)` pair.
+pub type VariantDefault = (&'static str, &'static [FieldDefault]);
 
 /// How an enum is tagged, so the merge can synthesize the same shape serde deserializes.
 ///
 /// Mirrors serde's representations: externally tagged (`{ Variant: {..} }`), internally
 /// tagged (`{ tag: "variant", ..fields }`), adjacently tagged (`{ tag: "variant", content:
 /// {..} }`), and untagged (no tag — defaults cannot pick a variant).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum EnumTag {
     /// `#[serde]` default: `{ Variant: {..} }` or a bare `"Variant"` unit string.
     #[default]
     External,
 
     /// `#[serde(tag = "..")]`: the tag field lives inline beside the variant's fields.
-    Internal { tag: String },
+    Internal { tag: &'static str },
 
     /// `#[serde(tag = "..", content = "..")]`: the variant's fields live under `content`.
-    Adjacent { tag: String, content: String },
+    Adjacent {
+        tag: &'static str,
+        content: &'static str,
+    },
 
     /// `#[serde(untagged)]`: no tag, so a default variant cannot be synthesized.
     Untagged,
@@ -34,18 +47,20 @@ pub enum EnumTag {
 /// The shape of a config type's field defaults, emitted by the `#[config]` macro and
 /// consumed by the merge step.
 ///
-/// Struct defaults fill every missing field; enum defaults fill only the fields of the
-/// variant actually present in the config, since variants are mutually exclusive and a
-/// phantom variant branch would confuse the deserializer. An enum may also name a
-/// **default variant** (`#[default]` on a variant), used when the config selects none.
-#[derive(Debug, Clone, Default)]
+/// Built from `&'static` data so it is `Copy` and `const`-constructible: the macro emits it as
+/// an associated const ([`ConfigProperties::DEFAULTS`](../../overseerd_core/config/trait.ConfigProperties.html)).
+/// Struct defaults fill every missing field; enum defaults fill only the fields of the variant
+/// actually present in the config, since variants are mutually exclusive and a phantom variant
+/// branch would confuse the deserializer. An enum may also name a **default variant**
+/// (`#[default]` on a variant), used when the config selects none.
+#[derive(Debug, Clone, Copy, Default)]
 pub enum DefaultSpec {
     /// No field carries a default.
     #[default]
     None,
 
-    /// `(field, raw default template)` pairs for a struct.
-    Fields(Vec<(String, String)>),
+    /// Field defaults for a struct.
+    Fields(&'static [FieldDefault]),
 
     /// Enum defaults.
     Variants {
@@ -55,18 +70,22 @@ pub enum DefaultSpec {
         /// The `#[default]` variant's `(serde tag, is_unit)`, selected when the config
         /// names no variant. `is_unit` chooses the synthesized shape: no field payload for
         /// a unit variant, the variant's defaults otherwise.
-        default: Option<(String, bool)>,
+        default: Option<(&'static str, bool)>,
 
-        /// Per-variant field defaults, keyed by serde tag:
-        /// `(variant, [(field, raw default template)])`.
-        fields: Vec<(String, Vec<(String, String)>)>,
+        /// Per-variant field defaults, keyed by serde tag.
+        fields: &'static [VariantDefault],
     },
 }
 
 impl DefaultSpec {
-    /// The empty default — the trait default when a type declares no field defaults.
-    pub fn none() -> Self {
+    /// The empty default — the value a type with no field defaults carries.
+    pub const fn none() -> Self {
         DefaultSpec::None
+    }
+
+    /// Whether this spec carries no defaults at all.
+    pub const fn is_none(&self) -> bool {
+        matches!(self, DefaultSpec::None)
     }
 
     /// Fills missing leaves of `subtree` in place from these defaults. Existing values are
@@ -98,7 +117,7 @@ impl DefaultSpec {
 /// would not coerce a string default to a numeric field. See [`default_value`].
 fn fill_fields(
     subtree: &mut ConfigValue,
-    fields: &[(String, String)],
+    fields: &[FieldDefault],
     coerce: bool,
 ) -> Result<(), ConfigError> {
     let ConfigValue::Table(entries) = subtree else {
@@ -111,7 +130,7 @@ fn fill_fields(
 /// Adds any field absent from `entries`, parsed from its default template.
 fn fill_entries(
     entries: &mut Vec<(String, ConfigValue)>,
-    fields: &[(String, String)],
+    fields: &[FieldDefault],
     coerce: bool,
 ) -> Result<(), ConfigError> {
     for (field, raw) in fields {
@@ -120,7 +139,7 @@ fn fill_entries(
         if !present {
             let value = default_value(raw, coerce)?;
 
-            entries.push((field.clone(), value));
+            entries.push(((*field).to_string(), value));
         }
     }
 
@@ -158,8 +177,8 @@ fn default_value(raw: &str, coerce: bool) -> Result<ConfigValue, ConfigError> {
 fn fill_variants(
     subtree: &mut ConfigValue,
     tagging: &EnumTag,
-    default: &Option<(String, bool)>,
-    fields: &[(String, Vec<(String, String)>)],
+    default: &Option<(&'static str, bool)>,
+    fields: &[VariantDefault],
 ) -> Result<(), ConfigError> {
     match tagging {
         EnumTag::External => fill_external(subtree, default, fields),
@@ -171,14 +190,11 @@ fn fill_variants(
 }
 
 /// The variant's field defaults, by serde tag.
-fn variant_fields<'a>(
-    fields: &'a [(String, Vec<(String, String)>)],
-    tag: &str,
-) -> Option<&'a [(String, String)]> {
+fn variant_fields<'a>(fields: &'a [VariantDefault], tag: &str) -> Option<&'a [FieldDefault]> {
     fields
         .iter()
-        .find(|(name, _)| name == tag)
-        .map(|(_, defaults)| defaults.as_slice())
+        .find(|(name, _)| *name == tag)
+        .map(|(_, defaults)| *defaults)
 }
 
 /// Externally tagged (`{ Variant: {..} }` / `"Variant"`): a selected variant is a
@@ -187,8 +203,8 @@ fn variant_fields<'a>(
 /// `{ tag: { ..defaults } }` table.
 fn fill_external(
     subtree: &mut ConfigValue,
-    default: &Option<(String, bool)>,
-    fields: &[(String, Vec<(String, String)>)],
+    default: &Option<(&'static str, bool)>,
+    fields: &[VariantDefault],
 ) -> Result<(), ConfigError> {
     let no_variant_selected = matches!(subtree, ConfigValue::Table(entries) if entries.is_empty());
 
@@ -223,7 +239,7 @@ fn fill_external(
         fill_fields(&mut inner, variant_fields, false)?;
     }
 
-    *subtree = ConfigValue::Table(vec![(tag.clone(), inner)]);
+    *subtree = ConfigValue::Table(vec![((*tag).to_string(), inner)]);
 
     Ok(())
 }
@@ -234,8 +250,8 @@ fn fill_external(
 fn fill_internal(
     subtree: &mut ConfigValue,
     tag_key: &str,
-    default: &Option<(String, bool)>,
-    fields: &[(String, Vec<(String, String)>)],
+    default: &Option<(&'static str, bool)>,
+    fields: &[VariantDefault],
 ) -> Result<(), ConfigError> {
     let ConfigValue::Table(entries) = subtree else {
         return Ok(());
@@ -270,8 +286,8 @@ fn fill_adjacent(
     subtree: &mut ConfigValue,
     tag_key: &str,
     content_key: &str,
-    default: &Option<(String, bool)>,
-    fields: &[(String, Vec<(String, String)>)],
+    default: &Option<(&'static str, bool)>,
+    fields: &[VariantDefault],
 ) -> Result<(), ConfigError> {
     let ConfigValue::Table(entries) = subtree else {
         return Ok(());
@@ -306,7 +322,7 @@ fn fill_adjacent(
 fn fill_content(
     entries: &mut Vec<(String, ConfigValue)>,
     content_key: &str,
-    fields: &[(String, String)],
+    fields: &[FieldDefault],
 ) -> Result<(), ConfigError> {
     let content = match entries.iter_mut().find(|(key, _)| key == content_key) {
         Some((_, value)) => value,

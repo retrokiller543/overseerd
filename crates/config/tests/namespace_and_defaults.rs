@@ -127,10 +127,10 @@ fn struct_defaults_fill_missing_and_never_override() {
     // `port` is present in the file and must win; `host` and the templated `addr` are
     // absent and fall back to their defaults, resolving through the normal pipeline.
     let mut subtree = table(vec![("port", s("8080"))]);
-    let defaults = DefaultSpec::Fields(vec![
-        ("port".to_string(), "1".to_string()),
-        ("host".to_string(), "localhost".to_string()),
-        ("addr".to_string(), "${HOST}:9000".to_string()),
+    let defaults = DefaultSpec::Fields(&[
+        ("port", "1"),
+        ("host", "localhost"),
+        ("addr", "${HOST}:9000"),
     ]);
 
     defaults.fill_missing(&mut subtree).unwrap();
@@ -151,7 +151,7 @@ fn fully_defaulted_struct_materializes_from_empty_table() {
     }
 
     let mut subtree = ConfigValue::Table(Vec::new());
-    let defaults = DefaultSpec::Fields(vec![("host".to_string(), "localhost".to_string())]);
+    let defaults = DefaultSpec::Fields(&[("host", "localhost")]);
 
     defaults.fill_missing(&mut subtree).unwrap();
 
@@ -175,10 +175,7 @@ fn enum_variant_default_applies_only_to_the_present_variant() {
     let defaults = DefaultSpec::Variants {
         tagging: EnumTag::External,
         default: None,
-        fields: vec![(
-            "Disk".to_string(),
-            vec![("path".to_string(), "${DATA}/blobs".to_string())],
-        )],
+        fields: &[("Disk", &[("path", "${DATA}/blobs")])],
     };
 
     defaults.fill_missing(&mut subtree).unwrap();
@@ -207,10 +204,7 @@ fn enum_unit_variant_is_left_untouched_by_defaults() {
     let defaults = DefaultSpec::Variants {
         tagging: EnumTag::External,
         default: None,
-        fields: vec![(
-            "Disk".to_string(),
-            vec![("path".to_string(), "${DATA}/blobs".to_string())],
-        )],
+        fields: &[("Disk", &[("path", "${DATA}/blobs")])],
     };
 
     defaults.fill_missing(&mut subtree).unwrap();
@@ -234,8 +228,8 @@ fn default_variant_synthesized_when_none_selected() {
     let mut subtree = ConfigValue::Table(Vec::new());
     let defaults = DefaultSpec::Variants {
         tagging: EnumTag::External,
-        default: Some(("Memory".to_string(), true)),
-        fields: vec![],
+        default: Some(("Memory", true)),
+        fields: &[],
     };
 
     defaults.fill_missing(&mut subtree).unwrap();
@@ -259,11 +253,8 @@ fn default_struct_variant_synthesized_with_its_field_defaults() {
     let mut subtree = ConfigValue::Table(Vec::new());
     let defaults = DefaultSpec::Variants {
         tagging: EnumTag::External,
-        default: Some(("Disk".to_string(), false)),
-        fields: vec![(
-            "Disk".to_string(),
-            vec![("path".to_string(), "${DATA}/blobs".to_string())],
-        )],
+        default: Some(("Disk", false)),
+        fields: &[("Disk", &[("path", "${DATA}/blobs")])],
     };
 
     defaults.fill_missing(&mut subtree).unwrap();
@@ -291,8 +282,8 @@ fn explicit_variant_wins_over_default() {
     let mut subtree = table(vec![("Disk", table(vec![("path", s("/explicit"))]))]);
     let defaults = DefaultSpec::Variants {
         tagging: EnumTag::External,
-        default: Some(("Memory".to_string(), true)),
-        fields: vec![],
+        default: Some(("Memory", true)),
+        fields: &[],
     };
 
     defaults.fill_missing(&mut subtree).unwrap();
