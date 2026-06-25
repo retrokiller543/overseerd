@@ -1,12 +1,13 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
-use overseerd_config::{ConfigValue, ResolverChain, from_value_in};
+use overseerd_config::{ConfigValue, DefaultSpec, Resolver, ResolverChain, from_value_in};
 use serde::de::DeserializeOwned;
+use tracing::{debug, info, instrument, trace};
 
-use crate::dirs::{Config, Dir};
+use crate::dirs::{Config, Dir, DirectoriesManager};
 
-use super::ConfigError;
+use super::{ConfigError, ConfigProperties};
 
 /// A parser from source text to the normalized config tree.
 type Parser = fn(&str) -> Result<ConfigValue, overseerd_config::ConfigError>;
@@ -130,12 +131,15 @@ impl<F: Format> ConfigManager<F> {
     /// `application-<profile>.<ext>`, each overriding the previous. Profiles come from
     /// `OVERSEERD_PROFILES` (comma-separated) first, then `profiles`. A missing file is
     /// skipped; a malformed one is an error.
+    #[instrument(target = "overseerd::config", level = "debug", skip(dir, profiles), fields(dir = %dir.path().display()))]
     pub fn load_in(dir: &Dir<Config>, profiles: &[String]) -> Result<Self, ConfigError> {
         let parsers = F::parsers();
         let active = resolve_profiles(profiles);
 
         let mut root = ConfigValue::Table(Vec::new());
         let mut sources = Vec::new();
+
+        debug!(target: "overseerd::config", profiles = ?active, "loading config");
 
         merge_stem(&mut root, dir.path(), "application", &parsers, &mut sources)?;
 
@@ -144,6 +148,8 @@ impl<F: Format> ConfigManager<F> {
 
             merge_stem(&mut root, dir.path(), &stem, &parsers, &mut sources)?;
         }
+
+        info!(target: "overseerd::config", sources = sources.len(), profiles = active.len(), "config loaded");
 
         Ok(Self::wrap(root, sources))
     }
@@ -163,6 +169,7 @@ impl<F> ConfigManager<F> {
     /// Deserializes the subtree at `path` into `T`, resolving `${...}` placeholders
     /// against environment variables and other config paths. The single entry point
     /// shared by transport setup in `main` and DI-seeded `Cfg<T>` injection.
+    #[instrument(target = "overseerd::config", level = "debug", skip(self))]
     pub fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ConfigError> {
         let subtree = self
             .root
@@ -173,12 +180,77 @@ impl<F> ConfigManager<F> {
 
         // Deserialize the subtree, but resolve placeholders against the full tree so
         // absolute property-path references (`${app.server.port}`) still resolve.
-        from_value_in(&self.root, subtree, &self.resolvers).map_err(|source| {
+        let value = from_value_in(&self.root, subtree, &self.resolvers).map_err(|source| {
             ConfigError::Substitution {
                 path: path.to_string(),
                 source,
             }
-        })
+        })?;
+
+        trace!(target: "overseerd::config", "config subtree deserialized");
+
+        Ok(value)
+    }
+
+    /// Like [`get`](Self::get), but for a [`ConfigProperties`] type: its `#[default = ".."]`
+    /// field defaults are merged *under* the file values before deserializing, so a missing
+    /// field falls back to its (possibly templated) default and resolves through the normal
+    /// `${...}` pipeline.
+    ///
+    /// When the `path` subtree is absent and the type declares defaults, deserialization
+    /// proceeds from an empty table so a fully-defaulted type still materializes; absent and
+    /// default-free remains a [`MissingPath`](ConfigError::MissingPath) error, matching
+    /// [`get`](Self::get).
+    #[instrument(target = "overseerd::config", level = "debug", skip(self))]
+    pub fn get_config<T: ConfigProperties>(&self, path: &str) -> Result<T, ConfigError> {
+        let defaults = T::defaults();
+
+        let mut subtree = match self.root.get_path(path) {
+            Some(node) => node.clone(),
+
+            None => {
+                if matches!(defaults, DefaultSpec::None) {
+                    return Err(ConfigError::MissingPath {
+                        path: path.to_string(),
+                    });
+                }
+
+                ConfigValue::Table(Vec::new())
+            }
+        };
+
+        defaults
+            .fill_missing(&mut subtree)
+            .map_err(|source| ConfigError::Substitution {
+                path: path.to_string(),
+                source,
+            })?;
+
+        let value = from_value_in(&self.root, &subtree, &self.resolvers).map_err(|source| {
+            ConfigError::Substitution {
+                path: path.to_string(),
+                source,
+            }
+        })?;
+
+        trace!(target: "overseerd::config", "config subtree deserialized with defaults");
+
+        Ok(value)
+    }
+
+    /// Appends a [`Resolver`] to the chain consulted during placeholder substitution. Later
+    /// resolvers are tried only when earlier ones (env by default) have no value.
+    pub fn with_resolver(mut self, resolver: Box<dyn Resolver>) -> Self {
+        self.resolvers.0.push(resolver);
+
+        self
+    }
+
+    /// Registers the directory namespace, so config values may reference application
+    /// directories as `${@runtime}`, `${@config}`, `${@data}`, `${@cache}`, `${@state}`,
+    /// and `${@tmp}` (e.g. `socket = "${@runtime}/app.sock"`).
+    pub fn with_directories(self, directories: &DirectoriesManager) -> Self {
+        self.with_resolver(Box::new(directories.resolver()))
     }
 
     /// Whether `path` resolves to a present subtree.
@@ -242,6 +314,8 @@ fn merge_stem(
         let path = dir.join(format!("{stem}.{ext}"));
 
         if !path.exists() {
+            trace!(target: "overseerd::config", path = %path.display(), "config file absent, skipping");
+
             continue;
         }
 
@@ -255,7 +329,9 @@ fn merge_stem(
         })?;
 
         merge_into(root, parsed);
-        sources.push(path);
+        sources.push(path.clone());
+
+        debug!(target: "overseerd::config", path = %path.display(), "merged config file");
     }
 
     Ok(())

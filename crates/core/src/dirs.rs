@@ -14,11 +14,14 @@
 //! The same manager is consumed by [`ConfigManager`](crate::ConfigManager) (to locate
 //! config files) and seeded into the daemon, so directory resolution is defined once.
 
+use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
+use overseerd_config::Resolver;
+use tracing::{debug, trace};
 
 use crate::descriptors::{Component, Injectable};
 
@@ -117,6 +120,8 @@ impl<K> Dir<K> {
 
     /// Creates the directory (and parents) on disk if absent.
     pub fn ensure(&self) -> std::io::Result<()> {
+        debug!(target: "overseerd::dirs", path = %self.path.display(), "ensuring directory exists");
+
         std::fs::create_dir_all(&self.path)
     }
 }
@@ -175,6 +180,8 @@ impl DirectoriesManager {
     /// Creates a new manager from any path, can be used if nothing else is possible or if default behavior
     /// is not enough. It will never fail.
     pub fn from_path(path: PathBuf) -> Self {
+        debug!(target: "overseerd::dirs", root = %path.display(), "directories rooted at path");
+
         Self {
             backing: Backing::Rooted(path),
         }
@@ -183,9 +190,23 @@ impl DirectoriesManager {
     /// Resolves directories from project metadata (reverse-DNS `qualifier`,
     /// `organization`, `application`). `None` if no valid home directory exists.
     pub fn from_project(qualifier: &str, organization: &str, application: &str) -> Option<Self> {
-        ProjectDirs::from(qualifier, organization, application).map(|project| Self {
-            backing: Backing::Project(project),
-        })
+        let resolved = ProjectDirs::from(qualifier, organization, application);
+
+        match resolved {
+            Some(project) => {
+                debug!(target: "overseerd::dirs", application, "directories resolved from project metadata");
+
+                Some(Self {
+                    backing: Backing::Project(project),
+                })
+            }
+
+            None => {
+                debug!(target: "overseerd::dirs", application, "no home directory; project directories unavailable");
+
+                None
+            }
+        }
     }
 
     /// A best-effort manager for `application`: platform project dirs when available,
@@ -197,6 +218,8 @@ impl DirectoriesManager {
 
         let root = std::env::temp_dir().join(application);
 
+        debug!(target: "overseerd::dirs", application, root = %root.display(), "falling back to temp-rooted directories");
+
         Self::from_path(root)
     }
 
@@ -207,7 +230,50 @@ impl DirectoriesManager {
             Backing::Rooted(root) => K::rooted_path(root),
         };
 
+        trace!(target: "overseerd::dirs", kind = K::LABEL, path = %path.display(), "resolved directory");
+
         Dir::new(path)
+    }
+
+    /// Builds a [`Resolver`] that answers `${@<kind>}` placeholders (e.g. `${@runtime}`)
+    /// with the resolved path for that directory kind.
+    ///
+    /// Pre-resolves every kind once, so the returned resolver is cheap to consult and
+    /// free of further directory logic. Register it on a
+    /// [`ConfigManager`](crate::ConfigManager) via
+    /// [`with_directories`](crate::ConfigManager::with_directories).
+    pub fn resolver(&self) -> DirectoriesResolver {
+        let entries = vec![
+            (Config::LABEL, self.dir::<Config>().path().to_path_buf()),
+            (Data::LABEL, self.dir::<Data>().path().to_path_buf()),
+            (Cache::LABEL, self.dir::<Cache>().path().to_path_buf()),
+            (State::LABEL, self.dir::<State>().path().to_path_buf()),
+            (Runtime::LABEL, self.dir::<Runtime>().path().to_path_buf()),
+            (Tmp::LABEL, self.dir::<Tmp>().path().to_path_buf()),
+        ];
+
+        debug!(target: "overseerd::dirs", kinds = entries.len(), "built directories resolver");
+
+        DirectoriesResolver { entries }
+    }
+}
+
+/// A config [`Resolver`] backing the `@` directory namespace.
+///
+/// Answers a placeholder keyed `@<label>` (one of `@config`, `@data`, `@cache`, `@state`,
+/// `@runtime`, `@tmp`) with the pre-resolved path for that [`DirKind`], so a config value
+/// like `"${@runtime}/app.sock"` resolves against the platform's directories.
+pub struct DirectoriesResolver {
+    entries: Vec<(&'static str, PathBuf)>,
+}
+
+impl Resolver for DirectoriesResolver {
+    fn resolve(&self, key: &str) -> Option<Cow<'_, str>> {
+        let label = key.strip_prefix('@')?;
+
+        let entry = self.entries.iter().find(|(name, _)| *name == label);
+
+        entry.map(|(_, path)| Cow::Owned(path.to_string_lossy().into_owned()))
     }
 }
 

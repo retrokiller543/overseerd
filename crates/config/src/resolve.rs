@@ -74,10 +74,13 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
     }
 
     /// Resolves one placeholder to its raw string, applying cycle detection, the
-    /// dotted-path / uppercase-heuristic precedence, the inline default, and finally
-    /// a missing-value error.
+    /// namespace (`@`) / dotted-path / uppercase-heuristic precedence, the inline
+    /// default, and finally a missing-value error.
+    #[tracing::instrument(target = "overseerd::config", level = "trace", skip(self), fields(key = %p.key))]
     pub(crate) fn resolve_placeholder(&mut self, p: &Placeholder) -> Result<String, ConfigError> {
         if self.in_flight.len() >= MAX_RESOLUTION_DEPTH {
+            tracing::trace!(target: "overseerd::config", limit = MAX_RESOLUTION_DEPTH, "resolution depth exceeded");
+
             return Err(ConfigErrorKind::ResolutionDepthExceeded {
                 limit: MAX_RESOLUTION_DEPTH,
             }
@@ -85,6 +88,8 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
         }
 
         if self.in_flight.iter().any(|key| key == &p.key) {
+            tracing::trace!(target: "overseerd::config", chain = ?self.in_flight, "resolution cycle detected");
+
             return Err(ConfigErrorKind::ResolutionCycle {
                 chain: self.in_flight.clone(),
                 key: p.key.clone(),
@@ -92,7 +97,11 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
             .into());
         }
 
-        let resolved = if p.key.contains('.') {
+        let is_namespace = p.key.starts_with('@');
+
+        let resolved = if is_namespace {
+            self.resolve_namespace(&p.key)
+        } else if p.key.contains('.') {
             self.resolve_path_then_env(&p.key)?
         } else if is_screaming(&p.key) {
             self.resolve_env_then_path(&p.key)?
@@ -101,14 +110,36 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
         };
 
         if let Some(value) = resolved {
+            tracing::trace!(target: "overseerd::config", value = %value, "placeholder resolved");
+
             return Ok(value);
         }
 
         if let Some(default) = &p.default {
+            tracing::trace!(target: "overseerd::config", default = %default, "placeholder fell back to inline default");
+
             return Ok(default.clone());
         }
 
+        if is_namespace {
+            tracing::trace!(target: "overseerd::config", "no resolver answered namespace placeholder");
+
+            return Err(ConfigErrorKind::UnknownNamespaceKey { key: p.key.clone() }.into());
+        }
+
+        tracing::trace!(target: "overseerd::config", "no value for placeholder");
+
         Err(ConfigErrorKind::MissingPlaceholder { key: p.key.clone() }.into())
+    }
+
+    /// Resolves an `@`-prefixed namespace key (e.g. `@runtime`) against the resolver
+    /// chain only.
+    ///
+    /// Namespace keys are reserved: they are never config-tree paths nor environment
+    /// variables, so only the chain (where a host registers namespace resolvers such as
+    /// the directories resolver) is consulted.
+    fn resolve_namespace(&self, key: &str) -> Option<String> {
+        self.resolvers.resolve(key).map(Cow::into_owned)
     }
 
     /// Config path first, then the resolver chain (env). Used for dotted keys and

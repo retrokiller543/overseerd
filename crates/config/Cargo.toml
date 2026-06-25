@@ -18,5 +18,6 @@ yaml = ["dep:serde_yaml_ng"]
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
+tracing = { workspace = true }
 toml = { workspace = true, optional = true }
 serde_yaml_ng = { workspace = true, optional = true }

@@ -16,6 +16,7 @@ use serde::de::DeserializeOwned;
 
 use crate::descriptors::{BoxedComponent, Injectable, TypeDescriptor};
 
+pub use overseerd_config::DefaultSpec;
 #[cfg(feature = "yaml")]
 pub use source::Yaml;
 pub use source::{ConfigManager, Dynamic, Format, FormatId, Toml};
@@ -83,10 +84,20 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
     /// A display name for the type, used in descriptors and error messages.
     const NAME: &'static str;
 
-    /// Deserializes this type from the subtree at `path` and wraps it as a stored
-    /// `Cfg<Self>` handle.
+    /// The type's `#[default = ".."]` field defaults, emitted by the `#[config]` macro.
+    ///
+    /// Defaults to [`DefaultSpec::None`](overseerd_config::DefaultSpec::None) — no fields
+    /// carry a default. The values are template strings merged *under* the config so they
+    /// resolve through the normal `${...}` pipeline (see
+    /// [`ConfigManager::get_config`](crate::ConfigManager::get_config)).
+    fn defaults() -> overseerd_config::DefaultSpec {
+        overseerd_config::DefaultSpec::none()
+    }
+
+    /// Deserializes this type from the subtree at `path` (filling missing fields from
+    /// [`defaults`](Self::defaults)) and wraps it as a stored `Cfg<Self>` handle.
     fn bind(tree: &ConfigManager, path: &str) -> Result<BoxedComponent, ConfigError> {
-        let value: Self = tree.get(path)?;
+        let value: Self = tree.get_config::<Self>(path)?;
 
         Ok(BoxedComponent {
             ty: TypeDescriptor::of::<Self>(Self::NAME),

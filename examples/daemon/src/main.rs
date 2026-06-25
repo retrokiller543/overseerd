@@ -26,14 +26,20 @@ async fn main() -> overseerd::Result<()> {
     let dir_manager = DirectoriesManager::from_path(CRATE_PATH.into());
 
     // Build the merged config first. Its `${VAR:default}` placeholders resolve
-    // against the environment as each subtree is deserialized.
-    let config = ConfigManager::<Toml>::load_in(&dir_manager.dir(), &[])?;
+    // against the environment as each subtree is deserialized; `with_directories`
+    // also wires the `${@kind}` directory namespace so config can reference, e.g.,
+    // the runtime directory.
+    let config =
+        ConfigManager::<Toml>::load_in(&dir_manager.dir(), &[])?.with_directories(&dir_manager);
 
     init_tracing(&config.get("logging")?).ok();
 
-    // Configure the transport from config before the daemon is assembled.
-    let server: AppServer = config.get("app.server")?;
+    // Configure the transport from config before the daemon is assembled. `get_config`
+    // applies the type's `#[default]` fields, so `socket` (omitted from the file) falls
+    // back to its templated default under the runtime directory.
+    let server: AppServer = config.get_config::<AppServer>("app.server")?;
     println!("server would bind to {}", server.addr);
+    println!("server socket resolves to {}", server.socket.display());
 
     // `app.greet` auto-registers via its `#[config(path = "app.greet")]`; the two
     // `DbConfig` bindings share one type at different paths, so they are listed

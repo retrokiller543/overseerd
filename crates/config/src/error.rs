@@ -44,6 +44,9 @@ pub enum ConfigErrorKind {
     #[error("no value for placeholder '{key}' (no env var, config path, or default)")]
     MissingPlaceholder { key: String },
 
+    #[error("no resolver answered namespace placeholder '{key}' (and no default was given)")]
+    UnknownNamespaceKey { key: String },
+
     #[error("placeholder '{key}' references a value that is not a string")]
     NotStringRenderable { key: String },
 
