@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.3.0...overseerd-core-v0.4.0) - 2026-06-25
+
+### Other
+
+- directory-namespace ergonomics + tagged-enum defaults ([#10](https://github.com/retrokiller543/overseerd/pull/10))
+
 ## [0.2.0](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.1.1...overseerd-core-v0.2.0) - 2026-06-25
 
 ### Other
