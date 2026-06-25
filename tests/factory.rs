@@ -65,6 +65,35 @@ impl FactorySvc {
     async fn note(Inject(manual): Inject<Arc<Manual>>, Payload(_): Payload<()>) -> String {
         manual.note.clone()
     }
+
+    /// Returns the value computed by the boxed-error `#[init]`, proving that
+    /// constructor's `Box<dyn Error + Send + Sync>` result type was accepted.
+    #[rpc]
+    async fn boxed(Inject(comp): Inject<Arc<BoxedErrComp>>, Payload(_): Payload<()>) -> u32 {
+        comp.value
+    }
+}
+
+/// Built by an async, fallible `#[init]` returning
+/// `Result<Self, Box<dyn Error + Send + Sync>>`, proving an app-defined boxed error
+/// converts into `overseerd::Error` (via the catch-all `Error::Other`) and satisfies the
+/// factory's `E: Into<Error>` bound. The `?` on a `ParseIntError` exercises that path.
+#[component]
+struct BoxedErrComp {
+    #[default]
+    value: u32,
+}
+
+#[methods]
+impl BoxedErrComp {
+    #[init]
+    async fn create(cfg: Cfg<FactoryCfg>) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        let parsed: u32 = "7".parse()?;
+
+        Ok(Self {
+            value: cfg.seed + parsed,
+        })
+    }
 }
 
 /// Built by an explicit async `factory = path` (not field injection); its `label`
@@ -159,6 +188,20 @@ async fn manual_component_is_provided_not_built() {
 
     match result {
         CallResult::Ok(body) => assert_eq!(dec::<String>(&body), "manual-note"),
+
+        other => panic!("expected ok, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn boxed_error_init_constructs() {
+    let conn = start().await;
+
+    let result = conn.call("FactorySvc.boxed", enc(&())).await.unwrap();
+
+    match result {
+        // cfg.seed = 100, parsed = 7 → value = 107.
+        CallResult::Ok(body) => assert_eq!(dec::<u32>(&body), 107),
 
         other => panic!("expected ok, got {other:?}"),
     }
