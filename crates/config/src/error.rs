@@ -44,7 +44,11 @@ pub enum ConfigErrorKind {
     #[error("no value for placeholder '{key}' (no env var, config path, or default)")]
     MissingPlaceholder { key: String },
 
-    #[error("no resolver answered namespace placeholder '{key}' (and no default was given)")]
+    #[error(
+        "no resolver registered for namespace placeholder '{key}' (and no default was given) — \
+         is the namespace wired up? (for `${{@dir}}`, build the config via \
+         `ConfigManager::load_from`/`with_directories`)"
+    )]
     UnknownNamespaceKey { key: String },
 
     #[error("placeholder '{key}' references a value that is not a string")]

@@ -199,3 +199,22 @@ fn enum_default_variant_overridden_by_explicit_selection() {
         }
     );
 }
+
+#[config]
+#[derive(Debug, Deserialize)]
+struct SockOnly {
+    #[default = "${@runtime}/srv.sock"]
+    socket: PathBuf,
+}
+
+#[test]
+fn load_from_registers_the_directory_namespace() {
+    // `load_from` reads the (absent) config dir and wires `${@kind}` in one step, so a
+    // `${@runtime}` default resolves without a separate `with_directories` call.
+    let dirs = DirectoriesManager::from_path(PathBuf::from("/base"));
+    let config = ConfigManager::<Toml>::load_from(&dirs, &[]).expect("load config");
+
+    let cfg: SockOnly = config.get_config::<SockOnly>("app").unwrap();
+
+    assert_eq!(cfg.socket, PathBuf::from("/base/runtime/srv.sock"));
+}
