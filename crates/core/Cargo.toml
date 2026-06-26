@@ -17,6 +17,9 @@ di-check = []
 yaml = ["overseerd-config/yaml"]
 # Provide the `init_tracing` helper, pulling in `tracing-subscriber`.
 tracing-subscriber = ["dep:tracing-subscriber"]
+# Watch config files and reload on change (opt-in via `ConfigManager::watch_config`),
+# pulling in the `notify` filesystem-events crate.
+watch = ["dep:notify"]
 
 [dependencies]
 arc-swap.workspace = true
@@ -32,6 +35,7 @@ serde = { workspace = true }
 postcard = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, optional = true }
+notify = { workspace = true, optional = true }
 overseerd-config = { workspace = true }
 overseerd-transport = { workspace = true }
 overseerd-macros = { workspace = true }

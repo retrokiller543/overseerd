@@ -8,6 +8,7 @@
 
 mod reload;
 mod source;
+mod trigger;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ pub use reload::{
     ReloadableConfig,
 };
 use reload::ConfigSlot;
+pub(crate) use trigger::spawn_reload_triggers;
 
 pub use overseerd_config::{DefaultSpec, EnumTag};
 
@@ -44,7 +46,7 @@ impl<T: ConfigProperties> ConfigDefaults for T {
 }
 #[cfg(feature = "yaml")]
 pub use source::Yaml;
-pub use source::{ConfigManager, Dynamic, Format, FormatId, Toml};
+pub use source::{ConfigManager, Dynamic, Format, FormatId, ReloadTriggers, Toml};
 
 /// Errors from loading, merging, and binding configuration.
 #[derive(Debug, thiserror::Error)]

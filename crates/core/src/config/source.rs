@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use overseerd_config::{ConfigValue, Resolver, ResolverChain, from_value_in};
 use serde::de::DeserializeOwned;
@@ -12,6 +13,29 @@ use super::{ConfigBinding, ConfigError, ConfigProperties};
 
 /// A parser from source text to the normalized config tree.
 type Parser = fn(&str) -> Result<ConfigValue, overseerd_config::ConfigError>;
+
+/// Which automatic reload triggers a [`ConfigManager`] requests, beyond the always-available
+/// manual [`ConfigReloader::reload`](crate::config::ConfigReloader::reload). The daemon reads
+/// these at `serve`/`run` and spawns the matching background tasks.
+#[derive(Clone, Copy, Debug)]
+pub struct ReloadTriggers {
+    /// Reload on `SIGHUP` (Unix only).
+    pub sighup: bool,
+    /// Watch the config source files and reload on change (requires the `watch` feature).
+    pub watch: bool,
+    /// How long to coalesce a burst of file-change events before reloading.
+    pub debounce: Duration,
+}
+
+impl Default for ReloadTriggers {
+    fn default() -> Self {
+        Self {
+            sighup: false,
+            watch: false,
+            debounce: Duration::from_millis(250),
+        }
+    }
+}
 
 /// Which source format(s) a [`ConfigManager`] reads. Retained as runtime data so the
 /// daemon knows how to re-read on reload even after the `Format` type is erased.
@@ -100,6 +124,8 @@ pub struct ConfigManager<F = Dynamic> {
     /// manager owns this registry so it can seed every bound type's defaults into the tree —
     /// the daemon reads it back at build to construct the `Cfg<T>` injectables.
     bindings: Vec<ConfigBinding>,
+    /// Which automatic reload triggers this manager requests (manual reload is always on).
+    triggers: ReloadTriggers,
     _marker: PhantomData<F>,
 }
 
@@ -184,6 +210,7 @@ impl<F: Format> ConfigManager<F> {
             format: F::ID,
             sources,
             bindings: Vec::new(),
+            triggers: ReloadTriggers::default(),
             _marker: PhantomData,
         }
     }
@@ -325,8 +352,37 @@ impl<F> ConfigManager<F> {
             format: self.format,
             sources: self.sources,
             bindings: self.bindings,
+            triggers: self.triggers,
             _marker: PhantomData,
         }
+    }
+
+    /// Reload the configuration on `SIGHUP` (Unix). Opt-in; manual reload is always
+    /// available.
+    pub fn reload_on_sighup(mut self) -> Self {
+        self.triggers.sighup = true;
+
+        self
+    }
+
+    /// Watch the config source files and reload on change. Requires the `watch` feature;
+    /// without it the request is logged and ignored at startup.
+    pub fn watch_config(mut self) -> Self {
+        self.triggers.watch = true;
+
+        self
+    }
+
+    /// How long to coalesce a burst of file-change events before reloading (default 250ms).
+    pub fn config_reload_debounce(mut self, debounce: Duration) -> Self {
+        self.triggers.debounce = debounce;
+
+        self
+    }
+
+    /// The automatic reload triggers this manager requests.
+    pub fn triggers(&self) -> ReloadTriggers {
+        self.triggers
     }
 
     /// Registers every link-time `#[config(path = "..")]` type (the [`CONFIG_BINDINGS`]

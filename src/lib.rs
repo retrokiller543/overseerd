@@ -59,7 +59,7 @@ pub use overseerd_core::{
     ComponentFactory, ComponentFactoryDescriptor, ComponentScope, CfgNext, ChangedBinding,
     ComponentHookReport, ConfigBinding, ConfigBindingDescriptor, ConfigDefaults, ConfigError,
     ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError, ConfigReloadReport,
-    ConfigReloader, HookOutcome, ReloadProposal, ReloadableConfig, Daemon,
+    ConfigReloader, HookOutcome, ReloadProposal, ReloadTriggers, ReloadableConfig, Daemon,
     DaemonBuilder, DefaultSpec, DependencyDescriptor, Descriptor, DescriptorRegistry, Dir, DirKind,
     DirectoriesManager, Dynamic, EnumTag, Error, ErrorHandler, ErrorResponse, Factory,
     FactoryOutput, FallibleHandler, Flags, FromContainer, FromContext, Guard, GuardLayer,

@@ -301,6 +301,17 @@ impl ConfigReloader {
         self.inner.generation.load(Ordering::SeqCst)
     }
 
+    /// A snapshot of the config source files, in merge order — the inputs a file watcher
+    /// observes to drive [`reload`](Self::reload).
+    pub fn sources(&self) -> Vec<std::path::PathBuf> {
+        self.inner
+            .manager
+            .lock()
+            .expect("config manager mutex poisoned")
+            .sources()
+            .to_vec()
+    }
+
     /// Re-reads the config sources and re-publishes the changed bindings.
     ///
     /// Re-merges all sources in their original order (so profile precedence is preserved),

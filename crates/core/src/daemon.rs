@@ -11,7 +11,10 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     ServiceComponent,
-    config::{ConfigBinding, ConfigManager, ConfigProperties, ConfigReloader, ReloadableConfig},
+    config::{
+        ConfigBinding, ConfigManager, ConfigProperties, ConfigReloader, ReloadTriggers,
+        ReloadableConfig, spawn_reload_triggers,
+    },
     hooks::{HookDescriptor, HookManager},
     container::{ScopeContainer, ScopeRegistry, topological_sort},
     descriptors::{
@@ -386,6 +389,10 @@ impl DaemonBuilder {
             config_seeds.push((binding.path.clone(), boxed));
         }
 
+        // Capture the manager's reload triggers before it moves into the reloader, so
+        // `serve`/`run` can spawn the matching background tasks.
+        let reload_triggers = tree.triggers();
+
         // Build the reloader over the (now finalized) manager and the slots sharing the
         // bound configs' live cells, then seed it as a framework singleton instance.
         let reloader = ConfigReloader::new(tree, reload_slots, hook_manager.clone());
@@ -442,6 +449,7 @@ impl DaemonBuilder {
             shutdown,
             reloader,
             hook_manager,
+            reload_triggers,
         })
     }
 }
@@ -603,6 +611,7 @@ pub struct Daemon {
     shutdown: ShutdownSignal,
     reloader: ConfigReloader,
     hook_manager: HookManager,
+    reload_triggers: ReloadTriggers,
 }
 
 impl fmt::Debug for Daemon {
@@ -675,6 +684,10 @@ impl Daemon {
         let needs_peer = self.needs_peer;
         let mut shutdown = self.shutdown;
 
+        // Spawn the configured config-reload triggers (SIGHUP / file watch); aborted on
+        // shutdown below. Manual reload via the injected `ConfigReloader` is always on.
+        let trigger_tasks = spawn_reload_triggers(self.reloader, self.reload_triggers);
+
         loop {
             tokio::select! {
                 result = transport.accept() => {
@@ -716,6 +729,10 @@ impl Daemon {
             }
         }
 
+        for task in trigger_tasks {
+            task.abort();
+        }
+
         info!(target: "overseerd::daemon", transport = transport_name, "serve stopped");
 
         Ok(())
@@ -725,9 +742,15 @@ impl Daemon {
     pub async fn run(self) -> crate::Result<()> {
         let mut shutdown = self.shutdown;
 
+        let trigger_tasks = spawn_reload_triggers(self.reloader, self.reload_triggers);
+
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {},
             _ = shutdown.wait() => {},
+        }
+
+        for task in trigger_tasks {
+            task.abort();
         }
 
         Ok(())

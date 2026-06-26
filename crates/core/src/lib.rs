@@ -47,7 +47,7 @@ pub use config::{
     Cfg, CfgNext, ChangedBinding, ComponentHookReport, ConfigBinding, ConfigBindingDescriptor,
     ConfigDefaults, ConfigError, ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError,
     ConfigReloadReport, ConfigReloader, DefaultSpec, EnumTag, HookOutcome, ReloadProposal,
-    ReloadableConfig,
+    ReloadTriggers, ReloadableConfig,
 };
 pub use container::{ComponentContainer, ScopeContainer};
 pub use hooks::{

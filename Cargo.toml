@@ -31,6 +31,7 @@ overseerd-transport = { path = "crates/transport", version = "0.5.0" }
 # Common dependencies
 arc-swap = "1.9.1"
 bitflags = "2"
+notify = "6"
 thiserror = "2"
 toml = "1.1"
 serde_yaml_ng = "0.10"
@@ -83,6 +84,9 @@ yaml = ["overseerd-core/yaml"]
 
 # Provide the `init_tracing` helper, pulling in `tracing-subscriber`.
 tracing-subscriber = ["overseerd-core/tracing-subscriber"]
+
+# Watch config files and reload on change (`ConfigManager::watch_config`), via `notify`.
+watch = ["overseerd-core/watch"]
 
 [dependencies]
 overseerd-core = { workspace = true }
