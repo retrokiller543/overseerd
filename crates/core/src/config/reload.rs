@@ -282,6 +282,10 @@ struct ReloaderInner {
     slots: Vec<Box<dyn ReloadableConfig>>,
     hooks: HookManager,
     generation: AtomicU64,
+    /// Serializes whole reloads. The prepare and commit phases each take the `manager`
+    /// lock briefly (and release it so hooks can `await`), so without this two concurrent
+    /// reloads could interleave and commit a stale tree. Held across all phases.
+    in_progress: tokio::sync::Mutex<()>,
 }
 
 impl ConfigReloader {
@@ -298,6 +302,7 @@ impl ConfigReloader {
                 slots,
                 hooks,
                 generation: AtomicU64::new(0),
+                in_progress: tokio::sync::Mutex::new(()),
             }),
         }
     }
@@ -326,6 +331,11 @@ impl ConfigReloader {
     /// hook accepts — commits the new values into their shared slots. On any failure
     /// nothing is published and the live values are untouched.
     pub async fn reload(&self) -> Result<ConfigReloadReport, ConfigReloadError> {
+        // Serialize whole reloads so the prepare → hooks → commit phases are atomic with
+        // respect to each other: a concurrent reload cannot commit a newer tree between this
+        // one's prepare and commit and have it overwritten by this one's stale `adopt`.
+        let _in_progress = self.inner.in_progress.lock().await;
+
         // If nothing listens for config_reload, skip building proposals entirely (O(1)).
         let run_hooks = self.inner.hooks.has::<ConfigReload>();
 
