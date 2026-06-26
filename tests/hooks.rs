@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use overseerd::config::Toml;
 use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{Cfg, CfgNext, ConfigManager, ConfigReload, Daemon, HookOutcome, component, config, methods};
+use overseerd::{
+    Cfg, CfgNext, ConfigManager, ConfigReload, Daemon, HookOutcome, component, config, methods,
+};
 use serde::Deserialize;
 
 #[config(path = "svc")]
@@ -159,7 +161,11 @@ async fn config_reload_hooks_fire_only_for_changed_configs() {
         2,
         "the hook received the proposed (new) value"
     );
-    assert_eq!(watcher.committed(), 2, "the value was committed after the hook accepted");
+    assert_eq!(
+        watcher.committed(),
+        2,
+        "the value was committed after the hook accepted"
+    );
     assert_eq!(
         other.fired(),
         0,
@@ -185,6 +191,9 @@ async fn config_reload_hooks_fire_only_for_changed_configs() {
         .await
         .expect("second reload succeeds");
 
-    assert!(again.hooks.is_empty(), "no config changed, so no hooks fired");
+    assert!(
+        again.hooks.is_empty(),
+        "no config changed, so no hooks fired"
+    );
     assert_eq!(watcher.fired(), 1, "watcher did not fire again");
 }

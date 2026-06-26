@@ -17,12 +17,12 @@ use serde::de::DeserializeOwned;
 
 use crate::descriptors::{BoxedComponent, Injectable, Live, LiveRef, TypeDescriptor};
 
+use reload::ConfigSlot;
 pub use reload::{
     CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, ChangedBinding, ComponentHookReport, ConfigReload,
     ConfigReloadError, ConfigReloadReport, ConfigReloader, HookOutcome, ReloadProposal,
     ReloadableConfig,
 };
-use reload::ConfigSlot;
 pub(crate) use trigger::spawn_reload_triggers;
 
 pub use overseerd_config::{DefaultSpec, EnumTag};

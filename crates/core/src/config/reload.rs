@@ -10,9 +10,9 @@
 
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 use overseerd_config::ConfigValue;
 
@@ -74,7 +74,10 @@ impl ReloadProposal {
                 .find(|staged| staged.type_id == type_id && &*staged.path == path)?,
 
             None => {
-                let mut matches = self.staged.iter().filter(|staged| staged.type_id == type_id);
+                let mut matches = self
+                    .staged
+                    .iter()
+                    .filter(|staged| staged.type_id == type_id);
                 let first = matches.next()?;
 
                 if matches.next().is_some() {
@@ -209,7 +212,10 @@ pub(crate) struct ConfigSlot<T> {
 impl<T: ConfigProperties> ConfigSlot<T> {
     /// Recovers a reloadable slot from a freshly bound config seed, sharing its live
     /// cell. Returns `None` if the seed does not hold a `Cfg<T>`.
-    pub(crate) fn from_seed(seed: &BoxedComponent, path: &str) -> Option<Box<dyn ReloadableConfig>> {
+    pub(crate) fn from_seed(
+        seed: &BoxedComponent,
+        path: &str,
+    ) -> Option<Box<dyn ReloadableConfig>> {
         let cfg = seed.value.downcast_ref::<Cfg<T>>()?.clone();
 
         Some(Box::new(ConfigSlot {

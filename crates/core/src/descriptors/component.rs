@@ -456,10 +456,7 @@ pub(crate) struct ScopeStore {
 /// box holds a different stored type (e.g. asking for `Dep<T>` of a by-value
 /// component, whose slot is not a `Live<T>`).
 pub(crate) fn from_boxed<H: Injectable>(boxed: &BoxedComponent) -> Option<H> {
-    boxed
-        .value
-        .downcast_ref::<H::Stored>()
-        .map(H::from_stored)
+    boxed.value.downcast_ref::<H::Stored>().map(H::from_stored)
 }
 
 impl ScopeStore {

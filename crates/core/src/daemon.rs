@@ -15,7 +15,6 @@ use crate::{
         ConfigBinding, ConfigManager, ConfigProperties, ConfigReloader, ReloadTriggers,
         ReloadableConfig, spawn_reload_triggers,
     },
-    hooks::{HookDescriptor, HookKind, HookManager, Shutdown, Startup},
     container::{ScopeContainer, ScopeRegistry, topological_sort},
     descriptors::{
         BoxedComponent, Component, ComponentDescriptor, ComponentScope, Descriptor, Injectable,
@@ -23,6 +22,7 @@ use crate::{
     },
     dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp},
     extract::ErrorResponse,
+    hooks::{HookDescriptor, HookKind, HookManager, Shutdown, Startup},
     lifecycle::{ShutdownHandle, ShutdownSignal},
     middleware::{ErrorHandler, Guard, GuardLayer, RouterService, RpcRequest, RpcService},
     registry::DescriptorRegistry,

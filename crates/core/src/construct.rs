@@ -25,8 +25,8 @@ use std::sync::Arc;
 
 use crate::config::Cfg;
 use crate::descriptors::{
-    BoxedComponent, Cardinality, Component, ComponentConstructionContext, Dep, DependencyDescriptor,
-    Injectable, TypeDescriptor,
+    BoxedComponent, Cardinality, Component, ComponentConstructionContext, Dep,
+    DependencyDescriptor, Injectable, TypeDescriptor,
 };
 use crate::error::Error;
 

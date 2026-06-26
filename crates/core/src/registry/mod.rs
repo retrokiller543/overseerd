@@ -864,10 +864,7 @@ mod tests {
         unreachable!("validation never binds")
     }
 
-    fn dummy_slot(
-        _: &BoxedComponent,
-        _: &str,
-    ) -> Option<Box<dyn crate::config::ReloadableConfig>> {
+    fn dummy_slot(_: &BoxedComponent, _: &str) -> Option<Box<dyn crate::config::ReloadableConfig>> {
         unreachable!("validation never builds reload slots")
     }
 

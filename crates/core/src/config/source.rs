@@ -531,10 +531,7 @@ fn merge_file(
 ) -> Result<(), ConfigError> {
     let extension = path.extension().and_then(|ext| ext.to_str());
 
-    let Some((_, parse)) = parsers
-        .iter()
-        .find(|(ext, _)| Some(*ext) == extension)
-    else {
+    let Some((_, parse)) = parsers.iter().find(|(ext, _)| Some(*ext) == extension) else {
         trace!(target: "overseerd::config", path = %path.display(), "no parser for source extension, skipping");
 
         return Ok(());

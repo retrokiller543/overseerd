@@ -120,7 +120,9 @@ impl Parse for DirSettings {
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
-                        format!("unknown `directories` setting `{other}`; expected `app` or `root`"),
+                        format!(
+                            "unknown `directories` setting `{other}`; expected `app` or `root`"
+                        ),
                     ));
                 }
             }
@@ -183,9 +185,7 @@ impl Parse for DaemonInput {
                 "services" => services = bracketed_list::<Type>(input)?,
                 "components" => components = bracketed_list::<Expr>(input)?,
                 "configs" => configs = bracketed_list::<ConfigEntry>(input)?,
-                "managers" => {
-                    parse_managers(input, &mut config_manager, &mut directories_manager)?
-                }
+                "managers" => parse_managers(input, &mut config_manager, &mut directories_manager)?,
                 "middleware" => middleware = bracketed_list::<Expr>(input)?,
                 "guards" => guards = bracketed_list::<Expr>(input)?,
                 "error_handler" => error_handler = Some(input.parse()?),
@@ -247,7 +247,10 @@ fn parse_managers(
 
             "directories" => {
                 if directories.is_some() {
-                    return Err(syn::Error::new(key.span(), "duplicate `directories` manager"));
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "duplicate `directories` manager",
+                    ));
                 }
 
                 *directories = Some(parse_manager_source(&content)?);

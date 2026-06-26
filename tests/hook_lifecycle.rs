@@ -83,5 +83,9 @@ async fn startup_and_shutdown_hooks_fire() {
     shutdown.shutdown();
     task.await.expect("run task joins");
 
-    assert_eq!(component.stopped(), 1, "shutdown hook fired on graceful stop");
+    assert_eq!(
+        component.stopped(),
+        1,
+        "shutdown hook fired on graceful stop"
+    );
 }

@@ -61,7 +61,7 @@ async fn dep_swap_is_shared_across_two_injection_sites() {
         .container()
         .get::<ConsumerB>()
         .expect("ConsumerB constructed");
-    
+
     let a_before = a.shared().snapshot();
     let b_before = b.shared().snapshot();
 

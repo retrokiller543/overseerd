@@ -71,7 +71,10 @@ async fn a_rejecting_hook_aborts_the_reload() {
         .await
         .expect("daemon builds");
 
-    let rejector = daemon.container().get::<Rejector>().expect("Rejector built");
+    let rejector = daemon
+        .container()
+        .get::<Rejector>()
+        .expect("Rejector built");
 
     assert_eq!(rejector.committed(), 1, "starts at the file value");
 
@@ -90,5 +93,9 @@ async fn a_rejecting_hook_aborts_the_reload() {
     );
 
     // The reloader is still usable; the generation did not advance on the aborted reload.
-    assert_eq!(daemon.config_reloader().generation(), 0, "no successful reload yet");
+    assert_eq!(
+        daemon.config_reloader().generation(),
+        0,
+        "no successful reload yet"
+    );
 }

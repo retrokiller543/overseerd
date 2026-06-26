@@ -91,7 +91,10 @@ async fn reload_swaps_only_the_changed_binding() {
         .await
         .expect("reload succeeds");
 
-    assert_eq!(report.generation, 1, "first successful reload is generation 1");
+    assert_eq!(
+        report.generation, 1,
+        "first successful reload is generation 1"
+    );
     assert_eq!(report.changed.len(), 1, "only one binding changed");
     assert_eq!(report.changed[0].path, "svc", "the changed binding is svc");
 

@@ -61,7 +61,9 @@ pub trait HookParam<K: HookKind>: Sized {
 pub type HookCall = for<'a> fn(
     &'a ScopeContainer,
     &'a (dyn Any + Send + Sync),
-) -> Pin<Box<dyn Future<Output = crate::Result<Box<dyn Any + Send>>> + Send + 'a>>;
+) -> Pin<
+    Box<dyn Future<Output = crate::Result<Box<dyn Any + Send>>> + Send + 'a>,
+>;
 
 /// Static metadata for one hook, registered into its type's `{Type}Hooks` slice.
 #[derive(Clone, Copy)]

@@ -50,22 +50,22 @@ pub use config::{
     ReloadTriggers, ReloadableConfig,
 };
 pub use container::{ComponentContainer, ScopeContainer};
-pub use hooks::{
-    ComponentHooks, HookCall, HookDescriptor, HookKind, HookManager, HookParam, Shutdown, Startup,
-    no_hooks,
-};
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cardinality, Component,
     ComponentConstructionContext, ComponentDescriptor, ComponentFactories, ComponentFactory,
-    ComponentFactoryDescriptor, ComponentScope, Dep, DependencyDescriptor, Descriptor,
-    Dynamic, Injectable, Live, LiveRef, OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Provide,
-    ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
+    ComponentFactoryDescriptor, ComponentScope, Dep, DependencyDescriptor, Descriptor, Dynamic,
+    Injectable, Live, LiveRef, OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind,
+    Provide, ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
     RpcResponse, SERVICES, ServiceComponent, ServiceDescriptor, ServiceRpcs, TypeDescriptor, Wired,
     Wiring, type_id_of,
 };
 pub use dirs::{Dir, DirKind, DirectoriesManager, DirectoriesResolver};
 pub use error::Error;
+pub use hooks::{
+    ComponentHooks, HookCall, HookDescriptor, HookKind, HookManager, HookParam, Shutdown, Startup,
+    no_hooks,
+};
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
 /// attribute through a stable path without the user crate depending on `linkme`

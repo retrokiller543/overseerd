@@ -63,7 +63,10 @@ async fn external_hook_kind_fires_through_the_manager() {
     let hooks = daemon.hook_manager();
 
     assert!(hooks.has::<Startup>(), "Startup has a listener");
-    assert!(!hooks.has::<Unused>(), "Unused has no listeners (O(1) miss)");
+    assert!(
+        !hooks.has::<Unused>(),
+        "Unused has no listeners (O(1) miss)"
+    );
     assert_eq!(boot.started(), 0, "not started yet");
 
     let outcomes = hooks.run::<Startup>(&(), |_| true).await;

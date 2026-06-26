@@ -117,19 +117,20 @@ fn spawn_watch(reloader: ConfigReloader, debounce: std::time::Duration) -> Optio
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<()>();
 
-    let mut watcher = match notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-        if result.is_ok() {
-            let _ = tx.send(());
-        }
-    }) {
-        Ok(watcher) => watcher,
+    let mut watcher =
+        match notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+            if result.is_ok() {
+                let _ = tx.send(());
+            }
+        }) {
+            Ok(watcher) => watcher,
 
-        Err(error) => {
-            error!(target: "overseerd::config", %error, "failed to create config file watcher");
+            Err(error) => {
+                error!(target: "overseerd::config", %error, "failed to create config file watcher");
 
-            return None;
-        }
-    };
+                return None;
+            }
+        };
 
     for dir in &dirs {
         if let Err(error) = watcher.watch(dir, RecursiveMode::NonRecursive) {
