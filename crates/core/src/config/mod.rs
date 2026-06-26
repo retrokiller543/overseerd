@@ -17,8 +17,9 @@ use serde::de::DeserializeOwned;
 use crate::descriptors::{BoxedComponent, Injectable, Live, LiveRef, TypeDescriptor};
 
 pub use reload::{
-    CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, ChangedBinding, ConfigReloadError,
-    ConfigReloadReport, ConfigReloader, ReloadableConfig,
+    CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, ChangedBinding, ComponentHookReport, ConfigReload,
+    ConfigReloadError, ConfigReloadReport, ConfigReloader, HookOutcome, ReloadProposal,
+    ReloadableConfig,
 };
 use reload::ConfigSlot;
 
@@ -135,6 +136,52 @@ impl<T: Send + Sync + 'static> Injectable for Cfg<T> {
 
     fn from_stored(stored: &Self) -> Self {
         stored.clone()
+    }
+}
+
+/// A **proposed** configuration value handed to a `#[hook(ConfigReload)]` method during a
+/// reload, before it is committed. Read-only; derefs to `T`. If every hook accepts the
+/// proposal the value is committed into its [`Cfg<T>`] slot, otherwise it is discarded.
+pub struct CfgNext<T> {
+    value: Arc<T>,
+    path: Arc<str>,
+}
+
+impl<T> CfgNext<T> {
+    pub(crate) fn new(value: Arc<T>, path: Arc<str>) -> Self {
+        Self { value, path }
+    }
+
+    /// The proposed value.
+    pub fn get(&self) -> &T {
+        &self.value
+    }
+
+    /// An owned `Arc` of the proposed value.
+    pub fn snapshot(&self) -> Arc<T> {
+        Arc::clone(&self.value)
+    }
+
+    /// The property path this value was bound from.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+impl<T> Clone for CfgNext<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: Arc::clone(&self.value),
+            path: Arc::clone(&self.path),
+        }
+    }
+}
+
+impl<T> std::ops::Deref for CfgNext<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.value
     }
 }
 

@@ -504,6 +504,7 @@ mod tests {
                 ty: $ty,
                 scope: $scope,
                 factories,
+                hooks: $crate::hooks::no_hooks,
             }
         }};
     }
@@ -543,6 +544,7 @@ mod tests {
         ty: TypeDescriptor::of::<u16>("PgPool"),
         scope: ComponentScope::Singleton,
         factories: pg_pool_factories,
+        hooks: crate::hooks::no_hooks,
     };
 
     fn backup_repo_deps() -> Vec<DependencyDescriptor> {
@@ -573,6 +575,7 @@ mod tests {
         ty: TypeDescriptor::of::<u8>("BackupRepository"),
         scope: ComponentScope::Singleton,
         factories: backup_repo_factories,
+        hooks: crate::hooks::no_hooks,
     };
 
     static BACKUP_SERVICE_RPCS: [RpcDescriptor; 2] = [

@@ -52,6 +52,35 @@ pub fn factories_infrastructure(self_ident: &syn::Ident, slice: &syn::Ident) -> 
     }
 }
 
+/// The per-type hook slice identifier, `{Type}Hooks`. The `#[component]` / `#[service]`
+/// macro declares it; each `#[hook]` method appends to it.
+pub fn hooks_slice_ident(self_ident: &syn::Ident) -> syn::Ident {
+    format_ident!("{}Hooks", self_ident)
+}
+
+/// Declares the module-level `{Type}Hooks` distributed slice and the `ComponentHooks`
+/// impl returning it. Mirrors [`factories_infrastructure`]; empty when the type has no
+/// `#[hook]` methods.
+pub fn hooks_infrastructure(self_ident: &syn::Ident, slice: &syn::Ident) -> TokenStream {
+    let component_hooks = overseerd_path("ComponentHooks");
+    let hook_descriptor = overseerd_path("HookDescriptor");
+    let distributed_slice = overseerd_path("linkme::distributed_slice");
+    let linkme_crate = overseerd_path("linkme");
+
+    quote! {
+        #[#distributed_slice]
+        #[linkme(crate = #linkme_crate)]
+        #[allow(non_upper_case_globals)]
+        pub static #slice: [#hook_descriptor];
+
+        impl #component_hooks for #self_ident {
+            fn hooks() -> &'static [#hook_descriptor] {
+                &#slice
+            }
+        }
+    }
+}
+
 pub fn field_injection_component(
     item: &mut ItemStruct,
     id: &LitStr,
@@ -66,6 +95,7 @@ pub fn field_injection_component(
     let component_construction_context = overseerd_path("ComponentConstructionContext");
     let component_descriptor = overseerd_path("ComponentDescriptor");
     let component_factories = overseerd_path("ComponentFactories");
+    let component_hooks = overseerd_path("ComponentHooks");
     let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
     let component_scope = overseerd_path("ComponentScope");
     let components_slice = overseerd_path("COMPONENTS");
@@ -207,6 +237,7 @@ pub fn field_injection_component(
                 ty: #type_descriptor::of::<#self_ident>(#name),
                 scope: #component_scope::#scope_variant,
                 factories: <#self_ident as #component_factories>::factories,
+                hooks: <#self_ident as #component_hooks>::hooks,
             };
 
         impl #descriptor_trait<#component_descriptor> for #self_ident {

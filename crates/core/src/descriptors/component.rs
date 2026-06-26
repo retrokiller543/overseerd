@@ -776,6 +776,9 @@ pub struct ComponentDescriptor {
     pub ty: TypeDescriptor,
     pub scope: ComponentScope,
     pub factories: fn() -> &'static [ComponentFactoryDescriptor],
+    /// The component's `{Type}Hooks` slice (its `#[hook]` methods). Empty for a type
+    /// that declares none — and for every manually-seeded instance.
+    pub hooks: fn() -> &'static [crate::hooks::HookDescriptor],
 }
 
 /// The empty factory slice for a manually-provided instance: nothing to construct,
@@ -792,6 +795,7 @@ impl ComponentDescriptor {
             ty: TypeDescriptor::of::<T>(T::NAME),
             scope: ComponentScope::Singleton,
             factories: no_factories,
+            hooks: crate::hooks::no_hooks,
         }
     }
 
@@ -811,6 +815,7 @@ impl ComponentDescriptor {
             ty,
             scope,
             factories: no_factories,
+            hooks: crate::hooks::no_hooks,
         }
     }
 

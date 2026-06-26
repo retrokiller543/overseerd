@@ -62,6 +62,7 @@ mod daemon;
 mod di;
 mod handle;
 mod handlers;
+mod hook;
 mod inject;
 mod injectable;
 mod methods;

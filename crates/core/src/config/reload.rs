@@ -1,25 +1,118 @@
-//! Manual configuration reloading.
+//! Manual configuration reloading, with two-phase hooks.
 //!
 //! [`ConfigReloader`] re-reads the [`ConfigManager`]'s sources, diffs each binding's
-//! merged subtree against the live tree, and swaps **only** the bindings whose source
-//! actually changed — so an unchanged value is never re-published (and, in a later
-//! phase, never fires a reload hook). The swap is two-phase: every changed binding is
-//! re-deserialized first (fallible), and only if all succeed are the new values
-//! committed into their shared [`Live`](crate::descriptors::Live) slots, so a reload
-//! is all-or-nothing.
+//! merged subtree against the live tree, and re-publishes **only** the bindings whose
+//! source actually changed. The transaction is two-phase: every changed binding is
+//! re-deserialized into a proposed value first, the affected `#[hook(ConfigReload)]`
+//! hooks run against those proposals and may **abort** the reload, and only if every
+//! hook accepts are the new values committed into their shared
+//! [`Live`](crate::descriptors::Live) slots. On any failure nothing is published.
 
-use std::sync::Arc;
+use std::any::{Any, TypeId};
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use overseerd_config::ConfigValue;
 
-use crate::descriptors::{BoxedComponent, Injectable};
+use crate::descriptors::{
+    BoxedComponent, Cardinality, DependencyDescriptor, Injectable, TypeDescriptor,
+};
+use crate::hooks::{HookKind, HookManager, HookParam};
 
-use super::{Cfg, ConfigError, ConfigManager, ConfigProperties};
+use super::{Cfg, CfgNext, ConfigError, ConfigManager, ConfigProperties};
+
+/// The config-reload hook kind: a `#[hook(ConfigReload)]` method runs when a config it
+/// targets is reloaded, receiving the proposed value(s) as [`CfgNext<T>`] and returning a
+/// [`HookOutcome`].
+pub struct ConfigReload;
+
+impl HookKind for ConfigReload {
+    const NAME: &'static str = "config_reload";
+    type Output = HookOutcome;
+    type Cx = ReloadProposal;
+}
+
+/// What a `#[hook(ConfigReload)]` hook reports back. `Err` from the hook aborts the reload;
+/// these variants all mean the proposal was accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookOutcome {
+    /// The hook inspected the new config and made no change.
+    Unchanged,
+    /// The hook applied the new config to its internal state.
+    Reloaded,
+    /// The config is valid but cannot be applied at runtime; a restart is required.
+    RestartRequired(&'static str),
+}
+
+/// The proposed configuration handed to config-reload hooks: the staged value of every
+/// binding (changed bindings hold their newly-deserialized value, unchanged bindings hold
+/// their current value), so a hook's [`CfgNext<T>`] params always resolve.
+pub struct ReloadProposal {
+    staged: Vec<StagedConfig>,
+}
+
+/// One binding's value staged into a [`ReloadProposal`] — its type, path, and erased value.
+pub struct StagedConfig {
+    type_id: TypeId,
+    path: Arc<str>,
+    value: Arc<dyn Any + Send + Sync>,
+}
+
+impl ReloadProposal {
+    /// The proposed value of type `T` at `path` (or its sole binding when `path` is
+    /// `None`), as a [`CfgNext<T>`]. `None` if no such binding is staged or the by-type
+    /// lookup is ambiguous.
+    fn next<T: Send + Sync + 'static>(&self, path: Option<&str>) -> Option<CfgNext<T>> {
+        let type_id = TypeId::of::<T>();
+
+        let entry = match path {
+            Some(path) => self
+                .staged
+                .iter()
+                .find(|staged| staged.type_id == type_id && &*staged.path == path)?,
+
+            None => {
+                let mut matches = self.staged.iter().filter(|staged| staged.type_id == type_id);
+                let first = matches.next()?;
+
+                if matches.next().is_some() {
+                    return None;
+                }
+
+                first
+            }
+        };
+
+        let value = entry.value.clone().downcast::<T>().ok()?;
+
+        Some(CfgNext::new(value, entry.path.clone()))
+    }
+}
+
+impl<T: ConfigProperties> HookParam<ConfigReload> for CfgNext<T> {
+    fn dependency(path: Option<&'static str>) -> DependencyDescriptor {
+        DependencyDescriptor {
+            name: T::NAME,
+            ty: TypeDescriptor::of::<T>(T::NAME),
+            cardinality: Cardinality::One,
+            optional: false,
+            dynamic: false,
+            qualifier: path,
+            config: true,
+        }
+    }
+
+    fn extract(cx: &ReloadProposal, path: Option<&'static str>) -> crate::Result<Self> {
+        cx.next::<T>(path)
+            .ok_or(crate::Error::MissingComponent(T::NAME))
+    }
+}
 
 /// Errors from a configuration reload. On any error the live values are left
-/// untouched — a reload commits only when every changed binding re-binds cleanly.
+/// untouched — a reload commits only when every changed binding re-binds and every
+/// affected hook accepts.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigReloadError {
     /// Re-reading or re-merging the config sources failed.
@@ -34,6 +127,14 @@ pub enum ConfigReloadError {
         #[source]
         source: ConfigError,
     },
+
+    /// A `#[hook(ConfigReload)]` hook rejected the proposal; the reload was aborted.
+    #[error("config_reload hook on '{component}' rejected the reload: {source}")]
+    Hook {
+        component: &'static str,
+        #[source]
+        source: Box<crate::Error>,
+    },
 }
 
 /// One binding changed by a reload.
@@ -41,6 +142,13 @@ pub enum ConfigReloadError {
 pub struct ChangedBinding {
     pub path: String,
     pub type_name: &'static str,
+}
+
+/// One component's config-reload hook outcome.
+#[derive(Debug, Clone)]
+pub struct ComponentHookReport {
+    pub component: &'static str,
+    pub outcome: HookOutcome,
 }
 
 /// The outcome of a successful reload.
@@ -51,23 +159,32 @@ pub struct ConfigReloadReport {
     /// The bindings whose source changed and were re-published. Empty when nothing
     /// changed.
     pub changed: Vec<ChangedBinding>,
+    /// The config-reload hooks that ran and accepted, with their outcomes.
+    pub hooks: Vec<ComponentHookReport>,
 }
 
-/// A re-deserialized value ready to publish into its slot. Produced in the reload's
-/// prepare step; run in the commit step once every changed binding has prepared.
+/// A re-deserialized value ready to publish into its slot, plus the staged proposal entry
+/// it contributes. Produced in the reload's prepare step; committed only after every hook
+/// accepts.
 pub struct PreparedSwap {
+    type_id: TypeId,
+    path: Arc<str>,
+    staged: Arc<dyn Any + Send + Sync>,
     commit: Box<dyn FnOnce() + Send>,
 }
 
-/// A config binding the reloader can re-bind: it knows its path and how to
-/// re-deserialize its type from a re-read tree and swap its live slot. Object-safe so
-/// the reloader holds a `Vec<Box<dyn ReloadableConfig>>` across all bound types.
+/// A config binding the reloader can re-bind: it knows its path, how to re-deserialize its
+/// type from a re-read tree, and how to stage its current value. Object-safe so the
+/// reloader holds a `Vec<Box<dyn ReloadableConfig>>` across all bound types.
 pub trait ReloadableConfig: Send + Sync {
     /// The property path this binding was bound at.
     fn path(&self) -> &str;
 
     /// The bound type's display name, for reports and errors.
     fn type_name(&self) -> &'static str;
+
+    /// The bound type's `TypeId`, for matching hook params to changed bindings.
+    fn type_id(&self) -> TypeId;
 
     /// Re-deserializes the binding from `new_root` and returns a committable swap.
     /// Fallible — a deserialize error aborts the whole reload before any commit.
@@ -76,6 +193,10 @@ pub trait ReloadableConfig: Send + Sync {
         manager: &ConfigManager,
         new_root: &ConfigValue,
     ) -> Result<PreparedSwap, ConfigError>;
+
+    /// The current committed value, erased, for staging an unchanged binding into the
+    /// proposal so hooks reading it still resolve.
+    fn stage_current(&self) -> StagedConfig;
 }
 
 /// The reloadable record for one `Cfg<T>` binding: a clone of the injected handle
@@ -107,6 +228,10 @@ impl<T: ConfigProperties> ReloadableConfig for ConfigSlot<T> {
         T::NAME
     }
 
+    fn type_id(&self) -> TypeId {
+        TypeId::of::<T>()
+    }
+
     fn prepare(
         &self,
         manager: &ConfigManager,
@@ -114,11 +239,24 @@ impl<T: ConfigProperties> ReloadableConfig for ConfigSlot<T> {
     ) -> Result<PreparedSwap, ConfigError> {
         let value: T = manager.get_config_in::<T>(new_root, &self.path)?;
         let replacement = Arc::new(value);
+        let staged: Arc<dyn Any + Send + Sync> = replacement.clone();
+        let committed = replacement.clone();
         let cfg = self.cfg.clone();
 
         Ok(PreparedSwap {
-            commit: Box::new(move || cfg.replace(replacement)),
+            type_id: TypeId::of::<T>(),
+            path: Arc::from(self.path.as_str()),
+            staged,
+            commit: Box::new(move || cfg.replace(committed)),
         })
+    }
+
+    fn stage_current(&self) -> StagedConfig {
+        StagedConfig {
+            type_id: TypeId::of::<T>(),
+            path: Arc::from(self.path.as_str()),
+            value: self.cfg.snapshot(),
+        }
     }
 }
 
@@ -136,17 +274,23 @@ pub struct ConfigReloader {
 struct ReloaderInner {
     manager: Mutex<ConfigManager>,
     slots: Vec<Box<dyn ReloadableConfig>>,
+    hooks: HookManager,
     generation: AtomicU64,
 }
 
 impl ConfigReloader {
-    /// Builds a reloader over the manager and the reloadable slots of every bound
-    /// config (sharing their live cells).
-    pub(crate) fn new(manager: ConfigManager, slots: Vec<Box<dyn ReloadableConfig>>) -> Self {
+    /// Builds a reloader over the manager, the reloadable slots of every bound config
+    /// (sharing their live cells), and the hook manager that fires reload hooks.
+    pub(crate) fn new(
+        manager: ConfigManager,
+        slots: Vec<Box<dyn ReloadableConfig>>,
+        hooks: HookManager,
+    ) -> Self {
         Self {
             inner: Arc::new(ReloaderInner {
                 manager: Mutex::new(manager),
                 slots,
+                hooks,
                 generation: AtomicU64::new(0),
             }),
         }
@@ -157,56 +301,180 @@ impl ConfigReloader {
         self.inner.generation.load(Ordering::SeqCst)
     }
 
-    /// Re-reads the config sources and publishes the changed bindings.
+    /// Re-reads the config sources and re-publishes the changed bindings.
     ///
-    /// Re-merges all sources in their original order (so profile precedence is
-    /// preserved), diffs each binding's subtree, re-deserializes only the changed
-    /// ones, and — if all succeed — commits them into their shared slots. On any
-    /// failure nothing is published and the live values are untouched.
+    /// Re-merges all sources in their original order (so profile precedence is preserved),
+    /// diffs each binding's subtree, deserializes the changed ones into proposals, runs the
+    /// affected `#[hook(ConfigReload)]` hooks, and — if every binding re-binds and every
+    /// hook accepts — commits the new values into their shared slots. On any failure
+    /// nothing is published and the live values are untouched.
     pub async fn reload(&self) -> Result<ConfigReloadReport, ConfigReloadError> {
-        let mut manager = self
-            .inner
-            .manager
-            .lock()
-            .expect("config manager mutex poisoned");
+        // If nothing listens for config_reload, skip building proposals entirely (O(1)).
+        let run_hooks = self.inner.hooks.has::<ConfigReload>();
 
-        let new_root = manager.reread().map_err(ConfigReloadError::Load)?;
+        let new_root;
         let mut prepared = Vec::new();
         let mut changed = Vec::new();
+        let mut staged = Vec::new();
+        let mut changed_paths: HashSet<String> = HashSet::new();
+        let bindings_by_type: HashMap<TypeId, Vec<String>>;
 
-        for slot in &self.inner.slots {
-            if manager.subtree(slot.path()) == new_root.get_path(slot.path()) {
-                continue;
-            }
+        // Phase 1 (prepare): re-read, diff, and deserialize changed bindings — all under
+        // the manager lock, with no await, so the lock is released before hooks run.
+        {
+            let manager = self
+                .inner
+                .manager
+                .lock()
+                .expect("config manager mutex poisoned");
 
-            let swap = slot.prepare(&manager, &new_root).map_err(|source| {
-                ConfigReloadError::Bind {
+            new_root = manager.reread().map_err(ConfigReloadError::Load)?;
+            bindings_by_type = if run_hooks {
+                bindings_by_type_index(&manager)
+            } else {
+                HashMap::new()
+            };
+
+            for slot in &self.inner.slots {
+                if manager.subtree(slot.path()) == new_root.get_path(slot.path()) {
+                    if run_hooks {
+                        staged.push(slot.stage_current());
+                    }
+
+                    continue;
+                }
+
+                let swap = slot.prepare(&manager, &new_root).map_err(|source| {
+                    ConfigReloadError::Bind {
+                        path: slot.path().to_string(),
+                        type_name: slot.type_name(),
+                        source,
+                    }
+                })?;
+
+                if run_hooks {
+                    staged.push(StagedConfig {
+                        type_id: swap.type_id,
+                        path: swap.path.clone(),
+                        value: swap.staged.clone(),
+                    });
+                    changed_paths.insert(slot.path().to_string());
+                }
+
+                changed.push(ChangedBinding {
                     path: slot.path().to_string(),
                     type_name: slot.type_name(),
-                    source,
-                }
-            })?;
+                });
+                prepared.push(swap);
+            }
+        }
 
-            prepared.push(swap);
-            changed.push(ChangedBinding {
-                path: slot.path().to_string(),
-                type_name: slot.type_name(),
+        // Nothing changed: no commit, no hooks — but a successful reload still advances the
+        // generation so observers can tell a reload ran.
+        if changed.is_empty() {
+            let generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
+
+            return Ok(ConfigReloadReport {
+                generation,
+                changed,
+                hooks: Vec::new(),
             });
         }
 
-        for swap in prepared {
-            (swap.commit)();
+        // Phase 2 (hooks): run every config_reload hook that targets a changed path. Any
+        // hook error aborts — `prepared` is dropped, so nothing is committed.
+        let mut hooks = Vec::new();
+
+        if run_hooks {
+            let proposal = ReloadProposal { staged };
+            let outcomes = self
+                .inner
+                .hooks
+                .run::<ConfigReload>(&proposal, |hook| {
+                    hook_targets_changed(hook, &changed_paths, &bindings_by_type)
+                })
+                .await;
+
+            hooks.reserve(outcomes.len());
+
+            for (component, result) in outcomes {
+                match result {
+                    Ok(outcome) => hooks.push(ComponentHookReport {
+                        component: component.name,
+                        outcome,
+                    }),
+
+                    Err(source) => {
+                        return Err(ConfigReloadError::Hook {
+                            component: component.name,
+                            source: Box::new(source),
+                        });
+                    }
+                }
+            }
         }
 
-        manager.adopt(new_root);
+        // Phase 3 (commit): every binding re-bound and every hook accepted.
+        {
+            let mut manager = self
+                .inner
+                .manager
+                .lock()
+                .expect("config manager mutex poisoned");
+
+            for swap in prepared {
+                (swap.commit)();
+            }
+
+            manager.adopt(new_root);
+        }
 
         let generation = self.inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
 
         Ok(ConfigReloadReport {
             generation,
             changed,
+            hooks,
         })
     }
+}
+
+/// Indexes bound config types to their property paths, so a hook's by-type (sole-binding)
+/// `CfgNext<T>` param can be resolved to the path it targets.
+fn bindings_by_type_index(manager: &ConfigManager) -> HashMap<TypeId, Vec<String>> {
+    let mut index: HashMap<TypeId, Vec<String>> = HashMap::new();
+
+    for binding in manager.bindings() {
+        index
+            .entry((binding.ty.type_id)())
+            .or_default()
+            .push(binding.path.clone());
+    }
+
+    index
+}
+
+/// Whether a hook targets a changed path: any of its `CfgNext<T>` params resolves (by
+/// `#[config("path")]` qualifier, or its type's sole binding) to a path that changed.
+fn hook_targets_changed(
+    hook: &crate::hooks::HookDescriptor,
+    changed_paths: &HashSet<String>,
+    bindings_by_type: &HashMap<TypeId, Vec<String>>,
+) -> bool {
+    (hook.dependencies)().iter().any(|dep| {
+        if !dep.config {
+            return false;
+        }
+
+        match dep.qualifier {
+            Some(path) => changed_paths.contains(path),
+
+            None => match bindings_by_type.get(&(dep.ty.type_id)()) {
+                Some(paths) if paths.len() == 1 => changed_paths.contains(&paths[0]),
+                _ => false,
+            },
+        }
+    })
 }
 
 /// The stable component id of the seeded [`ConfigReloader`] singleton.

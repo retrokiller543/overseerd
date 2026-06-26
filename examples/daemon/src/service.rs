@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use crate::components::{Config, DbConfig, DbConnection};
 use crate::notifiers::Notifier;
-use overseerd::{Cfg, Inject, Payload, ServerConfig, ShutdownHandle, handlers, service, Dep};
+use overseerd::{
+    Cfg, CfgNext, ConfigReload, Dep, HookOutcome, Inject, Payload, ServerConfig, ShutdownHandle,
+    handlers, service,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -86,5 +89,22 @@ impl Notifications {
             reader_pool: reader.pool_size,
             writer_pool: writer.pool_size,
         }
+    }
+
+    /// Reacts to a reload of the `app.greet` config: it receives the proposed greeting
+    /// before the swap is committed and reports that it applied cleanly. Fires only when
+    /// `app.greet` actually changes.
+    #[hook(ConfigReload)]
+    async fn on_greet_reload(
+        &self,
+        #[config("app.greet")] next: CfgNext<Config>,
+    ) -> overseerd::Result<HookOutcome> {
+        tracing::info!(
+            target: "overseerd::example",
+            greeting = %next.greeting,
+            "greeting config reloaded"
+        );
+
+        Ok(HookOutcome::Reloaded)
     }
 }

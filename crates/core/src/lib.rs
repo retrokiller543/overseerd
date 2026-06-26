@@ -18,6 +18,7 @@ pub mod descriptors;
 pub mod dirs;
 pub mod error;
 pub mod extract;
+pub mod hooks;
 pub mod lifecycle;
 pub mod middleware;
 pub mod registry;
@@ -43,11 +44,15 @@ pub use overseerd_transport::{
 
 pub use builtins::{LoggingConfig, ServerConfig};
 pub use config::{
-    Cfg, ChangedBinding, ConfigBinding, ConfigBindingDescriptor, ConfigDefaults, ConfigError,
-    ConfigManager, ConfigProperties, ConfigReloadError, ConfigReloadReport, ConfigReloader,
-    DefaultSpec, EnumTag, ReloadableConfig,
+    Cfg, CfgNext, ChangedBinding, ComponentHookReport, ConfigBinding, ConfigBindingDescriptor,
+    ConfigDefaults, ConfigError, ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError,
+    ConfigReloadReport, ConfigReloader, DefaultSpec, EnumTag, HookOutcome, ReloadProposal,
+    ReloadableConfig,
 };
 pub use container::{ComponentContainer, ScopeContainer};
+pub use hooks::{
+    ComponentHooks, HookCall, HookDescriptor, HookKind, HookManager, HookParam, no_hooks,
+};
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cardinality, Component,

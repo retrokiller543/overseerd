@@ -31,6 +31,7 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
     let mut wrappers = Vec::new();
     let mut descriptors = Vec::new();
     let mut client_methods = Vec::new();
+    let mut hooks: Vec<crate::hook::HookInfo> = Vec::new();
 
     for impl_item in &mut item.items {
         let ImplItem::Fn(method) = impl_item else {
@@ -42,6 +43,15 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
                 &method.sig,
                 "#[init] is a lifecycle method — put it in a #[methods] impl, not #[handlers]",
             ));
+        }
+
+        if let Some(pos) = method.attrs.iter().position(|a| a.path().is_ident("hook")) {
+            let attr = method.attrs.remove(pos);
+            let kind = crate::hook::parse_hook_kind(&attr)?;
+
+            hooks.push(crate::hook::parse_hook(method, kind)?);
+
+            continue;
         }
 
         let Some(pos) = method.attrs.iter().position(|a| a.path().is_ident("rpc")) else {
@@ -58,6 +68,15 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
         descriptors.push(descriptor);
         client_methods.push(client);
     }
+
+    let hooks_slice = crate::inject::hooks_slice_ident(&self_ident);
+    let hook_tokens: Vec<TokenStream> = hooks
+        .iter()
+        .enumerate()
+        .map(|(index, info)| {
+            crate::hook::generate_hook(&self_ty, &self_name, &hooks_slice, info, index)
+        })
+        .collect();
 
     let client_code = generate_client(&self_ident, &args.client_trait, &client_methods);
 
@@ -98,6 +117,8 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
             #(#wrappers)*
 
             #rpc_registration
+
+            #(#hook_tokens)*
         };
     })
 }
