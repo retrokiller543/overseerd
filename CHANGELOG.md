@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.5.0...overseerd-v0.6.0) - 2026-06-26
+
+### Other
+
+- Config hot-reloading: Live/Dep, mutable Cfg, two-phase reload, hooks, and triggers ([#14](https://github.com/retrokiller543/overseerd/pull/14))
+
 ## [0.5.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.4.0...overseerd-v0.5.0) - 2026-06-25
 
 ### Other
