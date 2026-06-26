@@ -51,7 +51,8 @@ pub use config::{
 };
 pub use container::{ComponentContainer, ScopeContainer};
 pub use hooks::{
-    ComponentHooks, HookCall, HookDescriptor, HookKind, HookManager, HookParam, no_hooks,
+    ComponentHooks, HookCall, HookDescriptor, HookKind, HookManager, HookParam, Shutdown, Startup,
+    no_hooks,
 };
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{

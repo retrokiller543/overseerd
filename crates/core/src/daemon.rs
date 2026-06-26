@@ -15,7 +15,7 @@ use crate::{
         ConfigBinding, ConfigManager, ConfigProperties, ConfigReloader, ReloadTriggers,
         ReloadableConfig, spawn_reload_triggers,
     },
-    hooks::{HookDescriptor, HookManager},
+    hooks::{HookDescriptor, HookKind, HookManager, Shutdown, Startup},
     container::{ScopeContainer, ScopeRegistry, topological_sort},
     descriptors::{
         BoxedComponent, Component, ComponentDescriptor, ComponentScope, Descriptor, Injectable,
@@ -683,6 +683,10 @@ impl Daemon {
         let request_order = self.request_order;
         let needs_peer = self.needs_peer;
         let mut shutdown = self.shutdown;
+        let hook_manager = self.hook_manager;
+
+        // Run startup hooks before accepting work; an error aborts serve.
+        run_lifecycle::<Startup>(&hook_manager, true).await?;
 
         // Spawn the configured config-reload triggers (SIGHUP / file watch); aborted on
         // shutdown below. Manual reload via the injected `ConfigReloader` is always on.
@@ -733,6 +737,9 @@ impl Daemon {
             task.abort();
         }
 
+        // Graceful stop: run shutdown hooks (errors are logged, shutdown proceeds).
+        run_lifecycle::<Shutdown>(&hook_manager, false).await.ok();
+
         info!(target: "overseerd::daemon", transport = transport_name, "serve stopped");
 
         Ok(())
@@ -741,6 +748,9 @@ impl Daemon {
     /// Waits for ctrl-c or a shutdown signal without serving any transport.
     pub async fn run(self) -> crate::Result<()> {
         let mut shutdown = self.shutdown;
+        let hook_manager = self.hook_manager;
+
+        run_lifecycle::<Startup>(&hook_manager, true).await?;
 
         let trigger_tasks = spawn_reload_triggers(self.reloader, self.reload_triggers);
 
@@ -753,8 +763,37 @@ impl Daemon {
             task.abort();
         }
 
+        run_lifecycle::<Shutdown>(&hook_manager, false).await.ok();
+
         Ok(())
     }
+}
+
+/// Runs a process-lifecycle hook kind (`Startup`/`Shutdown`) over the registered hooks.
+/// With `abort_on_error`, the first failing hook propagates its error (startup); otherwise
+/// failures are logged and the remaining hooks still run (shutdown). A no-op when nothing
+/// listens (`run` is an O(1) miss).
+async fn run_lifecycle<K>(hooks: &HookManager, abort_on_error: bool) -> crate::Result<()>
+where
+    K: HookKind<Cx = (), Output = ()>,
+{
+    for (component, result) in hooks.run::<K>(&(), |_| true).await {
+        if let Err(error) = result {
+            error!(
+                target: "overseerd::daemon",
+                hook = K::NAME,
+                component = %component.name,
+                %error,
+                "lifecycle hook failed"
+            );
+
+            if abort_on_error {
+                return Err(error);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[instrument(

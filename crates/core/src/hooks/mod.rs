@@ -13,6 +13,10 @@
 //! (the `{Type}Hooks` distributed slice, exposed via [`ComponentHooks`]) and registered into
 //! a [`HookManager`]; a type with no hooks contributes nothing at runtime.
 
+mod lifecycle;
+
+pub use lifecycle::{Shutdown, Startup};
+
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::future::Future;
