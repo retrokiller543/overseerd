@@ -6,15 +6,24 @@
 //! property path — the same type may appear at several paths — with a type-only
 //! shorthand that resolves only when exactly one binding of that type exists.
 
+mod reload;
 mod source;
+mod trigger;
 
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 
-use crate::descriptors::{BoxedComponent, Injectable, TypeDescriptor};
+use crate::descriptors::{BoxedComponent, Injectable, Live, LiveRef, TypeDescriptor};
+
+use reload::ConfigSlot;
+pub use reload::{
+    CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, ChangedBinding, ComponentHookReport, ConfigReload,
+    ConfigReloadError, ConfigReloadReport, ConfigReloader, HookOutcome, ReloadProposal,
+    ReloadableConfig,
+};
+pub(crate) use trigger::spawn_reload_triggers;
 
 pub use overseerd_config::{DefaultSpec, EnumTag};
 
@@ -37,7 +46,7 @@ impl<T: ConfigProperties> ConfigDefaults for T {
 }
 #[cfg(feature = "yaml")]
 pub use source::Yaml;
-pub use source::{ConfigManager, Dynamic, Format, FormatId, Toml};
+pub use source::{ConfigManager, Dynamic, Format, FormatId, ReloadTriggers, Toml};
 
 /// Errors from loading, merging, and binding configuration.
 #[derive(Debug, thiserror::Error)]
@@ -69,28 +78,113 @@ pub enum ConfigError {
 
 /// An injected configuration value, bound from a property path.
 ///
-/// Wraps `Arc<T>` and derefs to it. The path is supplied at the injection site via
-/// `#[config("...")]` (or omitted for the sole-binding shorthand). Reads always go
-/// through `Cfg<T>` rather than a raw `Arc<T>`, which reserves the seam a future
-/// hot-reload needs without changing any injection site.
-pub struct Cfg<T>(pub Arc<T>);
+/// Backed by a shared [`Live<T>`] slot, so a config reload swaps the value in place
+/// and every holder observes it on the next read; snapshots taken earlier stay
+/// pinned. The path is supplied at the injection site via `#[config("...")]` (or
+/// omitted for the sole-binding shorthand). Read with [`get`](Self::get) (a guard)
+/// or [`snapshot`](Self::snapshot) (an owned `Arc`).
+pub struct Cfg<T> {
+    live: Live<T>,
+    path: Arc<str>,
+}
 
-impl<T> Clone for Cfg<T> {
-    fn clone(&self) -> Self {
-        Self(Arc::clone(&self.0))
+impl<T: Send + Sync + 'static> Cfg<T> {
+    /// Wraps a freshly bound value with the property path it was bound at.
+    pub(crate) fn new(value: T, path: impl Into<Arc<str>>) -> Self {
+        Self {
+            live: Live::new(Arc::new(value)),
+            path: path.into(),
+        }
+    }
+
+    /// A guard pinning the current value, dereferencing to `T`, for short reads.
+    pub fn get(&self) -> LiveRef<'_, T> {
+        self.live.get()
+    }
+
+    /// An owned `Arc` snapshot of the current value — stable once taken.
+    pub fn snapshot(&self) -> Arc<T> {
+        self.live.snapshot()
+    }
+
+    /// The property path this value was bound from.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    /// Publishes a re-bound value into the slot. Used by a config reload at commit.
+    #[allow(dead_code)]
+    pub(crate) fn replace(&self, value: Arc<T>) {
+        self.live.replace(value);
     }
 }
 
-impl<T> Deref for Cfg<T> {
-    type Target = Arc<T>;
-
-    fn deref(&self) -> &Arc<T> {
-        &self.0
+impl<T: Send + Sync + 'static> Clone for Cfg<T> {
+    fn clone(&self) -> Self {
+        Self {
+            live: self.live.clone(),
+            path: Arc::clone(&self.path),
+        }
     }
 }
 
 impl<T: Send + Sync + 'static> Injectable for Cfg<T> {
     type Target = T;
+    type Stored = Self;
+
+    fn into_stored(self) -> Self {
+        self
+    }
+
+    fn from_stored(stored: &Self) -> Self {
+        stored.clone()
+    }
+}
+
+/// A **proposed** configuration value handed to a `#[hook(ConfigReload)]` method during a
+/// reload, before it is committed. Read-only; derefs to `T`. If every hook accepts the
+/// proposal the value is committed into its [`Cfg<T>`] slot, otherwise it is discarded.
+pub struct CfgNext<T> {
+    value: Arc<T>,
+    path: Arc<str>,
+}
+
+impl<T> CfgNext<T> {
+    pub(crate) fn new(value: Arc<T>, path: Arc<str>) -> Self {
+        Self { value, path }
+    }
+
+    /// The proposed value.
+    pub fn get(&self) -> &T {
+        &self.value
+    }
+
+    /// An owned `Arc` of the proposed value.
+    pub fn snapshot(&self) -> Arc<T> {
+        Arc::clone(&self.value)
+    }
+
+    /// The property path this value was bound from.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+impl<T> Clone for CfgNext<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: Arc::clone(&self.value),
+            path: Arc::clone(&self.path),
+        }
+    }
+}
+
+impl<T> std::ops::Deref for CfgNext<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.value
+    }
 }
 
 /// A struct bindable from a configuration subtree, injectable as [`Cfg<Self>`].
@@ -119,8 +213,14 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
 
         Ok(BoxedComponent {
             ty: TypeDescriptor::of::<Self>(Self::NAME),
-            value: Box::new(Cfg(Arc::new(value))),
+            value: Box::new(Cfg::new(value, path)),
         })
+    }
+
+    /// Recovers a [`ReloadableConfig`] slot from a [`bind`](Self::bind) seed, sharing
+    /// its live cell so a reload can re-publish the value in place.
+    fn slot(seed: &BoxedComponent, path: &str) -> Option<Box<dyn ReloadableConfig>> {
+        ConfigSlot::<Self>::from_seed(seed, path)
     }
 }
 
@@ -129,22 +229,28 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
 /// bound at several paths; the `bind` thunk is monomorphized per type so the manager need not
 /// name it. `defaults` is the type's compile-time [`DefaultSpec`], carried so the manager can
 /// seed every bound type's defaults into the tree (enabling cross-path `${a.b.c}` references).
+/// Monomorphized-per-type recovery of a [`ReloadableConfig`] from a bind seed, so the
+/// type-erased manager can build reload slots without naming the config type.
+pub type SlotThunk = fn(&BoxedComponent, &str) -> Option<Box<dyn ReloadableConfig>>;
+
 #[derive(Clone)]
 pub struct ConfigBinding {
     pub ty: TypeDescriptor,
     pub path: String,
     pub bind: fn(&ConfigManager, &str) -> Result<BoxedComponent, ConfigError>,
+    pub slot: SlotThunk,
     pub defaults: DefaultSpec,
 }
 
 impl ConfigBinding {
-    /// Builds a binding for type `T` at `path`, capturing `T`'s `bind` thunk and
-    /// compile-time defaults.
+    /// Builds a binding for type `T` at `path`, capturing `T`'s `bind`/`slot` thunks
+    /// and compile-time defaults.
     pub fn of<T: ConfigProperties>(path: impl Into<String>) -> Self {
         Self {
             ty: TypeDescriptor::of::<T>(T::NAME),
             path: path.into(),
             bind: T::bind,
+            slot: T::slot,
             defaults: T::DEFAULTS,
         }
     }
@@ -169,6 +275,7 @@ pub struct ConfigBindingDescriptor {
     pub ty: TypeDescriptor,
     pub path: &'static str,
     pub bind: fn(&ConfigManager, &str) -> Result<BoxedComponent, ConfigError>,
+    pub slot: SlotThunk,
     pub defaults: DefaultSpec,
 }
 
@@ -179,6 +286,7 @@ impl ConfigBindingDescriptor {
             ty: self.ty,
             path: self.path.to_string(),
             bind: self.bind,
+            slot: self.slot,
             defaults: self.defaults,
         }
     }

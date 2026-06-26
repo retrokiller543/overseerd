@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use crate::components::{Config, DbConfig, DbConnection};
 use crate::notifiers::Notifier;
-use overseerd::{Cfg, Inject, Payload, ServerConfig, ShutdownHandle, handlers, service};
+use overseerd::{
+    Cfg, CfgNext, ConfigReload, Dep, HookOutcome, Inject, Payload, ServerConfig, ShutdownHandle,
+    handlers, service,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -57,9 +60,13 @@ impl Notifications {
     async fn notify(
         &self,
         Payload(req): Payload<NotifyRequest>,
-        Inject(db): Inject<DbConnection>,
+        Inject(db): Inject<Dep<DbConnection>>,
     ) -> NotifyResponse {
-        let count = db.record_query();
+        let count = db.get().record_query();
+        let config = self.config.snapshot();
+        let reader = self.reader.snapshot();
+        let writer = self.writer.snapshot();
+        let server = self.server.snapshot();
 
         let mut delivered: Vec<String> = self.all.iter().map(|n| n.channel().to_string()).collect();
         delivered.sort_unstable();
@@ -68,19 +75,36 @@ impl Notifications {
             &self.default,
             &self.by_channel,
             &req.message,
-            &self.reader.url,
-            &self.writer.url,
+            &reader.url,
+            &writer.url,
             &self.shutdown,
-            &self.server.bind,
-            self.server.port,
+            &server.bind,
+            server.port,
         );
 
         NotifyResponse {
-            greeting: self.config.greeting.clone(),
+            greeting: config.greeting.clone(),
             delivered_to: delivered,
             query_count: count,
-            reader_pool: self.reader.pool_size,
-            writer_pool: self.writer.pool_size,
+            reader_pool: reader.pool_size,
+            writer_pool: writer.pool_size,
         }
+    }
+
+    /// Reacts to a reload of the `app.greet` config: it receives the proposed greeting
+    /// before the swap is committed and reports that it applied cleanly. Fires only when
+    /// `app.greet` actually changes.
+    #[hook(ConfigReload)]
+    async fn on_greet_reload(
+        &self,
+        #[config("app.greet")] next: CfgNext<Config>,
+    ) -> overseerd::Result<HookOutcome> {
+        tracing::info!(
+            target: "overseerd::example",
+            greeting = %next.greeting,
+            "greeting config reloaded"
+        );
+
+        Ok(HookOutcome::Reloaded)
     }
 }

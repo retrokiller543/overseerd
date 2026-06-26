@@ -62,7 +62,7 @@ pub(crate) async fn construct_transient<H: Injectable>(
         ComponentConstructionContext::new(ComponentScope::Transient, parent, Arc::clone(registry));
 
     match (factory.construct)(&mut cx).await {
-        Ok(boxed) => boxed.value.downcast_ref::<H>().cloned(),
+        Ok(boxed) => crate::descriptors::component::from_boxed::<H>(&boxed),
 
         Err(e) => {
             error!(component = %descriptor.name, error = %e, "transient construction failed");

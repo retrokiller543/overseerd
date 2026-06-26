@@ -6,98 +6,145 @@
 //!     services: [Notifications, Echo],
 //!     configs: [ DbConfig => "app.db.reader", DbConfig => "app.db.writer" ],
 //!     managers: {
-//!         config: config,        // a pre-built `ConfigManager`
-//!         directories: dirs,     // a pre-built `DirectoriesManager`
+//!         // a pre-built manager instance ...
+//!         directories: dirs,
+//!         // ... or a per-manager config block the macro constructs + configures:
+//!         config: { watch: true, sighup: true, debounce: std::time::Duration::from_millis(250) },
 //!     },
 //! }
 //! .build()
 //! .await?;
 //! ```
 //!
-//! Expands to a `DaemonBuilder`: `Daemon::builder(name).auto_discover()`, a
-//! `with_component(..)` for each listed instance, a `config::<T>(path)` for each
-//! `configs` entry, and `config_source`/`directories` calls for the `managers`
-//! bindings (both optional — the builder constructs defaults otherwise). The listed
-//! `services` are also asserted `Wired` (under `di-check`), so the same declaration
-//! that builds the daemon validates its dependency graph at compile time — no
-//! separate list to keep in sync.
+//! Each `managers` entry is either an **instance** (any expression) or a **config block**
+//! (`{ key: value, .. }`) that applies settings to just that manager. A `config` block with
+//! no `source` is loaded from the `directories` manager (which must then be present), so the
+//! file-reload triggers (`sighup`/`watch`/`debounce`) configure the `ConfigManager` itself —
+//! never the daemon. The listed `services` are asserted `Wired` (under `di-check`).
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use std::collections::HashSet;
-use std::hash::Hash;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{Expr, Ident, LitStr, Token, Type, braced, bracketed};
+use syn::{Expr, Ident, LitBool, LitStr, Token, Type, braced, bracketed};
 
 use crate::{di, paths::overseerd_path};
 
-/// Parsed `daemon! { name: .., services: [..], components: [..], configs: [..] }`.
+/// Parsed `daemon! { .. }`.
 pub struct DaemonInput {
     name: Expr,
     services: Vec<Type>,
     components: Vec<Expr>,
     configs: Vec<ConfigEntry>,
-    managers: HashSet<ManagerInstance>,
+    config_manager: Option<ManagerSource<ConfigSettings>>,
+    directories_manager: Option<ManagerSource<DirSettings>>,
     middleware: Vec<Expr>,
     guards: Vec<Expr>,
     error_handler: Option<Expr>,
 }
 
-/// Parses <manager>: <ident>
-pub enum ManagerInstance {
-    Config(Option<Ident>),
-    Directories(Option<Ident>),
+/// How a manager is supplied in the `managers` block: a pre-built instance, or settings the
+/// macro uses to construct and configure it.
+// A short-lived parse type built once per `daemon!`; variant size is irrelevant.
+#[allow(clippy::large_enum_variant)]
+enum ManagerSource<S> {
+    Instance(Expr),
+    Configure(S),
 }
 
-impl PartialEq for ManagerInstance {
-    fn eq(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (Self::Config(_), Self::Config(_)) | (Self::Directories(_), Self::Directories(_))
-        )
-    }
+/// Settings for a macro-constructed `ConfigManager`.
+#[derive(Default)]
+struct ConfigSettings {
+    /// A base manager expression to configure; if absent, the macro loads from the
+    /// `directories` manager.
+    source: Option<Expr>,
+    /// Profiles passed to `load_from` when building a default source (`&[]` if omitted).
+    profiles: Option<Expr>,
+    sighup: bool,
+    watch: bool,
+    debounce: Option<Expr>,
 }
 
-impl Eq for ManagerInstance {}
-
-impl Hash for ManagerInstance {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        match self {
-            Self::Config(_) => "config".hash(state),
-            Self::Directories(_) => "directories".hash(state),
-        }
-    }
-}
-
-impl Parse for ManagerInstance {
+impl Parse for ConfigSettings {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let ident: Ident = input.parse()?;
-        input.parse::<Token![:]>()?;
+        let mut settings = ConfigSettings::default();
 
-        match ident.to_string().as_str() {
-            "config" => Ok(Self::Config(Some(input.parse()?))),
-            "directories" => Ok(Self::Directories(Some(input.parse()?))),
-            _ => Err(syn::Error::new(input.span(), "Unknown manager instance")),
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            input.parse::<Token![:]>()?;
+
+            match key.to_string().as_str() {
+                "source" => settings.source = Some(input.parse()?),
+                "profiles" => settings.profiles = Some(input.parse()?),
+                "sighup" => settings.sighup = input.parse::<LitBool>()?.value,
+                "watch" => settings.watch = input.parse::<LitBool>()?.value,
+                "debounce" => settings.debounce = Some(input.parse()?),
+                other => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        format!(
+                            "unknown `config` setting `{other}`; expected `source`, `profiles`, \
+                             `sighup`, `watch`, or `debounce`"
+                        ),
+                    ));
+                }
+            }
+
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
         }
+
+        Ok(settings)
     }
 }
 
-impl quote::ToTokens for ManagerInstance {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
-        let default_config = Ident::new("config", proc_macro2::Span::call_site());
-        let default_directories = Ident::new("directories", proc_macro2::Span::call_site());
+/// Settings for a macro-constructed `DirectoriesManager`.
+#[derive(Default)]
+struct DirSettings {
+    app: Option<Expr>,
+    root: Option<Expr>,
+}
 
-        let ident = match self {
-            ManagerInstance::Config(ident) => ident.as_ref().unwrap_or(&default_config),
-            ManagerInstance::Directories(ident) => ident.as_ref().unwrap_or(&default_directories),
-        };
+impl Parse for DirSettings {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut settings = DirSettings::default();
 
-        let new_tokens = quote! {
-            #ident
-        };
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            input.parse::<Token![:]>()?;
 
-        tokens.extend(new_tokens);
+            match key.to_string().as_str() {
+                "app" => settings.app = Some(input.parse()?),
+                "root" => settings.root = Some(input.parse()?),
+                other => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        format!(
+                            "unknown `directories` setting `{other}`; expected `app` or `root`"
+                        ),
+                    ));
+                }
+            }
+
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+
+        Ok(settings)
+    }
+}
+
+/// Parses a manager value: a `{ .. }` config block, or any expression instance.
+fn parse_manager_source<S: Parse>(input: ParseStream) -> syn::Result<ManagerSource<S>> {
+    if input.peek(syn::token::Brace) {
+        let content;
+        braced!(content in input);
+
+        Ok(ManagerSource::Configure(content.parse()?))
+    } else {
+        Ok(ManagerSource::Instance(input.parse()?))
     }
 }
 
@@ -123,7 +170,8 @@ impl Parse for DaemonInput {
         let mut services = Vec::new();
         let mut components = Vec::new();
         let mut configs = Vec::new();
-        let mut managers = HashSet::new();
+        let mut config_manager = None;
+        let mut directories_manager = None;
         let mut middleware = Vec::new();
         let mut guards = Vec::new();
         let mut error_handler = None;
@@ -137,7 +185,7 @@ impl Parse for DaemonInput {
                 "services" => services = bracketed_list::<Type>(input)?,
                 "components" => components = bracketed_list::<Expr>(input)?,
                 "configs" => configs = bracketed_list::<ConfigEntry>(input)?,
-                "managers" => managers = braced::<ManagerInstance>(input)?.collect(),
+                "managers" => parse_managers(input, &mut config_manager, &mut directories_manager)?,
                 "middleware" => middleware = bracketed_list::<Expr>(input)?,
                 "guards" => guards = bracketed_list::<Expr>(input)?,
                 "error_handler" => error_handler = Some(input.parse()?),
@@ -165,12 +213,63 @@ impl Parse for DaemonInput {
             services,
             components,
             configs,
-            managers,
+            config_manager,
+            directories_manager,
             middleware,
             guards,
             error_handler,
         })
     }
+}
+
+/// Parses the `managers: { config: .., directories: .. }` block into the two optional
+/// per-manager sources, rejecting duplicates and unknown keys.
+fn parse_managers(
+    input: ParseStream,
+    config: &mut Option<ManagerSource<ConfigSettings>>,
+    directories: &mut Option<ManagerSource<DirSettings>>,
+) -> syn::Result<()> {
+    let content;
+    braced!(content in input);
+
+    while !content.is_empty() {
+        let key: Ident = content.parse()?;
+        content.parse::<Token![:]>()?;
+
+        match key.to_string().as_str() {
+            "config" => {
+                if config.is_some() {
+                    return Err(syn::Error::new(key.span(), "duplicate `config` manager"));
+                }
+
+                *config = Some(parse_manager_source(&content)?);
+            }
+
+            "directories" => {
+                if directories.is_some() {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "duplicate `directories` manager",
+                    ));
+                }
+
+                *directories = Some(parse_manager_source(&content)?);
+            }
+
+            other => {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!("unknown manager `{other}`, expected `config` or `directories`"),
+                ));
+            }
+        }
+
+        if content.peek(Token![,]) {
+            content.parse::<Token![,]>()?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Parses `[a, b, c]` into a `Vec<T>`.
@@ -182,21 +281,14 @@ fn bracketed_list<T: Parse>(input: ParseStream) -> syn::Result<Vec<T>> {
     Ok(list.into_iter().collect())
 }
 
-fn braced<T: Parse>(input: ParseStream) -> syn::Result<impl Iterator<Item = T>> {
-    let content;
-    braced!(content in input);
-    let list = Punctuated::<T, Token![,]>::parse_terminated(&content)?;
-
-    Ok(list.into_iter())
-}
-
 pub fn expand(input: DaemonInput) -> TokenStream {
     let DaemonInput {
         name,
         services,
         components,
         configs,
-        managers,
+        config_manager,
+        directories_manager,
         middleware,
         guards,
         error_handler,
@@ -206,6 +298,9 @@ pub fn expand(input: DaemonInput) -> TokenStream {
     let config_paths = configs.iter().map(|entry| &entry.path);
 
     let daemon = overseerd_path("Daemon");
+    let config_manager_path = overseerd_path("ConfigManager");
+    let directories_path = overseerd_path("DirectoriesManager");
+    let config_dynamic = overseerd_path("config::Dynamic");
 
     // Under `di-check`, assert each listed service's whole graph is satisfied —
     // discharged here at the use site, where every `Provide` impl is visible.
@@ -225,10 +320,83 @@ pub fn expand(input: DaemonInput) -> TokenStream {
         quote!()
     };
 
-    let config_manager = managers.get(&ManagerInstance::Config(None)).into_iter();
-    let directories_manager = managers
-        .get(&ManagerInstance::Directories(None))
-        .into_iter();
+    // Materialize the directories manager (if any) once, so both the config loader and the
+    // builder share the same instance.
+    let mut directories_binding = quote!();
+    let mut directories_call = quote!();
+    let mut directories_available = false;
+
+    match &directories_manager {
+        Some(ManagerSource::Instance(expr)) => {
+            directories_binding = quote!(let __overseerd_directories = #expr;);
+            directories_call = quote!(.directories(__overseerd_directories));
+            directories_available = true;
+        }
+
+        Some(ManagerSource::Configure(settings)) => {
+            let expr = if let Some(root) = &settings.root {
+                quote!(#directories_path::from_path(#root))
+            } else if let Some(app) = &settings.app {
+                quote!(#directories_path::for_app(#app))
+            } else {
+                return error("a `directories` config block needs `app` or `root`");
+            };
+
+            directories_binding = quote!(let __overseerd_directories = #expr;);
+            directories_call = quote!(.directories(__overseerd_directories));
+            directories_available = true;
+        }
+
+        None => {}
+    }
+
+    // Materialize the config manager (if any). A config block with no `source` is loaded
+    // from the directories manager, so the trigger settings configure the manager itself.
+    let mut config_binding = quote!();
+    let mut config_call = quote!();
+
+    match &config_manager {
+        Some(ManagerSource::Instance(expr)) => {
+            config_binding = quote!(let __overseerd_config = #expr;);
+            config_call = quote!(.config_source(__overseerd_config));
+        }
+
+        Some(ManagerSource::Configure(settings)) => {
+            let base = if let Some(source) = &settings.source {
+                quote!(#source)
+            } else if directories_available {
+                let profiles = match &settings.profiles {
+                    Some(profiles) => quote!(#profiles),
+                    None => quote!(&[]),
+                };
+
+                quote!(#config_manager_path::<#config_dynamic>::load_from(&__overseerd_directories, #profiles)?)
+            } else {
+                return error(
+                    "a `config` block without `source` requires a `directories` manager to load from",
+                );
+            };
+
+            let mut chain = base;
+
+            if settings.sighup {
+                chain = quote!(#chain.reload_on_sighup());
+            }
+
+            if settings.watch {
+                chain = quote!(#chain.watch_config());
+            }
+
+            if let Some(debounce) = &settings.debounce {
+                chain = quote!(#chain.config_reload_debounce(#debounce));
+            }
+
+            config_binding = quote!(let __overseerd_config = #chain;);
+            config_call = quote!(.config_source(__overseerd_config));
+        }
+
+        None => {}
+    }
 
     let error_handler = error_handler.into_iter();
 
@@ -236,15 +404,23 @@ pub fn expand(input: DaemonInput) -> TokenStream {
         {
             #assertion
 
+            #directories_binding
+            #config_binding
+
             #daemon::builder(#name)
                 .auto_discover()
                 #(.with_component(#components))*
                 #(.config::<#config_tys>(#config_paths))*
-                #(.config_source(#config_manager))*
-                #(.directories(#directories_manager))*
+                #config_call
+                #directories_call
                 #(.middleware(#middleware))*
                 #(.guard(#guards))*
                 #(.error_handler(#error_handler))*
         }
     }
+}
+
+/// A `compile_error!` expansion for an invalid `managers` configuration.
+fn error(message: &str) -> TokenStream {
+    syn::Error::new(Span::call_site(), message).to_compile_error()
 }

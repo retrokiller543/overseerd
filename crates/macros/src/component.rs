@@ -37,6 +37,8 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         .clone()
         .unwrap_or_else(|| inject::factories_slice_ident(&self_ident));
     let factories_infra = inject::factories_infrastructure(&self_ident, &factories_slice);
+    let hooks_slice = inject::hooks_slice_ident(&self_ident);
+    let hooks_infra = inject::hooks_infrastructure(&self_ident, &hooks_slice);
 
     // An explicit `factory = path` replaces the field-injection default; so does
     // `default_factory = false` (the manual case). Otherwise the default is emitted.
@@ -70,6 +72,8 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         #provide_impl
 
         #factories_infra
+
+        #hooks_infra
 
         const _: () = {
             #factory

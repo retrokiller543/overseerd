@@ -40,7 +40,7 @@ impl FactorySvc {
     #[init]
     async fn create(counter: Arc<Counter>, cfg: Cfg<FactoryCfg>) -> overseerd::Result<Self> {
         Ok(Self {
-            total: counter.base + cfg.seed,
+            total: counter.base + cfg.get().seed,
         })
     }
 }
@@ -93,7 +93,7 @@ impl BoxedErrComp {
         let parsed: u32 = "7".parse()?;
 
         Ok(Self {
-            value: cfg.seed + parsed,
+            value: cfg.get().seed + parsed,
         })
     }
 }

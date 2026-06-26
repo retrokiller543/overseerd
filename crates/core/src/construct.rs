@@ -25,8 +25,8 @@ use std::sync::Arc;
 
 use crate::config::Cfg;
 use crate::descriptors::{
-    BoxedComponent, Cardinality, Component, ComponentConstructionContext, DependencyDescriptor,
-    Injectable, TypeDescriptor,
+    BoxedComponent, Cardinality, Component, ComponentConstructionContext, Dep,
+    DependencyDescriptor, Injectable, TypeDescriptor,
 };
 use crate::error::Error;
 
@@ -85,6 +85,25 @@ where
 
     async fn from_container(cx: &ComponentConstructionContext) -> crate::Result<Self> {
         cx.resolve::<Arc<T>>()
+            .await
+            .ok_or(Error::MissingComponent(short_name::<T>()))
+    }
+}
+
+/// A live, reloadable dependency. Resolves the same component as `Arc<T>` (keyed by
+/// `T`), but hands back a `Dep<T>` sharing the component's live slot, so a later
+/// reload swap is observed. `Target = T ≠ Dep<T>`, so this does not overlap the
+/// by-value blanket below.
+impl<T> FromContainer for Dep<T>
+where
+    T: ?Sized + Send + Sync + 'static,
+{
+    fn dependency() -> DependencyDescriptor {
+        dependency_of::<T>(Cardinality::One, false, false)
+    }
+
+    async fn from_container(cx: &ComponentConstructionContext) -> crate::Result<Self> {
+        cx.resolve::<Dep<T>>()
             .await
             .ok_or(Error::MissingComponent(short_name::<T>()))
     }
@@ -241,13 +260,13 @@ macro_rules! impl_factory {
                 let output = (self)($($ty,)*).await;
                 let component = output.into_component()?;
 
+                let handle = <Out::Component as Component>::into_handle(component);
+
                 Ok(BoxedComponent {
                     ty: TypeDescriptor::of::<Out::Component>(
                         <Out::Component as Component>::NAME,
                     ),
-                    value: ::std::boxed::Box::new(
-                        <Out::Component as Component>::into_handle(component),
-                    ),
+                    value: ::std::boxed::Box::new(Injectable::into_stored(handle)),
                 })
             }
         }

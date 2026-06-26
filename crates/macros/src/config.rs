@@ -93,6 +93,7 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput) -> syn::Result<TokenStrea
                     ty: #type_descriptor::of::<#ident>(#name),
                     path: #path,
                     bind: <#ident as #config_properties>::bind,
+                    slot: <#ident as #config_properties>::slot,
                     defaults: <#ident as #config_properties>::DEFAULTS,
                 };
             }

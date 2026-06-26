@@ -11,14 +11,18 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     ServiceComponent,
-    config::{ConfigBinding, ConfigManager, ConfigProperties},
+    config::{
+        ConfigBinding, ConfigManager, ConfigProperties, ConfigReloader, ReloadTriggers,
+        ReloadableConfig, spawn_reload_triggers,
+    },
     container::{ScopeContainer, ScopeRegistry, topological_sort},
     descriptors::{
-        BoxedComponent, Component, ComponentDescriptor, ComponentScope, Descriptor, RpcCallContext,
-        RpcOutcome, RpcResponse, ServiceDescriptor, TypeDescriptor,
+        BoxedComponent, Component, ComponentDescriptor, ComponentScope, Descriptor, Injectable,
+        RpcCallContext, RpcOutcome, RpcResponse, ServiceDescriptor, TypeDescriptor,
     },
     dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp},
     extract::ErrorResponse,
+    hooks::{HookDescriptor, HookKind, HookManager, Shutdown, Startup},
     lifecycle::{ShutdownHandle, ShutdownSignal},
     middleware::{ErrorHandler, Guard, GuardLayer, RouterService, RpcRequest, RpcService},
     registry::DescriptorRegistry,
@@ -52,6 +56,30 @@ static SHUTDOWN_HANDLE_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::ma
     crate::builtins::shutdown::SHUTDOWN_HANDLE_ID,
     crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME,
     TypeDescriptor::of::<ShutdownHandle>(crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME),
+    ComponentScope::Singleton,
+);
+
+/// The framework-provided singleton injectable for triggering a config reload.
+///
+/// Seeded into the root scope with a [`ConfigReloader`] over the daemon's config
+/// manager and its bound slots, so any component or handler can inject it and call
+/// `reload()`.
+static CONFIG_RELOADER_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    crate::config::CONFIG_RELOADER_ID,
+    crate::config::CONFIG_RELOADER_NAME,
+    TypeDescriptor::of::<ConfigReloader>(crate::config::CONFIG_RELOADER_NAME),
+    ComponentScope::Singleton,
+);
+
+/// The framework-provided singleton injectable that runs lifecycle/event hooks.
+///
+/// Seeded into the root scope with a [`HookManager`] over every component's `#[hook]`
+/// methods, so any component or handler can inject it; the
+/// [`ConfigReloader`](crate::config::ConfigReloader) holds it to fire reload hooks.
+static HOOK_MANAGER_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    crate::hooks::HOOK_MANAGER_ID,
+    crate::hooks::HOOK_MANAGER_NAME,
+    TypeDescriptor::of::<HookManager>(crate::hooks::HOOK_MANAGER_NAME),
     ComponentScope::Singleton,
 );
 
@@ -128,7 +156,7 @@ impl DaemonBuilder {
 
         self.instances.push(BoxedComponent {
             ty: TypeDescriptor::of::<T>(T::NAME),
-            value: Box::new(value.into_handle()),
+            value: Box::new(Injectable::into_stored(value.into_handle())),
         });
 
         self
@@ -287,6 +315,12 @@ impl DaemonBuilder {
         // directories so any component can inject them.
         seed_builtins(&shutdown, &mut registry, &mut instances);
 
+        // The config reloader and hook manager are always available; declare them now so
+        // they partition as singletons. Their instances are seeded below, once the config
+        // slots and collected hooks exist.
+        registry.components.push(CONFIG_RELOADER_DESCRIPTOR);
+        registry.components.push(HOOK_MANAGER_DESCRIPTOR);
+
         // Finalize the config manager — it owns the config registry. Auto-discovery (gated on
         // the builder's `auto_discover`, so a daemon without it auto-registers no configs)
         // registers `#[config(path)]` types and seeds their defaults; explicit `config::<T>`
@@ -317,6 +351,19 @@ impl DaemonBuilder {
         let resolved = registry.resolved_components()?;
         registry.components = resolved.clone();
 
+        // Collect every component's `#[hook]` methods (empty slices contribute nothing)
+        // into the hook manager, seeded as a framework singleton. Its container is attached
+        // once the root scope is built.
+        let hooks: Vec<HookDescriptor> = resolved
+            .iter()
+            .flat_map(|component| (component.hooks)().iter().copied())
+            .collect();
+        let hook_manager = HookManager::new(hooks);
+        instances.push(BoxedComponent {
+            ty: TypeDescriptor::of::<HookManager>(crate::hooks::HOOK_MANAGER_NAME),
+            value: Box::new(Injectable::into_stored(hook_manager.clone())),
+        });
+
         // Config types are seeded before any factory runs, so the connection/request
         // scopes treat them as prebuilt for ordering.
         let config_type_ids: Vec<TypeId> = registry
@@ -329,12 +376,30 @@ impl DaemonBuilder {
 
         let mut config_seeds: Vec<(String, BoxedComponent)> =
             Vec::with_capacity(registry.config_bindings.len());
+        let mut reload_slots: Vec<Box<dyn ReloadableConfig>> =
+            Vec::with_capacity(registry.config_bindings.len());
 
         for binding in &registry.config_bindings {
             let boxed = (binding.bind)(&tree, &binding.path)?;
 
+            if let Some(slot) = (binding.slot)(&boxed, &binding.path) {
+                reload_slots.push(slot);
+            }
+
             config_seeds.push((binding.path.clone(), boxed));
         }
+
+        // Capture the manager's reload triggers before it moves into the reloader, so
+        // `serve`/`run` can spawn the matching background tasks.
+        let reload_triggers = tree.triggers();
+
+        // Build the reloader over the (now finalized) manager and the slots sharing the
+        // bound configs' live cells, then seed it as a framework singleton instance.
+        let reloader = ConfigReloader::new(tree, reload_slots, hook_manager.clone());
+        instances.push(BoxedComponent {
+            ty: TypeDescriptor::of::<ConfigReloader>(crate::config::CONFIG_RELOADER_NAME),
+            value: Box::new(Injectable::into_stored(reloader.clone())),
+        });
 
         let scope_registry = Arc::new(ScopeRegistry::new(
             scopes.transient,
@@ -347,6 +412,11 @@ impl DaemonBuilder {
             Arc::clone(&scope_registry),
         )
         .await?;
+
+        // Hooks resolve their `&self` receiver through the root container, which only now
+        // exists.
+        hook_manager.attach(Arc::clone(&root));
+
         let router = Arc::new(RpcRouter::from_registry(&registry));
 
         // Fold the registered layers onto the terminal router service. Appliers
@@ -377,6 +447,9 @@ impl DaemonBuilder {
             service,
             error_handler: self.error_handler,
             shutdown,
+            reloader,
+            hook_manager,
+            reload_triggers,
         })
     }
 }
@@ -536,6 +609,9 @@ pub struct Daemon {
     service: RpcService,
     error_handler: Option<Arc<dyn ErrorHandler>>,
     shutdown: ShutdownSignal,
+    reloader: ConfigReloader,
+    hook_manager: HookManager,
+    reload_triggers: ReloadTriggers,
 }
 
 impl fmt::Debug for Daemon {
@@ -573,6 +649,18 @@ impl Daemon {
         self.shutdown.handle()
     }
 
+    /// A handle that re-reads configuration and re-publishes the changed bindings.
+    /// The same [`ConfigReloader`] is injectable into any component or handler.
+    pub fn config_reloader(&self) -> ConfigReloader {
+        self.reloader.clone()
+    }
+
+    /// The hook manager, for running lifecycle/event hooks by kind. The same
+    /// [`HookManager`] is injectable into any component or handler.
+    pub fn hook_manager(&self) -> HookManager {
+        self.hook_manager.clone()
+    }
+
     /// Serves RPC calls from `transport` until ctrl-c or a shutdown signal.
     ///
     /// One task is spawned per accepted connection, and within a connection each
@@ -595,6 +683,14 @@ impl Daemon {
         let request_order = self.request_order;
         let needs_peer = self.needs_peer;
         let mut shutdown = self.shutdown;
+        let hook_manager = self.hook_manager;
+
+        // Run startup hooks before accepting work; an error aborts serve.
+        run_lifecycle::<Startup>(&hook_manager, true).await?;
+
+        // Spawn the configured config-reload triggers (SIGHUP / file watch); aborted on
+        // shutdown below. Manual reload via the injected `ConfigReloader` is always on.
+        let trigger_tasks = spawn_reload_triggers(self.reloader, self.reload_triggers);
 
         loop {
             tokio::select! {
@@ -637,6 +733,13 @@ impl Daemon {
             }
         }
 
+        for task in trigger_tasks {
+            task.abort();
+        }
+
+        // Graceful stop: run shutdown hooks (errors are logged, shutdown proceeds).
+        run_lifecycle::<Shutdown>(&hook_manager, false).await.ok();
+
         info!(target: "overseerd::daemon", transport = transport_name, "serve stopped");
 
         Ok(())
@@ -645,14 +748,52 @@ impl Daemon {
     /// Waits for ctrl-c or a shutdown signal without serving any transport.
     pub async fn run(self) -> crate::Result<()> {
         let mut shutdown = self.shutdown;
+        let hook_manager = self.hook_manager;
+
+        run_lifecycle::<Startup>(&hook_manager, true).await?;
+
+        let trigger_tasks = spawn_reload_triggers(self.reloader, self.reload_triggers);
 
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {},
             _ = shutdown.wait() => {},
         }
 
+        for task in trigger_tasks {
+            task.abort();
+        }
+
+        run_lifecycle::<Shutdown>(&hook_manager, false).await.ok();
+
         Ok(())
     }
+}
+
+/// Runs a process-lifecycle hook kind (`Startup`/`Shutdown`) over the registered hooks.
+/// With `abort_on_error`, the first failing hook propagates its error (startup); otherwise
+/// failures are logged and the remaining hooks still run (shutdown). A no-op when nothing
+/// listens (`run` is an O(1) miss).
+async fn run_lifecycle<K>(hooks: &HookManager, abort_on_error: bool) -> crate::Result<()>
+where
+    K: HookKind<Cx = (), Output = ()>,
+{
+    for (component, result) in hooks.run::<K>(&(), |_| true).await {
+        if let Err(error) = result {
+            error!(
+                target: "overseerd::daemon",
+                hook = K::NAME,
+                component = %component.name,
+                %error,
+                "lifecycle hook failed"
+            );
+
+            if abort_on_error {
+                return Err(error);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[instrument(

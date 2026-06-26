@@ -15,10 +15,11 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{FnArg, ImplItem, ImplItemFn, ItemImpl, ReturnType, Type};
+use syn::{FnArg, ImplItem, ImplItemFn, ItemImpl, LitStr, ReturnType, Type};
 
 use crate::attr::MethodsArgs;
-use crate::inject::factories_slice_ident;
+use crate::hook::{self, HookInfo};
+use crate::inject::{factories_slice_ident, hooks_slice_ident};
 use crate::paths::overseerd_path;
 
 pub fn expand(args: MethodsArgs, mut item: ItemImpl) -> syn::Result<TokenStream> {
@@ -26,6 +27,7 @@ pub fn expand(args: MethodsArgs, mut item: ItemImpl) -> syn::Result<TokenStream>
     let self_ident = self_ty_ident(&self_ty)?;
 
     let mut init: Option<InitInfo> = None;
+    let mut hooks: Vec<HookInfo> = Vec::new();
 
     for impl_item in &mut item.items {
         let ImplItem::Fn(method) = impl_item else {
@@ -37,6 +39,15 @@ pub fn expand(args: MethodsArgs, mut item: ItemImpl) -> syn::Result<TokenStream>
                 &method.sig,
                 "#[rpc] methods belong in a #[handlers] impl, not #[methods]",
             ));
+        }
+
+        if let Some(pos) = method.attrs.iter().position(|a| a.path().is_ident("hook")) {
+            let attr = method.attrs.remove(pos);
+            let kind = hook::parse_hook_kind(&attr)?;
+
+            hooks.push(hook::parse_hook(method, kind)?);
+
+            continue;
         }
 
         if let Some(pos) = method.attrs.iter().position(|a| a.path().is_ident("init")) {
@@ -62,6 +73,13 @@ pub fn expand(args: MethodsArgs, mut item: ItemImpl) -> syn::Result<TokenStream>
         None => (quote!(), quote!()),
     };
 
+    let hooks_slice = hooks_slice_ident(&self_ident);
+    let name = LitStr::new(&self_ident.to_string(), self_ident.span());
+    let hook_tokens = hooks
+        .iter()
+        .enumerate()
+        .map(|(index, info)| hook::generate_hook(&self_ty, &name, &hooks_slice, info, index));
+
     Ok(quote! {
         #item
 
@@ -69,6 +87,8 @@ pub fn expand(args: MethodsArgs, mut item: ItemImpl) -> syn::Result<TokenStream>
 
         const _: () = {
             #component
+
+            #(#hook_tokens)*
         };
     })
 }

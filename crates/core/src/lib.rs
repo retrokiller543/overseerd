@@ -18,6 +18,7 @@ pub mod descriptors;
 pub mod dirs;
 pub mod error;
 pub mod extract;
+pub mod hooks;
 pub mod lifecycle;
 pub mod middleware;
 pub mod registry;
@@ -43,22 +44,28 @@ pub use overseerd_transport::{
 
 pub use builtins::{LoggingConfig, ServerConfig};
 pub use config::{
-    Cfg, ConfigBinding, ConfigBindingDescriptor, ConfigDefaults, ConfigError, ConfigManager,
-    ConfigProperties, DefaultSpec, EnumTag,
+    Cfg, CfgNext, ChangedBinding, ComponentHookReport, ConfigBinding, ConfigBindingDescriptor,
+    ConfigDefaults, ConfigError, ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError,
+    ConfigReloadReport, ConfigReloader, DefaultSpec, EnumTag, HookOutcome, ReloadProposal,
+    ReloadTriggers, ReloadableConfig,
 };
 pub use container::{ComponentContainer, ScopeContainer};
 pub use daemon::{Daemon, DaemonBuilder};
 pub use descriptors::{
     BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cardinality, Component,
     ComponentConstructionContext, ComponentDescriptor, ComponentFactories, ComponentFactory,
-    ComponentFactoryDescriptor, ComponentScope, DependencyDescriptor, Descriptor, Dynamic,
-    Injectable, OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Provide,
-    ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
+    ComponentFactoryDescriptor, ComponentScope, Dep, DependencyDescriptor, Descriptor, Dynamic,
+    Injectable, Live, LiveRef, OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind,
+    Provide, ProviderDescriptor, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
     RpcResponse, SERVICES, ServiceComponent, ServiceDescriptor, ServiceRpcs, TypeDescriptor, Wired,
     Wiring, type_id_of,
 };
 pub use dirs::{Dir, DirKind, DirectoriesManager, DirectoriesResolver};
 pub use error::Error;
+pub use hooks::{
+    ComponentHooks, HookCall, HookDescriptor, HookKind, HookManager, HookParam, Shutdown, Startup,
+    no_hooks,
+};
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
 /// attribute through a stable path without the user crate depending on `linkme`

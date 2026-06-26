@@ -35,6 +35,15 @@ pub fn handle_impl(self_ident: &Ident, by_value: bool) -> HandleImpl {
             injectable: quote! {
                 impl #injectable for #self_ident {
                     type Target = #self_ident;
+                    type Stored = Self;
+
+                    fn into_stored(self) -> Self {
+                        self
+                    }
+
+                    fn from_stored(stored: &Self) -> Self {
+                        ::core::clone::Clone::clone(stored)
+                    }
                 }
             },
         }
