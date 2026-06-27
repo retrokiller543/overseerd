@@ -506,14 +506,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseerd-analyze"
-version = "0.6.0"
-dependencies = [
- "proc-macro2",
- "syn",
-]
-
-[[package]]
 name = "overseerd-config"
 version = "0.6.0"
 dependencies = [
@@ -591,7 +583,6 @@ name = "overseerd-example-daemon"
 version = "0.6.0"
 dependencies = [
  "overseerd",
- "overseerd-analyze",
  "serde",
  "tokio",
  "tracing",

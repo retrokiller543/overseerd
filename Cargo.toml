@@ -1,15 +1,7 @@
 [workspace]
 members = [
     ".",
-    "crates/analyze",
-    "crates/config",
-    "crates/core",
-    "crates/daemon",
-    "crates/di",
-    "crates/dirs",
-    "crates/hooks",
-    "crates/macros",
-    "crates/transport",
+    "crates/*",
     "examples/daemon",
 ]
 resolver = "3"
