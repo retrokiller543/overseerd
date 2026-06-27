@@ -22,10 +22,10 @@ pub use construct::{
     Factory, FactoryOutput, FromContainer, dependency_of, dispatch_factory, factory_dependencies,
     short_name,
 };
-pub use descriptors::component::from_boxed;
 pub use container::{
     ComponentContainer, ComponentSource, ScopeContainer, ScopeRegistry, topological_sort,
 };
+pub use descriptors::component::from_boxed;
 pub use descriptors::{
     BoxedComponent, COMPONENTS, Cardinality, Component, ComponentConstructionContext,
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor,

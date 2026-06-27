@@ -920,9 +920,12 @@ async fn drive_call<R>(
 
         Err(e) => {
             error!(target: "overseerd::daemon", %path, error = %e, "request scope build failed");
-            let response =
-                apply_error_handler(&error_handler, &path, ErrorResponse::from(crate::Error::from(e)))
-                    .await;
+            let response = apply_error_handler(
+                &error_handler,
+                &path,
+                ErrorResponse::from(crate::Error::from(e)),
+            )
+            .await;
             let _ = responder
                 .respond(CallResult::Err {
                     code: response.code,

@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 
 use overseerd_config::{
-    TemplateError, TemplateErrorKind, ConfigStr, ConfigValue, MapResolver, ResolverChain, from_value,
+    ConfigStr, ConfigValue, MapResolver, ResolverChain, TemplateError, TemplateErrorKind,
+    from_value,
 };
 use serde::Deserialize;
 

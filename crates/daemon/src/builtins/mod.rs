@@ -20,8 +20,8 @@ pub use logging::{InitTracingError, init_tracing};
 #[cfg(test)]
 mod tests {
     use crate::DaemonBuilder;
-    use overseerd_config::{ConfigManager, ConfigProperties, Toml};
     use crate::lifecycle::ShutdownHandle;
+    use overseerd_config::{ConfigManager, ConfigProperties, Toml};
 
     use super::config::{LoggingConfig, ServerConfig};
 

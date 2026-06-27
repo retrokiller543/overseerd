@@ -7,6 +7,7 @@ use std::{
 use overseerd_core::{Cardinality, ComponentScope, Resolver, ResolverCtx, ResolverSet};
 use tracing::{debug, error, info, instrument, trace};
 
+use crate::descriptors::BoxedComponent;
 use crate::{
     descriptors::{
         Component, ComponentDescriptor, Injectable, ProviderDescriptor,
@@ -14,7 +15,6 @@ use crate::{
     },
     error::Error,
 };
-use crate::descriptors::BoxedComponent;
 
 /// Shared, immutable data a [`ScopeContainer`] needs to resolve beyond its own
 /// store: the `Transient` components it may construct on demand and the trait
@@ -215,12 +215,8 @@ impl ScopeContainer {
         seeds: Vec<BoxedComponent>,
         externals: ResolverSet,
     ) -> crate::Result<Arc<ScopeContainer>> {
-        let mut cx = ComponentConstructionContext::new(
-            scope,
-            parent,
-            Arc::clone(&registry),
-            externals,
-        );
+        let mut cx =
+            ComponentConstructionContext::new(scope, parent, Arc::clone(&registry), externals);
         let providers = registry.providers();
 
         for seed in seeds {

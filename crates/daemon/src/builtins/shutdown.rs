@@ -8,8 +8,8 @@
 //!
 //! [`ShutdownSignal`]: crate::lifecycle::ShutdownSignal
 
-use overseerd_di::{Component, Injectable};
 use crate::lifecycle::ShutdownHandle;
+use overseerd_di::{Component, Injectable};
 
 /// The stable component id of the seeded [`ShutdownHandle`] singleton.
 pub const SHUTDOWN_HANDLE_ID: &str = "overseerd:shutdown-handle";

@@ -69,12 +69,11 @@ pub trait HookParam<K: HookKind>: Sized {
 /// The call takes `&dyn ResolverCtx` (not the container itself), so the hook layer stays
 /// below the DI engine. The macro-generated body resolves the receiver through the
 /// component source it fetches from the context.
-pub type HookCall = for<'a> fn(
-    &'a (dyn ResolverCtx + Send + Sync),
-    &'a (dyn Any + Send + Sync),
-) -> Pin<
-    Box<dyn Future<Output = Result<Box<dyn Any + Send>>> + Send + 'a>,
->;
+pub type HookCall =
+    for<'a> fn(
+        &'a (dyn ResolverCtx + Send + Sync),
+        &'a (dyn Any + Send + Sync),
+    ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Any + Send>>> + Send + 'a>>;
 
 /// Static metadata for one hook, registered into its type's `{Type}Hooks` slice.
 #[derive(Clone, Copy)]

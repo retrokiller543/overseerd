@@ -1,11 +1,13 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
 use std::fmt;
+use std::fmt::Write;
 
 use overseerd_config::{CONFIG_BINDINGS, ConfigBinding};
 use overseerd_core::DependencyDescriptor;
-use overseerd_di::{COMPONENTS, ComponentDescriptor, ComponentRegistry, PROVIDERS, ProviderDescriptor};
+use overseerd_di::{
+    COMPONENTS, ComponentDescriptor, ComponentRegistry, PROVIDERS, ProviderDescriptor,
+};
 
 use crate::descriptors::{ParameterDescriptor, RpcDescriptor, SERVICES, ServiceDescriptor};
 use crate::error::Error;

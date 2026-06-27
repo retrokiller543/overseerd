@@ -72,11 +72,11 @@ pub use overseerd_config::{
 pub use overseerd_daemon::{
     Cancel, Daemon, DaemonBuilder, DescriptorRegistry, Error, ErrorHandler, ErrorResponse,
     FallibleHandler, FromContext, Guard, GuardLayer, GuardService, Handler, Inject, LoggingConfig,
-    OperationKind, ParameterDescriptor, ParameterKind, Payload, Peer, Responder, ResponseError,
-    ResponseStream, RequestStream, ResolvedService, RouterService, RpcCallContext, RpcDescriptor,
-    RpcGroup, RpcHandler, RpcOutcome, RpcRequest, RpcResponse, RpcRouter, RpcService, Result,
-    SERVICES, ServerConfig, ServiceDescriptor, ServiceRpcs, ShutdownHandle, ShutdownSignal,
-    Streaming, dispatch_fallible, dispatch_with,
+    OperationKind, ParameterDescriptor, ParameterKind, Payload, Peer, RequestStream,
+    ResolvedService, Responder, ResponseError, ResponseStream, Result, RouterService,
+    RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcRequest, RpcResponse,
+    RpcRouter, RpcService, SERVICES, ServerConfig, ServiceDescriptor, ServiceRpcs, ShutdownHandle,
+    ShutdownSignal, Streaming, dispatch_fallible, dispatch_with,
 };
 
 // ---------------------------------------------------------------------------

@@ -106,6 +106,7 @@ pub trait ContainerConfigExt {
 
 impl ContainerConfigExt for ScopeContainer {
     fn config<T: Send + Sync + 'static>(&self, path: &str) -> Option<Cfg<T>> {
-        self.get_resolver::<ConfigStore>()?.resolve_path::<Cfg<T>>(path)
+        self.get_resolver::<ConfigStore>()?
+            .resolve_path::<Cfg<T>>(path)
     }
 }

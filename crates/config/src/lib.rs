@@ -26,13 +26,13 @@ pub use error::{TemplateError, TemplateErrorKind};
 pub use resolve::{EnvResolver, MapResolver, ResolveCtx, Resolver, ResolverChain};
 pub use value::{ConfigStr, ConfigValue, Placeholder, Segment};
 
-pub use managed::{
-    Cfg, CfgNext, ChangedBinding, ComponentHookReport, ConfigBinding, ConfigBindingDescriptor,
-    ConfigDefaults, ConfigError, ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError,
-    ConfigReloadReport, ConfigReloader, ConfigStore, ContainerConfigExt, DirectoriesResolver,
-    Dynamic, Format, FormatId, HookOutcome, ReloadProposal, ReloadTriggers, ReloadableConfig,
-    CONFIG_BINDINGS, CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, spawn_reload_triggers,
-};
+pub use managed::Toml;
 #[cfg(feature = "yaml")]
 pub use managed::Yaml;
-pub use managed::Toml;
+pub use managed::{
+    CONFIG_BINDINGS, CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, Cfg, CfgNext, ChangedBinding,
+    ComponentHookReport, ConfigBinding, ConfigBindingDescriptor, ConfigDefaults, ConfigError,
+    ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError, ConfigReloadReport,
+    ConfigReloader, ConfigStore, ContainerConfigExt, DirectoriesResolver, Dynamic, Format,
+    FormatId, HookOutcome, ReloadProposal, ReloadTriggers, ReloadableConfig, spawn_reload_triggers,
+};

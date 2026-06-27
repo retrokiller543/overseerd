@@ -11,6 +11,7 @@
 //! would be a sibling of this crate over the same foundation.
 
 pub mod builtins;
+pub mod daemon;
 pub mod descriptors;
 pub mod error;
 pub mod extract;
@@ -18,7 +19,6 @@ pub mod lifecycle;
 pub mod middleware;
 pub mod registry;
 pub mod router;
-pub mod daemon;
 
 pub use error::Error;
 

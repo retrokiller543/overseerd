@@ -20,7 +20,9 @@ use std::sync::Arc;
 
 use overseerd_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
 
-use crate::descriptors::{BoxedComponent, Component, ComponentConstructionContext, Dep, Injectable};
+use crate::descriptors::{
+    BoxedComponent, Component, ComponentConstructionContext, Dep, Injectable,
+};
 use crate::error::Error;
 
 /// The short, human-readable type name (the final `::` segment of the full path),
