@@ -1,0 +1,469 @@
+use std::any::TypeId;
+use std::collections::{HashMap, HashSet};
+
+use overseerd_core::{Cardinality, ComponentScope};
+
+use crate::descriptors::{COMPONENTS, ComponentDescriptor, PROVIDERS, ProviderDescriptor};
+use crate::error::Error;
+
+/// Holds the component and provider *descriptors* of an application — declarations
+/// only. Runtime instances live in the [`ScopeContainer`](crate::container::ScopeContainer).
+///
+/// This is the DI engine's own registry: it validates the component/provider graph
+/// (ids, dependencies, scopes) and resolves the per-type descriptor set the container
+/// builds from. Higher layers (services/RPC, config bindings) wrap it with their own
+/// validation. Config edges (`#[config]`) are *skipped* here — they resolve against an
+/// external resolver, validated by the config layer.
+#[derive(Default, Debug, Clone)]
+pub struct ComponentRegistry {
+    pub components: Vec<ComponentDescriptor>,
+    pub providers: Vec<ProviderDescriptor>,
+}
+
+impl ComponentRegistry {
+    /// Collects every link-time-registered component and provider descriptor.
+    pub fn collect() -> Self {
+        Self {
+            components: COMPONENTS.iter().copied().collect(),
+            providers: PROVIDERS.iter().copied().collect(),
+        }
+    }
+
+    /// Collapses the registered descriptors to one per type. A manually-provided
+    /// instance (an empty-factory descriptor) **overrides** an auto-constructed one
+    /// for the same type. The per-type factory ambiguity check runs here via
+    /// [`ComponentDescriptor::effective_factory`].
+    pub fn resolved_components(&self) -> crate::Result<Vec<ComponentDescriptor>> {
+        let mut chosen: HashMap<TypeId, ComponentDescriptor> = HashMap::new();
+
+        for component in &self.components {
+            let type_id = (component.ty.type_id)();
+            let new_manual = component.effective_factory()?.is_none();
+
+            match chosen.get(&type_id) {
+                None => {
+                    chosen.insert(type_id, *component);
+                }
+
+                Some(existing) => {
+                    let existing_manual = existing.effective_factory()?.is_none();
+
+                    if new_manual && !existing_manual {
+                        chosen.insert(type_id, *component);
+                    } else if new_manual == existing_manual && existing.id != component.id {
+                        return Err(Error::DuplicateComponentType(
+                            (component.ty.type_name)().to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(chosen.into_values().collect())
+    }
+
+    /// Validates the component graph: unique ids, satisfiable dependencies, and the
+    /// captive-dependency scope rule.
+    pub fn validate(&self) -> crate::Result<()> {
+        let components = self.resolved_components()?;
+
+        self.validate_component_ids(&components)?;
+        self.validate_dependencies(&components)?;
+        self.validate_scopes(&components)?;
+
+        Ok(())
+    }
+
+    /// Enforces the captive-dependency rule: a non-transient component may depend
+    /// only on equal-or-longer-lived non-transient components. Checked against
+    /// [`ComponentScope::rank`], not by matching each variant.
+    pub fn validate_scopes(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
+        let scope_of: HashMap<TypeId, ComponentScope> = components
+            .iter()
+            .map(|c| ((c.ty.type_id)(), c.scope))
+            .collect();
+
+        for c in components {
+            for dep in c.dependencies() {
+                // Config edges resolve against external bindings; dynamic edges are
+                // runtime-provided. Neither participates in the scope rule.
+                if dep.dynamic || dep.config {
+                    continue;
+                }
+
+                let dep_id = (dep.ty.type_id)();
+
+                let dep_scopes: Vec<(ComponentScope, &'static str)> = match scope_of.get(&dep_id) {
+                    Some(scope) => vec![(*scope, (dep.ty.type_name)())],
+
+                    None => self
+                        .providers
+                        .iter()
+                        .filter(|p| (p.trait_ty.type_id)() == dep_id)
+                        .filter_map(|p| {
+                            scope_of
+                                .get(&(p.concrete_ty.type_id)())
+                                .map(|scope| (*scope, (p.concrete_ty.type_name)()))
+                        })
+                        .collect(),
+                };
+
+                for (dep_scope, dep_name) in dep_scopes {
+                    if !scope_allows(c.scope, dep_scope) {
+                        return Err(Error::ScopeViolation {
+                            component: c.name.to_string(),
+                            dependency: dep_name.to_string(),
+                            component_scope: c.scope,
+                            dependency_scope: dep_scope,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_component_ids(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
+        let mut seen = HashSet::new();
+        for c in components {
+            if !seen.insert(c.id) {
+                return Err(Error::DuplicateComponentId(c.id.to_string()));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validates that every non-config single dependency is satisfiable by a
+    /// component or trait provider.
+    pub fn validate_dependencies(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
+        let available: HashSet<TypeId> = components.iter().map(|c| (c.ty.type_id)()).collect();
+
+        // Per trait: (total providers, primary providers).
+        let mut provider_counts: HashMap<TypeId, (usize, usize)> = HashMap::new();
+
+        for p in &self.providers {
+            let counts = provider_counts.entry((p.trait_ty.type_id)()).or_default();
+            counts.0 += 1;
+            counts.1 += usize::from(p.primary);
+        }
+
+        for c in components {
+            for dep in c.dependencies() {
+                // Config edges are validated against bindings by the config layer.
+                if dep.config {
+                    continue;
+                }
+
+                let dep_id = (dep.ty.type_id)();
+                let providers = provider_counts.get(&dep_id).copied();
+
+                if let Some(qualifier) = dep.qualifier {
+                    let found = dep.dynamic
+                        || self
+                            .providers
+                            .iter()
+                            .any(|p| (p.trait_ty.type_id)() == dep_id && p.qualifier == qualifier);
+
+                    if !found {
+                        return Err(Error::MissingDependency {
+                            component: c.name.to_string(),
+                            type_name: format!(
+                                "{} (qualifier `{qualifier}`)",
+                                (dep.ty.type_name)()
+                            ),
+                        });
+                    }
+
+                    continue;
+                }
+
+                if dep.cardinality == Cardinality::One
+                    && !dep.dynamic
+                    && let Some((total, primary)) = providers
+                    && total > 1
+                    && primary != 1
+                {
+                    return Err(Error::AmbiguousProvider((dep.ty.type_name)().to_string()));
+                }
+
+                let must_exist =
+                    dep.cardinality.requires_provider() && !dep.optional && !dep.dynamic;
+
+                if must_exist && !available.contains(&dep_id) && providers.is_none() {
+                    return Err(Error::MissingDependency {
+                        component: c.name.to_string(),
+                        type_name: (dep.ty.type_name)().to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Whether a `consumer`-scoped component may hold a `dependency`-scoped one.
+fn scope_allows(consumer: ComponentScope, dependency: ComponentScope) -> bool {
+    if dependency.is_transient() {
+        return true;
+    }
+
+    if consumer.is_transient() {
+        return dependency == ComponentScope::Singleton;
+    }
+
+    dependency.rank() >= consumer.rank()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{future::Future, pin::Pin};
+
+    use super::*;
+    use crate::descriptors::{
+        BoxedComponent, ComponentConstructionContext, ComponentDescriptor,
+        ComponentFactoryDescriptor,
+    };
+    use overseerd_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
+
+    fn fake_factory<'a>(
+        _: &'a mut ComponentConstructionContext,
+    ) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + 'a>> {
+        Box::pin(async { todo!() })
+    }
+
+    macro_rules! scoped {
+        ($name:expr, $scope:expr, $dep:expr, $ty:expr $(,)?) => {{
+            fn deps() -> ::std::vec::Vec<DependencyDescriptor> {
+                $dep.to_vec()
+            }
+
+            static FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+                construct: fake_factory,
+                dependencies: deps,
+                default: false,
+            }];
+
+            fn factories() -> &'static [ComponentFactoryDescriptor] {
+                &FACTORIES
+            }
+
+            ComponentDescriptor {
+                id: $name,
+                name: $name,
+                ty: $ty,
+                scope: $scope,
+                factories,
+                hooks: ::overseerd_hooks::no_hooks,
+            }
+        }};
+    }
+
+    fn pg_pool_deps() -> Vec<DependencyDescriptor> {
+        Vec::new()
+    }
+
+    static PG_POOL_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+        construct: fake_factory,
+        dependencies: pg_pool_deps,
+        default: false,
+    }];
+
+    fn pg_pool_factories() -> &'static [ComponentFactoryDescriptor] {
+        &PG_POOL_FACTORIES
+    }
+
+    static PG_POOL: ComponentDescriptor = ComponentDescriptor {
+        id: "pg_pool",
+        name: "PgPool",
+        ty: TypeDescriptor::of::<u16>("PgPool"),
+        scope: ComponentScope::Singleton,
+        factories: pg_pool_factories,
+        hooks: overseerd_hooks::no_hooks,
+    };
+
+    fn backup_repo_deps() -> Vec<DependencyDescriptor> {
+        vec![DependencyDescriptor {
+            name: "PgPool",
+            ty: TypeDescriptor::of::<u16>("PgPool"),
+            cardinality: Cardinality::One,
+            optional: false,
+            dynamic: false,
+            qualifier: None,
+            config: false,
+        }]
+    }
+
+    static BACKUP_REPO_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+        construct: fake_factory,
+        dependencies: backup_repo_deps,
+        default: false,
+    }];
+
+    fn backup_repo_factories() -> &'static [ComponentFactoryDescriptor] {
+        &BACKUP_REPO_FACTORIES
+    }
+
+    static BACKUP_REPO: ComponentDescriptor = ComponentDescriptor {
+        id: "backup_repo",
+        name: "BackupRepository",
+        ty: TypeDescriptor::of::<u8>("BackupRepository"),
+        scope: ComponentScope::Singleton,
+        factories: backup_repo_factories,
+        hooks: overseerd_hooks::no_hooks,
+    };
+
+    #[test]
+    fn validate_passes_with_fulfilled_dependencies() {
+        let registry = ComponentRegistry {
+            components: vec![BACKUP_REPO, PG_POOL],
+            ..Default::default()
+        };
+
+        assert!(registry.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_detects_duplicate_component_ids() {
+        let registry = ComponentRegistry {
+            components: vec![BACKUP_REPO, BACKUP_REPO],
+            ..Default::default()
+        };
+
+        assert!(registry.validate().is_err());
+    }
+
+    #[test]
+    fn validate_detects_missing_dependency() {
+        let registry = ComponentRegistry {
+            components: vec![BACKUP_REPO],
+            ..Default::default()
+        };
+
+        assert!(registry.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_manual_component_descriptor() {
+        let without = ComponentRegistry {
+            components: vec![BACKUP_REPO],
+            ..Default::default()
+        };
+
+        assert!(without.validate().is_err());
+
+        let manual = ComponentDescriptor::manual(
+            "pg_pool_manual",
+            "PgPool",
+            TypeDescriptor::of::<u16>("PgPool"),
+            ComponentScope::Singleton,
+        );
+        let with = ComponentRegistry {
+            components: vec![BACKUP_REPO, manual],
+            ..Default::default()
+        };
+
+        assert!(with.validate().is_ok());
+    }
+
+    // --- Scope validation --------------------------------------------------
+    //
+    // Stand-in types per scope: i16 = singleton, i32 = connection, i64 = request.
+
+    static SINGLETON_DEP_ON_REQUEST: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "ReqComp",
+        ty: TypeDescriptor::of::<i64>("ReqComp"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+        config: false,
+    }];
+
+    static REQUEST_DEP_ON_CONNECTION: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "ConnComp",
+        ty: TypeDescriptor::of::<i32>("ConnComp"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+        config: false,
+    }];
+
+    #[test]
+    fn validate_rejects_singleton_depending_on_request() {
+        let request = scoped!(
+            "ReqComp",
+            ComponentScope::Request,
+            &[],
+            TypeDescriptor::of::<i64>("ReqComp"),
+        );
+        let singleton = scoped!(
+            "RootComp",
+            ComponentScope::Singleton,
+            &SINGLETON_DEP_ON_REQUEST,
+            TypeDescriptor::of::<i16>("RootComp"),
+        );
+
+        let registry = ComponentRegistry {
+            components: vec![singleton, request],
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            registry.validate(),
+            Err(Error::ScopeViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_allows_request_depending_on_connection() {
+        let connection = scoped!(
+            "ConnComp",
+            ComponentScope::Connection,
+            &[],
+            TypeDescriptor::of::<i32>("ConnComp"),
+        );
+        let request = scoped!(
+            "ReqComp",
+            ComponentScope::Request,
+            &REQUEST_DEP_ON_CONNECTION,
+            TypeDescriptor::of::<i64>("ReqComp"),
+        );
+
+        let registry = ComponentRegistry {
+            components: vec![connection, request],
+            ..Default::default()
+        };
+
+        assert!(registry.validate_scopes(&registry.components).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_transient_depending_on_connection() {
+        let connection = scoped!(
+            "ConnComp",
+            ComponentScope::Connection,
+            &[],
+            TypeDescriptor::of::<i32>("ConnComp"),
+        );
+        let transient = scoped!(
+            "TransComp",
+            ComponentScope::Transient,
+            &REQUEST_DEP_ON_CONNECTION,
+            TypeDescriptor::of::<i64>("TransComp"),
+        );
+
+        let registry = ComponentRegistry {
+            components: vec![connection, transient],
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            registry.validate_scopes(&registry.components),
+            Err(Error::ScopeViolation { .. })
+        ));
+    }
+}

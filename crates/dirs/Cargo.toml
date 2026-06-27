@@ -1,0 +1,21 @@
+[package]
+name = "overseerd-dirs"
+description = "Unified application directories for the Overseerd framework, injectable as Dir<K>. Standalone: depends only on core and di."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+di-check = ["overseerd-di/di-check"]
+
+[dependencies]
+overseerd-core = { workspace = true }
+overseerd-di = { workspace = true }
+directories = { workspace = true }
+tracing = { workspace = true }

@@ -1,0 +1,16 @@
+[package]
+name = "overseerd-hooks"
+description = "The Overseerd hook system: a general lifecycle/event hook framework, generic over the core resolver."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+overseerd-core = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }

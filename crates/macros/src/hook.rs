@@ -108,11 +108,14 @@ pub fn generate_hook(
     let hook_kind = overseerd_path("HookKind");
     let hook_param = overseerd_path("HookParam");
     let hook_descriptor = overseerd_path("HookDescriptor");
-    let scope_container = overseerd_path("ScopeContainer");
+    let resolver_ctx = overseerd_path("ResolverCtx");
+    let resolver_ctx_ext = overseerd_path("ResolverCtxExt");
+    let component_source = overseerd_path("ComponentSource");
+    let component = overseerd_path("Component");
     let dependency_descriptor = overseerd_path("DependencyDescriptor");
     let type_descriptor = overseerd_path("TypeDescriptor");
-    let error = overseerd_path("Error");
-    let result = overseerd_path("Result");
+    let hook_error = overseerd_path("HookError");
+    let hook_result = overseerd_path("HookResult");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
 
@@ -138,11 +141,13 @@ pub fn generate_hook(
         .collect();
 
     // Resolve the receiver only when the method takes `&self`; a self-less hook is an
-    // associated call.
+    // associated call. The receiver is reached through the component source resolver fetched
+    // from the erased resolver context, so the hook layer never names the container.
     let invoke = if info.takes_self {
         quote! {
-            let __svc = #scope_container::get::<#self_ty>(__container)
-                .ok_or(#error::MissingComponent(<#self_ty as ::overseerd::Component>::NAME))?;
+            let __svc = #resolver_ctx_ext::get_resolver::<#component_source>(__ctx)
+                .and_then(|__src| __src.component::<#self_ty>())
+                .ok_or(#hook_error::MissingReceiver(<#self_ty as #component>::NAME))?;
             let __out = __svc.#method(#(#arg_idents),*).await;
         }
     } else {
@@ -151,12 +156,14 @@ pub fn generate_hook(
         }
     };
 
-    // Normalize the return into the kind's `Output`: unwrap a `Result` (mapping its error
-    // into the framework error), then bind it at the kind's `Output` type so a mismatched
-    // return is a compile error.
+    // Normalize the return into the kind's `Output`: unwrap a `Result`, boxing its error
+    // into the hook layer's error (the hook layer sits below the daemon, so it cannot name
+    // the daemon error — any `Error + Send + Sync` domain error boxes), then bind it at the
+    // kind's `Output` type so a mismatched return is a compile error.
     let normalize = if info.is_result {
         quote! {
-            let __out: <#kind as #hook_kind>::Output = __out?;
+            let __out: <#kind as #hook_kind>::Output =
+                __out.map_err(|__e| #hook_error::Other(__e.into()))?;
         }
     } else {
         quote! {
@@ -177,12 +184,12 @@ pub fn generate_hook(
 
         #[allow(unused_variables)]
         fn #call_fn<'a>(
-            __container: &'a #scope_container,
+            __ctx: &'a (dyn #resolver_ctx + ::core::marker::Send + ::core::marker::Sync),
             __cx: &'a (dyn #any::Any + ::core::marker::Send + ::core::marker::Sync),
         ) -> ::core::pin::Pin<
             ::std::boxed::Box<
                 dyn ::core::future::Future<
-                    Output = #result<::std::boxed::Box<dyn #any::Any + ::core::marker::Send>>,
+                    Output = #hook_result<::std::boxed::Box<dyn #any::Any + ::core::marker::Send>>,
                 > + ::core::marker::Send + 'a,
             >,
         > {

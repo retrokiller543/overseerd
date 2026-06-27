@@ -4,40 +4,40 @@ use thiserror::Error;
 ///
 /// Most failures carry the dotted path of the offending node (`At`) so a message
 /// reads like `at 'server.port': cannot parse "abc" as u16`. Failures that occur
-/// before a node path is known (template parsing) surface the bare [`ConfigErrorKind`].
+/// before a node path is known (template parsing) surface the bare [`TemplateErrorKind`].
 #[derive(Debug, Error)]
-pub enum ConfigError {
+pub enum TemplateError {
     #[error("at '{path}': {kind}")]
     At {
         path: String,
         #[source]
-        kind: ConfigErrorKind,
+        kind: TemplateErrorKind,
     },
 
     #[error(transparent)]
-    Bare(#[from] ConfigErrorKind),
+    Bare(#[from] TemplateErrorKind),
 }
 
-impl ConfigError {
+impl TemplateError {
     /// Wraps a kind with the dotted node path it occurred at.
-    pub fn at(path: impl Into<String>, kind: ConfigErrorKind) -> Self {
-        ConfigError::At {
+    pub fn at(path: impl Into<String>, kind: TemplateErrorKind) -> Self {
+        TemplateError::At {
             path: path.into(),
             kind,
         }
     }
 }
 
-impl serde::de::Error for ConfigError {
+impl serde::de::Error for TemplateError {
     fn custom<T: std::fmt::Display>(msg: T) -> Self {
-        ConfigError::Bare(ConfigErrorKind::Message(msg.to_string()))
+        TemplateError::Bare(TemplateErrorKind::Message(msg.to_string()))
     }
 }
 
 /// The specific failure, kept separate from path context so the same kind can be
 /// reported with or without a node path.
 #[derive(Debug, Error)]
-pub enum ConfigErrorKind {
+pub enum TemplateErrorKind {
     #[error("unterminated placeholder: expected '}}' to close '${{'")]
     UnterminatedPlaceholder,
 

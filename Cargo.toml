@@ -4,6 +4,10 @@ members = [
     "crates/analyze",
     "crates/config",
     "crates/core",
+    "crates/daemon",
+    "crates/di",
+    "crates/dirs",
+    "crates/hooks",
     "crates/macros",
     "crates/transport",
     "examples/daemon",
@@ -25,6 +29,10 @@ categories = ["network-programming", "asynchronous"]
 # strips the `path` and resolves the dependency by version instead.
 overseerd-config = { path = "crates/config", version = "0.6.0" }
 overseerd-core = { path = "crates/core", version = "0.6.0" }
+overseerd-di = { path = "crates/di", version = "0.6.0" }
+overseerd-dirs = { path = "crates/dirs", version = "0.6.0" }
+overseerd-hooks = { path = "crates/hooks", version = "0.6.0" }
+overseerd-daemon = { path = "crates/daemon", version = "0.6.0" }
 overseerd-macros = { path = "crates/macros", version = "0.6.0" }
 overseerd-transport = { path = "crates/transport", version = "0.6.0" }
 
@@ -70,26 +78,36 @@ default = ["di-check"]
 # `overseerd = { features = ["client"] }`; no feature is needed in the user crate.
 client = [
     "overseerd-macros/client",
-    "overseerd-core/client",
+    "overseerd-daemon/client",
     "overseerd-transport/client",
     "dep:async-trait",
 ]
 
 # Emit compile-time dependency-injection checks (a `Wiring: Provide<Dep>` bound
 # per concrete dependency). A missing provider becomes a `cargo check` error.
-di-check = ["overseerd-macros/di-check", "overseerd-core/di-check"]
+di-check = [
+    "overseerd-macros/di-check",
+    "overseerd-di/di-check",
+    "overseerd-config/di-check",
+    "overseerd-daemon/di-check",
+]
 
 # Enable YAML config sources (`application.yaml`) alongside the default TOML.
-yaml = ["overseerd-core/yaml"]
+yaml = ["overseerd-config/yaml", "overseerd-daemon/yaml"]
 
 # Provide the `init_tracing` helper, pulling in `tracing-subscriber`.
-tracing-subscriber = ["overseerd-core/tracing-subscriber"]
+tracing-subscriber = ["overseerd-daemon/tracing-subscriber"]
 
 # Watch config files and reload on change (`ConfigManager::watch_config`), via `notify`.
-watch = ["overseerd-core/watch"]
+watch = ["overseerd-config/watch", "overseerd-daemon/watch"]
 
 [dependencies]
 overseerd-core = { workspace = true }
+overseerd-di = { workspace = true }
+overseerd-hooks = { workspace = true }
+overseerd-dirs = { workspace = true }
+overseerd-config = { workspace = true }
+overseerd-daemon = { workspace = true }
 overseerd-transport = { workspace = true }
 overseerd-macros = { workspace = true }
 tokio = { workspace = true }

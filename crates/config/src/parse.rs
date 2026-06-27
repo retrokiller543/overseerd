@@ -1,7 +1,7 @@
 use std::iter::Peekable;
 use std::str::Chars;
 
-use crate::error::{ConfigError, ConfigErrorKind};
+use crate::error::{TemplateError, TemplateErrorKind};
 use crate::value::{Placeholder, Segment, StrKind};
 
 /// Parses a raw source string into placeholder segments, classified for the
@@ -11,7 +11,7 @@ use crate::value::{Placeholder, Segment, StrKind};
 /// `$$` collapses to a literal `$` (so `$${X}` is the literal text `${X}`); a lone
 /// `$` not followed by `{` is a literal `$`. An unterminated `${` is an error.
 /// Nesting and recursive defaults are out of scope in v1.
-pub(crate) fn parse_template(raw: &str) -> Result<(Vec<Segment>, StrKind), ConfigError> {
+pub(crate) fn parse_template(raw: &str) -> Result<(Vec<Segment>, StrKind), TemplateError> {
     let mut segments: Vec<Segment> = Vec::new();
     let mut literal = String::new();
     let mut chars = raw.chars().peekable();
@@ -57,13 +57,13 @@ pub(crate) fn parse_template(raw: &str) -> Result<(Vec<Segment>, StrKind), Confi
 
 /// Reads the body of a placeholder after the opening `${`, up to and including the
 /// closing `}`. The key runs to the first `:` (which begins the default) or `}`.
-fn parse_placeholder(chars: &mut Peekable<Chars<'_>>) -> Result<Placeholder, ConfigError> {
+fn parse_placeholder(chars: &mut Peekable<Chars<'_>>) -> Result<Placeholder, TemplateError> {
     let mut key = String::new();
 
     loop {
         let c = chars
             .next()
-            .ok_or(ConfigErrorKind::UnterminatedPlaceholder)?;
+            .ok_or(TemplateErrorKind::UnterminatedPlaceholder)?;
 
         if c == '}' {
             return Ok(Placeholder { key, default: None });
@@ -83,13 +83,13 @@ fn parse_placeholder(chars: &mut Peekable<Chars<'_>>) -> Result<Placeholder, Con
 }
 
 /// Reads the inline default after a `:`, up to the closing `}`.
-fn read_default(chars: &mut Peekable<Chars<'_>>) -> Result<String, ConfigError> {
+fn read_default(chars: &mut Peekable<Chars<'_>>) -> Result<String, TemplateError> {
     let mut default = String::new();
 
     loop {
         let c = chars
             .next()
-            .ok_or(ConfigErrorKind::UnterminatedPlaceholder)?;
+            .ok_or(TemplateErrorKind::UnterminatedPlaceholder)?;
 
         if c == '}' {
             break;

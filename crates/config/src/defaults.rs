@@ -11,7 +11,7 @@
 //! entirely from `&'static` data and can live in a `const` — the `#[config]` macro emits one
 //! as an associated const, with no runtime allocation.
 
-use crate::error::ConfigError;
+use crate::error::TemplateError;
 use crate::value::{ConfigStr, ConfigValue};
 
 /// A `(field, raw default template)` pair.
@@ -95,7 +95,7 @@ impl DefaultSpec {
     /// missing field is filled. For [`Variants`](DefaultSpec::Variants) only the fields of
     /// the variant present in the config are filled; when no variant is present the
     /// `#[default]` variant (if any) is synthesized in the enum's tagged shape.
-    pub fn fill_missing(&self, subtree: &mut ConfigValue) -> Result<(), ConfigError> {
+    pub fn fill_missing(&self, subtree: &mut ConfigValue) -> Result<(), TemplateError> {
         match self {
             DefaultSpec::None => Ok(()),
             DefaultSpec::Fields(fields) => fill_fields(subtree, fields, false),
@@ -119,7 +119,7 @@ fn fill_fields(
     subtree: &mut ConfigValue,
     fields: &[FieldDefault],
     coerce: bool,
-) -> Result<(), ConfigError> {
+) -> Result<(), TemplateError> {
     let ConfigValue::Table(entries) = subtree else {
         return Ok(());
     };
@@ -132,7 +132,7 @@ fn fill_entries(
     entries: &mut Vec<(String, ConfigValue)>,
     fields: &[FieldDefault],
     coerce: bool,
-) -> Result<(), ConfigError> {
+) -> Result<(), TemplateError> {
     for (field, raw) in fields {
         let present = entries.iter().any(|(key, _)| key == field);
 
@@ -153,7 +153,7 @@ fn fill_entries(
 /// integer, bool, or float is stored as that scalar — matching how a config file would carry
 /// it, so serde's content-buffered deserialization (internally/adjacently-tagged enums) sees a
 /// numeric field as a number rather than a string it refuses to coerce.
-fn default_value(raw: &str, coerce: bool) -> Result<ConfigValue, ConfigError> {
+fn default_value(raw: &str, coerce: bool) -> Result<ConfigValue, TemplateError> {
     let parsed = ConfigStr::parse(raw)?;
 
     if coerce && let Some(literal) = parsed.as_literal() {
@@ -179,7 +179,7 @@ fn fill_variants(
     tagging: &EnumTag,
     default: &Option<(&'static str, bool)>,
     fields: &[VariantDefault],
-) -> Result<(), ConfigError> {
+) -> Result<(), TemplateError> {
     match tagging {
         EnumTag::External => fill_external(subtree, default, fields),
         EnumTag::Internal { tag } => fill_internal(subtree, tag, default, fields),
@@ -205,7 +205,7 @@ fn fill_external(
     subtree: &mut ConfigValue,
     default: &Option<(&'static str, bool)>,
     fields: &[VariantDefault],
-) -> Result<(), ConfigError> {
+) -> Result<(), TemplateError> {
     let no_variant_selected = matches!(subtree, ConfigValue::Table(entries) if entries.is_empty());
 
     if !no_variant_selected {
@@ -252,7 +252,7 @@ fn fill_internal(
     tag_key: &str,
     default: &Option<(&'static str, bool)>,
     fields: &[VariantDefault],
-) -> Result<(), ConfigError> {
+) -> Result<(), TemplateError> {
     let ConfigValue::Table(entries) = subtree else {
         return Ok(());
     };
@@ -288,7 +288,7 @@ fn fill_adjacent(
     content_key: &str,
     default: &Option<(&'static str, bool)>,
     fields: &[VariantDefault],
-) -> Result<(), ConfigError> {
+) -> Result<(), TemplateError> {
     let ConfigValue::Table(entries) = subtree else {
         return Ok(());
     };
@@ -323,7 +323,7 @@ fn fill_content(
     entries: &mut Vec<(String, ConfigValue)>,
     content_key: &str,
     fields: &[FieldDefault],
-) -> Result<(), ConfigError> {
+) -> Result<(), TemplateError> {
     let content = match entries.iter_mut().find(|(key, _)| key == content_key) {
         Some((_, value)) => value,
 

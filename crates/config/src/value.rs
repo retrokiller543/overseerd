@@ -1,4 +1,4 @@
-use crate::error::ConfigError;
+use crate::error::TemplateError;
 use crate::parse;
 
 /// A format-agnostic configuration value tree.
@@ -39,7 +39,7 @@ impl ConfigValue {
     /// rendering. Used to inject default values into the tree so a templated default such
     /// as `${tcp.ip}:${tcp.port}` resolves through the same pipeline as a file value.
     /// Errors only on a structurally invalid template (an unterminated `${`).
-    pub fn parsed_str(raw: &str) -> Result<ConfigValue, ConfigError> {
+    pub fn parsed_str(raw: &str) -> Result<ConfigValue, TemplateError> {
         Ok(ConfigValue::Str(ConfigStr::parse(raw)?))
     }
 
@@ -70,7 +70,7 @@ pub struct ConfigStr {
 impl ConfigStr {
     /// Parses one raw source string into classified segments. Errors only on a
     /// structurally invalid template (an unterminated `${`).
-    pub fn parse(raw: &str) -> Result<Self, ConfigError> {
+    pub fn parse(raw: &str) -> Result<Self, TemplateError> {
         let (segments, kind) = parse::parse_template(raw)?;
 
         Ok(Self { segments, kind })

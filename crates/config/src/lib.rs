@@ -1,23 +1,38 @@
-//! Type-safe configuration value substitution.
+//! Configuration for the Overseerd framework.
 //!
-//! This crate is the format-agnostic core of Overseerd's config system: a normalized
+//! Two layers live here. The **parser** is the format-agnostic core: a normalized
 //! [`ConfigValue`] tree, a placeholder grammar (`${KEY}` / `${KEY:default}`), a
-//! [`Resolver`] chain, and a custom [`from_value`] deserializer that resolves
-//! placeholders *while* deserializing — so a leaf that is entirely `${VAR}` can become
-//! any scalar the target type wants, while a templated leaf like `https://${VAR}` can
-//! only ever be a string. It owns no I/O, merging, or file-watching; those layers sit
-//! on top of [`from_value`].
+//! [`Resolver`] chain, and a custom [`from_value`] deserializer that resolves placeholders
+//! *while* deserializing. The **managed** layer (this crate's `managed` module) integrates
+//! that parser with dependency injection: [`Cfg<T>`] injectables, the [`ConfigManager`]
+//! that loads and merges files, the [`ConfigStore`] resolver the DI container reaches
+//! config through, and the two-phase [`ConfigReloader`].
+//!
+//! The parser's substitution failure type is [`TemplateError`]; the managed layer's
+//! load/bind failure type is [`ConfigError`].
 
 mod de;
 mod defaults;
 mod error;
 pub mod format;
+mod managed;
 mod parse;
 mod resolve;
 mod value;
 
 pub use de::{ValueDeserializer, from_value, from_value_in};
 pub use defaults::{DefaultSpec, EnumTag};
-pub use error::{ConfigError, ConfigErrorKind};
+pub use error::{TemplateError, TemplateErrorKind};
 pub use resolve::{EnvResolver, MapResolver, ResolveCtx, Resolver, ResolverChain};
 pub use value::{ConfigStr, ConfigValue, Placeholder, Segment};
+
+pub use managed::{
+    Cfg, CfgNext, ChangedBinding, ComponentHookReport, ConfigBinding, ConfigBindingDescriptor,
+    ConfigDefaults, ConfigError, ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError,
+    ConfigReloadReport, ConfigReloader, ConfigStore, ContainerConfigExt, DirectoriesResolver,
+    Dynamic, Format, FormatId, HookOutcome, ReloadProposal, ReloadTriggers, ReloadableConfig,
+    CONFIG_BINDINGS, CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, spawn_reload_triggers,
+};
+#[cfg(feature = "yaml")]
+pub use managed::Yaml;
+pub use managed::Toml;

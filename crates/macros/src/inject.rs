@@ -104,7 +104,7 @@ pub fn field_injection_component(
     let injectable = overseerd_path("Injectable");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
-    let result = overseerd_path("Result");
+    let result = overseerd_path("DiResult");
     let type_descriptor = overseerd_path("TypeDescriptor");
     let descriptor_trait = overseerd_path("Descriptor");
 
@@ -264,7 +264,7 @@ pub fn explicit_factory(factory_path: &syn::Path, factories_slice: &syn::Ident) 
     let boxed_component = overseerd_path("BoxedComponent");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
-    let result = overseerd_path("Result");
+    let result = overseerd_path("DiResult");
 
     quote! {
         fn __overseerd_explicit_deps() -> ::std::vec::Vec<#dependency_descriptor> {
@@ -352,10 +352,12 @@ fn plan_field(field: &mut Field) -> FieldPlan {
 
     let cardinality = overseerd_path("Cardinality");
     let dynamic_ty = overseerd_path("Dynamic");
-    let error = overseerd_path("Error");
+    let error = overseerd_path("DiError");
     let injectable = overseerd_path("Injectable");
     let type_descriptor = overseerd_path("TypeDescriptor");
     let dependency_descriptor = overseerd_path("DependencyDescriptor");
+    let config_store = overseerd_path("ConfigStore");
+    let resolver_ctx_ext = overseerd_path("ResolverCtxExt");
 
     let dep = |handle: &syn::Type,
                kind: TokenStream,
@@ -397,13 +399,22 @@ fn plan_field(field: &mut Field) -> FieldPlan {
         };
         let dep_name = LitStr::new(&dep_name_str, handle.span());
 
+        // Config lives outside the container in a `ConfigStore` resolver, reached through
+        // the construction context's resolver set. `get_resolver` is called by UFCS so the
+        // generated code needs no `use` of the extension trait.
         let (resolved, qualifier) = match &config_path {
             Some(path) => (
-                quote!(cx.resolve_config::<#handle>(#path).await),
+                quote!(
+                    #resolver_ctx_ext::get_resolver::<#config_store>(cx)
+                        .and_then(|store| store.resolve_path::<#handle>(#path))
+                ),
                 quote!(::core::option::Option::Some(#path)),
             ),
             None => (
-                quote!(cx.resolve_config_sole::<#handle>().await),
+                quote!(
+                    #resolver_ctx_ext::get_resolver::<#config_store>(cx)
+                        .and_then(|store| store.resolve_sole::<#handle>())
+                ),
                 none.clone(),
             ),
         };
