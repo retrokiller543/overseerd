@@ -17,8 +17,10 @@ pub mod error;
 pub mod extract;
 pub mod lifecycle;
 pub mod middleware;
+pub mod protocol;
 pub mod registry;
 pub mod router;
+pub mod runtime;
 pub mod scope;
 
 pub use error::Error;
@@ -41,8 +43,10 @@ pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use middleware::{
     ErrorHandler, Guard, GuardLayer, GuardService, RouterService, RpcRequest, RpcService,
 };
+pub use protocol::{Protocol, Rpc, Serve};
 pub use registry::{DescriptorRegistry, ResolvedService};
 pub use router::RpcRouter;
+pub use runtime::AppRuntime;
 
 /// Re-exported so macro-generated code can reach the `#[distributed_slice]` attribute for
 /// the `SERVICES` slice through a stable path.

@@ -1,6 +1,5 @@
 use std::{any::TypeId, collections::HashSet, fmt, sync::Arc};
 
-use futures::StreamExt;
 use overseerd_config::{
     CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, ConfigBinding, ConfigManager, ConfigProperties,
     ConfigReloader, ConfigStore, ReloadTriggers, spawn_reload_triggers,
@@ -8,8 +7,6 @@ use overseerd_config::{
 use overseerd_core::{
     Descriptor, ResolverCtx, ResolverSet, Singleton as SingletonScope, TypeDescriptor,
 };
-
-use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
 use overseerd_di::{
     BoxedComponent, Component, ComponentDescriptor, Injectable, ProviderDescriptor, ScopeContainer,
     ScopeRegistry, ServiceComponent, topological_sort,
@@ -18,21 +15,20 @@ use overseerd_dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runt
 use overseerd_hooks::{
     HOOK_MANAGER_ID, HOOK_MANAGER_NAME, HookDescriptor, HookKind, HookManager, Shutdown, Startup,
 };
-use overseerd_transport::{
-    CallResult, Connection, PeerInfo, Respond, RespondStream, ResponseSink, Transport,
-};
-use tokio::{sync::mpsc, task::JoinSet};
-use tokio_util::sync::CancellationToken;
-use tower::{Layer, Service, ServiceExt};
-use tracing::{debug, error, info, instrument, warn};
+use overseerd_transport::PeerInfo;
+use tower::{Layer, Service};
+use tracing::{debug, error, info};
 
+use crate::scope::Connection as ConnectionScope;
 use crate::{
-    descriptors::{RpcCallContext, RpcOutcome, RpcResponse, ServiceDescriptor},
+    descriptors::{RpcOutcome, ServiceDescriptor},
     extract::ErrorResponse,
     lifecycle::{ShutdownHandle, ShutdownSignal},
     middleware::{ErrorHandler, Guard, GuardLayer, RouterService, RpcRequest, RpcService},
+    protocol::{Rpc, Serve},
     registry::DescriptorRegistry,
     router::RpcRouter,
+    runtime::AppRuntime,
 };
 
 /// A registered middleware step: wraps the current dispatch service in one more
@@ -428,20 +424,24 @@ impl AppBuilder {
             "daemon built"
         );
 
+        let runtime = AppRuntime::new(
+            Arc::from(self.name.as_str()),
+            root,
+            scope_registry,
+            Arc::new(scopes.connection_order),
+            Arc::new(scopes.request_order),
+            scopes.needs_peer,
+            hook_manager,
+        );
+        let protocol = Rpc::new(router, service, self.error_handler);
+
         Ok(App {
             name: self.name,
             registry,
-            root,
-            scopes: scope_registry,
-            connection_order: Arc::new(scopes.connection_order),
-            request_order: Arc::new(scopes.request_order),
-            needs_peer: scopes.needs_peer,
-            router,
-            service,
-            error_handler: self.error_handler,
+            runtime,
+            protocol,
             shutdown,
             reloader,
-            hook_manager,
             reload_triggers,
         })
     }
@@ -593,21 +593,18 @@ impl ScopePlan {
     }
 }
 
-/// A fully assembled daemon, ready to accept connections and dispatch RPC calls.
+/// A fully assembled app, ready to accept connections and dispatch calls.
+///
+/// It holds the agnostic [`AppRuntime`] (DI container, scope orders, hooks) and the
+/// built [`Protocol`](crate::protocol::Protocol) — here the native [`Rpc`] — plus the
+/// shutdown signal and config reloader the serve envelope drives.
 pub struct App {
     pub name: String,
     pub registry: DescriptorRegistry,
-    root: Arc<ScopeContainer>,
-    scopes: Arc<ScopeRegistry>,
-    connection_order: Arc<Vec<ComponentDescriptor>>,
-    request_order: Arc<Vec<ComponentDescriptor>>,
-    needs_peer: bool,
-    router: Arc<RpcRouter>,
-    service: RpcService,
-    error_handler: Option<Arc<dyn ErrorHandler>>,
+    runtime: AppRuntime,
+    protocol: Rpc,
     shutdown: ShutdownSignal,
     reloader: ConfigReloader,
-    hook_manager: HookManager,
     reload_triggers: ReloadTriggers,
 }
 
@@ -617,7 +614,7 @@ impl fmt::Debug for App {
             .field("name", &self.name)
             .field("components", &self.registry.components.len())
             .field("services", &self.registry.services.len())
-            .field("routes", &self.router.route_count())
+            .field("routes", &self.protocol.route_count())
             .finish_non_exhaustive()
     }
 }
@@ -638,7 +635,12 @@ impl App {
 
     /// The root (singleton) scope container.
     pub fn container(&self) -> &Arc<ScopeContainer> {
-        &self.root
+        self.runtime.root()
+    }
+
+    /// The protocol-facing runtime handle (DI container, scope orders, hooks).
+    pub fn runtime(&self) -> &AppRuntime {
+        &self.runtime
     }
 
     /// Returns a handle that can trigger graceful shutdown from any spawned task.
@@ -655,101 +657,73 @@ impl App {
     /// The hook manager, for running lifecycle/event hooks by kind. The same
     /// [`HookManager`] is injectable into any component or handler.
     pub fn hook_manager(&self) -> HookManager {
-        self.hook_manager.clone()
+        self.runtime.hooks().clone()
     }
 
-    /// Serves RPC calls from `transport` until ctrl-c or a shutdown signal.
+    /// Serves the app's protocol over `endpoint` until ctrl-c or a shutdown signal.
     ///
-    /// One task is spawned per accepted connection, and within a connection each
-    /// call is driven on its own task so streaming calls run concurrently and
-    /// the connection keeps reading inbound stream frames while handlers run.
-    pub async fn serve<T>(self, mut transport: T) -> crate::Result<()>
+    /// This is the agnostic envelope: it runs startup hooks, spawns the config-reload
+    /// triggers, bridges ctrl-c to the shutdown signal, and then hands the runtime and
+    /// the shutdown signal to the protocol's [`Serve`] impl — for the native [`Rpc`]
+    /// protocol, the per-connection / per-call dispatch loop. Shutdown hooks run on the
+    /// way out.
+    pub async fn serve<E>(self, endpoint: E) -> crate::Result<()>
     where
-        T: Transport,
-        T::Connection: 'static,
+        Rpc: Serve<E>,
     {
-        let transport_name = std::any::type_name::<T>();
-
-        info!(target: "overseerd::daemon", daemon = %self.name, transport = transport_name, "serve starting");
-
-        let service = self.service;
-        let error_handler = self.error_handler;
-        let root = self.root;
-        let scopes = self.scopes;
-        let connection_order = self.connection_order;
-        let request_order = self.request_order;
-        let needs_peer = self.needs_peer;
-        let mut shutdown = self.shutdown;
-        let hook_manager = self.hook_manager;
+        let App {
+            runtime,
+            protocol,
+            shutdown,
+            reloader,
+            reload_triggers,
+            ..
+        } = self;
 
         // Run startup hooks before accepting work; an error aborts serve.
-        run_lifecycle::<Startup>(&hook_manager, true).await?;
+        run_lifecycle::<Startup>(runtime.hooks(), true).await?;
 
         // Spawn the configured config-reload triggers (SIGHUP / file watch); aborted on
         // shutdown below. Manual reload via the injected `ConfigReloader` is always on.
-        let trigger_tasks = spawn_reload_triggers(self.reloader, self.reload_triggers);
+        let trigger_tasks = spawn_reload_triggers(reloader, reload_triggers);
 
-        loop {
-            tokio::select! {
-                result = transport.accept() => {
-                    match result {
-                        Ok(conn) => {
-                            debug!(target: "overseerd::daemon", peer = ?conn.peer().addr, "connection accepted, spawning task");
-
-                            let service = service.clone();
-                            let error_handler = error_handler.clone();
-                            let root = Arc::clone(&root);
-                            let scopes = Arc::clone(&scopes);
-                            let connection_order = Arc::clone(&connection_order);
-                            let request_order = Arc::clone(&request_order);
-                            tokio::spawn(async move {
-                                serve_connection(
-                                    conn, service, error_handler, root, scopes, connection_order,
-                                    request_order, needs_peer,
-                                )
-                                .await;
-                            });
-                        }
-
-                        Err(e) => {
-                            error!(target: "overseerd::daemon", error = %e, "transport accept failed");
-                            return Err(e.into());
-                        }
-                    }
-                }
-
-                _ = tokio::signal::ctrl_c() => {
-                    info!(target: "overseerd::daemon", "ctrl-c received, shutting down");
-                    break;
-                }
-
-                _ = shutdown.wait() => {
-                    info!(target: "overseerd::daemon", "shutdown signal received");
-                    break;
-                }
+        // Bridge ctrl-c to the shutdown signal so every protocol's loop only watches
+        // `shutdown`. Aborted once serve returns.
+        let shutdown_handle = shutdown.handle();
+        let ctrlc = tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                info!(target: "overseerd::daemon", "ctrl-c received, shutting down");
+                shutdown_handle.shutdown();
             }
-        }
+        });
+
+        let result = protocol.serve(runtime.clone(), shutdown, endpoint).await;
+
+        ctrlc.abort();
 
         for task in trigger_tasks {
             task.abort();
         }
 
         // Graceful stop: run shutdown hooks (errors are logged, shutdown proceeds).
-        run_lifecycle::<Shutdown>(&hook_manager, false).await.ok();
+        run_lifecycle::<Shutdown>(runtime.hooks(), false).await.ok();
 
-        info!(target: "overseerd::daemon", transport = transport_name, "serve stopped");
-
-        Ok(())
+        result
     }
 
     /// Waits for ctrl-c or a shutdown signal without serving any transport.
     pub async fn run(self) -> crate::Result<()> {
-        let mut shutdown = self.shutdown;
-        let hook_manager = self.hook_manager;
+        let App {
+            runtime,
+            mut shutdown,
+            reloader,
+            reload_triggers,
+            ..
+        } = self;
 
-        run_lifecycle::<Startup>(&hook_manager, true).await?;
+        run_lifecycle::<Startup>(runtime.hooks(), true).await?;
 
-        let trigger_tasks = spawn_reload_triggers(self.reloader, self.reload_triggers);
+        let trigger_tasks = spawn_reload_triggers(reloader, reload_triggers);
 
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {},
@@ -760,7 +734,7 @@ impl App {
             task.abort();
         }
 
-        run_lifecycle::<Shutdown>(&hook_manager, false).await.ok();
+        run_lifecycle::<Shutdown>(runtime.hooks(), false).await.ok();
 
         Ok(())
     }
@@ -791,240 +765,4 @@ where
     }
 
     Ok(())
-}
-
-#[instrument(
-    target = "overseerd::daemon",
-    level = "debug",
-    skip_all,
-    fields(peer = ?conn.peer().addr),
-    name = "connection"
-)]
-#[allow(clippy::too_many_arguments)]
-async fn serve_connection<C: Connection>(
-    mut conn: C,
-    service: RpcService,
-    error_handler: Option<Arc<dyn ErrorHandler>>,
-    root: Arc<ScopeContainer>,
-    scopes: Arc<ScopeRegistry>,
-    connection_order: Arc<Vec<ComponentDescriptor>>,
-    request_order: Arc<Vec<ComponentDescriptor>>,
-    needs_peer: bool,
-) {
-    debug!(target: "overseerd::daemon", "connection established");
-
-    // Build the connection scope (e.g. authenticated session, checked-out DB
-    // handle). The peer (by value — the framework's connection-scoped injectable)
-    // is seeded only when a component depends on it; handlers reach it through the
-    // `Peer` extractor regardless, so an otherwise-empty connection scope is
-    // skipped entirely. A failed factory closes the connection.
-    let peer = conn.peer().clone();
-    let seeds = if needs_peer {
-        vec![BoxedComponent {
-            ty: TypeDescriptor::of::<PeerInfo>("PeerInfo"),
-            value: Box::new(peer.clone()),
-        }]
-    } else {
-        Vec::new()
-    };
-
-    let connection_scope = match ScopeContainer::open_child(
-        &ConnectionScope,
-        root,
-        Arc::clone(&scopes),
-        &connection_order,
-        seeds,
-    )
-    .await
-    {
-        Ok(scope) => scope,
-
-        Err(e) => {
-            error!(target: "overseerd::daemon", error = %e, "connection scope build failed, closing");
-            return;
-        }
-    };
-
-    let mut tasks: JoinSet<()> = JoinSet::new();
-
-    debug!(target: "overseerd::daemon", "connection ready");
-
-    loop {
-        match conn.recv().await {
-            Ok(Some((call, responder))) => {
-                let path = call.path;
-                let service = service.clone();
-                let error_handler = error_handler.clone();
-                let connection_scope = Arc::clone(&connection_scope);
-                let scopes = Arc::clone(&scopes);
-                let request_order = Arc::clone(&request_order);
-                let peer = peer.clone();
-
-                debug!(target: "overseerd::daemon", %path, "dispatching call");
-
-                tasks.spawn(drive_call(
-                    path,
-                    call.payload,
-                    call.requests,
-                    call.cancel,
-                    peer,
-                    connection_scope,
-                    scopes,
-                    request_order,
-                    responder,
-                    service,
-                    error_handler,
-                ));
-            }
-
-            Ok(None) => {
-                debug!(target: "overseerd::daemon", "connection closed by peer");
-                break;
-            }
-
-            Err(e) => {
-                warn!(target: "overseerd::daemon", error = %e, "connection error");
-                break;
-            }
-        }
-    }
-
-    // The connection (and its call table) is dropped here, cancelling in-flight
-    // calls via their tokens; abort any handler tasks still winding down.
-    tasks.abort_all();
-
-    debug!(target: "overseerd::daemon", "connection ended");
-}
-
-/// Drives one call to completion on its own task: build its request scope,
-/// dispatch, then pump the outcome into the matching responder — a single reply
-/// for unary calls, or a stream of items terminated by `finish`/`error` for
-/// streaming calls.
-#[allow(clippy::too_many_arguments)]
-async fn drive_call<R>(
-    path: String,
-    payload: Vec<u8>,
-    requests: Option<mpsc::Receiver<Vec<u8>>>,
-    cancel: CancellationToken,
-    peer: PeerInfo,
-    connection_scope: Arc<ScopeContainer>,
-    scopes: Arc<ScopeRegistry>,
-    request_order: Arc<Vec<ComponentDescriptor>>,
-    responder: R,
-    mut service: RpcService,
-    error_handler: Option<Arc<dyn ErrorHandler>>,
-) where
-    R: Respond + RespondStream + Send + 'static,
-{
-    let request_scope = match ScopeContainer::open_child(
-        &RequestScope,
-        connection_scope,
-        scopes,
-        &request_order,
-        Vec::new(),
-    )
-    .await
-    {
-        Ok(scope) => scope,
-
-        Err(e) => {
-            error!(target: "overseerd::daemon", %path, error = %e, "request scope build failed");
-            let response = apply_error_handler(
-                &error_handler,
-                &path,
-                ErrorResponse::from(crate::Error::from(e)),
-            )
-            .await;
-            let _ = responder
-                .respond(CallResult::Err {
-                    code: response.code,
-                    body: response.body,
-                })
-                .await;
-
-            return;
-        }
-    };
-
-    let ctx = RpcCallContext::new(payload, peer, request_scope, requests, cancel);
-    let request = RpcRequest::new(path.clone(), ctx);
-
-    // Drive the request through the middleware stack; its terminal service is the
-    // router. `ready` honours the tower contract for layers that exert backpressure.
-    let outcome = match service.ready().await {
-        Ok(svc) => svc.call(request).await,
-
-        Err(e) => Err(e),
-    };
-
-    match outcome {
-        Ok(RpcOutcome::Unary(RpcResponse { payload })) => {
-            debug!(target: "overseerd::daemon", %path, "call succeeded");
-
-            if let Err(e) = responder.respond(CallResult::Ok(payload)).await {
-                warn!(target: "overseerd::daemon", %path, error = %e, "failed to send response");
-            }
-        }
-
-        Ok(RpcOutcome::Stream(mut stream)) => {
-            debug!(target: "overseerd::daemon", %path, "streaming response");
-
-            let mut sink = responder.into_sink();
-
-            loop {
-                match stream.next().await {
-                    Some(Ok(item)) => {
-                        if let Err(e) = sink.send(item).await {
-                            warn!(target: "overseerd::daemon", %path, error = %e, "failed to send stream item");
-
-                            return;
-                        }
-                    }
-
-                    Some(Err(e)) => {
-                        warn!(target: "overseerd::daemon", %path, code = ?e.code, "stream handler errored");
-                        let e = apply_error_handler(&error_handler, &path, e).await;
-                        let _ = sink.error(e.code, e.body).await;
-
-                        return;
-                    }
-
-                    None => break,
-                }
-            }
-
-            if let Err(e) = sink.finish().await {
-                warn!(target: "overseerd::daemon", %path, error = %e, "failed to finish stream");
-            }
-        }
-
-        Err(e) => {
-            warn!(target: "overseerd::daemon", %path, code = ?e.code, "call returned error");
-            let e = apply_error_handler(&error_handler, &path, e).await;
-
-            if let Err(e) = responder
-                .respond(CallResult::Err {
-                    code: e.code,
-                    body: e.body,
-                })
-                .await
-            {
-                warn!(target: "overseerd::daemon", %path, error = %e, "failed to send error response");
-            }
-        }
-    }
-}
-
-/// Applies the global [`ErrorHandler`] to an outgoing error, or passes it through
-/// unchanged when none is registered.
-async fn apply_error_handler(
-    handler: &Option<Arc<dyn ErrorHandler>>,
-    path: &str,
-    error: ErrorResponse,
-) -> ErrorResponse {
-    match handler {
-        Some(handler) => handler.handle(path, error).await,
-
-        None => error,
-    }
 }

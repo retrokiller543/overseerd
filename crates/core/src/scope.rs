@@ -23,7 +23,7 @@ pub trait StaticScope: Send + Sync + 'static {
 
     /// The name used for debug purposes.
     const NAME: &'static str;
-    
+
     const IS_TRANSIENT: bool = false;
 }
 
