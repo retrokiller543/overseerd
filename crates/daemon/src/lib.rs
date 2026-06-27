@@ -43,7 +43,8 @@ pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use middleware::{
     ErrorHandler, Guard, GuardLayer, GuardService, RouterService, RpcRequest, RpcService,
 };
-pub use protocol::{Protocol, Rpc, Serve};
+pub use daemon::RpcPlugin;
+pub use protocol::{Plugin, Protocol, ProtocolPlugin, Rpc, Serve};
 pub use registry::{DescriptorRegistry, ResolvedService};
 pub use router::RpcRouter;
 pub use runtime::AppRuntime;

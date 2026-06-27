@@ -86,11 +86,12 @@ pub use overseerd_config::{
 pub use overseerd_daemon::{
     App, AppBuilder, AppRuntime, Cancel, DescriptorRegistry, Error, ErrorHandler, ErrorResponse,
     FallibleHandler, FromContext, Guard, GuardLayer, GuardService, Handler, Inject, LoggingConfig,
-    OperationKind, ParameterDescriptor, ParameterKind, Payload, Peer, Protocol, RequestStream,
-    ResolvedService, Responder, ResponseError, ResponseStream, Result, RouterService, Rpc,
-    RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcRequest, RpcResponse,
-    RpcRouter, RpcService, SERVICES, Serve, ServerConfig, ServiceDescriptor, ServiceRpcs,
-    ShutdownHandle, ShutdownSignal, Streaming, dispatch_fallible, dispatch_with,
+    OperationKind, ParameterDescriptor, ParameterKind, Payload, Peer, Plugin, Protocol,
+    ProtocolPlugin, RequestStream, ResolvedService, Responder, ResponseError, ResponseStream,
+    Result, RouterService, Rpc, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
+    RpcPlugin, RpcRequest, RpcResponse, RpcRouter, RpcService, SERVICES, Serve, ServerConfig,
+    ServiceDescriptor, ServiceRpcs, ShutdownHandle, ShutdownSignal, Streaming, dispatch_fallible,
+    dispatch_with,
 };
 
 /// Deprecated alias for [`App`]. Renamed in 0.7.0; the alias is removed in 1.0.0.

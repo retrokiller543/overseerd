@@ -5,7 +5,7 @@ use overseerd_config::{
     ConfigReloader, ConfigStore, ReloadTriggers, spawn_reload_triggers,
 };
 use overseerd_core::{
-    Descriptor, ResolverCtx, ResolverSet, Singleton as SingletonScope, TypeDescriptor,
+    Descriptor, ResolverCtx, ResolverSet, Scope, Singleton as SingletonScope, TypeDescriptor,
 };
 use overseerd_di::{
     BoxedComponent, Component, ComponentDescriptor, Injectable, ProviderDescriptor, ScopeContainer,
@@ -19,13 +19,13 @@ use overseerd_transport::PeerInfo;
 use tower::{Layer, Service};
 use tracing::{debug, error, info};
 
-use crate::scope::Connection as ConnectionScope;
+use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
 use crate::{
     descriptors::{RpcOutcome, ServiceDescriptor},
     extract::ErrorResponse,
     lifecycle::{ShutdownHandle, ShutdownSignal},
     middleware::{ErrorHandler, Guard, GuardLayer, RouterService, RpcRequest, RpcService},
-    protocol::{Rpc, Serve},
+    protocol::{Plugin, ProtocolPlugin, Rpc, Serve},
     registry::DescriptorRegistry,
     router::RpcRouter,
     runtime::AppRuntime,
@@ -84,6 +84,54 @@ static HOOK_MANAGER_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manua
     TypeDescriptor::of::<HookManager>(HOOK_MANAGER_NAME),
     &SingletonScope,
 );
+
+/// The native RPC protocol plugin.
+///
+/// Accumulates the RPC-specific builder state (middleware layers and the global error
+/// handler), seeds the connection-scoped `PeerInfo` injectable via [`Plugin::register`],
+/// and builds the [`Rpc`] protocol — the router wrapped by the middleware stack — via
+/// [`ProtocolPlugin::build`].
+pub struct RpcPlugin {
+    layers: Vec<LayerApplier>,
+    error_handler: Option<Arc<dyn ErrorHandler>>,
+}
+
+impl RpcPlugin {
+    fn new(layers: Vec<LayerApplier>, error_handler: Option<Arc<dyn ErrorHandler>>) -> Self {
+        Self {
+            layers,
+            error_handler,
+        }
+    }
+}
+
+impl Plugin for RpcPlugin {
+    fn register(&self, registry: &mut DescriptorRegistry) {
+        registry.components.push(PEER_INFO_DESCRIPTOR);
+    }
+}
+
+impl ProtocolPlugin for RpcPlugin {
+    type Protocol = Rpc;
+    type Error = crate::Error;
+
+    const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
+
+    fn build(self, _runtime: &AppRuntime, registry: &DescriptorRegistry) -> crate::Result<Rpc> {
+        let router = Arc::new(RpcRouter::from_registry(registry));
+
+        // Fold the registered layers onto the terminal router service. Appliers are
+        // pushed in registration order, so applying them in reverse makes the
+        // first-registered layer the outermost wrapper.
+        let mut service: RpcService = RpcService::new(RouterService::new(Arc::clone(&router)));
+
+        for applier in self.layers.into_iter().rev() {
+            service = applier(service);
+        }
+
+        Ok(Rpc::new(router, service, self.error_handler))
+    }
+}
 
 /// Assembles an App from an explicit set of components and services.
 pub struct AppBuilder {
@@ -301,9 +349,12 @@ impl AppBuilder {
         // by `serve`/`run` and never exposed through DI.
         let shutdown = ShutdownSignal::new();
 
-        // The peer is a framework-provided connection-scoped injectable; declare it
-        // so dependencies on it validate and it partitions into the connection scope.
-        registry.components.push(PEER_INFO_DESCRIPTOR);
+        // The protocol plugin: it accumulates the protocol-specific builder state
+        // (middleware layers, error handler) and contributes its DI descriptors here —
+        // for RPC, the connection-scoped `PeerInfo` injectable, declared so dependencies
+        // on it validate and it partitions into the connection scope.
+        let plugin = RpcPlugin::new(self.layers, self.error_handler);
+        plugin.register(&mut registry);
 
         // Directories are framework-provided singletons: a manager (supplied or
         // derived from the daemon name) plus one `Dir<K>` per kind, seeded so any
@@ -406,17 +457,6 @@ impl AppBuilder {
         let hook_ctx: Arc<dyn ResolverCtx + Send + Sync> = root.clone();
         hook_manager.attach(hook_ctx);
 
-        let router = Arc::new(RpcRouter::from_registry(&registry));
-
-        // Fold the registered layers onto the terminal router service. Appliers
-        // are pushed in registration order, so applying them in reverse makes the
-        // first-registered layer the outermost wrapper.
-        let mut service: RpcService = RpcService::new(RouterService::new(Arc::clone(&router)));
-
-        for applier in self.layers.into_iter().rev() {
-            service = applier(service);
-        }
-
         info!(target: "overseerd::daemon",
             daemon = %self.name,
             components = registry.components.len(),
@@ -433,7 +473,10 @@ impl AppBuilder {
             scopes.needs_peer,
             hook_manager,
         );
-        let protocol = Rpc::new(router, service, self.error_handler);
+
+        // Hand off to the protocol plugin: it builds the router from the validated
+        // registry and folds the middleware stack into the served protocol.
+        let protocol = plugin.build(&runtime, &registry)?;
 
         Ok(App {
             name: self.name,

@@ -12,7 +12,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use futures::StreamExt;
-use overseerd_core::TypeDescriptor;
+use overseerd_core::{Scope, TypeDescriptor};
 use overseerd_di::{BoxedComponent, ScopeContainer};
 use overseerd_transport::{
     CallResult, Connection, PeerInfo, Respond, RespondStream, ResponseSink, Transport,
@@ -26,8 +26,43 @@ use crate::descriptors::{RpcCallContext, RpcOutcome, RpcResponse};
 use crate::extract::ErrorResponse;
 use crate::lifecycle::ShutdownSignal;
 use crate::middleware::{ErrorHandler, RpcRequest, RpcService};
+use crate::registry::DescriptorRegistry;
 use crate::router::RpcRouter;
 use crate::runtime::AppRuntime;
+
+/// A general extension unit applied to an app while it is built.
+///
+/// A plugin contributes DI descriptors (and, later, custom `#[component]` variants and
+/// their discovery) into the registry before the container is built. A plugin need not
+/// serve traffic — that is the job of the [`ProtocolPlugin`] sub-trait. Background
+/// behavior rides the components a plugin registers (via their own `#[hook]`s).
+pub trait Plugin: Sized {
+    /// Contributes DI descriptors / seeds into the registry before validation and build.
+    /// The native RPC plugin seeds its connection-scoped `PeerInfo` here.
+    fn register(&self, registry: &mut DescriptorRegistry);
+}
+
+/// A [`Plugin`] that additionally installs a serve/dispatch [`Protocol`]. An [`App`] is
+/// built around exactly one of these.
+pub trait ProtocolPlugin: Plugin {
+    /// The protocol this plugin installs.
+    type Protocol: Protocol;
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// The session scope chain this protocol opens, root→leaf by rank, *excluding* the
+    /// universal `Singleton` (root) and `Transient` (per-resolve). RPC opens
+    /// `[Connection, Request]`; a request-only protocol opens `[Request]`.
+    const SCOPES: &'static [&'static dyn Scope];
+
+    /// Finalizes the protocol from the accumulated builder state, the assembled runtime,
+    /// and the validated registry — for RPC, building the router and folding the
+    /// middleware stack.
+    fn build(
+        self,
+        runtime: &AppRuntime,
+        registry: &DescriptorRegistry,
+    ) -> Result<Self::Protocol, Self::Error>;
+}
 
 /// A pluggable serve/dispatch layer over the app's DI runtime. There is exactly one
 /// active protocol per [`App`](crate::App).
