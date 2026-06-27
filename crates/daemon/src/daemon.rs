@@ -25,7 +25,7 @@ use crate::{
     extract::ErrorResponse,
     lifecycle::{ShutdownHandle, ShutdownSignal},
     middleware::{ErrorHandler, Guard, GuardLayer, RouterService, RpcRequest, RpcService},
-    protocol::{Plugin, ProtocolPlugin, Rpc, Serve},
+    protocol::{Plugin, Protocol, ProtocolPlugin, Rpc, Serve},
     registry::DescriptorRegistry,
     router::RpcRouter,
     runtime::AppRuntime,
@@ -91,18 +91,10 @@ static HOOK_MANAGER_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manua
 /// handler), seeds the connection-scoped `PeerInfo` injectable via [`Plugin::register`],
 /// and builds the [`Rpc`] protocol — the router wrapped by the middleware stack — via
 /// [`ProtocolPlugin::build`].
+#[derive(Default)]
 pub struct RpcPlugin {
     layers: Vec<LayerApplier>,
     error_handler: Option<Arc<dyn ErrorHandler>>,
-}
-
-impl RpcPlugin {
-    fn new(layers: Vec<LayerApplier>, error_handler: Option<Arc<dyn ErrorHandler>>) -> Self {
-        Self {
-            layers,
-            error_handler,
-        }
-    }
 }
 
 impl Plugin for RpcPlugin {
@@ -117,7 +109,16 @@ impl ProtocolPlugin for RpcPlugin {
 
     const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
 
-    fn build(self, _runtime: &AppRuntime, registry: &DescriptorRegistry) -> crate::Result<Rpc> {
+    fn build(self, runtime: &AppRuntime, registry: &DescriptorRegistry) -> crate::Result<Rpc> {
+        // Does any real component depend on the peer? If not, the connection scope need
+        // not exist solely to hold it; handlers still reach the peer via the `Peer`
+        // extractor, which reads it off the call context rather than the scope chain.
+        let peer_id = (PEER_INFO_DESCRIPTOR.ty.type_id)();
+        let needs_peer = runtime.resolved_components().iter().any(|c| {
+            (c.ty.type_id)() != peer_id
+                && c.dependencies().iter().any(|d| (d.ty.type_id)() == peer_id)
+        });
+
         let router = Arc::new(RpcRouter::from_registry(registry));
 
         // Fold the registered layers onto the terminal router service. Appliers are
@@ -129,12 +130,18 @@ impl ProtocolPlugin for RpcPlugin {
             service = applier(service);
         }
 
-        Ok(Rpc::new(router, service, self.error_handler))
+        Ok(Rpc::new(router, service, self.error_handler, needs_peer))
     }
 }
 
 /// Assembles an App from an explicit set of components and services.
-pub struct AppBuilder {
+///
+/// Generic over the [`ProtocolPlugin`] it installs (defaulting to the native [`RpcPlugin`]).
+/// The agnostic builder methods (config, components, directories, auto-discovery) live
+/// here; protocol-specific methods — for RPC, `service`/`middleware`/`guard`/`error_handler`
+/// — come from an extension trait such as [`RpcAppBuilder`], so the same builder serves any
+/// protocol.
+pub struct AppBuilder<P: ProtocolPlugin = RpcPlugin> {
     name: String,
     registry: DescriptorRegistry,
     instances: Vec<BoxedComponent>,
@@ -143,11 +150,12 @@ pub struct AppBuilder {
     /// daemon assembled without `auto_discover` binds only its explicit `config::<T>` types.
     auto_discover_configs: bool,
     dirs: Option<DirectoriesManager>,
-    layers: Vec<LayerApplier>,
-    error_handler: Option<Arc<dyn ErrorHandler>>,
+    /// The protocol plugin: the builder-time accumulator for the installed protocol's
+    /// own configuration (for RPC, middleware layers + error handler).
+    protocol: P,
 }
 
-impl AppBuilder {
+impl<P: ProtocolPlugin> AppBuilder<P> {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -156,8 +164,7 @@ impl AppBuilder {
             config_source: None,
             auto_discover_configs: false,
             dirs: None,
-            layers: Vec::new(),
-            error_handler: None,
+            protocol: P::default(),
         }
     }
 
@@ -233,25 +240,6 @@ impl AppBuilder {
         self
     }
 
-    /// Registers a pre-built service singleton: its identity header (which carries
-    /// the service's own RPC surface) and the instance itself (like
-    /// [`with_component`](Self::with_component)).
-    ///
-    /// Reads the header straight from the type via [`Descriptor`], so it brings the
-    /// service's RPCs with it — no separate registration. Safe to combine with
-    /// [`auto_discover`](Self::auto_discover): services dedup by type at build, so a
-    /// service registered both ways resolves once.
-    pub fn with_service<T: ServiceComponent + Descriptor<ServiceDescriptor>>(
-        mut self,
-        value: T,
-    ) -> Self {
-        self.registry
-            .services
-            .push(<T as Descriptor<ServiceDescriptor>>::DESCRIPTOR);
-
-        self.with_component(value)
-    }
-
     /// Registers component type `T` for construction from its statically-known
     /// descriptor (its `#[component]`/`#[service]` factory), without auto-discovery.
     /// For a type built outside the DI scope, supply the value via
@@ -260,24 +248,6 @@ impl AppBuilder {
     where
         T: Descriptor<ComponentDescriptor>,
     {
-        self.registry
-            .components
-            .push(<T as Descriptor<ComponentDescriptor>>::DESCRIPTOR);
-
-        self
-    }
-
-    /// Registers service type `T` by type: its identity header (carrying its RPC
-    /// surface) and its construction factory. The complete by-type counterpart to
-    /// [`auto_discover`](Self::auto_discover); safe to combine with it (services dedup
-    /// by type at build).
-    pub fn service<T>(mut self) -> Self
-    where
-        T: Descriptor<ServiceDescriptor> + Descriptor<ComponentDescriptor>,
-    {
-        self.registry
-            .services
-            .push(<T as Descriptor<ServiceDescriptor>>::DESCRIPTOR);
         self.registry
             .components
             .push(<T as Descriptor<ComponentDescriptor>>::DESCRIPTOR);
@@ -294,51 +264,22 @@ impl AppBuilder {
         self
     }
 
-    /// Manually register a raw service header (prefer [`service`](Self::service) by type).
-    /// The descriptor's `rpcs` pointer carries the service's RPC surface.
-    pub fn service_descriptor(mut self, descriptor: &'static ServiceDescriptor) -> Self {
-        self.registry.services.push(*descriptor);
-
-        self
-    }
-
-    /// Wraps the dispatch path in a [`tower::Layer`], running on every call. Any
-    /// protocol-agnostic tower layer (timeout, rate-limit, …) or a framework layer
-    /// works. The first layer registered is the outermost (it sees the request
-    /// first and the response last).
-    pub fn middleware<L>(mut self, layer: L) -> Self
-    where
-        L: Layer<RpcService> + Send + 'static,
-        L::Service: Service<RpcRequest, Response = RpcOutcome, Error = ErrorResponse>
-            + Clone
-            + Send
-            + 'static,
-        <L::Service as Service<RpcRequest>>::Future: Send + 'static,
-    {
-        self.layers
-            .push(Box::new(move |inner| RpcService::new(layer.layer(inner))));
-
-        self
-    }
-
-    /// Registers a [`Guard`] as a pre-handler admit/reject check, adapted onto the
-    /// middleware stack. Equivalent to a [`middleware`](Self::middleware) of a
-    /// [`GuardLayer`], ordered like any other layer.
-    pub fn guard<G: Guard>(self, guard: G) -> Self {
-        self.middleware(GuardLayer::new(Arc::new(guard)))
-    }
-
-    /// Sets the single global [`ErrorHandler`] applied to every error response
-    /// before it reaches the caller. A later call replaces an earlier one.
-    pub fn error_handler<H: ErrorHandler>(mut self, handler: H) -> Self {
-        self.error_handler = Some(Arc::new(handler));
+    /// Applies a non-protocol [`Plugin`], folding its registrations into the app.
+    /// Protocol installation is fixed at the type level (`AppBuilder<P>`); this is for
+    /// additional plugins (e.g. a future scheduling plugin) that only contribute
+    /// components and discovery.
+    pub fn plugin<Q: Plugin>(mut self, plugin: Q) -> Self {
+        plugin.register(&mut self.registry);
 
         self
     }
 
     /// Validates the registry, resolves all components, partitions them by scope,
     /// and builds a ready-to-run App.
-    pub async fn build(self) -> crate::Result<App> {
+    pub async fn build(self) -> crate::Result<App<P>>
+    where
+        crate::Error: From<P::Error>,
+    {
         debug!(target: "overseerd::daemon", daemon = %self.name, "building daemon");
 
         let mut registry = self.registry;
@@ -349,11 +290,11 @@ impl AppBuilder {
         // by `serve`/`run` and never exposed through DI.
         let shutdown = ShutdownSignal::new();
 
-        // The protocol plugin: it accumulates the protocol-specific builder state
-        // (middleware layers, error handler) and contributes its DI descriptors here —
-        // for RPC, the connection-scoped `PeerInfo` injectable, declared so dependencies
-        // on it validate and it partitions into the connection scope.
-        let plugin = RpcPlugin::new(self.layers, self.error_handler);
+        // The protocol plugin (the builder's accumulated protocol state) contributes its
+        // DI descriptors here — for RPC, the connection-scoped `PeerInfo` injectable,
+        // declared so dependencies on it validate and it partitions into the connection
+        // scope.
+        let plugin = self.protocol;
         plugin.register(&mut registry);
 
         // Directories are framework-provided singletons: a manager (supplied or
@@ -417,7 +358,7 @@ impl AppBuilder {
             value: Box::new(Injectable::into_stored(hook_manager.clone())),
         });
 
-        let scopes = ScopePlan::partition(&resolved, &registry.providers)?;
+        let scopes = ScopePlan::partition(&resolved, &registry.providers, P::SCOPES)?;
 
         // Build the config store — every bound `Cfg<T>` value, plus the reload slots
         // sharing their live cells. The store is a resolver, inserted into the resolver set
@@ -468,9 +409,8 @@ impl AppBuilder {
             Arc::from(self.name.as_str()),
             root,
             scope_registry,
-            Arc::new(scopes.connection_order),
-            Arc::new(scopes.request_order),
-            scopes.needs_peer,
+            Arc::new(scopes.orders),
+            Arc::from(resolved),
             hook_manager,
         );
 
@@ -487,6 +427,106 @@ impl AppBuilder {
             reloader,
             reload_triggers,
         })
+    }
+}
+
+/// RPC-specific builder methods, contributed to [`AppBuilder<RpcPlugin>`] as an
+/// extension trait (a foreign crate cannot add inherent methods to a generic type, so
+/// every protocol layers its surface on this way). Bring it into scope to register
+/// services, middleware, guards, and the error handler; it is in the prelude.
+pub trait RpcAppBuilder {
+    /// Registers service type `T` by type: its identity header (carrying its RPC
+    /// surface) and its construction factory. Safe to combine with `auto_discover`
+    /// (services dedup by type at build).
+    fn service<T>(self) -> Self
+    where
+        T: Descriptor<ServiceDescriptor> + Descriptor<ComponentDescriptor>;
+
+    /// Registers a pre-built service singleton: its identity header (which carries the
+    /// service's RPC surface) and the instance itself (like `with_component`).
+    fn with_service<T>(self, value: T) -> Self
+    where
+        T: ServiceComponent + Descriptor<ServiceDescriptor>;
+
+    /// Manually registers a raw service header (prefer [`service`](Self::service) by type).
+    fn service_descriptor(self, descriptor: &'static ServiceDescriptor) -> Self;
+
+    /// Wraps the dispatch path in a [`tower::Layer`], running on every call. The first
+    /// layer registered is the outermost.
+    fn middleware<L>(self, layer: L) -> Self
+    where
+        L: Layer<RpcService> + Send + 'static,
+        L::Service: Service<RpcRequest, Response = RpcOutcome, Error = ErrorResponse>
+            + Clone
+            + Send
+            + 'static,
+        <L::Service as Service<RpcRequest>>::Future: Send + 'static;
+
+    /// Registers a [`Guard`] as a pre-handler admit/reject check, adapted onto the
+    /// middleware stack.
+    fn guard<G: Guard>(self, guard: G) -> Self;
+
+    /// Sets the single global [`ErrorHandler`] applied to every error response before it
+    /// reaches the caller. A later call replaces an earlier one.
+    fn error_handler<H: ErrorHandler>(self, handler: H) -> Self;
+}
+
+impl RpcAppBuilder for AppBuilder<RpcPlugin> {
+    fn service<T>(mut self) -> Self
+    where
+        T: Descriptor<ServiceDescriptor> + Descriptor<ComponentDescriptor>,
+    {
+        self.registry
+            .services
+            .push(<T as Descriptor<ServiceDescriptor>>::DESCRIPTOR);
+        self.registry
+            .components
+            .push(<T as Descriptor<ComponentDescriptor>>::DESCRIPTOR);
+
+        self
+    }
+
+    fn with_service<T>(mut self, value: T) -> Self
+    where
+        T: ServiceComponent + Descriptor<ServiceDescriptor>,
+    {
+        self.registry
+            .services
+            .push(<T as Descriptor<ServiceDescriptor>>::DESCRIPTOR);
+
+        self.with_component(value)
+    }
+
+    fn service_descriptor(mut self, descriptor: &'static ServiceDescriptor) -> Self {
+        self.registry.services.push(*descriptor);
+
+        self
+    }
+
+    fn middleware<L>(mut self, layer: L) -> Self
+    where
+        L: Layer<RpcService> + Send + 'static,
+        L::Service: Service<RpcRequest, Response = RpcOutcome, Error = ErrorResponse>
+            + Clone
+            + Send
+            + 'static,
+        <L::Service as Service<RpcRequest>>::Future: Send + 'static,
+    {
+        self.protocol
+            .layers
+            .push(Box::new(move |inner| RpcService::new(layer.layer(inner))));
+
+        self
+    }
+
+    fn guard<G: Guard>(self, guard: G) -> Self {
+        self.middleware(GuardLayer::new(Arc::new(guard)))
+    }
+
+    fn error_handler<H: ErrorHandler>(mut self, handler: H) -> Self {
+        self.protocol.error_handler = Some(Arc::new(handler));
+
+        self
     }
 }
 
@@ -546,92 +586,84 @@ fn seed_dir<K: DirKind>(
     });
 }
 
-/// The per-scope construction plan computed once at daemon build.
+/// The per-scope construction plan computed once at app build.
+///
+/// Agnostic to any particular protocol: the intermediate scopes come from the
+/// protocol's declared chain (`P::SCOPES`), and the per-scope construction `orders`
+/// are keyed by scope name. Singletons are sorted by `build_root`; transients are
+/// constructed on demand, so need no order.
 struct ScopePlan {
     singletons: Vec<ComponentDescriptor>,
-    connection_order: Vec<ComponentDescriptor>,
-    request_order: Vec<ComponentDescriptor>,
     transient: std::collections::HashMap<TypeId, ComponentDescriptor>,
-    /// Whether any component depends on the framework-seeded `PeerInfo`. When
-    /// false (and no connection components exist), the connection scope holds
-    /// nothing and is skipped — handlers still reach the peer via the [`Peer`]
-    /// extractor, which reads it off the call context rather than the scope chain.
-    ///
-    /// [`Peer`]: crate::extract::Peer
-    needs_peer: bool,
+    orders: std::collections::HashMap<&'static str, Vec<ComponentDescriptor>>,
 }
 
 impl ScopePlan {
-    /// Splits the resolved components by scope and precomputes the construction
-    /// order for the connection and request scopes (singletons are sorted by
-    /// `build_root`; transients are constructed on demand, so need no order).
+    /// Splits the resolved components by scope and precomputes the construction order
+    /// for each scope in the protocol's chain (`scopes`, root→leaf by rank). A
+    /// factory-less scoped component (e.g. the framework's seeded `PeerInfo`) is treated
+    /// as prebuilt — seeded at runtime, not constructed. A constructable component whose
+    /// scope is not in the chain (nor a singleton/transient) is a build error.
     fn partition(
         resolved: &[ComponentDescriptor],
         providers: &[ProviderDescriptor],
+        scopes: &[&'static dyn Scope],
     ) -> crate::Result<Self> {
+        let singleton_rank = SingletonScope.rank();
+
         let mut singletons = Vec::new();
-        let mut connection_components = Vec::new();
-        let mut request_components = Vec::new();
         let mut transient = std::collections::HashMap::new();
+        // Constructable components bucketed by their scope name; drained by the chain
+        // loop below, so a non-empty remainder means a scope the protocol does not open.
+        let mut by_scope: std::collections::HashMap<&'static str, Vec<ComponentDescriptor>> =
+            std::collections::HashMap::new();
+        // Available to each successive scope: singletons, factory-less seeds (the peer),
+        // and every earlier scope in the chain.
+        let mut prebuilt: HashSet<TypeId> = HashSet::new();
 
         for c in resolved {
-            // A manually-seeded instance (no factory) — e.g. the framework's PeerInfo
-            // — is seeded into its scope, not constructed.
-            let constructable = c.effective_factory()?.is_some();
-
-            // The Plugin step replaces this hardcoded connection/request chain with
-            // the active protocol's declared `SCOPES`. Today only the four built-in
-            // scopes exist, dispatched here by their label.
             if c.scope.is_transient() {
                 transient.insert((c.ty.type_id)(), *c);
+            } else if c.scope.rank() == singleton_rank {
+                singletons.push(*c);
+            } else if c.effective_factory()?.is_some() {
+                by_scope.entry(c.scope.name()).or_default().push(*c);
             } else {
-                match c.scope.name() {
-                    "Singleton" => singletons.push(*c),
-                    "Connection" if constructable => connection_components.push(*c),
-                    "Connection" => {}
-                    "Request" if constructable => request_components.push(*c),
-                    "Request" => {}
-                    other => unreachable!("unknown component scope `{other}`"),
-                }
+                // Factory-less intermediate component — seeded at runtime, prebuilt for
+                // ordering (e.g. a connection component may depend on the peer).
+                prebuilt.insert((c.ty.type_id)());
             }
         }
 
-        // Connection components resolve against singletons and the seeded peer. Config
-        // edges impose no ordering (config resolves through an external resolver), so they
-        // need not be treated as prebuilt.
-        let peer_id = (PEER_INFO_DESCRIPTOR.ty.type_id)();
-        let mut conn_prebuilt: HashSet<TypeId> =
-            singletons.iter().map(|c| (c.ty.type_id)()).collect();
-        conn_prebuilt.insert(peer_id);
+        prebuilt.extend(singletons.iter().map(|c| (c.ty.type_id)()));
 
-        // Does any real component depend on the peer? If not, the connection scope
-        // need not exist solely to hold it.
-        let needs_peer = resolved.iter().any(|c| {
-            (c.ty.type_id)() != peer_id
-                && c.dependencies().iter().any(|d| (d.ty.type_id)() == peer_id)
-        });
+        // Order each scope in the chain against the accumulating prebuilt set, so a
+        // longer-lived scope is available to the shorter-lived ones below it.
+        let mut orders = std::collections::HashMap::new();
 
-        let connection_order = topological_sort(&connection_components, &conn_prebuilt, providers)?
-            .into_iter()
-            .copied()
-            .collect();
+        for scope in scopes {
+            let components = by_scope.remove(scope.name()).unwrap_or_default();
+            let order: Vec<ComponentDescriptor> =
+                topological_sort(&components, &prebuilt, providers)?
+                    .into_iter()
+                    .copied()
+                    .collect();
 
-        // Request components resolve against singletons, the peer, and all
-        // connection-scoped components.
-        let mut req_prebuilt = conn_prebuilt.clone();
-        req_prebuilt.extend(connection_components.iter().map(|c| (c.ty.type_id)()));
+            prebuilt.extend(order.iter().map(|c| (c.ty.type_id)()));
+            orders.insert(scope.name(), order);
+        }
 
-        let request_order = topological_sort(&request_components, &req_prebuilt, providers)?
-            .into_iter()
-            .copied()
-            .collect();
+        if let Some((scope, components)) = by_scope.iter().next() {
+            return Err(crate::Error::UndeclaredScope {
+                component: components[0].name.to_string(),
+                scope,
+            });
+        }
 
         Ok(Self {
             singletons,
-            connection_order,
-            request_order,
             transient,
-            needs_peer,
+            orders,
         })
     }
 }
@@ -641,28 +673,27 @@ impl ScopePlan {
 /// It holds the agnostic [`AppRuntime`] (DI container, scope orders, hooks) and the
 /// built [`Protocol`](crate::protocol::Protocol) — here the native [`Rpc`] — plus the
 /// shutdown signal and config reloader the serve envelope drives.
-pub struct App {
+pub struct App<P: ProtocolPlugin = RpcPlugin> {
     pub name: String,
     pub registry: DescriptorRegistry,
     runtime: AppRuntime,
-    protocol: Rpc,
+    protocol: P::Protocol,
     shutdown: ShutdownSignal,
     reloader: ConfigReloader,
     reload_triggers: ReloadTriggers,
 }
 
-impl fmt::Debug for App {
+impl<P: ProtocolPlugin> fmt::Debug for App<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("App")
             .field("name", &self.name)
             .field("components", &self.registry.components.len())
             .field("services", &self.registry.services.len())
-            .field("routes", &self.protocol.route_count())
             .finish_non_exhaustive()
     }
 }
 
-impl fmt::Display for App {
+impl<P: ProtocolPlugin> fmt::Display for App<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "App: {}", self.name)?;
         write!(f, "{}", self.registry)?;
@@ -671,11 +702,15 @@ impl fmt::Display for App {
     }
 }
 
-impl App {
-    pub fn builder(name: impl Into<String>) -> AppBuilder {
+impl App<RpcPlugin> {
+    /// Starts building an RPC app. (Other protocols construct their builder with
+    /// [`AppBuilder::<P>::new`](AppBuilder::new).)
+    pub fn builder(name: impl Into<String>) -> AppBuilder<RpcPlugin> {
         AppBuilder::new(name)
     }
+}
 
+impl<P: ProtocolPlugin> App<P> {
     /// The root (singleton) scope container.
     pub fn container(&self) -> &Arc<ScopeContainer> {
         self.runtime.root()
@@ -712,7 +747,8 @@ impl App {
     /// way out.
     pub async fn serve<E>(self, endpoint: E) -> crate::Result<()>
     where
-        Rpc: Serve<E>,
+        P::Protocol: Serve<E>,
+        crate::Error: From<<P::Protocol as Protocol>::Error>,
     {
         let App {
             runtime,
@@ -751,7 +787,7 @@ impl App {
         // Graceful stop: run shutdown hooks (errors are logged, shutdown proceeds).
         run_lifecycle::<Shutdown>(runtime.hooks(), false).await.ok();
 
-        result
+        result.map_err(crate::Error::from)
     }
 
     /// Waits for ctrl-c or a shutdown signal without serving any transport.

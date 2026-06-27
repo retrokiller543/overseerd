@@ -7,43 +7,45 @@
 //! take as a long argument list, and exposes the scope-opening primitives a protocol
 //! drives per connection and per request.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use overseerd_core::Scope;
 use overseerd_di::{BoxedComponent, ComponentDescriptor, ScopeContainer, ScopeRegistry};
 use overseerd_hooks::HookManager;
 
-use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
-
 /// Everything a protocol needs to drive requests through DI, cheaply cloneable.
+///
+/// Agnostic to any particular protocol: it holds the built root scope, the per-scope
+/// construction orders keyed by scope name (computed from the protocol's declared
+/// scope chain), the resolved component set, and the hook manager. A protocol opens
+/// its scopes through [`open_scope`](Self::open_scope), naming each scope from its own
+/// chain.
 #[derive(Clone)]
 pub struct AppRuntime {
     name: Arc<str>,
     root: Arc<ScopeContainer>,
     scopes: Arc<ScopeRegistry>,
-    connection_order: Arc<Vec<ComponentDescriptor>>,
-    request_order: Arc<Vec<ComponentDescriptor>>,
-    needs_peer: bool,
+    orders: Arc<HashMap<&'static str, Vec<ComponentDescriptor>>>,
+    resolved: Arc<[ComponentDescriptor]>,
     hooks: HookManager,
 }
 
 impl AppRuntime {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         name: Arc<str>,
         root: Arc<ScopeContainer>,
         scopes: Arc<ScopeRegistry>,
-        connection_order: Arc<Vec<ComponentDescriptor>>,
-        request_order: Arc<Vec<ComponentDescriptor>>,
-        needs_peer: bool,
+        orders: Arc<HashMap<&'static str, Vec<ComponentDescriptor>>>,
+        resolved: Arc<[ComponentDescriptor]>,
         hooks: HookManager,
     ) -> Self {
         Self {
             name,
             root,
             scopes,
-            connection_order,
-            request_order,
-            needs_peer,
+            orders,
+            resolved,
             hooks,
         }
     }
@@ -63,45 +65,32 @@ impl AppRuntime {
         &self.hooks
     }
 
-    /// Whether any component depends on the framework-seeded `PeerInfo`. When false a
-    /// connection scope that would hold only the peer can be skipped.
-    pub fn needs_peer(&self) -> bool {
-        self.needs_peer
+    /// The resolved component set (the effective per-type descriptors). A protocol may
+    /// introspect it — the RPC protocol uses it to decide whether the peer is depended
+    /// on and therefore worth seeding.
+    pub fn resolved_components(&self) -> &[ComponentDescriptor] {
+        &self.resolved
     }
 
-    /// Opens a connection-scoped child over the root, seeding `seeds` (e.g. the peer)
-    /// and constructing the connection-scope order. An empty scope is skipped, so this
-    /// returns the root unchanged when nothing connection-scoped exists.
-    pub async fn open_connection_scope(
+    /// Opens a child container for `scope` over `parent`, seeding `seeds` and
+    /// constructing that scope's precomputed order (empty when the scope holds nothing
+    /// constructable). An empty, unseeded scope is skipped — `parent` is returned
+    /// unchanged. `scope` must be one the app was built for (in the protocol's chain).
+    pub async fn open_scope(
         &self,
-        seeds: Vec<BoxedComponent>,
-    ) -> crate::Result<Arc<ScopeContainer>> {
-        ScopeContainer::open_child(
-            &ConnectionScope,
-            Arc::clone(&self.root),
-            Arc::clone(&self.scopes),
-            &self.connection_order,
-            seeds,
-        )
-        .await
-        .map_err(crate::Error::from)
-    }
-
-    /// Opens a request-scoped child over `parent` (a connection scope, or the root),
-    /// constructing the request-scope order.
-    pub async fn open_request_scope(
-        &self,
+        scope: &'static dyn Scope,
         parent: Arc<ScopeContainer>,
         seeds: Vec<BoxedComponent>,
     ) -> crate::Result<Arc<ScopeContainer>> {
-        ScopeContainer::open_child(
-            &RequestScope,
-            parent,
-            Arc::clone(&self.scopes),
-            &self.request_order,
-            seeds,
-        )
-        .await
-        .map_err(crate::Error::from)
+        const EMPTY: &[ComponentDescriptor] = &[];
+
+        let order = self
+            .orders
+            .get(scope.name())
+            .map_or(EMPTY, |order| order.as_slice());
+
+        ScopeContainer::open_child(scope, parent, Arc::clone(&self.scopes), order, seeds)
+            .await
+            .map_err(crate::Error::from)
     }
 }

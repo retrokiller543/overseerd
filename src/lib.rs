@@ -88,10 +88,10 @@ pub use overseerd_daemon::{
     FallibleHandler, FromContext, Guard, GuardLayer, GuardService, Handler, Inject, LoggingConfig,
     OperationKind, ParameterDescriptor, ParameterKind, Payload, Peer, Plugin, Protocol,
     ProtocolPlugin, RequestStream, ResolvedService, Responder, ResponseError, ResponseStream,
-    Result, RouterService, Rpc, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome,
-    RpcPlugin, RpcRequest, RpcResponse, RpcRouter, RpcService, SERVICES, Serve, ServerConfig,
-    ServiceDescriptor, ServiceRpcs, ShutdownHandle, ShutdownSignal, Streaming, dispatch_fallible,
-    dispatch_with,
+    Result, RouterService, Rpc, RpcAppBuilder, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler,
+    RpcOutcome, RpcPlugin, RpcRequest, RpcResponse, RpcRouter, RpcService, SERVICES, Serve,
+    ServerConfig, ServiceDescriptor, ServiceRpcs, ShutdownHandle, ShutdownSignal, Streaming,
+    dispatch_fallible, dispatch_with,
 };
 
 /// Deprecated alias for [`App`]. Renamed in 0.7.0; the alias is removed in 1.0.0.
@@ -207,7 +207,7 @@ pub mod builtins {
 pub mod prelude {
     pub use crate::{
         App, Cfg, Component, ConfigManager, ConfigProperties, Handler, Inject, Payload, Result,
-        ServiceComponent, component, handlers, rpc, service,
+        RpcAppBuilder, ServiceComponent, component, handlers, rpc, service,
     };
 
     pub use overseerd_transport::TcpTransport;

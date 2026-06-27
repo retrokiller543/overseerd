@@ -29,14 +29,17 @@ use crate::middleware::{ErrorHandler, RpcRequest, RpcService};
 use crate::registry::DescriptorRegistry;
 use crate::router::RpcRouter;
 use crate::runtime::AppRuntime;
+use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
 
 /// A general extension unit applied to an app while it is built.
 ///
-/// A plugin contributes DI descriptors (and, later, custom `#[component]` variants and
-/// their discovery) into the registry before the container is built. A plugin need not
-/// serve traffic — that is the job of the [`ProtocolPlugin`] sub-trait. Background
-/// behavior rides the components a plugin registers (via their own `#[hook]`s).
-pub trait Plugin: Sized {
+/// A plugin is the builder-time accumulator for an extension: it starts empty
+/// ([`Default`]), gathers protocol-specific configuration through the builder, and
+/// contributes DI descriptors (and, later, custom `#[component]` variants and their
+/// discovery) into the registry before the container is built. A plugin need not serve
+/// traffic — that is the job of the [`ProtocolPlugin`] sub-trait. Background behavior
+/// rides the components a plugin registers (via their own `#[hook]`s).
+pub trait Plugin: Default {
     /// Contributes DI descriptors / seeds into the registry before validation and build.
     /// The native RPC plugin seeds its connection-scoped `PeerInfo` here.
     fn register(&self, registry: &mut DescriptorRegistry);
@@ -90,6 +93,7 @@ pub struct Rpc {
     router: Arc<RpcRouter>,
     service: RpcService,
     error_handler: Option<Arc<dyn ErrorHandler>>,
+    needs_peer: bool,
 }
 
 impl Rpc {
@@ -97,11 +101,13 @@ impl Rpc {
         router: Arc<RpcRouter>,
         service: RpcService,
         error_handler: Option<Arc<dyn ErrorHandler>>,
+        needs_peer: bool,
     ) -> Self {
         Self {
             router,
             service,
             error_handler,
+            needs_peer,
         }
     }
 
@@ -139,9 +145,11 @@ where
 
                             let service = self.service.clone();
                             let error_handler = self.error_handler.clone();
+                            let needs_peer = self.needs_peer;
                             let runtime = runtime.clone();
                             tokio::spawn(async move {
-                                serve_connection(conn, service, error_handler, runtime).await;
+                                serve_connection(conn, service, error_handler, needs_peer, runtime)
+                                    .await;
                             });
                         }
 
@@ -180,6 +188,7 @@ async fn serve_connection<C: Connection>(
     mut conn: C,
     service: RpcService,
     error_handler: Option<Arc<dyn ErrorHandler>>,
+    needs_peer: bool,
     runtime: AppRuntime,
 ) {
     debug!(target: "overseerd::daemon", "connection established");
@@ -189,7 +198,7 @@ async fn serve_connection<C: Connection>(
     // extractor regardless, so an otherwise-empty connection scope is skipped. A
     // failed factory closes the connection.
     let peer = conn.peer().clone();
-    let seeds = if runtime.needs_peer() {
+    let seeds = if needs_peer {
         vec![BoxedComponent {
             ty: TypeDescriptor::of::<PeerInfo>("PeerInfo"),
             value: Box::new(peer.clone()),
@@ -198,7 +207,10 @@ async fn serve_connection<C: Connection>(
         Vec::new()
     };
 
-    let connection_scope = match runtime.open_connection_scope(seeds).await {
+    let connection_scope = match runtime
+        .open_scope(&ConnectionScope, Arc::clone(runtime.root()), seeds)
+        .await
+    {
         Ok(scope) => scope,
 
         Err(e) => {
@@ -275,7 +287,7 @@ async fn drive_call<R>(
     R: Respond + RespondStream + Send + 'static,
 {
     let request_scope = match runtime
-        .open_request_scope(connection_scope, Vec::new())
+        .open_scope(&RequestScope, connection_scope, Vec::new())
         .await
     {
         Ok(scope) => scope,

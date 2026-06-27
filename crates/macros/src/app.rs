@@ -398,6 +398,17 @@ pub fn expand(input: AppInput) -> TokenStream {
         None => {}
     }
 
+    // The `middleware`/`guard`/`error_handler` chain methods come from the `RpcAppBuilder`
+    // extension trait; bring it into scope only when one of them is emitted, so a plain
+    // `app! { .. }` stays free of an unused import.
+    let rpc_use = if !middleware.is_empty() || !guards.is_empty() || error_handler.is_some() {
+        let rpc_app_builder = overseerd_path("RpcAppBuilder");
+
+        quote!(use #rpc_app_builder as _;)
+    } else {
+        quote!()
+    };
+
     let error_handler = error_handler.into_iter();
 
     quote! {
@@ -406,6 +417,7 @@ pub fn expand(input: AppInput) -> TokenStream {
 
             #directories_binding
             #config_binding
+            #rpc_use
 
             #app_ty::builder(#name)
                 .auto_discover()

@@ -38,6 +38,14 @@ pub enum Error {
     MissingComponent(&'static str),
 
     #[error(
+        "component '{component}' declares scope '{scope}', which the active protocol does not open"
+    )]
+    UndeclaredScope {
+        component: String,
+        scope: &'static str,
+    },
+
+    #[error(
         "missing config for component '{component}': no binding of type '{type_name}' \
          at path '{path}'"
     )]

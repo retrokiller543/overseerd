@@ -30,6 +30,7 @@ pub type Result<T, E = Error> = core::result::Result<T, E>;
 
 pub use builtins::{LoggingConfig, ServerConfig};
 pub use daemon::{App, AppBuilder};
+pub use daemon::{RpcAppBuilder, RpcPlugin};
 pub use descriptors::{
     Descriptor, OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor,
     RpcGroup, RpcHandler, RpcOutcome, RpcResponse, SERVICES, ServiceDescriptor, ServiceRpcs,
@@ -43,7 +44,6 @@ pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use middleware::{
     ErrorHandler, Guard, GuardLayer, GuardService, RouterService, RpcRequest, RpcService,
 };
-pub use daemon::RpcPlugin;
 pub use protocol::{Plugin, Protocol, ProtocolPlugin, Rpc, Serve};
 pub use registry::{DescriptorRegistry, ResolvedService};
 pub use router::RpcRouter;

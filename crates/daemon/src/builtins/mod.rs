@@ -19,7 +19,7 @@ pub use logging::{InitTracingError, init_tracing};
 
 #[cfg(test)]
 mod tests {
-    use crate::AppBuilder;
+    use crate::App;
     use crate::lifecycle::ShutdownHandle;
     use overseerd_config::{ConfigManager, ConfigProperties, Toml};
 
@@ -27,7 +27,7 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_handle_resolves_from_root_scope() {
-        let daemon = AppBuilder::new("builtins-test")
+        let daemon = App::builder("builtins-test")
             .build()
             .await
             .expect("build daemon");
