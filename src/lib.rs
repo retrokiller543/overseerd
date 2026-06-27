@@ -1,8 +1,10 @@
 //! # Overseerd
 //!
-//! A component- and service-oriented RPC framework. Depend on this single crate;
-//! it re-exports everything from the implementation crates (`overseerd-core` and
-//! `overseerd-transport`) plus the procedural macros.
+//! A component- and service-oriented RPC framework. Depend on this single crate; it
+//! re-exports everything from the layered implementation crates — `overseerd-core`
+//! (vocabulary + resolver), `overseerd-di` (the DI engine), `overseerd-hooks`,
+//! `overseerd-dirs`, `overseerd-config`, `overseerd-daemon` (runtime + RPC), and
+//! `overseerd-transport` — plus the procedural macros.
 //!
 //! ## Concepts
 //!
@@ -13,83 +15,94 @@
 //!   methods. A stateful service is also a component (its `&self` is the singleton).
 //! - **Container** — holds the constructed instances ([`ComponentContainer`]).
 //! - **Registry** — holds the *declarations* ([`DescriptorRegistry`]).
-//!
-//! ## Example
-//!
-//! ```ignore
-//! use overseerd::prelude::*;
-//! use serde::{Deserialize, Serialize};
-//! use std::sync::Arc;
-//!
-//! #[component(default_factory = false)]
-//! struct Config { greeting: String }
-//!
-//! #[service(id = "greeter", version = "0.1")]
-//! struct Greeter { config: Arc<Config> }
-//!
-//! #[derive(Deserialize)] struct GreetReq { name: String }
-//! #[derive(Serialize)]   struct GreetResp { message: String }
-//!
-//! #[handlers]
-//! impl Greeter {
-//!     #[rpc]
-//!     async fn greet(&self, Payload(req): Payload<GreetReq>) -> Result<GreetResp> {
-//!         Ok(GreetResp { message: format!("{}, {}!", self.config.greeting, req.name) })
-//!     }
-//! }
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<()> {
-//!     let daemon = Daemon::builder("greeter")
-//!         .auto_discover()
-//!         .with_component(Config { greeting: "Hello".into() })
-//!         .build()
-//!         .await?;
-//!
-//!     daemon.serve(TcpTransport::bind("127.0.0.1:9000").await?).await
-//! }
-//! ```
 
 // ---------------------------------------------------------------------------
-// Core: descriptors, registry, container, daemon, extractors, macros.
+// Leaf vocabulary + resolver model.
 // ---------------------------------------------------------------------------
 pub use overseerd_core::{
-    BoxedComponent, COMPONENTS, CONFIG_BINDINGS, Cancel, Cardinality, Cfg, CfgNext, ChangedBinding,
-    Component, ComponentConstructionContext, ComponentContainer, ComponentDescriptor,
-    ComponentFactories, ComponentFactory, ComponentFactoryDescriptor, ComponentHookReport,
-    ComponentHooks, ComponentScope, ConfigBinding, ConfigBindingDescriptor, ConfigDefaults,
-    ConfigError, ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError,
-    ConfigReloadReport, ConfigReloader, Daemon, DaemonBuilder, DefaultSpec, Dep,
-    DependencyDescriptor, Descriptor, DescriptorRegistry, Dir, DirKind, DirectoriesManager,
-    Dynamic, EnumTag, Error, ErrorHandler, ErrorResponse, Factory, FactoryOutput, FallibleHandler,
-    Flags, FromContainer, FromContext, Guard, GuardLayer, GuardService, Handler, HookCall,
-    HookDescriptor, HookKind, HookManager, HookOutcome, HookParam, Inject, Injectable, Live,
-    LiveRef, LoggingConfig, OperationKind, PROVIDERS, ParameterDescriptor, ParameterKind, Payload,
-    Peer, PredefinedCode, Provide, ProviderDescriptor, ReloadProposal, ReloadTriggers,
-    ReloadableConfig, RequestStream, Responder, ResponseError, ResponseStream, Result,
-    RouterService, RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcRequest,
-    RpcResponse, RpcRouter, RpcService, SERVICES, ScopeContainer, ServerConfig, ServiceComponent,
-    ServiceDescriptor, ServiceRpcs, Shutdown, ShutdownHandle, ShutdownSignal, Startup, StatusCode,
-    Streaming, TypeDescriptor, Wired, Wiring, component, daemon, dispatch_factory,
-    dispatch_fallible, dispatch_with, factory_dependencies, handlers, injectable, methods,
-    no_hooks, rpc, service, type_id_of,
+    Cardinality, ComponentScope, DependencyDescriptor, Descriptor, Resolver, ResolverCtx,
+    ResolverCtxExt, ResolverSet, TypeDescriptor, type_id_of,
 };
 
-/// The `#[config]` attribute macro. Re-exported straight from `overseerd_macros`
-/// (where the name is unambiguously the macro) so it coexists with the [`config`]
-/// module rather than colliding with it through `overseerd_core`'s dual-namespace
-/// `config` name.
-pub use overseerd_macros::config;
+// ---------------------------------------------------------------------------
+// DI engine: descriptors, container, factories, registry.
+// ---------------------------------------------------------------------------
+pub use overseerd_di::{
+    BoxedComponent, COMPONENTS, Component, ComponentConstructionContext, ComponentContainer,
+    ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor,
+    ComponentRegistry, ComponentSource, Dep, Dynamic, Factory, FactoryOutput, FromContainer,
+    Injectable, Live, LiveRef, PROVIDERS, Provide, ProviderDescriptor, ScopeContainer,
+    ServiceComponent, Wired, Wiring, dispatch_factory, factory_dependencies, from_boxed,
+};
+/// The DI layer's own error/result, exposed under distinct names so macro-generated
+/// **factory** code (which constructs components) can name them without colliding with the
+/// daemon's root [`Error`]/[`Result`] (used by RPC handler codegen).
+pub use overseerd_di::{Error as DiError, Result as DiResult};
+
+// ---------------------------------------------------------------------------
+// Hooks.
+// ---------------------------------------------------------------------------
+pub use overseerd_hooks::{
+    ComponentHooks, HookCall, HookDescriptor, HookKind, HookManager, HookParam, Shutdown, Startup,
+    no_hooks,
+};
+/// The hook layer's own error/result, exposed under distinct names so macro-generated hook
+/// code can name them without colliding with the daemon's root [`Error`]/[`Result`].
+pub use overseerd_hooks::{Error as HookError, Result as HookResult};
+
+// ---------------------------------------------------------------------------
+// Directories.
+// ---------------------------------------------------------------------------
+pub use overseerd_dirs::{Dir, DirKind, DirectoriesManager};
+
+// ---------------------------------------------------------------------------
+// Config: Cfg, ConfigManager, reload, the config store, the directory resolver.
+// ---------------------------------------------------------------------------
+pub use overseerd_config::{
+    CONFIG_BINDINGS, Cfg, CfgNext, ChangedBinding, ComponentHookReport, ConfigBinding,
+    ConfigBindingDescriptor, ConfigDefaults, ConfigError, ConfigManager, ConfigProperties,
+    ConfigReload, ConfigReloadError, ConfigReloadReport, ConfigReloader, ConfigStore,
+    ContainerConfigExt, DefaultSpec, DirectoriesResolver, EnumTag, HookOutcome, ReloadProposal,
+    ReloadTriggers, ReloadableConfig, spawn_reload_triggers,
+};
+
+// ---------------------------------------------------------------------------
+// Daemon runtime + RPC: builder, router, extractors, middleware, registry, errors.
+// ---------------------------------------------------------------------------
+pub use overseerd_daemon::{
+    Cancel, Daemon, DaemonBuilder, DescriptorRegistry, Error, ErrorHandler, ErrorResponse,
+    FallibleHandler, FromContext, Guard, GuardLayer, GuardService, Handler, Inject, LoggingConfig,
+    OperationKind, ParameterDescriptor, ParameterKind, Payload, Peer, RequestStream,
+    ResolvedService, Responder, ResponseError, ResponseStream, Result, RouterService,
+    RpcCallContext, RpcDescriptor, RpcGroup, RpcHandler, RpcOutcome, RpcRequest, RpcResponse,
+    RpcRouter, RpcService, SERVICES, ServerConfig, ServiceDescriptor, ServiceRpcs, ShutdownHandle,
+    ShutdownSignal, Streaming, dispatch_fallible, dispatch_with,
+};
+
+// ---------------------------------------------------------------------------
+// Wire-contract status types and stream item codecs.
+// ---------------------------------------------------------------------------
+pub use overseerd_transport::{
+    Flags, PredefinedCode, StatusCode, StreamDecode, StreamDecodeError, StreamEncode,
+    StreamEncodeError,
+};
+
+// ---------------------------------------------------------------------------
+// Procedural macros.
+// ---------------------------------------------------------------------------
+pub use overseerd_macros::{
+    component, config, daemon, handlers, injectable, methods, rpc, service,
+};
 
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
 /// attribute through the facade crate without user crates depending on `linkme`
 /// directly.
 #[doc(hidden)]
-pub use overseerd_core::linkme;
+pub use overseerd_di::linkme;
 
 /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`
 /// (and reach tower's own layers) without depending on `tower` directly.
-pub use overseerd_core::tower;
+pub use overseerd_daemon::tower;
 
 /// Re-exported so generated client traits can be annotated `#[async_trait]`
 /// (for `dyn`-compatibility) without user crates depending on `async-trait`.
@@ -105,14 +118,14 @@ pub use futures::Stream as __Stream;
 
 // ---------------------------------------------------------------------------
 // Transport: server endpoints, client wire protocol, custom-transport traits.
-// `Error`/`Result` are intentionally not lifted to the root (the core ones win);
+// `Error`/`Result` are intentionally not lifted to the root (the daemon ones win);
 // reach transport's via `overseerd::transport`.
 // ---------------------------------------------------------------------------
 pub use overseerd_transport::{
     CallId, CallResult, Connection, IncomingCall, MemoryCall, MemoryClient, MemoryConnection,
     MemoryConnectionHandle, MemoryResponder, MemoryTransport, PeerInfo, Respond, RespondStream,
-    ResponseSink, ServerEvent, StreamDecode, StreamDecodeError, StreamEncode, StreamEncodeError,
-    TcpTransport, Transport, WireMessage, WireOutcome, WireRequest, WireResponse,
+    ResponseSink, ServerEvent, TcpTransport, Transport, WireMessage, WireOutcome, WireRequest,
+    WireResponse,
 };
 
 #[cfg(unix)]
@@ -138,30 +151,27 @@ pub mod transport {
 /// `Tmp`), the typed [`Dir`] wrapper, and the [`DirectoriesManager`] that resolves
 /// them. Inject `Dir<dirs::Config>` and friends.
 pub mod dirs {
-    pub use overseerd_core::dirs::*;
+    pub use overseerd_dirs::*;
 }
 
-/// Config source-format markers for `ConfigManager<F>`: [`Toml`], [`Yaml`], and the
-/// format-erased [`Dynamic`] (which tries every enabled format).
-///
-/// [`Toml`]: overseerd_core::config::Toml
-/// [`Yaml`]: overseerd_core::config::Yaml
-/// [`Dynamic`]: overseerd_core::config::Dynamic
+/// Config source-format markers for `ConfigManager<F>`: [`Toml`](overseerd_config::Toml),
+/// the format-erased [`Dynamic`](overseerd_config::Dynamic), and (with the `yaml` feature)
+/// `Yaml`.
 pub mod config {
-    pub use overseerd_core::config::{Dynamic, Format, FormatId, Toml};
+    pub use overseerd_config::{Dynamic, Format, FormatId, Toml};
 
     #[cfg(feature = "yaml")]
-    pub use overseerd_core::config::Yaml;
+    pub use overseerd_config::Yaml;
 }
 
 /// Framework builtins: the seeded [`ShutdownHandle`] injectable, the opt-in
 /// [`ServerConfig`] / [`LoggingConfig`] property structs, and the feature-gated
 /// `init_tracing` subscriber helper.
 pub mod builtins {
-    pub use overseerd_core::builtins::{LoggingConfig, ServerConfig};
+    pub use overseerd_daemon::builtins::{LoggingConfig, ServerConfig};
 
     #[cfg(feature = "tracing-subscriber")]
-    pub use overseerd_core::builtins::{InitTracingError, init_tracing};
+    pub use overseerd_daemon::builtins::{InitTracingError, init_tracing};
 }
 
 /// The common imports for building a daemon: `use overseerd::prelude::*;`.

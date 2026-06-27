@@ -8,6 +8,8 @@
 //!
 //! Usually consumed through the `overseerd` facade crate.
 
+#[cfg(feature = "di")]
+mod di;
 pub mod error;
 pub mod frame;
 pub mod protocol;

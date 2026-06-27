@@ -146,7 +146,7 @@ fn generate_init(
     let boxed_component = overseerd_path("BoxedComponent");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
-    let result = overseerd_path("Result");
+    let result = overseerd_path("DiResult");
 
     // A fixed-name `init` associated fn, always `async`, forwards to the marked
     // constructor — normalizing a sync constructor to async (factories are async)

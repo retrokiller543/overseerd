@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 
 use overseerd_config::{
-    ConfigError, ConfigErrorKind, ConfigStr, ConfigValue, MapResolver, ResolverChain, from_value,
+    ConfigStr, ConfigValue, MapResolver, ResolverChain, TemplateError, TemplateErrorKind,
+    from_value,
 };
 use serde::Deserialize;
 
@@ -37,11 +38,11 @@ fn resolvers(pairs: &[(&str, &str)]) -> ResolverChain {
     ResolverChain(vec![Box::new(MapResolver(map))])
 }
 
-/// The failure kind behind a `ConfigError`, regardless of path context.
-fn kind(error: &ConfigError) -> &ConfigErrorKind {
+/// The failure kind behind a `TemplateError`, regardless of path context.
+fn kind(error: &TemplateError) -> &TemplateErrorKind {
     match error {
-        ConfigError::At { kind, .. } => kind,
-        ConfigError::Bare(kind) => kind,
+        TemplateError::At { kind, .. } => kind,
+        TemplateError::Bare(kind) => kind,
     }
 }
 
@@ -105,7 +106,7 @@ fn partial_placeholder_into_non_string_is_rejected() {
 
     assert!(matches!(
         kind(&error),
-        ConfigErrorKind::PartialInNonString { target: "u16" }
+        TemplateErrorKind::PartialInNonString { target: "u16" }
     ));
 }
 
@@ -138,7 +139,7 @@ fn missing_placeholder_without_default_errors() {
 
     assert!(matches!(
         kind(&error),
-        ConfigErrorKind::MissingPlaceholder { key } if key == "NOPE"
+        TemplateErrorKind::MissingPlaceholder { key } if key == "NOPE"
     ));
 }
 
@@ -156,7 +157,7 @@ fn out_of_range_full_placeholder_errors() {
 
     assert!(matches!(
         kind(&error),
-        ConfigErrorKind::OutOfRange { target: "u8", .. }
+        TemplateErrorKind::OutOfRange { target: "u8", .. }
     ));
 }
 
@@ -223,7 +224,7 @@ fn resolution_cycle_is_detected() {
 
     assert!(matches!(
         kind(&error),
-        ConfigErrorKind::ResolutionCycle { .. }
+        TemplateErrorKind::ResolutionCycle { .. }
     ));
 }
 
@@ -255,7 +256,7 @@ fn long_linear_chain_fails_with_depth_error_not_overflow() {
 
     assert!(matches!(
         kind(&error),
-        ConfigErrorKind::ResolutionDepthExceeded { .. }
+        TemplateErrorKind::ResolutionDepthExceeded { .. }
     ));
 }
 

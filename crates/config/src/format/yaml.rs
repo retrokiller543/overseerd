@@ -1,12 +1,12 @@
 use serde_yaml_ng::Value as YamlValue;
 
-use crate::error::{ConfigError, ConfigErrorKind};
+use crate::error::{TemplateError, TemplateErrorKind};
 use crate::value::{ConfigStr, ConfigValue};
 
 /// Parses YAML source text and normalizes it into the [`ConfigValue`] tree.
-pub fn from_str(text: &str) -> Result<ConfigValue, ConfigError> {
+pub fn from_str(text: &str) -> Result<ConfigValue, TemplateError> {
     let value: YamlValue =
-        serde_yaml_ng::from_str(text).map_err(|e| ConfigErrorKind::Message(e.to_string()))?;
+        serde_yaml_ng::from_str(text).map_err(|e| TemplateErrorKind::Message(e.to_string()))?;
 
     from_yaml(value)
 }
@@ -14,7 +14,7 @@ pub fn from_str(text: &str) -> Result<ConfigValue, ConfigError> {
 /// Normalizes a parsed YAML value into the shared [`ConfigValue`] tree, parsing
 /// placeholders in every string leaf. Non-string mapping keys are stringified;
 /// tagged values are unwrapped to their inner value.
-pub fn from_yaml(value: YamlValue) -> Result<ConfigValue, ConfigError> {
+pub fn from_yaml(value: YamlValue) -> Result<ConfigValue, TemplateError> {
     let normalized = match value {
         YamlValue::Null => ConfigValue::Null,
         YamlValue::Bool(b) => ConfigValue::Bool(b),
@@ -49,7 +49,7 @@ pub fn from_yaml(value: YamlValue) -> Result<ConfigValue, ConfigError> {
 
 /// Converts a YAML number to an integer or float `ConfigValue`, widening integers to
 /// `i128`.
-fn number_to_value(n: serde_yaml_ng::Number) -> Result<ConfigValue, ConfigError> {
+fn number_to_value(n: serde_yaml_ng::Number) -> Result<ConfigValue, TemplateError> {
     if let Some(i) = n.as_i64() {
         return Ok(ConfigValue::Int(i128::from(i)));
     }
@@ -62,7 +62,7 @@ fn number_to_value(n: serde_yaml_ng::Number) -> Result<ConfigValue, ConfigError>
         return Ok(ConfigValue::Float(f));
     }
 
-    Err(ConfigErrorKind::Message(format!("unrepresentable YAML number: {n}")).into())
+    Err(TemplateErrorKind::Message(format!("unrepresentable YAML number: {n}")).into())
 }
 
 /// Renders a mapping key to its string form. Scalar keys use their natural text;

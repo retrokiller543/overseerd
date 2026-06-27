@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use crate::error::{ConfigError, ConfigErrorKind};
+use crate::error::{TemplateError, TemplateErrorKind};
 use crate::value::{ConfigStr, ConfigValue, Placeholder, Segment, lookup_path};
 
 /// Maximum nesting depth for transitive placeholder resolution. Cycle detection
@@ -77,11 +77,11 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
     /// namespace (`@`) / dotted-path / uppercase-heuristic precedence, the inline
     /// default, and finally a missing-value error.
     #[tracing::instrument(target = "overseerd::config", level = "trace", skip(self), fields(key = %p.key))]
-    pub(crate) fn resolve_placeholder(&mut self, p: &Placeholder) -> Result<String, ConfigError> {
+    pub(crate) fn resolve_placeholder(&mut self, p: &Placeholder) -> Result<String, TemplateError> {
         if self.in_flight.len() >= MAX_RESOLUTION_DEPTH {
             tracing::trace!(target: "overseerd::config", limit = MAX_RESOLUTION_DEPTH, "resolution depth exceeded");
 
-            return Err(ConfigErrorKind::ResolutionDepthExceeded {
+            return Err(TemplateErrorKind::ResolutionDepthExceeded {
                 limit: MAX_RESOLUTION_DEPTH,
             }
             .into());
@@ -90,7 +90,7 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
         if self.in_flight.iter().any(|key| key == &p.key) {
             tracing::trace!(target: "overseerd::config", chain = ?self.in_flight, "resolution cycle detected");
 
-            return Err(ConfigErrorKind::ResolutionCycle {
+            return Err(TemplateErrorKind::ResolutionCycle {
                 chain: self.in_flight.clone(),
                 key: p.key.clone(),
             }
@@ -124,12 +124,12 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
         if is_namespace {
             tracing::trace!(target: "overseerd::config", "no resolver answered namespace placeholder");
 
-            return Err(ConfigErrorKind::UnknownNamespaceKey { key: p.key.clone() }.into());
+            return Err(TemplateErrorKind::UnknownNamespaceKey { key: p.key.clone() }.into());
         }
 
         tracing::trace!(target: "overseerd::config", "no value for placeholder");
 
-        Err(ConfigErrorKind::MissingPlaceholder { key: p.key.clone() }.into())
+        Err(TemplateErrorKind::MissingPlaceholder { key: p.key.clone() }.into())
     }
 
     /// Resolves an `@`-prefixed namespace key (e.g. `@runtime`) against the resolver
@@ -144,7 +144,7 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
 
     /// Config path first, then the resolver chain (env). Used for dotted keys and
     /// for single-segment keys that do not look like an env var.
-    fn resolve_path_then_env(&mut self, key: &str) -> Result<Option<String>, ConfigError> {
+    fn resolve_path_then_env(&mut self, key: &str) -> Result<Option<String>, TemplateError> {
         if let Some(value) = self.resolve_config_path(key)? {
             return Ok(Some(value));
         }
@@ -154,7 +154,7 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
 
     /// Resolver chain (env) first, then the config tree. Used for single-segment
     /// keys that look like an env var (SCREAMING_SNAKE_CASE).
-    fn resolve_env_then_path(&mut self, key: &str) -> Result<Option<String>, ConfigError> {
+    fn resolve_env_then_path(&mut self, key: &str) -> Result<Option<String>, TemplateError> {
         if let Some(value) = self.resolvers.resolve(key) {
             return Ok(Some(value.into_owned()));
         }
@@ -164,7 +164,7 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
 
     /// Looks up `key` as a dotted path in the root tree and renders that node to a
     /// string, guarding against reference cycles. `None` when the path is absent.
-    fn resolve_config_path(&mut self, key: &str) -> Result<Option<String>, ConfigError> {
+    fn resolve_config_path(&mut self, key: &str) -> Result<Option<String>, TemplateError> {
         let node = match lookup_path(self.root, key) {
             Some(node) => node,
             None => return Ok(None),
@@ -184,7 +184,7 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
 pub(crate) fn render_str(
     s: &ConfigStr,
     ctx: &mut ResolveCtx<'_, '_>,
-) -> Result<String, ConfigError> {
+) -> Result<String, TemplateError> {
     let mut out = String::new();
 
     for segment in &s.segments {
@@ -209,7 +209,7 @@ fn render_node_as_string(
     node: &ConfigValue,
     ctx: &mut ResolveCtx<'_, '_>,
     key: &str,
-) -> Result<String, ConfigError> {
+) -> Result<String, TemplateError> {
     match node {
         ConfigValue::Str(s) => render_str(s, ctx),
         ConfigValue::Bool(b) => Ok(b.to_string()),
@@ -217,7 +217,7 @@ fn render_node_as_string(
         ConfigValue::Float(f) => Ok(f.to_string()),
 
         ConfigValue::Null | ConfigValue::Array(_) | ConfigValue::Table(_) => {
-            Err(ConfigErrorKind::NotStringRenderable {
+            Err(TemplateErrorKind::NotStringRenderable {
                 key: key.to_string(),
             }
             .into())
