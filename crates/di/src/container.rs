@@ -4,7 +4,9 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use overseerd_core::{Cardinality, ComponentScope, Resolver, ResolverCtx, ResolverSet};
+use overseerd_core::{
+    Cardinality, Resolver, ResolverCtx, ResolverSet, Scope, Singleton, Transient,
+};
 use tracing::{debug, error, info, instrument, trace};
 
 use crate::descriptors::BoxedComponent;
@@ -64,12 +66,8 @@ pub(crate) async fn construct_transient<H: Injectable>(
         .map(|p| p.resolvers().clone())
         .unwrap_or_default();
 
-    let mut cx = ComponentConstructionContext::new(
-        ComponentScope::Transient,
-        parent,
-        Arc::clone(registry),
-        externals,
-    );
+    let mut cx =
+        ComponentConstructionContext::new(&Transient, parent, Arc::clone(registry), externals);
 
     match (factory.construct)(&mut cx).await {
         Ok(boxed) => crate::descriptors::component::from_boxed::<H>(&boxed),
@@ -93,7 +91,7 @@ pub(crate) async fn construct_transient<H: Injectable>(
 /// resolving components by type — used by hooks and config-targeted resolution) plus
 /// any *external* resolvers (the config store) threaded in at build.
 pub struct ScopeContainer {
-    scope: ComponentScope,
+    scope: &'static dyn Scope,
     store: ScopeStore,
     parent: Option<Arc<ScopeContainer>>,
     registry: Arc<ScopeRegistry>,
@@ -132,7 +130,7 @@ impl ComponentSource {
 
 impl ScopeContainer {
     /// The scope this container holds.
-    pub fn scope(&self) -> ComponentScope {
+    pub fn scope(&self) -> &'static dyn Scope {
         self.scope
     }
 
@@ -164,15 +162,7 @@ impl ScopeContainer {
         let order = topological_sort(components, &prebuilt, registry.providers())?;
         let order: Vec<ComponentDescriptor> = order.into_iter().copied().collect();
 
-        let root = Self::build(
-            ComponentScope::Singleton,
-            None,
-            registry,
-            &order,
-            instances,
-            externals,
-        )
-        .await?;
+        let root = Self::build(&Singleton, None, registry, &order, instances, externals).await?;
 
         info!(count = root.store.components.len(), "root container built");
 
@@ -188,7 +178,7 @@ impl ScopeContainer {
     /// its own, so resolution through it would only pass through to `parent`. Rather
     /// than allocate a redundant container, this returns `parent` directly.
     pub async fn open_child(
-        scope: ComponentScope,
+        scope: &'static dyn Scope,
         parent: Arc<ScopeContainer>,
         registry: Arc<ScopeRegistry>,
         order: &[ComponentDescriptor],
@@ -208,7 +198,7 @@ impl ScopeContainer {
     /// parent chain. The frozen container is built with [`Arc::new_cyclic`] so it can
     /// hold its own [`ComponentSource`] (a `Weak` self-reference) in its resolver set.
     async fn build(
-        scope: ComponentScope,
+        scope: &'static dyn Scope,
         parent: Option<Arc<ScopeContainer>>,
         registry: Arc<ScopeRegistry>,
         order: &[ComponentDescriptor],
@@ -229,7 +219,7 @@ impl ScopeContainer {
         for descriptor in order {
             match descriptor.effective_factory()? {
                 Some(factory) => {
-                    debug!(component = %descriptor.name, ?scope, "constructing component");
+                    debug!(component = %descriptor.name, scope = scope.name(), "constructing component");
 
                     let component = (factory.construct)(&mut cx).await?;
 
@@ -448,6 +438,20 @@ mod tests {
     use super::*;
     use overseerd_core::TypeDescriptor;
 
+    /// A throwaway intermediate scope for exercising child-container construction
+    /// without depending on any protocol's concrete scopes.
+    struct TestScope;
+
+    impl Scope for TestScope {
+        fn rank(&self) -> u8 {
+            1
+        }
+
+        fn name(&self) -> &'static str {
+            "Test"
+        }
+    }
+
     fn registry() -> Arc<ScopeRegistry> {
         Arc::new(ScopeRegistry::new(HashMap::new(), Vec::new()))
     }
@@ -462,15 +466,10 @@ mod tests {
     async fn empty_child_scope_is_skipped() {
         let root = root().await;
 
-        let child = ScopeContainer::open_child(
-            ComponentScope::Request,
-            Arc::clone(&root),
-            registry(),
-            &[],
-            Vec::new(),
-        )
-        .await
-        .expect("open child");
+        let child =
+            ScopeContainer::open_child(&TestScope, Arc::clone(&root), registry(), &[], Vec::new())
+                .await
+                .expect("open child");
 
         assert!(
             Arc::ptr_eq(&root, &child),
@@ -487,20 +486,15 @@ mod tests {
             value: Box::new(7u8),
         };
 
-        let child = ScopeContainer::open_child(
-            ComponentScope::Connection,
-            Arc::clone(&root),
-            registry(),
-            &[],
-            vec![seed],
-        )
-        .await
-        .expect("open child");
+        let child =
+            ScopeContainer::open_child(&TestScope, Arc::clone(&root), registry(), &[], vec![seed])
+                .await
+                .expect("open child");
 
         assert!(
             !Arc::ptr_eq(&root, &child),
             "a seeded scope should allocate its own container"
         );
-        assert_eq!(child.scope(), ComponentScope::Connection);
+        assert_eq!(child.scope().name(), "Test");
     }
 }

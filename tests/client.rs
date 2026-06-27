@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf};
 
 use overseerd::{
-    ClientConnection, ClientError, App, ErrorResponse, Payload, ResponseError, ResponseStream,
+    App, ClientConnection, ClientError, ErrorResponse, Payload, ResponseError, ResponseStream,
     StreamClientTransport, Streaming, handlers, service,
     transport::{PeerInfo, StreamConnection, Transport},
 };

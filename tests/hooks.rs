@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use overseerd::config::Toml;
 use overseerd::dirs::{Config, DirectoriesManager};
 use overseerd::{
-    Cfg, CfgNext, ConfigManager, ConfigReload, App, HookOutcome, component, config, methods,
+    App, Cfg, CfgNext, ConfigManager, ConfigReload, HookOutcome, component, config, methods,
 };
 use serde::Deserialize;
 

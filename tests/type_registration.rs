@@ -10,7 +10,7 @@
 #![cfg(not(feature = "client"))]
 
 use overseerd::{
-    CallResult, App, MemoryClient, MemoryConnectionHandle, Payload, handlers, service,
+    App, CallResult, MemoryClient, MemoryConnectionHandle, Payload, handlers, service,
 };
 
 /// A service whose RPCs are contributed by two separate `#[handlers]` blocks.

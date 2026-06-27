@@ -19,6 +19,7 @@ pub mod lifecycle;
 pub mod middleware;
 pub mod registry;
 pub mod router;
+pub mod scope;
 
 pub use error::Error;
 

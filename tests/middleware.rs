@@ -11,7 +11,7 @@ use std::task::{Context, Poll};
 
 use overseerd::tower::{Layer, Service};
 use overseerd::{
-    CallResult, App, ErrorHandler, ErrorResponse, Guard, MemoryClient, MemoryConnectionHandle,
+    App, CallResult, ErrorHandler, ErrorResponse, Guard, MemoryClient, MemoryConnectionHandle,
     Payload, PredefinedCode, RpcCallContext, RpcOutcome, RpcRequest, StatusCode, handlers, service,
 };
 

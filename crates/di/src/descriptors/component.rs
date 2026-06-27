@@ -11,7 +11,7 @@ use std::{
 };
 
 use overseerd_core::{
-    ComponentScope, DependencyDescriptor, ResolverCtx, ResolverSet, TypeDescriptor,
+    DependencyDescriptor, ResolverCtx, ResolverSet, Scope, Singleton, TypeDescriptor,
 };
 use overseerd_hooks::{HookDescriptor, no_hooks};
 
@@ -427,7 +427,7 @@ impl ScopeStore {
 /// and keeping the interface async is what lets connection/request scopes move to
 /// lazy construction later without changing generated factory code.
 pub struct ComponentConstructionContext {
-    scope: ComponentScope,
+    scope: &'static dyn Scope,
     store: ScopeStore,
     parent: Option<Arc<crate::container::ScopeContainer>>,
     registry: Arc<crate::container::ScopeRegistry>,
@@ -444,7 +444,7 @@ impl ResolverCtx for ComponentConstructionContext {
 
 impl ComponentConstructionContext {
     pub(crate) fn new(
-        scope: ComponentScope,
+        scope: &'static dyn Scope,
         parent: Option<Arc<crate::container::ScopeContainer>>,
         registry: Arc<crate::container::ScopeRegistry>,
         resolvers: ResolverSet,
@@ -521,7 +521,7 @@ impl ComponentConstructionContext {
     pub(crate) fn into_parts(
         self,
     ) -> (
-        ComponentScope,
+        &'static dyn Scope,
         ScopeStore,
         Option<Arc<crate::container::ScopeContainer>>,
         Arc<crate::container::ScopeRegistry>,
@@ -614,7 +614,7 @@ pub struct ComponentDescriptor {
     pub id: &'static str,
     pub name: &'static str,
     pub ty: TypeDescriptor,
-    pub scope: ComponentScope,
+    pub scope: &'static dyn Scope,
     pub factories: fn() -> &'static [ComponentFactoryDescriptor],
     /// The component's `{Type}Hooks` slice (its `#[hook]` methods). Empty for a type
     /// that declares none — and for every manually-seeded instance.
@@ -633,7 +633,7 @@ impl ComponentDescriptor {
             id: T::ID,
             name: T::NAME,
             ty: TypeDescriptor::of::<T>(T::NAME),
-            scope: ComponentScope::Singleton,
+            scope: &Singleton,
             factories: no_factories,
             hooks: no_hooks,
         }
@@ -647,7 +647,7 @@ impl ComponentDescriptor {
         id: &'static str,
         name: &'static str,
         ty: TypeDescriptor,
-        scope: ComponentScope,
+        scope: &'static dyn Scope,
     ) -> Self {
         Self {
             id,
@@ -700,7 +700,7 @@ impl fmt::Debug for ComponentDescriptor {
             .field("id", &self.id)
             .field("name", &self.name)
             .field("ty", &self.ty)
-            .field("scope", &self.scope)
+            .field("scope", &self.scope.name())
             .field("dependencies", &self.dependencies())
             .finish_non_exhaustive()
     }

@@ -8,7 +8,9 @@ pub use component::{
     Live, LiveRef, Provide, ProviderDescriptor, ServiceComponent, Wired, Wiring,
 };
 
-pub use overseerd_core::{Cardinality, ComponentScope, DependencyDescriptor, TypeDescriptor};
+pub use overseerd_core::{
+    Cardinality, DependencyDescriptor, Scope, Singleton, StaticScope, Transient, TypeDescriptor,
+};
 
 /// Link-time registry of every discovered [`ComponentDescriptor`].
 ///

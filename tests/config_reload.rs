@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use overseerd::config::Toml;
 use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{Cfg, ConfigManager, App, component, config};
+use overseerd::{App, Cfg, ConfigManager, component, config};
 use serde::Deserialize;
 
 #[config(path = "svc")]

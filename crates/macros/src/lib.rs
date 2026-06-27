@@ -455,7 +455,10 @@ pub fn app(input: TokenStream) -> TokenStream {
 }
 
 /// Deprecated alias for [`app!`](macro@app). Renamed in 0.7.0; removed in 1.0.0.
-#[deprecated(since = "0.7.0", note = "renamed to `app!`; the `daemon!` alias is removed in 1.0.0")]
+#[deprecated(
+    since = "0.7.0",
+    note = "renamed to `app!`; the `daemon!` alias is removed in 1.0.0"
+)]
 #[proc_macro]
 pub fn daemon(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as app::AppInput);

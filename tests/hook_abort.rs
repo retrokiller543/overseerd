@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use overseerd::config::Toml;
 use overseerd::dirs::{Config, DirectoriesManager};
 use overseerd::{
-    Cfg, CfgNext, ConfigManager, ConfigReload, ConfigReloadError, App, HookOutcome, component,
+    App, Cfg, CfgNext, ConfigManager, ConfigReload, ConfigReloadError, HookOutcome, component,
     config, methods,
 };
 use serde::Deserialize;

@@ -18,5 +18,5 @@ pub mod types;
 pub use dependency::{Cardinality, DependencyDescriptor};
 pub use descriptor::Descriptor;
 pub use resolver::{Resolver, ResolverCtx, ResolverCtxExt, ResolverSet};
-pub use scope::ComponentScope;
+pub use scope::{Scope, Singleton, StaticScope, Transient};
 pub use types::{TypeDescriptor, type_id_of};

@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use overseerd::{
-    CallResult, Cfg, App, Inject, MemoryClient, MemoryConnectionHandle, Payload, component,
-    config, handlers, methods, service,
+    App, CallResult, Cfg, Inject, MemoryClient, MemoryConnectionHandle, Payload, component, config,
+    handlers, methods, service,
 };
 
 #[config]

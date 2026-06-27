@@ -1,7 +1,7 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
-use overseerd_core::{Cardinality, ComponentScope};
+use overseerd_core::{Cardinality, Scope, Singleton};
 
 use crate::descriptors::{COMPONENTS, ComponentDescriptor, PROVIDERS, ProviderDescriptor};
 use crate::error::Error;
@@ -76,9 +76,9 @@ impl ComponentRegistry {
 
     /// Enforces the captive-dependency rule: a non-transient component may depend
     /// only on equal-or-longer-lived non-transient components. Checked against
-    /// [`ComponentScope::rank`], not by matching each variant.
+    /// [`Scope::rank`], not by matching each label.
     pub fn validate_scopes(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
-        let scope_of: HashMap<TypeId, ComponentScope> = components
+        let scope_of: HashMap<TypeId, &'static dyn Scope> = components
             .iter()
             .map(|c| ((c.ty.type_id)(), c.scope))
             .collect();
@@ -93,28 +93,29 @@ impl ComponentRegistry {
 
                 let dep_id = (dep.ty.type_id)();
 
-                let dep_scopes: Vec<(ComponentScope, &'static str)> = match scope_of.get(&dep_id) {
-                    Some(scope) => vec![(*scope, (dep.ty.type_name)())],
+                let dep_scopes: Vec<(&'static dyn Scope, &'static str)> =
+                    match scope_of.get(&dep_id) {
+                        Some(scope) => vec![(*scope, (dep.ty.type_name)())],
 
-                    None => self
-                        .providers
-                        .iter()
-                        .filter(|p| (p.trait_ty.type_id)() == dep_id)
-                        .filter_map(|p| {
-                            scope_of
-                                .get(&(p.concrete_ty.type_id)())
-                                .map(|scope| (*scope, (p.concrete_ty.type_name)()))
-                        })
-                        .collect(),
-                };
+                        None => self
+                            .providers
+                            .iter()
+                            .filter(|p| (p.trait_ty.type_id)() == dep_id)
+                            .filter_map(|p| {
+                                scope_of
+                                    .get(&(p.concrete_ty.type_id)())
+                                    .map(|scope| (*scope, (p.concrete_ty.type_name)()))
+                            })
+                            .collect(),
+                    };
 
                 for (dep_scope, dep_name) in dep_scopes {
                     if !scope_allows(c.scope, dep_scope) {
                         return Err(Error::ScopeViolation {
                             component: c.name.to_string(),
                             dependency: dep_name.to_string(),
-                            component_scope: c.scope,
-                            dependency_scope: dep_scope,
+                            component_scope: c.scope.name(),
+                            dependency_scope: dep_scope.name(),
                         });
                     }
                 }
@@ -205,13 +206,13 @@ impl ComponentRegistry {
 }
 
 /// Whether a `consumer`-scoped component may hold a `dependency`-scoped one.
-fn scope_allows(consumer: ComponentScope, dependency: ComponentScope) -> bool {
+fn scope_allows(consumer: &dyn Scope, dependency: &dyn Scope) -> bool {
     if dependency.is_transient() {
         return true;
     }
 
     if consumer.is_transient() {
-        return dependency == ComponentScope::Singleton;
+        return dependency.rank() == Singleton.rank();
     }
 
     dependency.rank() >= consumer.rank()
@@ -226,7 +227,34 @@ mod tests {
         BoxedComponent, ComponentConstructionContext, ComponentDescriptor,
         ComponentFactoryDescriptor,
     };
-    use overseerd_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
+    use overseerd_core::{Cardinality, DependencyDescriptor, Transient, TypeDescriptor};
+
+    /// Local stand-in intermediate scopes (the captive rule only cares about rank
+    /// ordering): `Connection` outranks `Request`, both between singleton and transient.
+    /// They are defined here rather than imported so the DI engine stays unaware of any
+    /// protocol's concrete scopes.
+    struct Connection;
+    struct Request;
+
+    impl Scope for Connection {
+        fn rank(&self) -> u8 {
+            2
+        }
+
+        fn name(&self) -> &'static str {
+            "Connection"
+        }
+    }
+
+    impl Scope for Request {
+        fn rank(&self) -> u8 {
+            1
+        }
+
+        fn name(&self) -> &'static str {
+            "Request"
+        }
+    }
 
     fn fake_factory<'a>(
         _: &'a mut ComponentConstructionContext,
@@ -279,7 +307,7 @@ mod tests {
         id: "pg_pool",
         name: "PgPool",
         ty: TypeDescriptor::of::<u16>("PgPool"),
-        scope: ComponentScope::Singleton,
+        scope: &Singleton,
         factories: pg_pool_factories,
         hooks: overseerd_hooks::no_hooks,
     };
@@ -310,7 +338,7 @@ mod tests {
         id: "backup_repo",
         name: "BackupRepository",
         ty: TypeDescriptor::of::<u8>("BackupRepository"),
-        scope: ComponentScope::Singleton,
+        scope: &Singleton,
         factories: backup_repo_factories,
         hooks: overseerd_hooks::no_hooks,
     };
@@ -358,7 +386,7 @@ mod tests {
             "pg_pool_manual",
             "PgPool",
             TypeDescriptor::of::<u16>("PgPool"),
-            ComponentScope::Singleton,
+            &Singleton,
         );
         let with = ComponentRegistry {
             components: vec![BACKUP_REPO, manual],
@@ -396,13 +424,13 @@ mod tests {
     fn validate_rejects_singleton_depending_on_request() {
         let request = scoped!(
             "ReqComp",
-            ComponentScope::Request,
+            &Request,
             &[],
             TypeDescriptor::of::<i64>("ReqComp"),
         );
         let singleton = scoped!(
             "RootComp",
-            ComponentScope::Singleton,
+            &Singleton,
             &SINGLETON_DEP_ON_REQUEST,
             TypeDescriptor::of::<i16>("RootComp"),
         );
@@ -422,13 +450,13 @@ mod tests {
     fn validate_allows_request_depending_on_connection() {
         let connection = scoped!(
             "ConnComp",
-            ComponentScope::Connection,
+            &Connection,
             &[],
             TypeDescriptor::of::<i32>("ConnComp"),
         );
         let request = scoped!(
             "ReqComp",
-            ComponentScope::Request,
+            &Request,
             &REQUEST_DEP_ON_CONNECTION,
             TypeDescriptor::of::<i64>("ReqComp"),
         );
@@ -445,13 +473,13 @@ mod tests {
     fn validate_rejects_transient_depending_on_connection() {
         let connection = scoped!(
             "ConnComp",
-            ComponentScope::Connection,
+            &Connection,
             &[],
             TypeDescriptor::of::<i32>("ConnComp"),
         );
         let transient = scoped!(
             "TransComp",
-            ComponentScope::Transient,
+            &Transient,
             &REQUEST_DEP_ON_CONNECTION,
             TypeDescriptor::of::<i64>("TransComp"),
         );

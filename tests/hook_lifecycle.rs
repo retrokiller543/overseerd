@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use overseerd::config::Toml;
-use overseerd::{ConfigManager, App, Shutdown, Startup, component, methods};
+use overseerd::{App, ConfigManager, Shutdown, Startup, component, methods};
 
 /// Records that its startup and shutdown hooks ran.
 #[component]

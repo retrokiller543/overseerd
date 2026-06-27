@@ -97,7 +97,7 @@ pub fn field_injection_component(
     let component_factories = overseerd_path("ComponentFactories");
     let component_hooks = overseerd_path("ComponentHooks");
     let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
-    let component_scope = overseerd_path("ComponentScope");
+    let scope_path = overseerd_path(&format!("scope::{scope_variant}"));
     let components_slice = overseerd_path("COMPONENTS");
     let dependency_descriptor = overseerd_path("DependencyDescriptor");
     let component = overseerd_path("Component");
@@ -235,7 +235,7 @@ pub fn field_injection_component(
                 id: #id,
                 name: #name,
                 ty: #type_descriptor::of::<#self_ident>(#name),
-                scope: #component_scope::#scope_variant,
+                scope: &#scope_path,
                 factories: <#self_ident as #component_factories>::factories,
                 hooks: <#self_ident as #component_hooks>::hooks,
             };

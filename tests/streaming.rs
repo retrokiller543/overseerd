@@ -10,7 +10,7 @@ use std::time::Duration;
 use futures::{Stream, StreamExt};
 
 use overseerd::{
-    CallResult, Cancel, App, MemoryClient, MemoryConnectionHandle, Payload, ResponseStream,
+    App, CallResult, Cancel, MemoryClient, MemoryConnectionHandle, Payload, ResponseStream,
     ServerEvent, StreamDecode, StreamDecodeError, StreamEncode, StreamEncodeError, Streaming,
     handlers, service,
 };

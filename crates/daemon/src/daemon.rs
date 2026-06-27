@@ -5,7 +5,11 @@ use overseerd_config::{
     CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, ConfigBinding, ConfigManager, ConfigProperties,
     ConfigReloader, ConfigStore, ReloadTriggers, spawn_reload_triggers,
 };
-use overseerd_core::{ComponentScope, Descriptor, ResolverCtx, ResolverSet, TypeDescriptor};
+use overseerd_core::{
+    Descriptor, ResolverCtx, ResolverSet, Singleton as SingletonScope, TypeDescriptor,
+};
+
+use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
 use overseerd_di::{
     BoxedComponent, Component, ComponentDescriptor, Injectable, ProviderDescriptor, ScopeContainer,
     ScopeRegistry, ServiceComponent, topological_sort,
@@ -45,7 +49,7 @@ static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
     "__overseerd_peer_info",
     "PeerInfo",
     TypeDescriptor::of::<PeerInfo>("PeerInfo"),
-    ComponentScope::Connection,
+    &ConnectionScope,
 );
 
 /// The framework-provided singleton injectable for triggering graceful shutdown.
@@ -58,7 +62,7 @@ static SHUTDOWN_HANDLE_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::ma
     crate::builtins::shutdown::SHUTDOWN_HANDLE_ID,
     crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME,
     TypeDescriptor::of::<ShutdownHandle>(crate::builtins::shutdown::SHUTDOWN_HANDLE_NAME),
-    ComponentScope::Singleton,
+    &SingletonScope,
 );
 
 /// The framework-provided singleton injectable for triggering a config reload.
@@ -70,7 +74,7 @@ static CONFIG_RELOADER_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::ma
     CONFIG_RELOADER_ID,
     CONFIG_RELOADER_NAME,
     TypeDescriptor::of::<ConfigReloader>(CONFIG_RELOADER_NAME),
-    ComponentScope::Singleton,
+    &SingletonScope,
 );
 
 /// The framework-provided singleton injectable that runs lifecycle/event hooks.
@@ -82,7 +86,7 @@ static HOOK_MANAGER_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manua
     HOOK_MANAGER_ID,
     HOOK_MANAGER_NAME,
     TypeDescriptor::of::<HookManager>(HOOK_MANAGER_NAME),
-    ComponentScope::Singleton,
+    &SingletonScope,
 );
 
 /// Assembles an App from an explicit set of components and services.
@@ -532,14 +536,19 @@ impl ScopePlan {
             // — is seeded into its scope, not constructed.
             let constructable = c.effective_factory()?.is_some();
 
-            match c.scope {
-                ComponentScope::Singleton => singletons.push(*c),
-                ComponentScope::Connection if constructable => connection_components.push(*c),
-                ComponentScope::Connection => {}
-                ComponentScope::Request if constructable => request_components.push(*c),
-                ComponentScope::Request => {}
-                ComponentScope::Transient => {
-                    transient.insert((c.ty.type_id)(), *c);
+            // The Plugin step replaces this hardcoded connection/request chain with
+            // the active protocol's declared `SCOPES`. Today only the four built-in
+            // scopes exist, dispatched here by their label.
+            if c.scope.is_transient() {
+                transient.insert((c.ty.type_id)(), *c);
+            } else {
+                match c.scope.name() {
+                    "Singleton" => singletons.push(*c),
+                    "Connection" if constructable => connection_components.push(*c),
+                    "Connection" => {}
+                    "Request" if constructable => request_components.push(*c),
+                    "Request" => {}
+                    other => unreachable!("unknown component scope `{other}`"),
                 }
             }
         }
@@ -820,7 +829,7 @@ async fn serve_connection<C: Connection>(
     };
 
     let connection_scope = match ScopeContainer::open_child(
-        ComponentScope::Connection,
+        &ConnectionScope,
         root,
         Arc::clone(&scopes),
         &connection_order,
@@ -908,7 +917,7 @@ async fn drive_call<R>(
     R: Respond + RespondStream + Send + 'static,
 {
     let request_scope = match ScopeContainer::open_child(
-        ComponentScope::Request,
+        &RequestScope,
         connection_scope,
         scopes,
         &request_order,

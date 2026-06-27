@@ -3,7 +3,7 @@
 //! user story / success criterion from `specs/003-response-status-codes/`.
 
 use overseerd::{
-    CallResult, App, ErrorResponse, Flags, MemoryClient, MemoryConnectionHandle, PredefinedCode,
+    App, CallResult, ErrorResponse, Flags, MemoryClient, MemoryConnectionHandle, PredefinedCode,
     ResponseError, ResponseStream, ServerEvent, StatusCode, handlers, service,
 };
 

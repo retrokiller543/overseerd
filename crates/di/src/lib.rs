@@ -28,9 +28,10 @@ pub use container::{
 pub use descriptors::component::from_boxed;
 pub use descriptors::{
     BoxedComponent, COMPONENTS, Cardinality, Component, ComponentConstructionContext,
-    ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor,
-    ComponentScope, Dep, DependencyDescriptor, Dynamic, Injectable, Live, LiveRef, PROVIDERS,
-    Provide, ProviderDescriptor, ServiceComponent, TypeDescriptor, Wired, Wiring,
+    ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor, Dep,
+    DependencyDescriptor, Dynamic, Injectable, Live, LiveRef, PROVIDERS, Provide,
+    ProviderDescriptor, Scope, ServiceComponent, Singleton, StaticScope, Transient, TypeDescriptor,
+    Wired, Wiring,
 };
 pub use error::{Error, Result};
 pub use registry::ComponentRegistry;

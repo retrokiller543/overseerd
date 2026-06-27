@@ -12,8 +12,8 @@ use std::sync::{
 };
 
 use overseerd::{
-    CallResult, App, Inject, MemoryClient, MemoryConnectionHandle, PeerInfo, component,
-    handlers, service,
+    App, CallResult, Inject, MemoryClient, MemoryConnectionHandle, PeerInfo, component, handlers,
+    service,
 };
 
 static CONNECTION_IDS: AtomicU64 = AtomicU64::new(1);

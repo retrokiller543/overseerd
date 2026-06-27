@@ -35,9 +35,9 @@ pub struct ServiceArgs {
     pub qualifier: Option<LitStr>,
     pub primary: bool,
     pub by_value: bool,
-    /// The `ComponentScope` variant ident (`Singleton`/`Connection`/`Request`/
-    /// `Transient`) parsed from `scope = ..`, ready to splice after
-    /// `ComponentScope::`. `None` means the default (singleton).
+    /// The [`Scope`] marker-type ident (`Singleton`/`Connection`/`Request`/
+    /// `Transient`) parsed from `scope = ..`, spliced as `&::overseerd::scope::<ident>`.
+    /// `None` means the default (singleton).
     pub scope: Option<Ident>,
     /// Overrides the generated per-service RPC slice name (`rpc_slice = Ident`).
     /// `None` defaults to `{Service}Rpcs`. An escape hatch when that name collides

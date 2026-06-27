@@ -3,7 +3,7 @@
 //! completes, proving the builtin resolves through the request scope chain.
 
 use overseerd::{
-    CallResult, App, Inject, MemoryClient, MemoryConnectionHandle, Payload, ShutdownHandle,
+    App, CallResult, Inject, MemoryClient, MemoryConnectionHandle, Payload, ShutdownHandle,
     handlers, service,
 };
 

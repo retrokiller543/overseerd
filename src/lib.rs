@@ -20,9 +20,23 @@
 // Leaf vocabulary + resolver model.
 // ---------------------------------------------------------------------------
 pub use overseerd_core::{
-    Cardinality, ComponentScope, DependencyDescriptor, Descriptor, Resolver, ResolverCtx,
-    ResolverCtxExt, ResolverSet, TypeDescriptor, type_id_of,
+    Cardinality, DependencyDescriptor, Descriptor, Resolver, ResolverCtx, ResolverCtxExt,
+    ResolverSet, Scope, StaticScope, TypeDescriptor, type_id_of,
 };
+
+/// Component lifetime scopes: the [`Scope`] trait a protocol's scope chain is built
+/// from, plus the marker types. A component selects one with `#[component(scope = Request)]`;
+/// a `#[component]` defaults to [`Singleton`](scope::Singleton).
+///
+/// The core defines only the universal anchors [`Singleton`](scope::Singleton) and
+/// [`Transient`](scope::Transient); [`Connection`](scope::Connection) and
+/// [`Request`](scope::Request) are RPC-protocol scopes from `overseerd-daemon`. Kept in
+/// a module so the common names don't collide with the transport [`Connection`] trait at
+/// the crate root.
+pub mod scope {
+    pub use overseerd_core::scope::{Singleton, Transient};
+    pub use overseerd_daemon::scope::{Connection, Request};
+}
 
 // ---------------------------------------------------------------------------
 // DI engine: descriptors, container, factories, registry.
@@ -80,7 +94,10 @@ pub use overseerd_daemon::{
 };
 
 /// Deprecated alias for [`App`]. Renamed in 0.7.0; the alias is removed in 1.0.0.
-#[deprecated(since = "0.7.0", note = "renamed to `App`; the `Daemon` alias is removed in 1.0.0")]
+#[deprecated(
+    since = "0.7.0",
+    note = "renamed to `App`; the `Daemon` alias is removed in 1.0.0"
+)]
 pub type Daemon = App;
 
 /// Deprecated alias for [`AppBuilder`]. Renamed in 0.7.0; the alias is removed in 1.0.0.
