@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use overseerd::{Daemon, component};
+use overseerd::{App, component};
 
 /// Internally `Arc`, so cloning is cheap and shares the counter. `#[default]`
 /// keeps the field as owned state rather than an injected dependency.
@@ -23,7 +23,7 @@ struct Service {
 
 #[tokio::test]
 async fn by_value_component_is_stored_and_injected_unwrapped() {
-    let daemon = Daemon::builder("by-value-test")
+    let daemon = App::builder("by-value-test")
         .auto_discover()
         .build()
         .await

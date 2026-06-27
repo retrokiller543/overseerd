@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use overseerd::{
-    CallResult, Cfg, Daemon, Inject, MemoryClient, MemoryConnectionHandle, Payload, component,
+    CallResult, Cfg, App, Inject, MemoryClient, MemoryConnectionHandle, Payload, component,
     config, handlers, methods, service,
 };
 
@@ -128,7 +128,7 @@ async fn start() -> MemoryConnectionHandle {
         overseerd::ConfigManager::<overseerd::config::Toml>::from_str("[factory]\nseed = 100\n")
             .expect("parse config");
 
-    let daemon = Daemon::builder("test")
+    let daemon = App::builder("test")
         .auto_discover()
         .config::<FactoryCfg>("factory")
         .config_source(config)

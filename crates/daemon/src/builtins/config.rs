@@ -3,8 +3,8 @@
 //! These implement [`ConfigProperties`](overseerd_config::ConfigProperties) and derive
 //! serde `Deserialize` but carry **no** `#[config(path = "..")]` auto-binding —
 //! binding a missing subtree is a hard build error, so they are opt-in. A user binds
-//! them explicitly, e.g. `DaemonBuilder::config::<ServerConfig>("server")` (or the
-//! `configs:` key of the `daemon!{}` macro), and injects them as
+//! them explicitly, e.g. `AppBuilder::config::<ServerConfig>("server")` (or the
+//! `configs:` key of the `app!{}` macro), and injects them as
 //! [`Cfg<ServerConfig>`](overseerd_config::Cfg).
 
 use serde::Deserialize;

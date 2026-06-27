@@ -7,7 +7,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use overseerd::config::Toml;
-use overseerd::{ConfigManager, Daemon, HookKind, component, methods};
+use overseerd::{ConfigManager, App, HookKind, component, methods};
 
 /// A user-defined lifecycle kind — no inputs, no output.
 struct Startup;
@@ -52,7 +52,7 @@ impl Boot {
 
 #[tokio::test]
 async fn external_hook_kind_fires_through_the_manager() {
-    let daemon = Daemon::builder("hook-custom-test")
+    let daemon = App::builder("hook-custom-test")
         .config_source(ConfigManager::<Toml>::empty())
         .auto_discover()
         .build()

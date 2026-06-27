@@ -85,8 +85,8 @@ static HOOK_MANAGER_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manua
     ComponentScope::Singleton,
 );
 
-/// Assembles a Daemon from an explicit set of components and services.
-pub struct DaemonBuilder {
+/// Assembles an App from an explicit set of components and services.
+pub struct AppBuilder {
     name: String,
     registry: DescriptorRegistry,
     instances: Vec<BoxedComponent>,
@@ -99,7 +99,7 @@ pub struct DaemonBuilder {
     error_handler: Option<Arc<dyn ErrorHandler>>,
 }
 
-impl DaemonBuilder {
+impl AppBuilder {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -289,8 +289,8 @@ impl DaemonBuilder {
     }
 
     /// Validates the registry, resolves all components, partitions them by scope,
-    /// and builds a ready-to-run Daemon.
-    pub async fn build(self) -> crate::Result<Daemon> {
+    /// and builds a ready-to-run App.
+    pub async fn build(self) -> crate::Result<App> {
         debug!(target: "overseerd::daemon", daemon = %self.name, "building daemon");
 
         let mut registry = self.registry;
@@ -424,7 +424,7 @@ impl DaemonBuilder {
             "daemon built"
         );
 
-        Ok(Daemon {
+        Ok(App {
             name: self.name,
             registry,
             root,
@@ -585,7 +585,7 @@ impl ScopePlan {
 }
 
 /// A fully assembled daemon, ready to accept connections and dispatch RPC calls.
-pub struct Daemon {
+pub struct App {
     pub name: String,
     pub registry: DescriptorRegistry,
     root: Arc<ScopeContainer>,
@@ -602,9 +602,9 @@ pub struct Daemon {
     reload_triggers: ReloadTriggers,
 }
 
-impl fmt::Debug for Daemon {
+impl fmt::Debug for App {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Daemon")
+        f.debug_struct("App")
             .field("name", &self.name)
             .field("components", &self.registry.components.len())
             .field("services", &self.registry.services.len())
@@ -613,18 +613,18 @@ impl fmt::Debug for Daemon {
     }
 }
 
-impl fmt::Display for Daemon {
+impl fmt::Display for App {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Daemon: {}", self.name)?;
+        writeln!(f, "App: {}", self.name)?;
         write!(f, "{}", self.registry)?;
 
         Ok(())
     }
 }
 
-impl Daemon {
-    pub fn builder(name: impl Into<String>) -> DaemonBuilder {
-        DaemonBuilder::new(name)
+impl App {
+    pub fn builder(name: impl Into<String>) -> AppBuilder {
+        AppBuilder::new(name)
     }
 
     /// The root (singleton) scope container.

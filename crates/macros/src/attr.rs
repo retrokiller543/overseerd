@@ -55,7 +55,7 @@ pub struct ServiceArgs {
     pub factory: Option<syn::Path>,
     /// Suppresses the field-injection default factory (`default_factory = false`).
     /// With no other factory this makes the component **manual** — provided via
-    /// `DaemonBuilder::with_component` rather than constructed.
+    /// `AppBuilder::with_component` rather than constructed.
     pub no_default_factory: bool,
 }
 

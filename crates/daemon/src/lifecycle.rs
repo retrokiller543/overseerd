@@ -25,7 +25,7 @@ impl ShutdownSignal {
         }
     }
 
-    /// Waits until shutdown is triggered, either by a handle or by `Daemon::run`.
+    /// Waits until shutdown is triggered, either by a handle or by `App::run`.
     pub async fn wait(&mut self) {
         let _ = self.receiver.wait_for(|v| *v).await;
     }

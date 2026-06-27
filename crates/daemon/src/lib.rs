@@ -1,7 +1,7 @@
 //! The Overseerd daemon runtime and RPC adapter.
 //!
 //! This crate is the protocol layer: it ties the DI engine, the config system, the hook
-//! system, and a transport together into a running daemon. It owns the [`DaemonBuilder`],
+//! system, and a transport together into a running daemon. It owns the [`AppBuilder`],
 //! the RPC [`router`], the request [`extract`]ors, the [`middleware`] stack, the serve
 //! loop, and the full [`DescriptorRegistry`] (component graph via the DI engine, plus
 //! service/RPC and config-binding validation).
@@ -26,7 +26,7 @@ pub use error::Error;
 pub type Result<T, E = Error> = core::result::Result<T, E>;
 
 pub use builtins::{LoggingConfig, ServerConfig};
-pub use daemon::{Daemon, DaemonBuilder};
+pub use daemon::{App, AppBuilder};
 pub use descriptors::{
     Descriptor, OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor,
     RpcGroup, RpcHandler, RpcOutcome, RpcResponse, SERVICES, ServiceDescriptor, ServiceRpcs,

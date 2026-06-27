@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use overseerd::config::Toml;
 use overseerd::dirs::{Config, DirectoriesManager};
 use overseerd::{
-    Cfg, CfgNext, ConfigManager, ConfigReload, ConfigReloadError, Daemon, HookOutcome, component,
+    Cfg, CfgNext, ConfigManager, ConfigReload, ConfigReloadError, App, HookOutcome, component,
     config, methods,
 };
 use serde::Deserialize;
@@ -64,7 +64,7 @@ async fn a_rejecting_hook_aborts_the_reload() {
 
     let manager = ConfigManager::<Toml>::load_in(&config_dir, &[]).expect("load config");
 
-    let daemon = Daemon::builder("hook-abort-test")
+    let daemon = App::builder("hook-abort-test")
         .config_source(manager)
         .auto_discover()
         .build()

@@ -3,7 +3,7 @@
 //! completes, proving the builtin resolves through the request scope chain.
 
 use overseerd::{
-    CallResult, Daemon, Inject, MemoryClient, MemoryConnectionHandle, Payload, ShutdownHandle,
+    CallResult, App, Inject, MemoryClient, MemoryConnectionHandle, Payload, ShutdownHandle,
     handlers, service,
 };
 
@@ -24,7 +24,7 @@ impl BuiltinsSvc {
 async fn start() -> MemoryConnectionHandle {
     let (client, transport) = MemoryClient::pair();
 
-    let daemon = Daemon::builder("builtins-test")
+    let daemon = App::builder("builtins-test")
         .auto_discover()
         .build()
         .await

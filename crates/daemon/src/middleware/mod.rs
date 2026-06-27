@@ -4,7 +4,7 @@
 //! to an [`RpcOutcome`] (or an [`ErrorResponse`]). [`RouterService`] is the
 //! terminal service that looks the call up and invokes its handler; user
 //! middleware are ordinary [`tower::Layer`]s wrapping it, registered on the
-//! [`DaemonBuilder`](crate::daemon::DaemonBuilder). Because the request and
+//! [`AppBuilder`](crate::daemon::AppBuilder). Because the request and
 //! response types are concrete, any protocol-agnostic tower layer (timeout,
 //! rate-limit, concurrency-limit, …) composes directly alongside framework ones.
 //!
@@ -78,7 +78,7 @@ impl Service<RpcRequest> for RouterService {
 /// A pre-handler check that admits or rejects a call before it reaches the
 /// handler. Returning `Err` short-circuits dispatch with that error response;
 /// returning `Ok(())` lets the call proceed. Adapted into the middleware stack by
-/// [`DaemonBuilder::guard`](crate::daemon::DaemonBuilder::guard).
+/// [`AppBuilder::guard`](crate::daemon::AppBuilder::guard).
 pub trait Guard: Send + Sync + 'static {
     /// Inspects the call context and decides whether the call may proceed.
     fn check<'a>(
@@ -88,7 +88,7 @@ pub trait Guard: Send + Sync + 'static {
 }
 
 /// A [`tower::Layer`] that runs a [`Guard`] before delegating to the inner
-/// service. Constructed for you by `DaemonBuilder::guard`.
+/// service. Constructed for you by `AppBuilder::guard`.
 pub struct GuardLayer {
     guard: Arc<dyn Guard>,
 }

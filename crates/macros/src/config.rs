@@ -4,7 +4,7 @@
 //!
 //! `NAME` defaults to the type name (override with `#[config(name = "..")]`). The
 //! type must also be `Deserialize`. Omitting `path` leaves binding to an explicit
-//! `DaemonBuilder::config::<T>(path)` call — needed when the same type binds at
+//! `AppBuilder::config::<T>(path)` call — needed when the same type binds at
 //! several paths.
 //!
 //! Applies to a `struct` or an `enum` (serde handles either). Fields may carry a

@@ -12,7 +12,7 @@ use std::sync::{
 };
 
 use overseerd::{
-    CallResult, Daemon, Inject, MemoryClient, MemoryConnectionHandle, PeerInfo, component,
+    CallResult, App, Inject, MemoryClient, MemoryConnectionHandle, PeerInfo, component,
     handlers, service,
 };
 
@@ -96,7 +96,7 @@ impl ScopeSvc {
 async fn start() -> MemoryClient {
     let (client, transport) = MemoryClient::pair();
 
-    let daemon = Daemon::builder("scopes-test")
+    let daemon = App::builder("scopes-test")
         .auto_discover()
         .build()
         .await

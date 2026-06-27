@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf};
 
 use overseerd::{
-    ClientConnection, ClientError, Daemon, ErrorResponse, Payload, ResponseError, ResponseStream,
+    ClientConnection, ClientError, App, ErrorResponse, Payload, ResponseError, ResponseStream,
     StreamClientTransport, Streaming, handlers, service,
     transport::{PeerInfo, StreamConnection, Transport},
 };
@@ -135,7 +135,7 @@ async fn start() -> Client {
     let (server_read, server_write) = tokio::io::split(server_io);
     let (client_read, client_write) = tokio::io::split(client_io);
 
-    let daemon = Daemon::builder("test")
+    let daemon = App::builder("test")
         .auto_discover()
         .build()
         .await

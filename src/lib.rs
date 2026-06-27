@@ -10,7 +10,7 @@
 //!
 //! - **Component** — a singleton dependency. Either *system-constructed* (declared
 //!   with [`component`] / a stateful [`service`], built by the container from its
-//!   dependencies) or *manually provided* ([`DaemonBuilder::with_component`]).
+//!   dependencies) or *manually provided* ([`AppBuilder::with_component`]).
 //! - **Service** — a [`service`] type whose [`handlers`] impls expose `#[rpc]`
 //!   methods. A stateful service is also a component (its `&self` is the singleton).
 //! - **Container** — holds the constructed instances ([`ComponentContainer`]).
@@ -67,10 +67,10 @@ pub use overseerd_config::{
 };
 
 // ---------------------------------------------------------------------------
-// Daemon runtime + RPC: builder, router, extractors, middleware, registry, errors.
+// App runtime + RPC: builder, router, extractors, middleware, registry, errors.
 // ---------------------------------------------------------------------------
 pub use overseerd_daemon::{
-    Cancel, Daemon, DaemonBuilder, DescriptorRegistry, Error, ErrorHandler, ErrorResponse,
+    App, AppBuilder, Cancel, DescriptorRegistry, Error, ErrorHandler, ErrorResponse,
     FallibleHandler, FromContext, Guard, GuardLayer, GuardService, Handler, Inject, LoggingConfig,
     OperationKind, ParameterDescriptor, ParameterKind, Payload, Peer, RequestStream,
     ResolvedService, Responder, ResponseError, ResponseStream, Result, RouterService,
@@ -78,6 +78,17 @@ pub use overseerd_daemon::{
     RpcRouter, RpcService, SERVICES, ServerConfig, ServiceDescriptor, ServiceRpcs, ShutdownHandle,
     ShutdownSignal, Streaming, dispatch_fallible, dispatch_with,
 };
+
+/// Deprecated alias for [`App`]. Renamed in 0.7.0; the alias is removed in 1.0.0.
+#[deprecated(since = "0.7.0", note = "renamed to `App`; the `Daemon` alias is removed in 1.0.0")]
+pub type Daemon = App;
+
+/// Deprecated alias for [`AppBuilder`]. Renamed in 0.7.0; the alias is removed in 1.0.0.
+#[deprecated(
+    since = "0.7.0",
+    note = "renamed to `AppBuilder`; the `DaemonBuilder` alias is removed in 1.0.0"
+)]
+pub type DaemonBuilder = AppBuilder;
 
 // ---------------------------------------------------------------------------
 // Wire-contract status types and stream item codecs.
@@ -91,7 +102,7 @@ pub use overseerd_transport::{
 // Procedural macros.
 // ---------------------------------------------------------------------------
 pub use overseerd_macros::{
-    component, config, daemon, handlers, injectable, methods, rpc, service,
+    app, component, config, daemon, handlers, injectable, methods, rpc, service,
 };
 
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]`
@@ -177,7 +188,7 @@ pub mod builtins {
 /// The common imports for building a daemon: `use overseerd::prelude::*;`.
 pub mod prelude {
     pub use crate::{
-        Cfg, Component, ConfigManager, ConfigProperties, Daemon, Handler, Inject, Payload, Result,
+        App, Cfg, Component, ConfigManager, ConfigProperties, Handler, Inject, Payload, Result,
         ServiceComponent, component, handlers, rpc, service,
     };
 

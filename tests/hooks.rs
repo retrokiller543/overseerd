@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use overseerd::config::Toml;
 use overseerd::dirs::{Config, DirectoriesManager};
 use overseerd::{
-    Cfg, CfgNext, ConfigManager, ConfigReload, Daemon, HookOutcome, component, config, methods,
+    Cfg, CfgNext, ConfigManager, ConfigReload, App, HookOutcome, component, config, methods,
 };
 use serde::Deserialize;
 
@@ -132,7 +132,7 @@ async fn config_reload_hooks_fire_only_for_changed_configs() {
 
     let manager = ConfigManager::<Toml>::load_in(&config_dir, &[]).expect("load config");
 
-    let daemon = Daemon::builder("hooks-test")
+    let daemon = App::builder("hooks-test")
         .config_source(manager)
         .auto_discover()
         .build()

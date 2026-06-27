@@ -10,7 +10,7 @@ use std::time::Duration;
 use futures::{Stream, StreamExt};
 
 use overseerd::{
-    CallResult, Cancel, Daemon, MemoryClient, MemoryConnectionHandle, Payload, ResponseStream,
+    CallResult, Cancel, App, MemoryClient, MemoryConnectionHandle, Payload, ResponseStream,
     ServerEvent, StreamDecode, StreamDecodeError, StreamEncode, StreamEncodeError, Streaming,
     handlers, service,
 };
@@ -202,7 +202,7 @@ impl ErgoSvc {
 async fn start() -> MemoryConnectionHandle {
     let (client, transport) = MemoryClient::pair();
 
-    let daemon = Daemon::builder("test")
+    let daemon = App::builder("test")
         .auto_discover()
         .build()
         .await
@@ -245,7 +245,7 @@ async fn drain(call: &mut overseerd::MemoryCall) -> (Vec<u32>, bool) {
 
 #[tokio::test]
 async fn infers_operation_kinds() {
-    let daemon = Daemon::builder("test")
+    let daemon = App::builder("test")
         .auto_discover()
         .build()
         .await
@@ -464,7 +464,7 @@ async fn concurrent_streams_on_one_connection() {
 
 #[tokio::test]
 async fn ergo_operation_kinds() {
-    let daemon = Daemon::builder("test")
+    let daemon = App::builder("test")
         .auto_discover()
         .build()
         .await

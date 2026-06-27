@@ -1,7 +1,7 @@
-//! `daemon!` expansion: assembles the daemon *and* validates it.
+//! `app!` expansion: assembles the app *and* validates it.
 //!
 //! ```ignore
-//! let daemon = daemon! {
+//! let app = app! {
 //!     name: "example-daemon",
 //!     services: [Notifications, Echo],
 //!     configs: [ DbConfig => "app.db.reader", DbConfig => "app.db.writer" ],
@@ -20,7 +20,7 @@
 //! (`{ key: value, .. }`) that applies settings to just that manager. A `config` block with
 //! no `source` is loaded from the `directories` manager (which must then be present), so the
 //! file-reload triggers (`sighup`/`watch`/`debounce`) configure the `ConfigManager` itself —
-//! never the daemon. The listed `services` are asserted `Wired` (under `di-check`).
+//! never the app. The listed `services` are asserted `Wired` (under `di-check`).
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
@@ -30,8 +30,8 @@ use syn::{Expr, Ident, LitBool, LitStr, Token, Type, braced, bracketed};
 
 use crate::{di, paths::overseerd_path};
 
-/// Parsed `daemon! { .. }`.
-pub struct DaemonInput {
+/// Parsed `app! { .. }`.
+pub struct AppInput {
     name: Expr,
     services: Vec<Type>,
     components: Vec<Expr>,
@@ -45,7 +45,7 @@ pub struct DaemonInput {
 
 /// How a manager is supplied in the `managers` block: a pre-built instance, or settings the
 /// macro uses to construct and configure it.
-// A short-lived parse type built once per `daemon!`; variant size is irrelevant.
+// A short-lived parse type built once per `app!`; variant size is irrelevant.
 #[allow(clippy::large_enum_variant)]
 enum ManagerSource<S> {
     Instance(Expr),
@@ -164,7 +164,7 @@ impl Parse for ConfigEntry {
     }
 }
 
-impl Parse for DaemonInput {
+impl Parse for AppInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut name = None;
         let mut services = Vec::new();
@@ -193,7 +193,7 @@ impl Parse for DaemonInput {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
-                            "unknown `daemon!` key `{other}`, expected `name`, `services`, \
+                            "unknown `app!` key `{other}`, expected `name`, `services`, \
                              `components`, `configs`, `managers`, `middleware`, `guards`, or \
                              `error_handler`"
                         ),
@@ -206,9 +206,9 @@ impl Parse for DaemonInput {
             }
         }
 
-        let name = name.ok_or_else(|| input.error("`daemon!` requires a `name`"))?;
+        let name = name.ok_or_else(|| input.error("`app!` requires a `name`"))?;
 
-        Ok(DaemonInput {
+        Ok(AppInput {
             name,
             services,
             components,
@@ -281,8 +281,8 @@ fn bracketed_list<T: Parse>(input: ParseStream) -> syn::Result<Vec<T>> {
     Ok(list.into_iter().collect())
 }
 
-pub fn expand(input: DaemonInput) -> TokenStream {
-    let DaemonInput {
+pub fn expand(input: AppInput) -> TokenStream {
+    let AppInput {
         name,
         services,
         components,
@@ -297,7 +297,7 @@ pub fn expand(input: DaemonInput) -> TokenStream {
     let config_tys = configs.iter().map(|entry| &entry.ty);
     let config_paths = configs.iter().map(|entry| &entry.path);
 
-    let daemon = overseerd_path("Daemon");
+    let app_ty = overseerd_path("App");
     let config_manager_path = overseerd_path("ConfigManager");
     let directories_path = overseerd_path("DirectoriesManager");
     let config_dynamic = overseerd_path("config::Dynamic");
@@ -311,7 +311,7 @@ pub fn expand(input: DaemonInput) -> TokenStream {
             const _: () = {
                 fn __overseerd_assert_wired<T: #wired>() {}
 
-                fn __overseerd_daemon_check() {
+                fn __overseerd_app_check() {
                     #(__overseerd_assert_wired::<#services>();)*
                 }
             };
@@ -407,7 +407,7 @@ pub fn expand(input: DaemonInput) -> TokenStream {
             #directories_binding
             #config_binding
 
-            #daemon::builder(#name)
+            #app_ty::builder(#name)
                 .auto_discover()
                 #(.with_component(#components))*
                 #(.config::<#config_tys>(#config_paths))*

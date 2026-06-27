@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use overseerd::config::Toml;
-use overseerd::{ConfigManager, Daemon, Shutdown, Startup, component, methods};
+use overseerd::{ConfigManager, App, Shutdown, Startup, component, methods};
 
 /// Records that its startup and shutdown hooks ran.
 #[component]
@@ -46,7 +46,7 @@ impl LifecycleComponent {
 
 #[tokio::test]
 async fn startup_and_shutdown_hooks_fire() {
-    let daemon = Daemon::builder("lifecycle-test")
+    let daemon = App::builder("lifecycle-test")
         .config_source(ConfigManager::<Toml>::empty())
         .auto_discover()
         .build()

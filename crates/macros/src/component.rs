@@ -5,7 +5,7 @@
 //! so the container builds it from its dependencies (each field injected unless
 //! marked `#[default]`, which builds it via `Default`). Unlike `#[service]` there
 //! is no versioning or RPC surface. For construction that field injection can't
-//! express, provide the instance via `DaemonBuilder::with_component` instead.
+//! express, provide the instance via `AppBuilder::with_component` instead.
 
 use proc_macro2::TokenStream;
 use quote::quote;

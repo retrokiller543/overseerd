@@ -11,7 +11,7 @@ use std::task::{Context, Poll};
 
 use overseerd::tower::{Layer, Service};
 use overseerd::{
-    CallResult, Daemon, ErrorHandler, ErrorResponse, Guard, MemoryClient, MemoryConnectionHandle,
+    CallResult, App, ErrorHandler, ErrorResponse, Guard, MemoryClient, MemoryConnectionHandle,
     Payload, PredefinedCode, RpcCallContext, RpcOutcome, RpcRequest, StatusCode, handlers, service,
 };
 
@@ -154,11 +154,11 @@ impl ErrorHandler for RemapHandler {
 /// client handle.
 async fn start<F>(configure: F) -> MemoryConnectionHandle
 where
-    F: FnOnce(overseerd::DaemonBuilder) -> overseerd::DaemonBuilder,
+    F: FnOnce(overseerd::AppBuilder) -> overseerd::AppBuilder,
 {
     let (client, transport) = MemoryClient::pair();
 
-    let builder = Daemon::builder("test").auto_discover();
+    let builder = App::builder("test").auto_discover();
     let daemon = configure(builder).build().await.expect("build daemon");
 
     tokio::spawn(async move {

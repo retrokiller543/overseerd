@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseerd::{Daemon, component, injectable};
+use overseerd::{App, component, injectable};
 
 /// A trait two components provide. The `Send + Sync` supertraits make the bare
 /// `dyn Animal` shareable, so no use site needs to write `+ Send + Sync`.
@@ -60,7 +60,7 @@ fn data_ptr<T: ?Sized>(arc: &Arc<T>) -> *const () {
 
 #[tokio::test]
 async fn primary_provider_is_chosen_and_aliases_the_single_instance() {
-    let daemon = Daemon::builder("providers-test")
+    let daemon = App::builder("providers-test")
         .auto_discover()
         .build()
         .await

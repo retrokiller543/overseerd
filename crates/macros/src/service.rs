@@ -11,7 +11,7 @@
 //! state built via `Default`) — overridable by an `#[init]` in a `#[handlers]`
 //! impl. A field whose type is not an `Injectable` handle and is not `#[default]`
 //! fails to compile; construct such a type via `#[init]` or
-//! `DaemonBuilder::with_component`.
+//! `AppBuilder::with_component`.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};

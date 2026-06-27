@@ -3,7 +3,7 @@
 //! user story / success criterion from `specs/003-response-status-codes/`.
 
 use overseerd::{
-    CallResult, Daemon, ErrorResponse, Flags, MemoryClient, MemoryConnectionHandle, PredefinedCode,
+    CallResult, App, ErrorResponse, Flags, MemoryClient, MemoryConnectionHandle, PredefinedCode,
     ResponseError, ResponseStream, ServerEvent, StatusCode, handlers, service,
 };
 
@@ -86,7 +86,7 @@ impl StatusSvc {
 async fn start() -> MemoryConnectionHandle {
     let (client, transport) = MemoryClient::pair();
 
-    let daemon = Daemon::builder("test")
+    let daemon = App::builder("test")
         .auto_discover()
         .build()
         .await

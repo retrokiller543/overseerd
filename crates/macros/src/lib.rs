@@ -23,7 +23,7 @@
 //!    stateful `#[service]`). The macro registers a factory; the container builds
 //!    the instance from its dependencies during startup.
 //! 2. **Manually provided** — construct the instance yourself and hand it to
-//!    `DaemonBuilder::with_component`. Annotate the type
+//!    `AppBuilder::with_component`. Annotate the type
 //!    `#[component(default_factory = false)]`, which emits the `Component` metadata
 //!    with no factory.
 //!
@@ -50,15 +50,15 @@
 //! returns `syn::Result`, with errors surfaced through
 //! `syn::Error::into_compile_error` rather than panics. Registration is done by
 //! emitting `#[linkme::distributed_slice]` elements into the per-kind descriptor
-//! slices that `DaemonBuilder::auto_discover` collects.
+//! slices that `AppBuilder::auto_discover` collects.
 
 extern crate proc_macro;
 
+mod app;
 mod attr;
 mod case;
 mod component;
 mod config;
-mod daemon;
 mod di;
 mod handle;
 mod handlers;
@@ -83,7 +83,7 @@ use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// Use this for dependencies the system can assemble itself (pools, clients composed
 /// from other components, …). For an instance you must build yourself, use
 /// `#[component(default_factory = false)]` and provide it via
-/// `DaemonBuilder::with_component`.
+/// `AppBuilder::with_component`.
 ///
 /// # Arguments
 ///
@@ -93,7 +93,7 @@ use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// - `factory = path` — register `path` (an async `Factory`) as the constructor
 ///   instead of field injection; its parameters are its dependencies.
 /// - `default_factory = false` — emit no factory (a **manual** instance, provided
-///   via `DaemonBuilder::with_component`).
+///   via `AppBuilder::with_component`).
 /// - `factory_slice = Ident` — override the generated `{Type}Factories` slice name.
 ///
 /// ```ignore
@@ -136,7 +136,7 @@ use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 ///
 /// A component the system should *build* uses field injection by default; for one
 /// you construct yourself, `#[component(default_factory = false)]` emits the
-/// metadata with no factory (provide it via `DaemonBuilder::with_component`), and
+/// metadata with no factory (provide it via `AppBuilder::with_component`), and
 /// `#[component(factory = path)]` registers an explicit async factory.
 ///
 /// # See also
@@ -159,7 +159,7 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// The type must also derive `Deserialize`, and `#[config]` must sit *above* the derive so
 /// it strips any field `#[default]` before the derive runs. With `#[config(path = "..")]`
 /// the binding is auto-registered (picked up by `auto_discover`); without a path, bind it
-/// explicitly with `DaemonBuilder::config::<T>(path)` — needed when the same type is
+/// explicitly with `AppBuilder::config::<T>(path)` — needed when the same type is
 /// bound at several paths. `#[config(name = "..")]` overrides the display name.
 ///
 /// A named field may carry `#[default = ".."]`: the literal is a template string merged
@@ -221,7 +221,7 @@ pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # What it generates
 ///
 /// - `impl Component for T` and `impl ServiceComponent for T` (the latter carries
-///   `VERSION`, enabling `DaemonBuilder::with_service`);
+///   `VERSION`, enabling `AppBuilder::with_service`);
 /// - a public `{Service}Rpcs` distributed slice (e.g. `GreeterRpcs`) that the
 ///   service's `#[handlers]` blocks append their RPC groups to, plus an
 ///   `impl ServiceRpcs for T` returning it;
@@ -410,13 +410,13 @@ pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .into()
 }
 
-/// Assembles a daemon and validates it from one declaration.
+/// Assembles an app and validates it from one declaration.
 ///
 /// ```ignore
 /// // Built earlier in `main`, so their values can also configure the transport.
 /// let config = ConfigManager::<Toml>::load_in(&dirs.dir(), &[])?;
 ///
-/// let daemon = daemon! {
+/// let app = app! {
 ///     name: "example-daemon",
 ///     services: [Notifications, Echo],
 ///     configs: [ DbConfig => "app.db.reader", DbConfig => "app.db.writer" ],
@@ -429,7 +429,7 @@ pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// .await?;
 /// ```
 ///
-/// Expands to a `DaemonBuilder` — `Daemon::builder(name).auto_discover()`, a
+/// Expands to an `AppBuilder` — `App::builder(name).auto_discover()`, a
 /// `with_component(..)` for each listed instance, a `config::<T>(path)` for each
 /// `configs` entry (`Type => "property.path"`), and `config_source`/`directories`
 /// for any `managers` entries — so it is what you use in `main`.
@@ -440,18 +440,27 @@ pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///   [`ConfigManager`](overseerd_core::ConfigManager), `directories: <binding>` a
 ///   [`DirectoriesManager`](overseerd_core::DirectoriesManager). Both are optional —
 ///   omitted, the builder constructs defaults (config loaded from the `Dir<Config>`
-///   directory, directories derived from the daemon name).
+///   directory, directories derived from the app name).
 ///
 /// The listed `services` are additionally required to be
 /// [`Wired`](overseerd_core::Wired) under the `di-check` feature, asserting their
 /// whole dependency graph (including trait-object and `#[service]` field
 /// dependencies, across crates) at compile time. The same declaration that wires the
-/// daemon validates it — there is no separate list to maintain.
+/// app validates it — there is no separate list to maintain.
+#[proc_macro]
+pub fn app(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as app::AppInput);
+
+    app::expand(input).into()
+}
+
+/// Deprecated alias for [`app!`](macro@app). Renamed in 0.7.0; removed in 1.0.0.
+#[deprecated(since = "0.7.0", note = "renamed to `app!`; the `daemon!` alias is removed in 1.0.0")]
 #[proc_macro]
 pub fn daemon(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as daemon::DaemonInput);
+    let input = parse_macro_input!(input as app::AppInput);
 
-    daemon::expand(input).into()
+    app::expand(input).into()
 }
 
 /// Marks a trait as injectable as `Arc<dyn Trait>` (providers register with

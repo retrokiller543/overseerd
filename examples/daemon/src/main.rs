@@ -17,7 +17,7 @@ use crate::components::{AppServer, DbConfig};
 use crate::service::Notifications;
 use overseerd::builtins::init_tracing;
 use overseerd::config::Toml;
-use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig, daemon};
+use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig, app};
 
 #[tokio::main]
 async fn main() -> overseerd::Result<()> {
@@ -46,7 +46,7 @@ async fn main() -> overseerd::Result<()> {
     // `DbConfig` bindings share one type at different paths, so they are listed
     // explicitly. The framework `ServerConfig` builtin carries no auto-binding, so
     // it is bound here at `app.server`. The supplied config source backs them all.
-    let daemon = daemon! {
+    let app = app! {
         name: "example-daemon",
         services: [Notifications],
         configs: [
@@ -63,7 +63,7 @@ async fn main() -> overseerd::Result<()> {
     .build()
     .await?;
 
-    println!("{daemon}");
+    println!("{app}");
 
     Ok(())
 }
