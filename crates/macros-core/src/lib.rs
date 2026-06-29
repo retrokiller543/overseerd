@@ -31,9 +31,14 @@ mod config;
 mod injectable;
 
 pub use extend::{
-    NoExt, ParseItem, ParseKeyed, ParseMethod, eat_comma, eat_eq, unknown_key_error,
+    ComponentContext, ComponentExt, NoExt, ParseItem, ParseKeyed, ParseMethod, eat_comma, eat_eq,
+    unknown_key_error,
 };
 pub use paths::Paths;
+
+/// The generic component-macro expansion, reused by a plugin's component-variant macro (e.g.
+/// `#[service]` = `ComponentArgs<Router>`).
+pub use component::expand as expand_component;
 
 use proc_macro2::TokenStream;
 use syn::{DeriveInput, ItemImpl, ItemStruct, ItemTrait};
@@ -59,9 +64,9 @@ where
     }
 }
 
-/// `#[component]` expansion entry point.
+/// `#[component]` expansion entry point — the base component macro with no extension.
 pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = match syn::parse2::<attr::ServiceArgs>(attr) {
+    let args = match syn::parse2::<attr::ComponentArgs>(attr) {
         Ok(args) => args,
 
         Err(e) => return e.into_compile_error(),

@@ -1,19 +1,27 @@
-//! `#[component]` expansion (struct).
+//! The base component macro: `ComponentArgs<Ext>` expansion.
 //!
-//! Declares a system-constructed singleton component: implements `Component`
-//! and emits a field-injection factory registered into the `COMPONENTS` slice,
-//! so the container builds it from its dependencies (each field injected unless
-//! marked `#[default]`, which builds it via `Default`). Unlike `#[service]` there
-//! is no versioning or RPC surface. For construction that field injection can't
-//! express, provide the instance via `AppBuilder::with_component` instead.
+//! Declares a system-constructed singleton component — implements `Component`, emits a
+//! field-injection factory registered into the `COMPONENTS` slice, and wires providers/handle.
+//! `#[component]` is `ComponentArgs<NoExt>`; `#[service]` is `ComponentArgs<Router>` — the same
+//! base skeleton plus the RPC service surface the extension appends.
+//!
+//! The base resolves the component identity (`id`/`name`/`scope`), hands it to the extension
+//! via [`ParseItem<ComponentContext>`] (so the extension's output agrees with the component),
+//! and defers its eager field-DI assertion when the extension reports the factory may be
+//! overridden ([`ComponentExt::defers_factory`] — as a service is, by a `#[handlers]` `#[init]`).
 
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{ItemStruct, LitStr};
 
-use crate::{attr::ServiceArgs, di, handle, inject, paths::overseerd_path, provide};
+use crate::attr::ComponentArgs;
+use crate::extend::{ComponentContext, ComponentExt};
+use crate::{di, handle, inject, paths::overseerd_path, provide};
 
-pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStream> {
+pub fn expand<Ext: ComponentExt>(
+    mut args: ComponentArgs<Ext>,
+    mut item: ItemStruct,
+) -> syn::Result<TokenStream> {
     let self_ident = item.ident.clone();
     let providers = provide::generate_providers(&self_ident, &args);
     let handle = handle::handle_impl(&self_ident, args.by_value);
@@ -23,10 +31,13 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
 
     let id = args
         .id
+        .clone()
         .unwrap_or_else(|| LitStr::new(&self_ident.to_string().to_lowercase(), self_ident.span()));
     let name = args
         .name
+        .clone()
         .unwrap_or_else(|| LitStr::new(&self_ident.to_string(), self_ident.span()));
+    let type_name = LitStr::new(&self_ident.to_string(), self_ident.span());
 
     let scope_variant = args
         .scope
@@ -40,8 +51,20 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
     let hooks_slice = inject::hooks_slice_ident(&self_ident);
     let hooks_infra = inject::hooks_infrastructure(&self_ident, &hooks_slice);
 
+    // Hand the resolved identity to the extension before it emits, so its output (service
+    // descriptor, route table, …) names the component consistently.
+    let context = ComponentContext {
+        ident: self_ident.clone(),
+        type_name,
+        id: id.clone(),
+        name: name.clone(),
+        scope: args.scope.clone(),
+    };
+    args.ext.parse_item(&context)?;
+
     // An explicit `factory = path` replaces the field-injection default; so does
-    // `default_factory = false` (the manual case). Otherwise the default is emitted.
+    // `default_factory = false` (the manual case). Otherwise the default is emitted. The
+    // eager DI assertion is deferred when the extension allows a later factory override.
     let explicit = args
         .factory
         .as_ref()
@@ -51,12 +74,16 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         &mut item,
         &id,
         &name,
-        false,
+        args.ext.defers_factory(),
         &scope_variant,
         &factories_slice,
         emit_default,
     );
     let component = overseerd_path("Component");
+
+    // The extension's appended surface (nothing for `#[component]`; the service header, RPC
+    // slice, and client for `#[service]`).
+    let ext = &args.ext;
 
     Ok(quote! {
         #item
@@ -82,5 +109,7 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
 
             #providers
         };
+
+        #ext
     })
 }

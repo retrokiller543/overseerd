@@ -34,8 +34,8 @@ async fn daemon_macro_alias_builds() {
         protocol: overseerd::daemon::RpcPlugin,
     }
     .build()
-        .await
-        .expect("daemon! alias builds");
+    .await
+    .expect("daemon! alias builds");
 
     assert_eq!(app.name, "deprecated-macro-alias");
 }

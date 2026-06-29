@@ -11,8 +11,7 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::parse::ParseStream;
 use syn::{
-    Attribute, FnArg, Ident, ImplItemFn, ItemImpl, LitStr, Meta, ReturnType, Type,
-    spanned::Spanned,
+    Attribute, FnArg, Ident, ImplItemFn, ItemImpl, LitStr, Meta, ReturnType, Type, spanned::Spanned,
 };
 
 use overseerd_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
@@ -743,4 +742,3 @@ fn handler_return_type() -> TokenStream {
         >
     }
 }
-

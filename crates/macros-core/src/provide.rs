@@ -10,11 +10,15 @@ use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 use syn::{Ident, LitStr};
 
-use crate::{attr::ServiceArgs, paths::overseerd_path};
+use crate::extend::ParseKeyed;
+use crate::{attr::ComponentArgs, paths::overseerd_path};
 
 /// Emits the provider registrations for `self_ident` given the parsed args.
 /// Empty when the component provides nothing.
-pub fn generate_providers(self_ident: &Ident, args: &ServiceArgs) -> TokenStream {
+pub fn generate_providers<Ext: ParseKeyed>(
+    self_ident: &Ident,
+    args: &ComponentArgs<Ext>,
+) -> TokenStream {
     if args.provide.is_empty() {
         return quote!();
     }

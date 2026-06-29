@@ -8,8 +8,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use overseerd::ConfigManager;
-use overseerd::config::Toml;
 use overseerd::app;
+use overseerd::config::Toml;
 use overseerd::dirs::{Config, DirectoriesManager};
 
 #[cfg(feature = "watch")]

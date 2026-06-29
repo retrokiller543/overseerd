@@ -13,7 +13,9 @@ use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, ReturnType, Type};
 
-use crate::extend::{NoExt, ParseItem, ParseKeyed, ParseMethod, eat_comma, eat_eq, unknown_key_error};
+use crate::extend::{
+    NoExt, ParseItem, ParseKeyed, ParseMethod, eat_comma, eat_eq, unknown_key_error,
+};
 use crate::hook::{self, HookInfo};
 use crate::inject::{factories_slice_ident, hooks_slice_ident};
 use crate::paths::overseerd_path;

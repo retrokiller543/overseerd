@@ -15,9 +15,9 @@ mod service;
 
 use crate::components::{AppServer, DbConfig};
 use crate::service::Notifications;
+use overseerd::app;
 use overseerd::builtins::init_tracing;
 use overseerd::config::Toml;
-use overseerd::app;
 use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig};
 
 #[tokio::main]

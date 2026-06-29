@@ -163,7 +163,6 @@ pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
     overseerd_macros_core::config(attr.into(), item.into()).into()
 }
 
-
 /// Registers a component's lifecycle methods from an inherent `impl` block.
 ///
 /// Today that is the `#[init]` constructor — an explicit factory that overrides the
@@ -193,7 +192,6 @@ pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
     overseerd_macros_core::methods(attr.into(), item.into()).into()
 }
-
 
 /// Assembles an app and validates it from one declaration.
 ///

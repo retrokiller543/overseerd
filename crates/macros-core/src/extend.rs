@@ -74,6 +74,38 @@ pub trait ParseMethod: Default {
     }
 }
 
+/// The base-resolved component identity handed to a struct-macro extension (via
+/// [`ParseItem<ComponentContext>`]) before it emits. A component extension (e.g. the RPC
+/// `Router`) needs the *base's* resolved `id`/`name` so its own output (a service descriptor,
+/// a route table, …) agrees with the component — it can't re-derive them, since the user may
+/// have overridden them on the base macro.
+pub struct ComponentContext {
+    /// The bare type ident, e.g. `Greeter`.
+    pub ident: Ident,
+    /// The type ident as a string literal, e.g. for `TypeDescriptor::of::<Self>(..)`.
+    pub type_name: syn::LitStr,
+    /// The resolved component id (the `id = ..` override, else the lowercased ident).
+    pub id: syn::LitStr,
+    /// The resolved display name (the `name = ..` override, else the ident).
+    pub name: syn::LitStr,
+    /// The scope marker ident from `scope = ..`, if specified (`None` = default singleton).
+    pub scope: Option<Ident>,
+}
+
+/// A **component** macro extension: the struct-side analogue of an impl extension. It is a
+/// [`ParseKeyed`] (its own args) + [`ParseItem<ComponentContext>`] (receives the base's
+/// resolved identity) + [`ToTokens`] (emits its appended surface). The RPC `Router` — turning
+/// `#[component]` into `#[service]` — is one. `ComponentArgs<NoExt>` is `#[component]`;
+/// `ComponentArgs<Router>` is `#[service]`.
+pub trait ComponentExt: ParseKeyed + ParseItem<ComponentContext> + ToTokens {
+    /// Whether the component's field-injection factory may be overridden later (by an `#[init]`
+    /// in a separate impl — as a service is), so the base defers its *eager* field-dependency
+    /// assertion to that path. Default: no (assert eagerly). A `Router` (service) returns true.
+    fn defers_factory(&self) -> bool {
+        false
+    }
+}
+
 /// The single no-op extension: the default for every slot. `ComponentArgs<NoExt>` is exactly
 /// `#[component]`; `MethodArgs<NoExt>` is exactly `#[methods]`. Emits nothing.
 #[derive(Default)]
@@ -86,6 +118,7 @@ impl ToTokens for NoExt {
 impl ParseKeyed for NoExt {}
 impl<T> ParseItem<T> for NoExt {}
 impl ParseMethod for NoExt {}
+impl ComponentExt for NoExt {}
 
 /// Consumes the `= value` half of a `key = value` argument, or nothing for a bare flag, so a
 /// [`ParseKeyed`] impl doesn't repeat the `=`-peek boilerplate.

@@ -19,28 +19,29 @@
 extern crate proc_macro;
 
 mod handlers;
+mod router;
 mod rpc;
-mod service;
 
-use overseerd_macros_core::attr::ServiceArgs;
+use overseerd_macros_core::expand_component;
 use overseerd_macros_core::methods::MethodArgs;
 use overseerd_macros_core::run;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
+use router::RouterComponent;
 use syn::{ItemFn, ItemImpl, ItemStruct};
 
 /// Declares a **service** — a router component exposing RPC methods.
 ///
-/// Implements `Component` + `ServiceComponent`, registers a `ServiceDescriptor` and the
-/// service's `{Service}Rpcs` slice, emits a field-injection factory (overridable by an
-/// `#[init]` in a `#[handlers]` impl), and — under the `client` feature — the generated
-/// `{Service}Client<C>` struct. RPC methods are added by `#[handlers]` impls. Applies to a
-/// struct.
+/// `#[service]` is `ComponentArgs<Router>`: a `#[component]` (field-injected singleton) plus the
+/// router surface — a `ServiceComponent` impl, the service's `{Service}Rpcs` slice and
+/// `ServiceDescriptor`, and (under the `client` feature) the `{Service}Client<C>` struct. RPC
+/// methods are added by `#[handlers]` impls. Accepts the component keys plus `version` /
+/// `rpc_slice`.
 #[proc_macro_attribute]
 pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = TokenStream2::from(attr);
-    let out = match syn::parse2::<ServiceArgs>(attr) {
-        Ok(args) => run::<ItemStruct, _>(item.into(), |item| service::expand(args, item)),
+    let out = match syn::parse2::<RouterComponent>(attr) {
+        Ok(args) => run::<ItemStruct, _>(item.into(), |item| expand_component(args, item)),
 
         Err(e) => e.into_compile_error(),
     };

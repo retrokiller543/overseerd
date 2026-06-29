@@ -12,57 +12,62 @@ use syn::{
     token,
 };
 
-/// Arguments of `#[service(...)]` / `#[component(...)]`. All optional:
-/// - `id` / `name` — default to the type name (`name` is also the RPC prefix);
-/// - `version` — service version;
-/// - `provide = dyn Trait` or `provide = [dyn A, dyn B]` — traits this component
-///   provides, injectable as `Arc<dyn Trait>` / `Vec<_>` / `HashMap<String, _>`.
-///   The trait must be `Send + Sync` (state it as a supertrait: `trait Trait:
-///   Send + Sync`), so no use site needs to write `+ Send + Sync`;
+use crate::extend::{NoExt, ParseKeyed, unknown_key_error};
+
+/// The common component-macro keys, for the "unknown argument" diagnostic (the extension's
+/// keys are merged in by [`unknown_key_error`]).
+const COMPONENT_KEYS: &[&str] = &[
+    "id",
+    "name",
+    "qualifier",
+    "primary",
+    "by_value",
+    "scope",
+    "factory_slice",
+    "factory",
+    "default_factory",
+    "provide",
+];
+
+/// The base arguments of a component macro, generic over an extension `Ext` (the struct-side
+/// analogue of [`MethodArgs`](crate::methods::MethodArgs)). `ComponentArgs<NoExt>` is
+/// `#[component]`; `ComponentArgs<Router>` is `#[service]`. All base keys are optional:
+/// - `id` / `name` — default to the type name;
+/// - `provide = dyn Trait` / `provide = [dyn A, dyn B]` — traits this component provides
+///   (injectable as `Arc<dyn Trait>` / `Vec<_>` / `HashMap<String, _>`); the trait must be
+///   `Send + Sync` via a supertrait;
 /// - `qualifier = ".."` — key for `HashMap<String, Arc<dyn Trait>>` injection;
 /// - `primary` — mark this the primary provider for every trait it provides;
-/// - `by_value` — store/inject this component as `Self` rather than `Arc<Self>`
-///   (for cheap-to-clone, typically internally-`Arc`, types);
-/// - `scope = singleton | connection | request | transient` — the lifetime of the
-///   instance (default `singleton`). Only valid on `#[component]`; a `#[service]`
-///   is always a singleton.
-// TODO: Should be renamed/extended so that we can allow library users to make their own interpretation of a service
+/// - `by_value` — store/inject this component as `Self` rather than `Arc<Self>`;
+/// - `scope = singleton | connection | request | transient` — the instance lifetime;
+/// - `factory_slice` / `factory` / `default_factory` — factory overrides.
+///
+/// Any other key is delegated to the extension's [`parse_keyed`](ParseKeyed::parse_keyed)
+/// (the RPC `Router` adds `version` and `rpc_slice`, for instance).
 #[derive(Default)]
-pub struct ServiceArgs {
+pub struct ComponentArgs<Ext: ParseKeyed = NoExt> {
     pub id: Option<LitStr>,
     pub name: Option<LitStr>,
-    pub version: Option<LitStr>,
     pub provide: Vec<Type>,
     pub qualifier: Option<LitStr>,
     pub primary: bool,
     pub by_value: bool,
-    /// The [`Scope`] marker-type ident (`Singleton`/`Connection`/`Request`/
-    /// `Transient`) parsed from `scope = ..`, spliced as `&::overseerd::scope::<ident>`.
-    /// `None` means the default (singleton).
+    /// The [`Scope`] marker-type ident (`Singleton`/`Connection`/`Request`/`Transient`) parsed
+    /// from `scope = ..`. `None` means the default (singleton).
     pub scope: Option<Ident>,
-    /// Overrides the generated per-service RPC slice name (`rpc_slice = Ident`).
-    /// `None` defaults to `{Service}Rpcs`. An escape hatch when that name collides
-    /// with something already in scope; a `#[handlers]` block for the service must
-    /// then pass the same `rpc_slice = ..`.
-    pub rpc_slice: Option<Ident>, // Service specific and should not be here, its a protocol plugin thing, not core macro thing.
     /// Overrides the generated per-type factory slice name (`factory_slice = Ident`).
-    /// `None` defaults to `{Type}Factories`. An escape hatch for a name collision; a
-    /// `#[methods]` block contributing an `#[init]` to this type must then pass the
-    /// same `factory_slice = ..`.
     pub factory_slice: Option<Ident>,
-    /// An explicit async factory path (`factory = path::to::fn`). When set, that
-    /// function (a [`Factory`](overseerd_core::Factory)) is registered as the
-    /// component's constructor instead of (or alongside) field injection.
+    /// An explicit async factory path (`factory = path::to::fn`).
     pub factory: Option<syn::Path>,
     /// Suppresses the field-injection default factory (`default_factory = false`).
-    /// With no other factory this makes the component **manual** — provided via
-    /// `AppBuilder::with_component` rather than constructed.
     pub no_default_factory: bool,
+    /// The macro extension (its own keyed args, item pass, and emission).
+    pub ext: Ext,
 }
 
-impl Parse for ServiceArgs {
+impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut args = ServiceArgs::default();
+        let mut args = ComponentArgs::<Ext>::default();
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -70,14 +75,9 @@ impl Parse for ServiceArgs {
             match key.to_string().as_str() {
                 "id" => args.id = Some(parse_value(input)?),
                 "name" => args.name = Some(parse_value(input)?),
-                "version" => args.version = Some(parse_value(input)?),
                 "qualifier" => args.qualifier = Some(parse_value(input)?),
                 "primary" => args.primary = true,
                 "by_value" => args.by_value = true,
-                "rpc_slice" => {
-                    input.parse::<Token![=]>()?;
-                    args.rpc_slice = Some(input.parse()?);
-                }
                 "factory_slice" => {
                     input.parse::<Token![=]>()?;
                     args.factory_slice = Some(input.parse()?);
@@ -126,15 +126,10 @@ impl Parse for ServiceArgs {
                         args.provide.push(input.parse::<ProvidedTrait>()?.0);
                     }
                 }
-                other => {
-                    return Err(syn::Error::new(
-                        key.span(),
-                        format!(
-                            "unknown argument `{other}`, expected `id`, `name`, `version`, \
-                             `provide`, `qualifier`, `primary`, `by_value`, `scope`, \
-                             `rpc_slice`, `factory_slice`, `factory`, or `default_factory`"
-                        ),
-                    ));
+                _ => {
+                    if !args.ext.parse_keyed(&key, input)? {
+                        return Err(unknown_key_error::<Ext>(&key, COMPONENT_KEYS));
+                    }
                 }
             }
 
