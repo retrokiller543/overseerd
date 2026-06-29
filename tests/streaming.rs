@@ -245,13 +245,14 @@ async fn drain(call: &mut overseerd::MemoryCall) -> (Vec<u32>, bool) {
 
 #[tokio::test]
 async fn infers_operation_kinds() {
-    let daemon = App::builder("test")
+    let _daemon = App::builder("test")
         .auto_discover()
         .build()
         .await
         .expect("build daemon");
 
-    let services = daemon.registry.resolved_services();
+    let __all: Vec<_> = overseerd::SERVICES.iter().copied().collect();
+    let services = overseerd_rpc::routes::resolved_services(&__all);
     let svc = services
         .iter()
         .find(|s| s.descriptor.name == "StreamSvc")
@@ -464,13 +465,14 @@ async fn concurrent_streams_on_one_connection() {
 
 #[tokio::test]
 async fn ergo_operation_kinds() {
-    let daemon = App::builder("test")
+    let _daemon = App::builder("test")
         .auto_discover()
         .build()
         .await
         .expect("build daemon");
 
-    let services = daemon.registry.resolved_services();
+    let __all: Vec<_> = overseerd::SERVICES.iter().copied().collect();
+    let services = overseerd_rpc::routes::resolved_services(&__all);
     let svc = services
         .iter()
         .find(|s| s.descriptor.name == "ErgoSvc")

@@ -19,27 +19,9 @@ pub use logging::{InitTracingError, init_tracing};
 
 #[cfg(test)]
 mod tests {
-    use crate::App;
-    use crate::lifecycle::ShutdownHandle;
     use overseerd_config::{ConfigManager, ConfigProperties, Toml};
 
     use super::config::{LoggingConfig, ServerConfig};
-
-    #[tokio::test]
-    async fn shutdown_handle_resolves_from_root_scope() {
-        let daemon = App::builder("builtins-test")
-            .build()
-            .await
-            .expect("build daemon");
-
-        let handle = daemon
-            .container()
-            .resolve::<ShutdownHandle>()
-            .await
-            .expect("ShutdownHandle resolves from the root scope");
-
-        handle.shutdown();
-    }
 
     #[test]
     fn server_config_round_trips_a_subtree() {

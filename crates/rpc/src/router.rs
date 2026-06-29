@@ -6,7 +6,7 @@ use crate::{
     Error,
     descriptors::{RpcCallContext, RpcHandler, RpcOutcome},
     extract::ErrorResponse,
-    registry::DescriptorRegistry,
+    routes::ResolvedService,
 };
 
 /// Routes incoming RPC calls to their registered handlers by path.
@@ -18,10 +18,10 @@ pub struct RpcRouter {
 }
 
 impl RpcRouter {
-    pub fn from_registry(registry: &DescriptorRegistry) -> Self {
+    pub fn from_services(services: &[ResolvedService]) -> Self {
         let mut routes = HashMap::new();
 
-        for service in registry.resolved_services() {
+        for service in services {
             for rpc in &service.rpcs {
                 let path = format!("{}.{}", service.descriptor.name, rpc.name);
                 debug!(%path, "registered route");

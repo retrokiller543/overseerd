@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-daemon"
-description = "The Overseerd daemon runtime and RPC adapter: builder, router, extractors, middleware, lifecycle, and serve loop."
+name = "overseerd-app"
+description = "The Overseerd protocol-agnostic application core: the App/AppBuilder, the Plugin/Protocol traits, the DI runtime handle, scope planning, lifecycle, and builtins."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,11 +12,9 @@ categories.workspace = true
 
 [features]
 default = []
-client = ["overseerd-transport/client"]
 di-check = [
     "overseerd-di/di-check",
     "overseerd-config/di-check",
-    "overseerd-transport/di-check",
 ]
 yaml = ["overseerd-config/yaml"]
 watch = ["overseerd-config/watch"]
@@ -27,18 +25,10 @@ overseerd-core = { workspace = true }
 overseerd-di = { workspace = true }
 overseerd-hooks = { workspace = true }
 overseerd-config = { workspace = true }
-overseerd-transport = { workspace = true, features = ["di"] }
 overseerd-dirs = { workspace = true }
-arc-swap = { workspace = true }
-linkme = { workspace = true }
-directories = { workspace = true }
 tokio = { workspace = true }
-tokio-stream = { workspace = true }
-tokio-util = { workspace = true }
-tower = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
-postcard = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, optional = true }
 thiserror = { workspace = true }

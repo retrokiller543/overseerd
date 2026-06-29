@@ -1,18 +1,17 @@
-//! The pluggable protocol seam.
+//! The native RPC protocol.
 //!
-//! A [`Protocol`] is a serve/dispatch mechanism layered over the agnostic
-//! [`AppRuntime`]. The native RPC protocol is [`Rpc`]: it owns the router + middleware
-//! stack and drives the per-connection / per-call loop over any
+//! [`Rpc`] implements the [`Protocol`]/[`Serve`] traits from `overseerd-app`: it owns the
+//! router + middleware stack and drives the per-connection / per-call loop over any
 //! [`Transport`](overseerd_transport::Transport), opening connection and request scopes
-//! through the runtime. The serve envelope (lifecycle hooks, reload triggers, ctrl-c) is
-//! run by [`App`](crate::App) around [`Serve::serve`], so a protocol only watches its
-//! endpoint and the shutdown signal.
+//! through the [`AppRuntime`]. The serve envelope (lifecycle hooks, reload triggers,
+//! ctrl-c) is run by `App::serve`, so this loop only watches its transport and the
+//! shutdown signal.
 
-use std::future::Future;
 use std::sync::Arc;
 
 use futures::StreamExt;
-use overseerd_core::{Scope, TypeDescriptor};
+use overseerd_app::{AppRuntime, Protocol, Serve, ShutdownSignal};
+use overseerd_core::TypeDescriptor;
 use overseerd_di::{BoxedComponent, ScopeContainer};
 use overseerd_transport::{
     CallResult, Connection, PeerInfo, Respond, RespondStream, ResponseSink, Transport,
@@ -24,71 +23,13 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::descriptors::{RpcCallContext, RpcOutcome, RpcResponse};
 use crate::extract::ErrorResponse;
-use crate::lifecycle::ShutdownSignal;
 use crate::middleware::{ErrorHandler, RpcRequest, RpcService};
-use crate::registry::DescriptorRegistry;
 use crate::router::RpcRouter;
-use crate::runtime::AppRuntime;
 use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
 
-/// A general extension unit applied to an app while it is built.
-///
-/// A plugin is the builder-time accumulator for an extension: it starts empty
-/// ([`Default`]), gathers protocol-specific configuration through the builder, and
-/// contributes DI descriptors (and, later, custom `#[component]` variants and their
-/// discovery) into the registry before the container is built. A plugin need not serve
-/// traffic — that is the job of the [`ProtocolPlugin`] sub-trait. Background behavior
-/// rides the components a plugin registers (via their own `#[hook]`s).
-pub trait Plugin: Default {
-    /// Contributes DI descriptors / seeds into the registry before validation and build.
-    /// The native RPC plugin seeds its connection-scoped `PeerInfo` here.
-    fn register(&self, registry: &mut DescriptorRegistry);
-}
-
-/// A [`Plugin`] that additionally installs a serve/dispatch [`Protocol`]. An [`App`] is
-/// built around exactly one of these.
-pub trait ProtocolPlugin: Plugin {
-    /// The protocol this plugin installs.
-    type Protocol: Protocol;
-    type Error: std::error::Error + Send + Sync + 'static;
-
-    /// The session scope chain this protocol opens, root→leaf by rank, *excluding* the
-    /// universal `Singleton` (root) and `Transient` (per-resolve). RPC opens
-    /// `[Connection, Request]`; a request-only protocol opens `[Request]`.
-    const SCOPES: &'static [&'static dyn Scope];
-
-    /// Finalizes the protocol from the accumulated builder state, the assembled runtime,
-    /// and the validated registry — for RPC, building the router and folding the
-    /// middleware stack.
-    fn build(
-        self,
-        runtime: &AppRuntime,
-        registry: &DescriptorRegistry,
-    ) -> Result<Self::Protocol, Self::Error>;
-}
-
-/// A pluggable serve/dispatch layer over the app's DI runtime. There is exactly one
-/// active protocol per [`App`](crate::App).
-pub trait Protocol: Send + 'static {
-    type Error: std::error::Error + Send + Sync + 'static;
-}
-
-/// Serves a built protocol over a concrete endpoint type `E`. Kept separate from
-/// [`Protocol`] so one protocol can serve many endpoint types — RPC over any
-/// [`Transport`], a future HTTP protocol over a `SocketAddr`. The serve loop only needs
-/// to watch `endpoint` and `shutdown`; lifecycle and reload are handled by the caller.
-pub trait Serve<E>: Protocol {
-    fn serve(
-        self,
-        runtime: AppRuntime,
-        shutdown: ShutdownSignal,
-        endpoint: E,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
-}
-
 /// The native RPC protocol: a router wrapped by the middleware stack, plus the global
-/// error handler. Built by [`AppBuilder::build`](crate::AppBuilder::build) and served
-/// over a [`Transport`].
+/// error handler. Built by [`RpcPlugin`](crate::RpcPlugin) and served over a
+/// [`Transport`].
 pub struct Rpc {
     router: Arc<RpcRouter>,
     service: RpcService,
@@ -294,7 +235,12 @@ async fn drive_call<R>(
 
         Err(e) => {
             error!(target: "overseerd::daemon", %path, error = %e, "request scope build failed");
-            let response = apply_error_handler(&error_handler, &path, ErrorResponse::from(e)).await;
+            let response = apply_error_handler(
+                &error_handler,
+                &path,
+                ErrorResponse::from(crate::Error::from(e)),
+            )
+            .await;
             let _ = responder
                 .respond(CallResult::Err {
                     code: response.code,

@@ -492,17 +492,35 @@ version = "0.6.0"
 dependencies = [
  "async-trait",
  "futures",
+ "overseerd-app",
  "overseerd-config",
  "overseerd-core",
- "overseerd-daemon",
  "overseerd-di",
  "overseerd-dirs",
  "overseerd-hooks",
  "overseerd-macros",
+ "overseerd-rpc",
  "overseerd-transport",
  "postcard",
  "serde",
  "tokio",
+]
+
+[[package]]
+name = "overseerd-app"
+version = "0.6.0"
+dependencies = [
+ "futures",
+ "overseerd-config",
+ "overseerd-core",
+ "overseerd-di",
+ "overseerd-dirs",
+ "overseerd-hooks",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -528,31 +546,6 @@ dependencies = [
 [[package]]
 name = "overseerd-core"
 version = "0.6.0"
-
-[[package]]
-name = "overseerd-daemon"
-version = "0.6.0"
-dependencies = [
- "arc-swap",
- "directories",
- "futures",
- "linkme",
- "overseerd-config",
- "overseerd-core",
- "overseerd-di",
- "overseerd-dirs",
- "overseerd-hooks",
- "overseerd-transport",
- "postcard",
- "serde",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "overseerd-di"
@@ -604,6 +597,31 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "overseerd-rpc"
+version = "0.6.0"
+dependencies = [
+ "arc-swap",
+ "directories",
+ "futures",
+ "linkme",
+ "overseerd-app",
+ "overseerd-config",
+ "overseerd-core",
+ "overseerd-di",
+ "overseerd-dirs",
+ "overseerd-hooks",
+ "overseerd-transport",
+ "postcard",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tower",
+ "tracing",
 ]
 
 [[package]]

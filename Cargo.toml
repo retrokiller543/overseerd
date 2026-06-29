@@ -24,8 +24,10 @@ overseerd-core = { path = "crates/core", version = "0.6.0" }
 overseerd-di = { path = "crates/di", version = "0.6.0" }
 overseerd-dirs = { path = "crates/dirs", version = "0.6.0" }
 overseerd-hooks = { path = "crates/hooks", version = "0.6.0" }
-overseerd-daemon = { path = "crates/daemon", version = "0.6.0" }
+overseerd-app = { path = "crates/app", version = "0.6.0" }
+overseerd-rpc = { path = "crates/rpc", version = "0.6.0" }
 overseerd-macros = { path = "crates/macros", version = "0.6.0" }
+overseerd-macros-core = { path = "crates/macros-core", version = "0.6.0" }
 overseerd-transport = { path = "crates/transport", version = "0.6.0" }
 
 # Common dependencies
@@ -64,13 +66,19 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["di-check"]
+default = ["di-check", "daemon"]
+
+# Re-export the native RPC daemon (`overseerd-rpc`) through the facade for convenience.
+# Disable for a core-framework-only build (`default-features = false`); the daemon then
+# lives in its own `overseerd-rpc` crate.
+daemon = ["dep:overseerd-rpc"]
 
 # Compile the generated client SDK and the client-side transport. Opt in via
 # `overseerd = { features = ["client"] }`; no feature is needed in the user crate.
 client = [
+    "daemon",
     "overseerd-macros/client",
-    "overseerd-daemon/client",
+    "overseerd-rpc?/client",
     "overseerd-transport/client",
     "dep:async-trait",
 ]
@@ -81,17 +89,18 @@ di-check = [
     "overseerd-macros/di-check",
     "overseerd-di/di-check",
     "overseerd-config/di-check",
-    "overseerd-daemon/di-check",
+    "overseerd-app/di-check",
+    "overseerd-rpc?/di-check",
 ]
 
 # Enable YAML config sources (`application.yaml`) alongside the default TOML.
-yaml = ["overseerd-config/yaml", "overseerd-daemon/yaml"]
+yaml = ["overseerd-config/yaml", "overseerd-app/yaml", "overseerd-rpc?/yaml"]
 
 # Provide the `init_tracing` helper, pulling in `tracing-subscriber`.
-tracing-subscriber = ["overseerd-daemon/tracing-subscriber"]
+tracing-subscriber = ["overseerd-app/tracing-subscriber"]
 
 # Watch config files and reload on change (`ConfigManager::watch_config`), via `notify`.
-watch = ["overseerd-config/watch", "overseerd-daemon/watch"]
+watch = ["overseerd-config/watch", "overseerd-app/watch", "overseerd-rpc?/watch"]
 
 [dependencies]
 overseerd-core = { workspace = true }
@@ -99,7 +108,8 @@ overseerd-di = { workspace = true }
 overseerd-hooks = { workspace = true }
 overseerd-dirs = { workspace = true }
 overseerd-config = { workspace = true }
-overseerd-daemon = { workspace = true }
+overseerd-app = { workspace = true }
+overseerd-rpc = { workspace = true, optional = true }
 overseerd-transport = { workspace = true }
 overseerd-macros = { workspace = true }
 tokio = { workspace = true }
@@ -107,3 +117,8 @@ futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 async-trait = { workspace = true, optional = true }
+
+# Always available to integration tests so macro-emitted `::overseerd_rpc::*` paths
+# resolve, even though the dependency itself is feature-gated for downstream users.
+[dev-dependencies]
+overseerd-rpc = { workspace = true }
