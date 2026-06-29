@@ -28,7 +28,7 @@ pub mod scope {
     pub use overseerd_core::scope::{Singleton, Transient};
 
     #[cfg(feature = "daemon")]
-    pub use overseerd_rpc::scope::{Connection, Request};
+    pub use overseerd_rpc::scope::{Connection, Request}; // should not be here, should be in crate::daemon with the rest of the daemon related items
 }
 
 // ---------------------------------------------------------------------------
@@ -81,35 +81,8 @@ pub use overseerd_app::{
     ShutdownHandle, ShutdownSignal,
 };
 
-// ---------------------------------------------------------------------------
-// Native RPC daemon (behind the `daemon` feature): App, builder, router, extractors,
-// middleware, descriptors, and the RPC `Error`/`Result`.
-// ---------------------------------------------------------------------------
-#[cfg(feature = "daemon")]
-pub use overseerd_rpc::{
-    App, AppBuilder, Cancel, Error, ErrorHandler, ErrorResponse, FallibleHandler, FromContext,
-    Guard, GuardLayer, GuardService, Handler, Inject, OperationKind, ParameterDescriptor,
-    ParameterKind, Payload, Peer, RequestStream, ResolvedService, Responder, ResponseError,
-    ResponseStream, Result, RouterService, Rpc, RpcAppBuilder, RpcCallContext, RpcDescriptor,
-    RpcGroup, RpcHandler, RpcOutcome, RpcPlugin, RpcRequest, RpcResponse, RpcRouter, RpcService,
-    SERVICES, ServiceDescriptor, ServiceRpcs, Streaming, dispatch_fallible, dispatch_with,
-};
-
-/// Deprecated alias for [`App`]. Renamed in 0.7.0; the alias is removed in 1.0.0.
-#[cfg(feature = "daemon")]
-#[deprecated(
-    since = "0.7.0",
-    note = "renamed to `App`; the `Daemon` alias is removed in 1.0.0"
-)]
-pub type Daemon = App;
-
-/// Deprecated alias for [`AppBuilder`]. Renamed in 0.7.0; the alias is removed in 1.0.0.
-#[cfg(feature = "daemon")]
-#[deprecated(
-    since = "0.7.0",
-    note = "renamed to `AppBuilder`; the `DaemonBuilder` alias is removed in 1.0.0"
-)]
-pub type DaemonBuilder = AppBuilder;
+// The native RPC daemon surface lives under the `daemon` module (defined below), so the
+// facade root stays free of plugin-specific names. `use overseerd::daemon::prelude::*`.
 
 // ---------------------------------------------------------------------------
 // Wire-contract status types and stream item codecs.
@@ -125,18 +98,10 @@ pub use overseerd_transport::{
 // ---------------------------------------------------------------------------
 pub use overseerd_macros::{component, config, injectable, methods};
 
-#[cfg(feature = "daemon")]
-pub use overseerd_macros::{app, daemon, handlers, rpc, service};
-
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]` attribute
 /// through the facade crate without user crates depending on `linkme` directly.
 #[doc(hidden)]
 pub use overseerd_di::linkme;
-
-/// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`
-/// (and reach tower's own layers) without depending on `tower` directly.
-#[cfg(feature = "daemon")]
-pub use overseerd_rpc::tower;
 
 /// Re-exported so generated client traits can be annotated `#[async_trait]`
 /// (for `dyn`-compatibility) without user crates depending on `async-trait`.
@@ -205,18 +170,67 @@ pub mod builtins {
     pub use overseerd_app::builtins::{InitTracingError, init_tracing};
 }
 
-/// The common imports for building a daemon: `use overseerd::prelude::*;`.
+/// The native RPC **daemon** plugin surface, namespaced so plugin items never collide with
+/// the facade root or with other plugins (`overseerd::axum::*`, …).
+///
+/// Build an RPC app with `use overseerd::prelude::*;` (the core framework) plus
+/// `use overseerd::daemon::prelude::*;` (the common RPC items). The daemon macros
+/// (`#[service]`/`#[handlers]`/`#[rpc]`/`app!`) emit `::overseerd::daemon::*` paths, so end
+/// users depend only on `overseerd` — never on `overseerd-rpc` directly.
+#[cfg(feature = "daemon")]
+pub mod daemon {
+    pub use overseerd_rpc::{
+        App, AppBuilder, Cancel, Error, ErrorHandler, ErrorResponse, FallibleHandler, FromContext,
+        Guard, GuardLayer, GuardService, Handler, Inject, OperationKind, ParameterDescriptor,
+        ParameterKind, Payload, Peer, RequestStream, ResolvedService, Responder, ResponseError,
+        ResponseStream, Result, RouterService, Rpc, RpcAppBuilder, RpcCallContext, RpcDescriptor,
+        RpcGroup, RpcHandler, RpcOutcome, RpcPlugin, RpcRequest, RpcResponse, RpcRouter,
+        RpcService, SERVICES, ServiceDescriptor, ServiceRpcs, Streaming, dispatch_fallible,
+        dispatch_with,
+    };
+
+    /// Service/RPC route resolution, for introspecting the registered surface.
+    pub use overseerd_rpc::routes::resolved_services;
+
+    /// The RPC component scopes.
+    pub use overseerd_rpc::scope::{Connection, Request};
+
+    /// The daemon macros. Their generated code roots at `::overseerd::daemon::*`.
+    pub use overseerd_macros::{app, daemon, handlers, rpc, service};
+
+    /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`.
+    pub use overseerd_rpc::tower;
+
+    /// Deprecated alias for [`App`]. Renamed in 0.7.0; removed in 1.0.0.
+    #[deprecated(since = "0.7.0", note = "renamed to `App`; removed in 1.0.0")]
+    pub type Daemon = App;
+
+    /// Deprecated alias for [`AppBuilder`]. Renamed in 0.7.0; removed in 1.0.0.
+    #[deprecated(since = "0.7.0", note = "renamed to `AppBuilder`; removed in 1.0.0")]
+    pub type DaemonBuilder = AppBuilder;
+
+    /// Common imports for building an RPC daemon: `use overseerd::daemon::prelude::*;`.
+    pub mod prelude {
+        pub use super::{
+            App, FromContext, Handler, Inject, Payload, Peer, Responder, RpcAppBuilder, Streaming,
+            app, handlers, rpc, service,
+        };
+
+        pub use overseerd_transport::TcpTransport;
+
+        #[cfg(unix)]
+        pub use overseerd_transport::UnixTransport;
+    }
+}
+
+/// The common imports for the **core framework**: `use overseerd::prelude::*;`. Pair with
+/// `use overseerd::daemon::prelude::*;` (or another plugin's prelude) for the protocol layer.
 pub mod prelude {
-    pub use crate::{Cfg, Component, ConfigManager, ConfigProperties, ServiceComponent, component};
-
-    #[cfg(feature = "daemon")]
-    pub use crate::{App, Handler, Inject, Payload, Result, RpcAppBuilder, handlers, rpc, service};
-
-    #[cfg(feature = "daemon")]
-    pub use overseerd_transport::TcpTransport;
-
-    #[cfg(all(feature = "daemon", unix))]
-    pub use overseerd_transport::UnixTransport;
+    pub use crate::{
+        Cfg, Component, ConfigManager, ConfigProperties, Dep, Dir, DirKind, DirectoriesManager,
+        Injectable, Plugin, Protocol, ProtocolPlugin, Scope, Serve, ServiceComponent, component,
+        config, injectable, methods,
+    };
 }
 
 #[cfg(test)]

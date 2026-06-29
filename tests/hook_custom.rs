@@ -7,7 +7,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use overseerd::config::Toml;
-use overseerd::{App, ConfigManager, HookKind, component, methods};
+use overseerd::daemon::App;
+use overseerd::{ConfigManager, HookKind, component, methods};
 
 /// A user-defined lifecycle kind — no inputs, no output.
 struct Startup;
@@ -43,7 +44,7 @@ impl Boot {
 #[methods]
 impl Boot {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::Result<()> {
+    async fn on_start(&self) -> overseerd::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())

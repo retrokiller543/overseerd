@@ -11,10 +11,8 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use overseerd::{
-    App, CallResult, Inject, MemoryClient, MemoryConnectionHandle, PeerInfo, component, handlers,
-    service,
-};
+use overseerd::daemon::{App, Inject, handlers, service};
+use overseerd::{CallResult, MemoryClient, MemoryConnectionHandle, PeerInfo, component};
 
 static CONNECTION_IDS: AtomicU64 = AtomicU64::new(1);
 static REQUEST_IDS: AtomicU64 = AtomicU64::new(1);
@@ -77,7 +75,7 @@ struct ScopeSvc;
 impl ScopeSvc {
     /// Returns (connection id, request id) for this call.
     #[rpc]
-    async fn ids(Inject(req): Inject<Arc<ReqState>>) -> overseerd::Result<(u64, u64)> {
+    async fn ids(Inject(req): Inject<Arc<ReqState>>) -> overseerd::daemon::Result<(u64, u64)> {
         Ok((req.conn.id.0, req.id.0))
     }
 
@@ -86,7 +84,7 @@ impl ScopeSvc {
     async fn two_traces(
         Inject(a): Inject<Arc<Trace>>,
         Inject(b): Inject<Arc<Trace>>,
-    ) -> overseerd::Result<(u64, u64)> {
+    ) -> overseerd::daemon::Result<(u64, u64)> {
         Ok((a.id.0, b.id.0))
     }
 }

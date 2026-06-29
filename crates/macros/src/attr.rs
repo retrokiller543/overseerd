@@ -26,6 +26,7 @@ use syn::{
 /// - `scope = singleton | connection | request | transient` — the lifetime of the
 ///   instance (default `singleton`). Only valid on `#[component]`; a `#[service]`
 ///   is always a singleton.
+// TODO: Should be renamed/extended so that we can allow library users to make their own interpretation of a service
 #[derive(Default)]
 pub struct ServiceArgs {
     pub id: Option<LitStr>,
@@ -43,7 +44,7 @@ pub struct ServiceArgs {
     /// `None` defaults to `{Service}Rpcs`. An escape hatch when that name collides
     /// with something already in scope; a `#[handlers]` block for the service must
     /// then pass the same `rpc_slice = ..`.
-    pub rpc_slice: Option<Ident>,
+    pub rpc_slice: Option<Ident>, // Service specific and should not be here, its a protocol plugin thing, not core macro thing.
     /// Overrides the generated per-type factory slice name (`factory_slice = Ident`).
     /// `None` defaults to `{Type}Factories`. An escape hatch for a name collision; a
     /// `#[methods]` block contributing an `#[init]` to this type must then pass the

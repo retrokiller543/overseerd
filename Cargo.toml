@@ -117,8 +117,3 @@ futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 async-trait = { workspace = true, optional = true }
-
-# Always available to integration tests so macro-emitted `::overseerd_rpc::*` paths
-# resolve, even though the dependency itself is feature-gated for downstream users.
-[dev-dependencies]
-overseerd-rpc = { workspace = true }

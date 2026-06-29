@@ -6,10 +6,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use overseerd::config::Toml;
+use overseerd::daemon::App;
 use overseerd::dirs::{Config, DirectoriesManager};
 use overseerd::{
-    App, Cfg, CfgNext, ConfigManager, ConfigReload, ConfigReloadError, HookOutcome, component,
-    config, methods,
+    Cfg, CfgNext, ConfigManager, ConfigReload, ConfigReloadError, HookOutcome, component, config,
+    methods,
 };
 use serde::Deserialize;
 
@@ -38,8 +39,10 @@ impl Rejector {
     async fn on_reload(
         &self,
         #[config("svc")] _next: CfgNext<SvcCfg>,
-    ) -> overseerd::Result<HookOutcome> {
-        Err(overseerd::Error::MissingComponent("rejected by test hook"))
+    ) -> overseerd::daemon::Result<HookOutcome> {
+        Err(overseerd::daemon::Error::MissingComponent(
+            "rejected by test hook",
+        ))
     }
 }
 

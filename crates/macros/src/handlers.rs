@@ -21,7 +21,11 @@ use syn::{
     spanned::Spanned,
 };
 
-use crate::{attr, attr::HandlersArgs, paths::overseerd_path};
+use crate::{
+    attr,
+    attr::HandlersArgs,
+    paths::{overseerd_daemon_path, overseerd_path},
+};
 
 pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream> {
     let self_ty = (*item.self_ty).clone();
@@ -86,8 +90,8 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
         let count = descriptors.len();
         let distributed_slice = overseerd_path("linkme::distributed_slice");
         let linkme_crate = overseerd_path("linkme");
-        let rpc_descriptor = overseerd_path("RpcDescriptor");
-        let rpc_group = overseerd_path("RpcGroup");
+        let rpc_descriptor = overseerd_daemon_path("RpcDescriptor");
+        let rpc_group = overseerd_daemon_path("RpcGroup");
         let rpcs_slice = args
             .rpc_slice
             .clone()
@@ -218,8 +222,8 @@ fn expand_method(
         .collect();
 
     let generics = &method.sig.generics;
-    let streaming = overseerd_path("Streaming");
-    let request_stream = overseerd_path("RequestStream");
+    let streaming = overseerd_daemon_path("Streaming");
+    let request_stream = overseerd_daemon_path("RequestStream");
 
     // Resolve each parameter into the concrete extractor type the dispatch
     // closure declares (so it always flows through `FromContext`), and detect the
@@ -345,15 +349,15 @@ fn expand_method(
     // `E: ResponseError`); any other `Responder` return goes through `Handler`.
     // Both erase to the same `RpcHandler` fn pointer.
     let dispatch = if attr::returns_result(&method.sig.output) {
-        overseerd_path("dispatch_fallible")
+        overseerd_daemon_path("dispatch_fallible")
     } else {
-        overseerd_path("dispatch_with")
+        overseerd_daemon_path("dispatch_with")
     };
-    let error = overseerd_path("Error");
-    let operation_kind = overseerd_path("OperationKind");
-    let response_stream = overseerd_path("ResponseStream");
-    let rpc_call_context = overseerd_path("RpcCallContext");
-    let rpc_descriptor = overseerd_path("RpcDescriptor");
+    let error = overseerd_daemon_path("Error");
+    let operation_kind = overseerd_daemon_path("OperationKind");
+    let response_stream = overseerd_daemon_path("ResponseStream");
+    let rpc_call_context = overseerd_daemon_path("RpcCallContext");
+    let rpc_descriptor = overseerd_daemon_path("RpcDescriptor");
     let type_descriptor = overseerd_path("TypeDescriptor");
     let ret = handler_return_type();
 
@@ -474,7 +478,7 @@ fn client_method(
     );
     let client_error = overseerd_path("transport::ClientError");
     let client_transport = overseerd_path("transport::ClientTransport");
-    let response_error = overseerd_path("ResponseError");
+    let response_error = overseerd_daemon_path("ResponseError");
     let raw = overseerd_path("transport::Raw");
 
     let payload_ty = param_types.iter().find_map(|ty| attr::payload_inner(ty));
@@ -698,8 +702,8 @@ fn generate_client(
 
 /// The erased `RpcHandler` return type, repeated by both wrapper forms.
 fn handler_return_type() -> TokenStream {
-    let error_response = overseerd_path("ErrorResponse");
-    let rpc_outcome = overseerd_path("RpcOutcome");
+    let error_response = overseerd_daemon_path("ErrorResponse");
+    let rpc_outcome = overseerd_daemon_path("RpcOutcome");
 
     quote! {
         ::core::pin::Pin<

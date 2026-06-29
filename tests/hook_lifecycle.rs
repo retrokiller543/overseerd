@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use overseerd::config::Toml;
-use overseerd::{App, ConfigManager, Shutdown, Startup, component, methods};
+use overseerd::daemon::App;
+use overseerd::{ConfigManager, Shutdown, Startup, component, methods};
 
 /// Records that its startup and shutdown hooks ran.
 #[component]
@@ -30,14 +31,14 @@ impl LifecycleComponent {
 #[methods]
 impl LifecycleComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::Result<()> {
+    async fn on_start(&self) -> overseerd::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::Result<()> {
+    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())

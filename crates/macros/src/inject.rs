@@ -97,7 +97,7 @@ pub fn field_injection_component(
     let component_factories = overseerd_path("ComponentFactories");
     let component_hooks = overseerd_path("ComponentHooks");
     let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
-    let scope_path = overseerd_path(&format!("scope::{scope_variant}"));
+    let scope_path = overseerd_path(&format!("scope::{scope_variant}")); // Should not be hardcoded to a overseerd path, should assume the item is in scope so users can use their own scopes
     let components_slice = overseerd_path("COMPONENTS");
     let dependency_descriptor = overseerd_path("DependencyDescriptor");
     let component = overseerd_path("Component");

@@ -17,10 +17,11 @@ use crate::components::{AppServer, DbConfig};
 use crate::service::Notifications;
 use overseerd::builtins::init_tracing;
 use overseerd::config::Toml;
-use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig, app};
+use overseerd::daemon::app;
+use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig};
 
 #[tokio::main]
-async fn main() -> overseerd::Result<()> {
+async fn main() -> overseerd::daemon::Result<()> {
     const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
 
     let dir_manager = DirectoriesManager::from_path(CRATE_PATH.into());

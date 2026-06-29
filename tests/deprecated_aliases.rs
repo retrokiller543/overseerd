@@ -4,7 +4,7 @@
 //! warning-free while still exercising the deprecated surface.
 #![allow(deprecated)]
 
-use overseerd::{Daemon, DaemonBuilder, daemon};
+use overseerd::daemon::{Daemon, DaemonBuilder, daemon};
 
 #[tokio::test]
 async fn daemon_type_alias_builds() {

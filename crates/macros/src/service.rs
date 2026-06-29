@@ -17,7 +17,12 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemStruct, LitStr};
 
-use crate::{attr::ServiceArgs, di, handle, inject, paths::overseerd_path, provide};
+use crate::{
+    attr::ServiceArgs,
+    di, handle, inject,
+    paths::{overseerd_daemon_path, overseerd_path},
+    provide,
+};
 
 pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStream> {
     let self_ident = item.ident.clone();
@@ -86,11 +91,11 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
     let descriptor_trait = overseerd_path("Descriptor");
     let distributed_slice = overseerd_path("linkme::distributed_slice");
     let linkme_crate = overseerd_path("linkme");
-    let rpc_group = overseerd_path("RpcGroup");
+    let rpc_group = overseerd_daemon_path("RpcGroup");
     let service_component = overseerd_path("ServiceComponent");
-    let service_descriptor = overseerd_path("ServiceDescriptor");
-    let service_rpcs = overseerd_path("ServiceRpcs");
-    let services_slice = overseerd_path("SERVICES");
+    let service_descriptor = overseerd_daemon_path("ServiceDescriptor");
+    let service_rpcs = overseerd_daemon_path("ServiceRpcs");
+    let services_slice = overseerd_daemon_path("SERVICES");
     let type_descriptor = overseerd_path("TypeDescriptor");
 
     Ok(quote! {

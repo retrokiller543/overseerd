@@ -9,12 +9,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 
-use overseerd::tower::{Layer, Service};
-use overseerd::{
-    App, CallResult, ErrorHandler, ErrorResponse, Guard, MemoryClient, MemoryConnectionHandle,
-    Payload, PredefinedCode, RpcAppBuilder, RpcCallContext, RpcOutcome, RpcRequest, StatusCode,
-    handlers, service,
+use overseerd::daemon::tower::{Layer, Service};
+use overseerd::daemon::{
+    App, ErrorHandler, ErrorResponse, Guard, Payload, RpcAppBuilder, RpcCallContext, RpcOutcome,
+    RpcRequest, handlers, service,
 };
+use overseerd::{CallResult, MemoryClient, MemoryConnectionHandle, PredefinedCode, StatusCode};
 
 // ---------------------------------------------------------------------------
 // A trivial service: one infallible rpc and one always-failing rpc.
@@ -34,8 +34,8 @@ impl MwSvc {
 
     /// Always returns a framework error (mapped to `BadInput`).
     #[rpc]
-    async fn boom() -> overseerd::Result<u32> {
-        Err(overseerd::Error::InvalidPayload("boom".to_string()))
+    async fn boom() -> overseerd::daemon::Result<u32> {
+        Err(overseerd::daemon::Error::InvalidPayload("boom".to_string()))
     }
 }
 
@@ -155,7 +155,7 @@ impl ErrorHandler for RemapHandler {
 /// client handle.
 async fn start<F>(configure: F) -> MemoryConnectionHandle
 where
-    F: FnOnce(overseerd::AppBuilder) -> overseerd::AppBuilder,
+    F: FnOnce(overseerd::daemon::AppBuilder) -> overseerd::daemon::AppBuilder,
 {
     let (client, transport) = MemoryClient::pair();
 

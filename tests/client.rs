@@ -13,9 +13,11 @@
 use serde::{Deserialize, Serialize};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf};
 
+use overseerd::daemon::{
+    App, ErrorResponse, Payload, ResponseError, ResponseStream, Streaming, handlers, service,
+};
 use overseerd::{
-    App, ClientConnection, ClientError, ErrorResponse, Payload, ResponseError, ResponseStream,
-    StreamClientTransport, Streaming, handlers, service,
+    ClientConnection, ClientError, StreamClientTransport,
     transport::{PeerInfo, StreamConnection, Transport},
 };
 
@@ -86,7 +88,7 @@ impl Calc {
     }
 
     #[rpc]
-    async fn sum(mut input: Streaming<u32>) -> overseerd::Result<u32> {
+    async fn sum(mut input: Streaming<u32>) -> overseerd::daemon::Result<u32> {
         let mut total = 0;
 
         while let Some(item) = input.next().await {

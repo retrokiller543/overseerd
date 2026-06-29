@@ -28,7 +28,10 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Expr, Ident, LitBool, LitStr, Token, Type, braced, bracketed};
 
-use crate::{di, paths::overseerd_path};
+use crate::{
+    di,
+    paths::{overseerd_daemon_path, overseerd_path},
+};
 
 /// Parsed `app! { .. }`.
 pub struct AppInput {
@@ -297,7 +300,7 @@ pub fn expand(input: AppInput) -> TokenStream {
     let config_tys = configs.iter().map(|entry| &entry.ty);
     let config_paths = configs.iter().map(|entry| &entry.path);
 
-    let app_ty = overseerd_path("App");
+    let app_ty = overseerd_daemon_path("App");
     let config_manager_path = overseerd_path("ConfigManager");
     let directories_path = overseerd_path("DirectoriesManager");
     let config_dynamic = overseerd_path("config::Dynamic");
@@ -402,7 +405,7 @@ pub fn expand(input: AppInput) -> TokenStream {
     // extension trait; bring it into scope only when one of them is emitted, so a plain
     // `app! { .. }` stays free of an unused import.
     let rpc_use = if !middleware.is_empty() || !guards.is_empty() || error_handler.is_some() {
-        let rpc_app_builder = overseerd_path("RpcAppBuilder");
+        let rpc_app_builder = overseerd_daemon_path("RpcAppBuilder");
 
         quote!(use #rpc_app_builder as _;)
     } else {
