@@ -543,6 +543,13 @@ fn client_method(
         resp_item: resp_item.clone(),
         response,
         error_ty,
+        // RPC is a pure passthrough: no extra args, both envelopes are the body/decoded value,
+        // and no request build or response map step.
+        extra_args: Vec::new(),
+        request_envelope: None,
+        request_builder: None,
+        response_envelope: None,
+        response_mapper: None,
     }
 }
 

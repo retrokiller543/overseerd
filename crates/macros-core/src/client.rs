@@ -51,6 +51,23 @@ pub struct ClientMethod {
     /// The decoded error body type (protocol-specific — RPC uses `<E as ResponseError>::Body`).
     /// `None` leaves the framework default `::overseerd::client::Raw` (an opaque error body).
     pub error_ty: Option<TokenStream>,
+    /// Extra leading method parameters before the request body (HTTP path/query params).
+    /// Empty for RPC. Spliced into the signature and visible to [`request_builder`](Self::request_builder).
+    pub extra_args: Vec<(Ident, TokenStream)>,
+    /// The request envelope type pinned by the `Unary<Request<B> = ..>` bound. `None` means the
+    /// body passes through unchanged (`Request<B> = B`, RPC); `Some(ty)` pins a richer envelope
+    /// (HTTP's `http::Request<B>`), so the generated method may construct it.
+    pub request_envelope: Option<TokenStream>,
+    /// Builds the request envelope value passed to the capability call. `None` forwards the body
+    /// argument as-is (passthrough); `Some(expr)` builds it (HTTP constructs the `http::Request`).
+    pub request_builder: Option<TokenStream>,
+    /// The response envelope type pinned by the `Unary<Response<R> = ..>` bound, and the method's
+    /// success return type. `None` returns the decoded body unchanged (`Response<R> = R`, RPC);
+    /// `Some(ty)` returns a richer envelope (HTTP's `HttpResponse<R>`, which derefs to `R`).
+    pub response_envelope: Option<TokenStream>,
+    /// Maps the call result before returning. `None` returns it unchanged; `Some(expr)` is applied
+    /// as `.map(#expr)` — for a protocol whose response needs a post-step the codec can't express.
+    pub response_mapper: Option<TokenStream>,
 }
 
 impl ClientMethod {
@@ -64,11 +81,13 @@ impl ClientMethod {
         TokenStream,
         TokenStream,
         TokenStream,
+        TokenStream,
     ) {
         let client_error = paths.client("ClientError");
         let stream_arg = paths.client("StreamArg");
         let server_streaming = paths.client("ServerStreaming");
         let bidi_streaming = paths.client("BidiStreaming");
+        let unary = paths.client("Unary");
 
         let raw = paths.client("Raw");
         let path = &self.path;
@@ -81,6 +100,14 @@ impl ClientMethod {
             Some(req) => (quote!(, request: #req), quote!(request), quote!(#req)),
             None => (quote!(), quote!(()), quote!(())),
         };
+
+        // Leading path/query parameters (HTTP); empty for RPC. Spliced before the body param
+        // and visible to `request_builder`.
+        let extra_params = self
+            .extra_args
+            .iter()
+            .map(|(name, ty)| quote!(, #name: #ty));
+        let extra_params = quote!(#(#extra_params)*);
         let req_item = self
             .req_item
             .as_ref()
@@ -91,15 +118,40 @@ impl ClientMethod {
             .clone()
             .unwrap_or_else(|| self.response.clone());
 
-        // (encode_ty, decode_ty, args, ret, body)
+        // (encode_ty, decode_ty, args, ret, body, where_extra)
         match self.capability {
-            Capability::Unary => (
-                unary_encode,
-                quote!(#response),
-                quote!(&self #req_arg),
-                quote!(::core::result::Result<#response, #client_error<#err>>),
-                quote!(self.0.unary(#path, #call_arg).await),
-            ),
+            Capability::Unary => {
+                // The value handed to `unary`: the protocol's builder (HTTP's `http::Request`),
+                // or the body argument passed straight through (RPC).
+                let call = self
+                    .request_builder
+                    .clone()
+                    .unwrap_or_else(|| call_arg.clone());
+
+                // The pinned envelopes: a richer type, or the body/decoded value itself.
+                let req_env = self
+                    .request_envelope
+                    .clone()
+                    .unwrap_or_else(|| unary_encode.clone());
+                let resp_env = self
+                    .response_envelope
+                    .clone()
+                    .unwrap_or_else(|| quote!(#response));
+
+                let map = match &self.response_mapper {
+                    Some(mapper) => quote!(.map(#mapper)),
+                    None => quote!(),
+                };
+
+                (
+                    unary_encode.clone(),
+                    quote!(#response),
+                    quote!(&self #extra_params #req_arg),
+                    quote!(::core::result::Result<#resp_env, #client_error<#err>>),
+                    quote!(self.0.unary(#path, #call).await #map),
+                    quote!(, C: #unary<Request<#unary_encode> = #req_env, Response<#response> = #resp_env>),
+                )
+            }
 
             Capability::ServerStreaming => (
                 unary_encode,
@@ -112,6 +164,7 @@ impl ClientMethod {
                     >
                 },
                 quote!(self.0.server_stream(#path, #call_arg).await),
+                quote!(),
             ),
 
             Capability::ClientStreaming => (
@@ -123,6 +176,7 @@ impl ClientMethod {
                 },
                 quote!(::core::result::Result<#response, #client_error<#err>>),
                 quote!(self.0.client_stream(#path, input).await),
+                quote!(),
             ),
 
             Capability::BidiStreaming => (
@@ -139,6 +193,7 @@ impl ClientMethod {
                     >
                 },
                 quote!(self.0.bidi_stream(#path, input).await),
+                quote!(),
             ),
         }
     }
@@ -176,12 +231,12 @@ pub fn generate_client(
             .filter(|m| m.capability == *capability)
             .map(|m| {
                 let ident = &m.ident;
-                let (encode_ty, decode_ty, args, ret, body) = m.build(paths);
+                let (encode_ty, decode_ty, args, ret, body, where_extra) = m.build(paths);
 
                 quote! {
                     pub async fn #ident(#args) -> #ret
                     where
-                        C: #encodes<#encode_ty> + #decodes<#decode_ty>,
+                        C: #encodes<#encode_ty> + #decodes<#decode_ty> #where_extra,
                     {
                         #body
                     }

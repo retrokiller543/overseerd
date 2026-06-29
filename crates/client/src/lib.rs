@@ -238,14 +238,33 @@ where
 /// One request, one response. Every protocol supports this. The implementation owns body
 /// encoding (via [`Encodes`]) and response parsing (via [`Decodes`]).
 pub trait Unary: Send + Sync {
-    fn unary<Req, Resp, E>(
+    /// The request envelope this transport accepts, over a body type `B`.
+    ///
+    /// This is the seam that lets one generated client shape span very different wire
+    /// protocols. A protocol that needs only a body passes it straight through
+    /// (`type Request<B> = B`); a protocol that needs more — HTTP's method, headers, and
+    /// path — wraps the body in its own envelope (`type Request<B> = HttpRequest<B>`), and
+    /// its `unary` impl reads those fields off the *concrete* envelope (a method generic
+    /// `Req` could not be destructured). A generated client pins the envelope per call with a
+    /// `Unary<Request<B> = ..>` bound, so it composes the exact request its transport expects.
+    type Request<B>;
+
+    /// The response envelope this transport returns, over a decoded body `R`. The dual of
+    /// [`Request`](Self::Request): RPC returns the body straight (`type Response<R> = R`); HTTP
+    /// returns an `HttpResponse<R>` that carries the status and headers yet `Deref`s/`AsRef`s
+    /// into `R`, so the body stays one `.` away while status/headers remain reachable. An HTTP
+    /// error *status* is an `Ok(HttpResponse { .. })` with that status — [`ClientError`] is kept
+    /// for transport/decode failures. A generated client pins it with a `Response<R> = ..` bound.
+    type Response<R>;
+
+    fn unary<B, Resp, E>(
         &self,
         path: &str,
-        request: Req,
-    ) -> impl Future<Output = Result<Resp, ClientError<E>>> + Send
+        request: Self::Request<B>,
+    ) -> impl Future<Output = Result<Self::Response<Resp>, ClientError<E>>> + Send
     where
-        Self: Encodes<Req> + Decodes<Resp>,
-        Req: Send,
+        Self: Encodes<B> + Decodes<Resp>,
+        B: Send,
         Resp: Send;
 }
 

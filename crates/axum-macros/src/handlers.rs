@@ -18,6 +18,7 @@ use overseerd_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
 use overseerd_macros_core::methods::self_ty_ident;
 use overseerd_macros_core::paths::Paths;
 
+use crate::client;
 use crate::route::{self, RouteAttr};
 
 /// The controller handlers extension. Accumulates the impl's route specs and the captured impl
@@ -97,11 +98,29 @@ impl ParseMethod for AxumHandlers {
             .as_ref()
             .expect("AxumHandlers::parse_item runs before parse_method");
 
-        let spec = build_route(&cx.self_ty, method, route_attr)?;
+        let arg_types: Vec<&Type> = method
+            .sig
+            .inputs
+            .iter()
+            .filter_map(|arg| match arg {
+                FnArg::Typed(typed) => Some(typed.ty.as_ref()),
+                FnArg::Receiver(_) => None,
+            })
+            .collect();
+
+        let spec = build_route(&cx.self_ty, method, &route_attr)?;
         self.routes.push(spec);
 
-        // No client hint in v1 — the HTTP client needs verb+path mapping and is deferred.
-        Ok(None)
+        // The framework owns client generation; hand back the hint (or `None` to skip the
+        // client method while keeping the server route).
+        Ok(client::build_client_method(
+            &cx.self_ident,
+            &method.sig.ident,
+            &route_attr,
+            &arg_types,
+            &method.sig.output,
+            &cx.paths,
+        ))
     }
 }
 
@@ -180,7 +199,7 @@ impl ToTokens for AxumHandlers {
 fn build_route(
     self_ty: &Type,
     method: &ImplItemFn,
-    route_attr: RouteAttr,
+    route_attr: &RouteAttr,
 ) -> syn::Result<RouteSpec> {
     let takes_self = match method.sig.inputs.first() {
         Some(FnArg::Receiver(receiver)) => {
@@ -239,8 +258,8 @@ fn build_route(
     };
 
     Ok(RouteSpec {
-        verb: route_attr.verb,
-        path: route_attr.path,
+        verb: route_attr.verb.clone(),
+        path: route_attr.path.clone(),
         handler,
     })
 }

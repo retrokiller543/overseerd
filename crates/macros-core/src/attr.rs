@@ -235,7 +235,8 @@ pub fn response_body_type(output: &ReturnType) -> Type {
 }
 
 /// The last path-segment ident of a simple path type (e.g. `Foo` of `a::b::Foo<T>`).
-fn type_name(ty: &Type) -> Option<&Ident> {
+/// Public so a protocol's macro crate can classify handler-parameter extractor types.
+pub fn type_name(ty: &Type) -> Option<&Ident> {
     match ty {
         Type::Path(path) => path.path.segments.last().map(|segment| &segment.ident),
         _ => None,
@@ -244,8 +245,9 @@ fn type_name(ty: &Type) -> Option<&Ident> {
 
 /// The first type argument of `Name<T, ..>` when the last path segment is `name`.
 /// Used by the client codegen to recover request/response payload types from the
-/// extractor and `Responder` wrappers in a handler signature.
-fn first_type_arg(ty: &Type, name: &str) -> Option<Type> {
+/// extractor and `Responder` wrappers in a handler signature. Public so a protocol's macro
+/// crate can peel its own extractor wrappers (`Path<T>`, `Json<T>`, …).
+pub fn first_type_arg(ty: &Type, name: &str) -> Option<Type> {
     if let Type::Path(path) = ty
         && let Some(segment) = path.path.segments.last()
         && segment.ident == name

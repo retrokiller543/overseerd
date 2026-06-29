@@ -186,10 +186,11 @@ pub mod daemon {
     /// The RPC component scopes.
     pub use overseerd_rpc::scope::{Connection, Request};
 
-    /// The RPC daemon macros. Their generated code roots its own types at
-    /// `::overseerd::daemon::*` and core types at `::overseerd::*`. (`app!`/`daemon!` are
-    /// protocol-agnostic core macros at the crate root, not here.)
-    pub use overseerd_rpc_macros::{handlers, rpc, service};
+    /// The RPC daemon macros, re-exported through `overseerd-rpc` (which owns them). With the
+    /// facade's `daemon` feature, `overseerd-rpc/facade` is on, so their generated code roots
+    /// plugin types at `::overseerd::daemon::*` and core types at `::overseerd::*`.
+    /// (`app!`/`daemon!` are protocol-agnostic core macros at the crate root, not here.)
+    pub use overseerd_rpc::{handlers, rpc, service};
 
     /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`.
     pub use overseerd_rpc::tower;
@@ -251,6 +252,16 @@ pub mod axum {
     /// (`Router`, `Json`, `extract::*`, `routing::*`, …) without a separate dependency.
     pub use overseerd_axum::axum;
 
+    /// The `http` crate (verb, headers, request/response), the foundation `reqwest` and `hyper`
+    /// share. The generated client builds `http::Request` against it.
+    pub use overseerd_axum::axum::http;
+
+    /// The generated HTTP **client** runtime: the body family, the response envelope, and the
+    /// `reqwest` backend. Gated on the `client` feature (so it is "axum + client"); the
+    /// controller macros emit their client methods against `::overseerd::axum::client::*`.
+    #[cfg(feature = "client")]
+    pub use overseerd_axum::client;
+
     /// The axum protocol's component scope. A request-scoped component selects it with
     /// `#[component(scope = overseerd::axum::scope::Request)]` (or `scope = Request` with the
     /// prelude in scope).
@@ -258,10 +269,11 @@ pub mod axum {
         pub use overseerd_axum::scope::Request;
     }
 
-    /// The axum controller macros. Their generated code roots its own types at
-    /// `::overseerd::axum::*` and core types at `::overseerd::*`. (`app!`/`daemon!` are
-    /// protocol-agnostic core macros at the crate root, not here.)
-    pub use overseerd_axum_macros::{
+    /// The axum controller macros, re-exported through `overseerd-axum` (which owns them). With
+    /// the facade's `axum` feature, `overseerd-axum/facade` is on, so their generated code roots
+    /// plugin types at `::overseerd::axum::*` and core types at `::overseerd::*`.
+    /// (`app!`/`daemon!` are protocol-agnostic core macros at the crate root, not here.)
+    pub use overseerd_axum::{
         controller, delete, get, handlers, head, options, patch, post, put, route,
     };
 

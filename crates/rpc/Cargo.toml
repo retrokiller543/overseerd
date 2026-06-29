@@ -12,19 +12,25 @@ categories.workspace = true
 
 [features]
 default = []
-client = ["dep:async-trait", "dep:overseerd-client"]
+client = ["dep:async-trait", "dep:overseerd-client", "overseerd-rpc-macros/client"]
 di-check = [
     "overseerd-app/di-check",
     "overseerd-di/di-check",
     "overseerd-config/di-check",
     "overseerd-transport/di-check",
+    "overseerd-rpc-macros/di-check",
 ]
 yaml = ["overseerd-app/yaml", "overseerd-config/yaml"]
 watch = ["overseerd-app/watch", "overseerd-config/watch"]
 tracing-subscriber = ["overseerd-app/tracing-subscriber"]
+# Set by the `overseerd` facade: root the macros' generated plugin types at
+# `::overseerd::daemon::*`. Off (the default) keeps them at this standalone crate
+# (`::overseerd_rpc::*`), so depending on `overseerd-rpc` directly works.
+facade = ["overseerd-rpc-macros/facade"]
 
 [dependencies]
 overseerd-app = { workspace = true }
+overseerd-rpc-macros = { workspace = true }
 overseerd-client = { workspace = true, optional = true }
 overseerd-core = { workspace = true }
 overseerd-di = { workspace = true }

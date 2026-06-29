@@ -152,9 +152,12 @@ impl<T: ComponentExt> ToTokens for AxumRouter<T> {
             "__OVERSEERD_CONTROLLER_{}",
             ident.to_string().to_uppercase()
         );
+        let client_struct = client_struct(ident);
         let inner = &self.inner;
 
         out.extend(quote! {
+            #client_struct
+
             #[#distributed_slice]
             #[linkme(crate = #linkme_crate)]
             #[allow(non_upper_case_globals)]
@@ -207,5 +210,28 @@ impl<T: ComponentExt> ToTokens for AxumRouter<T> {
 
             #inner
         });
+    }
+}
+
+/// The per-controller client struct (its methods are contributed by `#[handlers]` blocks). One
+/// per controller, gated on the `client` feature; the generated methods land in capability
+/// `impl` blocks the framework emits.
+fn client_struct(ident: &Ident) -> TokenStream {
+    if !cfg!(feature = "client") {
+        return quote!();
+    }
+
+    let client_ident = format_ident!("{}Client", ident);
+
+    quote! {
+        /// Generated HTTP client: wraps a transport `C` and exposes one method per route.
+        pub struct #client_ident<C>(pub C);
+
+        impl<C> #client_ident<C> {
+            /// Wraps an HTTP client transport (e.g. `ReqwestClient`).
+            pub fn new(transport: C) -> Self {
+                Self(transport)
+            }
+        }
     }
 }

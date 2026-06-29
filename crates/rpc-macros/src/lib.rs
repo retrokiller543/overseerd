@@ -31,6 +31,24 @@ use proc_macro2::TokenStream as TokenStream2;
 use router::RouterComponent;
 use syn::{ItemFn, ItemImpl, ItemStruct};
 
+/// The default crate roots for the RPC macros. Core is always the `overseerd` facade; the
+/// plugin (own-types) root is `::overseerd::daemon` when consumed through the facade (the
+/// `facade` feature, set by the `overseerd` crate) and the standalone `::overseerd_rpc`
+/// otherwise — so a direct dependant on `overseerd-rpc` gets working codegen.
+fn rpc_paths() -> Paths {
+    if cfg!(feature = "facade") {
+        Paths::new(
+            syn::parse_quote!(::overseerd),
+            syn::parse_quote!(::overseerd::daemon),
+        )
+    } else {
+        Paths::new(
+            syn::parse_quote!(::overseerd),
+            syn::parse_quote!(::overseerd_rpc),
+        )
+    }
+}
+
 /// Declares a **service** — a router component exposing RPC methods.
 ///
 /// `#[service]` is `ComponentArgs<Router>`: a `#[component]` (field-injected singleton) plus the
@@ -43,7 +61,7 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = TokenStream2::from(attr);
     let out = match syn::parse2::<RouterComponent>(attr) {
         Ok(args) => {
-            let paths = args.paths(Paths::overseerd_daemon());
+            let paths = args.paths(rpc_paths());
 
             run::<ItemStruct, _>(item.into(), |item| expand_component(args, item, &paths))
         }
@@ -67,7 +85,7 @@ pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = TokenStream2::from(attr);
     let out = match syn::parse2::<MethodArgs<handlers::Rpcs>>(attr) {
         Ok(args) => {
-            let paths = args.paths(Paths::overseerd_daemon());
+            let paths = args.paths(rpc_paths());
 
             run::<ItemImpl, _>(item.into(), |item| {
                 overseerd_macros_core::methods::expand(args, item, &paths)

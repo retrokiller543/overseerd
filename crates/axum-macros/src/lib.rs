@@ -15,6 +15,7 @@
 
 extern crate proc_macro;
 
+mod client;
 mod handlers;
 mod route;
 mod router;
@@ -27,13 +28,22 @@ use proc_macro2::TokenStream as TokenStream2;
 use router::ControllerComponent;
 use syn::{ItemFn, ItemImpl, ItemStruct};
 
-/// The default crate roots for the axum macros: core at `::overseerd`, own types under the
-/// facade's `::overseerd::axum` module.
+/// The default crate roots for the axum macros. Core is always the `overseerd` facade; the
+/// plugin (own-types) root is `::overseerd::axum` when consumed through the facade (the
+/// `facade` feature, set by the `overseerd` crate) and the standalone `::overseerd_axum`
+/// otherwise — so a direct dependant on `overseerd-axum` gets working codegen.
 fn axum_paths() -> Paths {
-    Paths::new(
-        syn::parse_quote!(::overseerd),
-        syn::parse_quote!(::overseerd::axum),
-    )
+    if cfg!(feature = "facade") {
+        Paths::new(
+            syn::parse_quote!(::overseerd),
+            syn::parse_quote!(::overseerd::axum),
+        )
+    } else {
+        Paths::new(
+            syn::parse_quote!(::overseerd),
+            syn::parse_quote!(::overseerd_axum),
+        )
+    }
 }
 
 /// Declares a **controller** — a router component exposing HTTP routes.

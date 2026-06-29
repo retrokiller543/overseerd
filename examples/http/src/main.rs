@@ -7,9 +7,9 @@
 //!
 //! ```text
 //! cargo run -p overseerd-example-http
-//! curl localhost:3000/greet/world
-//! curl -X POST localhost:3000/greet -H 'content-type: application/json' -d '"there"'
-//! curl localhost:3000/greet/world/ticket
+//! curl localhost:3001/greet/world
+//! curl -X POST localhost:3001/greet -H 'content-type: application/json' -d '"there"'
+//! curl localhost:3001/greet/world/ticket
 //! ```
 
 use std::net::SocketAddr;

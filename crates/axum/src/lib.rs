@@ -10,6 +10,8 @@
 //! [`Arc<ScopeContainer>`](overseerd_di::ScopeContainer) through the request extensions, and
 //! [`Inject`] resolves components from it.
 
+#[cfg(feature = "client")]
+pub mod client;
 pub mod controller;
 pub mod error;
 pub mod extract;
@@ -19,7 +21,16 @@ pub mod scope;
 
 pub use controller::{CONTROLLERS, Controller, ControllerDescriptor};
 pub use error::{Error, Result};
+
 pub use extract::{Inject, InjectRejection, ScopeHandle};
+/// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
+/// this protocol crate. Their generated code roots plugin types at this crate
+/// (`::overseerd_axum::*`) by default, or at `::overseerd::axum::*` under the `facade` feature —
+/// so they work whether `overseerd-axum` is used directly or through the `overseerd` facade. The
+/// core macros (`app!`, `#[component]`, …) come from `overseerd` (the always-present core).
+pub use overseerd_axum_macros::{
+    controller, delete, get, handlers, head, options, patch, post, put, route,
+};
 pub use plugin::{AxumAppBuilder, AxumPlugin};
 pub use protocol::Axum;
 
@@ -44,3 +55,8 @@ pub use linkme;
 /// Re-exported so `#[controller]`/`#[handlers]` generated code and users reach axum through a
 /// stable path without a separate dependency.
 pub use axum;
+
+/// The `http` crate (verb, headers, request/response), re-exported at the crate root so a
+/// standalone `overseerd-axum` dependant resolves `::overseerd_axum::http` — the path the
+/// generated client builds its `http::Request` against.
+pub use axum::http;
