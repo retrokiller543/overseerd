@@ -500,6 +500,7 @@ dependencies = [
  "overseerd-hooks",
  "overseerd-macros",
  "overseerd-rpc",
+ "overseerd-rpc-macros",
  "overseerd-transport",
  "postcard",
  "serde",
@@ -640,6 +641,16 @@ dependencies = [
  "tokio-util",
  "tower",
  "tracing",
+]
+
+[[package]]
+name = "overseerd-rpc-macros"
+version = "0.6.0"
+dependencies = [
+ "overseerd-macros-core",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

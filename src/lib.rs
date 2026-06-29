@@ -77,12 +77,14 @@ pub use overseerd_config::{
 // handle, lifecycle/shutdown, and the opt-in config-property builtins.
 // ---------------------------------------------------------------------------
 pub use overseerd_app::{
-    AppRegistry, AppRuntime, LoggingConfig, Plugin, Protocol, ProtocolPlugin, Serve, ServerConfig,
-    ShutdownHandle, ShutdownSignal,
+    App, AppBuilder, AppRegistry, AppRuntime, LoggingConfig, Plugin, Protocol, ProtocolPlugin,
+    Serve, ServerConfig, ShutdownHandle, ShutdownSignal,
 };
 
-// The native RPC daemon surface lives under the `daemon` module (defined below), so the
-// facade root stays free of plugin-specific names. `use overseerd::daemon::prelude::*`.
+// The generic `App<P>` / `AppBuilder<P>` are at the root (protocol-agnostic core); the `app!`
+// macro builds `App::<P>::builder(..)` for the protocol named in its `protocol:` field. A
+// protocol's own surface (the RPC daemon's services, client, …) lives in its module
+// (`overseerd::daemon::*`), so the facade root stays free of plugin-specific names.
 
 // ---------------------------------------------------------------------------
 // Wire-contract status types and stream item codecs.
@@ -93,10 +95,11 @@ pub use overseerd_transport::{
 };
 
 // ---------------------------------------------------------------------------
-// Procedural macros: the core macros are always available; the daemon macros (which emit
-// RPC-surface paths) need the `daemon` feature.
+// Procedural macros: the core macros (including the protocol-agnostic `app!`/`daemon!`) are
+// always available; the RPC daemon macros (`service`/`handlers`/`rpc`) live in the `daemon`
+// module behind the `daemon` feature.
 // ---------------------------------------------------------------------------
-pub use overseerd_macros::{component, config, injectable, methods};
+pub use overseerd_macros::{app, component, config, daemon, injectable, methods};
 
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]` attribute
 /// through the facade crate without user crates depending on `linkme` directly.
@@ -183,8 +186,10 @@ pub mod daemon {
     /// The RPC component scopes.
     pub use overseerd_rpc::scope::{Connection, Request};
 
-    /// The daemon macros. Their generated code roots at `::overseerd::daemon::*`.
-    pub use overseerd_macros::{app, daemon, handlers, rpc, service};
+    /// The RPC daemon macros. Their generated code roots its own types at
+    /// `::overseerd::daemon::*` and core types at `::overseerd::*`. (`app!`/`daemon!` are
+    /// protocol-agnostic core macros at the crate root, not here.)
+    pub use overseerd_rpc_macros::{handlers, rpc, service};
 
     /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`.
     pub use overseerd_rpc::tower;
@@ -212,11 +217,12 @@ pub mod daemon {
     #[deprecated(since = "0.7.0", note = "renamed to `AppBuilder`; removed in 1.0.0")]
     pub type DaemonBuilder = AppBuilder;
 
-    /// Common imports for building an RPC daemon: `use overseerd::daemon::prelude::*;`.
+    /// Common imports for building an RPC daemon: `use overseerd::daemon::prelude::*;` (pair
+    /// with the crate-root `use overseerd::prelude::*;` for the core framework + `app!`).
     pub mod prelude {
         pub use super::{
-            App, FromContext, Handler, Inject, Payload, Peer, Responder, RpcAppBuilder, Streaming,
-            app, handlers, rpc, service,
+            App, FromContext, Handler, Inject, Payload, Peer, Responder, RpcAppBuilder, RpcPlugin,
+            Streaming, handlers, rpc, service,
         };
 
         pub use overseerd_transport::TcpTransport;
@@ -230,9 +236,9 @@ pub mod daemon {
 /// `use overseerd::daemon::prelude::*;` (or another plugin's prelude) for the protocol layer.
 pub mod prelude {
     pub use crate::{
-        Cfg, Component, ConfigManager, ConfigProperties, Dep, Dir, DirKind, DirectoriesManager,
-        Injectable, Plugin, Protocol, ProtocolPlugin, Scope, Serve, ServiceComponent, component,
-        config, injectable, methods,
+        App, Cfg, Component, ConfigManager, ConfigProperties, Dep, Dir, DirKind,
+        DirectoriesManager, Injectable, Plugin, Protocol, ProtocolPlugin, Scope, Serve,
+        ServiceComponent, app, component, config, injectable, methods,
     };
 }
 

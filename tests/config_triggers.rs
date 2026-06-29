@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use overseerd::ConfigManager;
 use overseerd::config::Toml;
-use overseerd::daemon::app;
+use overseerd::app;
 use overseerd::dirs::{Config, DirectoriesManager};
 
 #[cfg(feature = "watch")]
@@ -50,6 +50,7 @@ async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::d
     // and applies the triggers to the manager.
     let built = app! {
         name: "trigger-macro-test",
+        protocol: overseerd::daemon::RpcPlugin,
         managers: {
             directories: dirs,
             config: { sighup: true, debounce: Duration::from_millis(50) },

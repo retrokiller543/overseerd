@@ -28,14 +28,14 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Expr, Ident, LitBool, LitStr, Token, Type, braced, bracketed};
 
-use crate::{
-    di,
-    paths::{overseerd_daemon_path, overseerd_path},
-};
+use crate::{di, paths::overseerd_path};
 
 /// Parsed `app! { .. }`.
 pub struct AppInput {
     name: Expr,
+    /// The protocol plugin type `P` the app installs (`protocol: SomeProtocolPlugin`). Required
+    /// — `app!` is protocol-agnostic, so the protocol must be named.
+    protocol: Type,
     services: Vec<Type>,
     components: Vec<Expr>,
     configs: Vec<ConfigEntry>,
@@ -170,6 +170,7 @@ impl Parse for ConfigEntry {
 impl Parse for AppInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut name = None;
+        let mut protocol = None;
         let mut services = Vec::new();
         let mut components = Vec::new();
         let mut configs = Vec::new();
@@ -185,6 +186,7 @@ impl Parse for AppInput {
 
             match key.to_string().as_str() {
                 "name" => name = Some(input.parse()?),
+                "protocol" => protocol = Some(input.parse()?),
                 "services" => services = bracketed_list::<Type>(input)?,
                 "components" => components = bracketed_list::<Expr>(input)?,
                 "configs" => configs = bracketed_list::<ConfigEntry>(input)?,
@@ -196,9 +198,9 @@ impl Parse for AppInput {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
-                            "unknown `app!` key `{other}`, expected `name`, `services`, \
-                             `components`, `configs`, `managers`, `middleware`, `guards`, or \
-                             `error_handler`"
+                            "unknown `app!` key `{other}`, expected `name`, `protocol`, \
+                             `services`, `components`, `configs`, `managers`, `middleware`, \
+                             `guards`, or `error_handler`"
                         ),
                     ));
                 }
@@ -210,9 +212,13 @@ impl Parse for AppInput {
         }
 
         let name = name.ok_or_else(|| input.error("`app!` requires a `name`"))?;
+        let protocol = protocol.ok_or_else(|| {
+            input.error("`app!` requires a `protocol: <ProtocolPlugin>` (e.g. the RPC daemon's)")
+        })?;
 
         Ok(AppInput {
             name,
+            protocol,
             services,
             components,
             configs,
@@ -287,6 +293,7 @@ fn bracketed_list<T: Parse>(input: ParseStream) -> syn::Result<Vec<T>> {
 pub fn expand(input: AppInput) -> TokenStream {
     let AppInput {
         name,
+        protocol,
         services,
         components,
         configs,
@@ -300,7 +307,8 @@ pub fn expand(input: AppInput) -> TokenStream {
     let config_tys = configs.iter().map(|entry| &entry.ty);
     let config_paths = configs.iter().map(|entry| &entry.path);
 
-    let app_ty = overseerd_daemon_path("App");
+    // The protocol-agnostic core `App`, specialized to the chosen protocol plugin.
+    let app_ty = overseerd_path("App");
     let config_manager_path = overseerd_path("ConfigManager");
     let directories_path = overseerd_path("DirectoriesManager");
     let config_dynamic = overseerd_path("config::Dynamic");
@@ -401,17 +409,9 @@ pub fn expand(input: AppInput) -> TokenStream {
         None => {}
     }
 
-    // The `middleware`/`guard`/`error_handler` chain methods come from the `RpcAppBuilder`
-    // extension trait; bring it into scope only when one of them is emitted, so a plain
-    // `app! { .. }` stays free of an unused import.
-    let rpc_use = if !middleware.is_empty() || !guards.is_empty() || error_handler.is_some() {
-        let rpc_app_builder = overseerd_daemon_path("RpcAppBuilder");
-
-        quote!(use #rpc_app_builder as _;)
-    } else {
-        quote!()
-    };
-
+    // `middleware`/`guard`/`error_handler` are protocol-builder methods (e.g. the RPC daemon's
+    // `RpcAppBuilder`). `app!` is protocol-agnostic, so it does not import any specific builder
+    // trait — the caller brings their protocol's builder extension into scope (its prelude).
     let error_handler = error_handler.into_iter();
 
     quote! {
@@ -420,9 +420,8 @@ pub fn expand(input: AppInput) -> TokenStream {
 
             #directories_binding
             #config_binding
-            #rpc_use
 
-            #app_ty::builder(#name)
+            #app_ty::<#protocol>::builder(#name)
                 .auto_discover()
                 #(.with_component(#components))*
                 #(.config::<#config_tys>(#config_paths))*

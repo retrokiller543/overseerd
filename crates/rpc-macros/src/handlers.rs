@@ -1,134 +1,176 @@
-//! `#[handlers]` expansion (impl).
+//! The RPC handlers extension: `Rpcs`, the `ParseMethod` extension that makes
+//! `#[handlers]` = `MethodArgs<Rpcs>` (`#[methods]` + RPC registration).
 //!
-//! Contributes the impl's `#[rpc]` methods to the service of `Self` as an
-//! `RpcGroup` appended to the service's `{Service}Rpcs` slice (the one `#[service]`
-//! declares), so multiple impl blocks merge into one service with no coordination.
-//! A block in another module than its `#[service]` brings the slice into scope with
-//! `use path::{Service}Rpcs;` (or both pass a matching `rpc_slice = ..`). It also
-//! turns an optional `#[init]` constructor into an explicit singleton factory.
-//!
-//! The `#[init]` constructor (any name) gets a fixed-name `init` associated fn
-//! generated on the type that forwards the injected dependencies to it
-//! (constructor injection). That fixed name is also a compile-time guard: two
-//! `#[init]`s anywhere on the type produce two `init` definitions and fail with
-//! E0592 ("duplicate definitions with name `init`"). When the marked method is
-//! itself named `init`, it serves as its own marker and no wrapper is emitted.
+//! `Rpcs` claims each `#[rpc]` method — building its erased dispatch wrapper, its
+//! `RpcDescriptor`, and its client method — then on emission contributes the `RpcGroup`
+//! registration (appended to the service's `{Service}Rpcs` slice) and the generated client.
+//! The base [`MethodArgs`](overseerd_macros_core::methods::MethodArgs) handles `#[init]`/`#[hook]`, so a
+//! `#[handlers]` block supports those too.
 
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
+use syn::parse::ParseStream;
 use syn::{
-    Attribute, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, Meta, ReturnType, Type,
+    Attribute, FnArg, Ident, ImplItemFn, ItemImpl, LitStr, Meta, ReturnType, Type,
     spanned::Spanned,
 };
 
-use crate::{
+use overseerd_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
+use overseerd_macros_core::methods::self_ty_ident;
+use overseerd_macros_core::{
     attr,
-    attr::HandlersArgs,
     paths::{overseerd_client_path, overseerd_daemon_path, overseerd_path},
 };
 
-pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream> {
-    let self_ty = (*item.self_ty).clone();
-    let self_ident = self_ty_ident(&self_ty)?;
-    let self_name = LitStr::new(&self_ident.to_string(), self_ident.span());
+/// The RPC handlers extension. Accumulates the impl's `#[rpc]` methods (their wrappers,
+/// descriptors, and client methods) and the captured impl context, then emits the RPC group
+/// registration and the generated client.
+#[derive(Default)]
+pub struct Rpcs {
+    /// `rpc_slice = ..` — the per-service slice to append to (default `{Service}Rpcs`).
+    rpc_slice: Option<Ident>,
+    /// `client_trait = ..` — accepted for back-compat, no longer changes codegen.
+    client_trait: Option<Ident>,
+    /// Captured during [`ParseItem`]: the impl's self type, ident, and name.
+    context: Option<RpcContext>,
+    /// Accumulated per `#[rpc]` method (during [`ParseMethod`]).
+    wrappers: Vec<TokenStream>,
+    descriptors: Vec<TokenStream>,
+    client_methods: Vec<ClientMethod>,
+}
 
-    let mut wrappers = Vec::new();
-    let mut descriptors = Vec::new();
-    let mut client_methods = Vec::new();
-    let mut hooks: Vec<crate::hook::HookInfo> = Vec::new();
+/// The impl context `Rpcs` needs to emit (captured in the item pass).
+struct RpcContext {
+    self_ty: Type,
+    self_ident: Ident,
+    self_name: LitStr,
+}
 
-    for impl_item in &mut item.items {
-        let ImplItem::Fn(method) = impl_item else {
-            continue;
-        };
+impl ParseKeyed for Rpcs {
+    fn parse_keyed(&mut self, key: &Ident, input: ParseStream) -> syn::Result<bool> {
+        match key.to_string().as_str() {
+            "rpc_slice" => {
+                eat_eq(input)?;
+                self.rpc_slice = Some(input.parse()?);
 
-        if method.attrs.iter().any(|a| a.path().is_ident("init")) {
-            return Err(syn::Error::new_spanned(
-                &method.sig,
-                "#[init] is a lifecycle method — put it in a #[methods] impl, not #[handlers]",
-            ));
+                Ok(true)
+            }
+
+            "client_trait" => {
+                eat_eq(input)?;
+                self.client_trait = Some(input.parse()?);
+
+                Ok(true)
+            }
+
+            _ => Ok(false),
         }
+    }
 
-        if let Some(pos) = method.attrs.iter().position(|a| a.path().is_ident("hook")) {
-            let attr = method.attrs.remove(pos);
-            let kind = crate::hook::parse_hook_kind(&attr)?;
+    fn expected_keys() -> &'static [&'static str] {
+        &["rpc_slice", "client_trait"]
+    }
+}
 
-            hooks.push(crate::hook::parse_hook(method, kind)?);
+impl ParseItem<ItemImpl> for Rpcs {
+    fn parse_item(&mut self, item: &ItemImpl) -> syn::Result<()> {
+        let self_ty = (*item.self_ty).clone();
+        let self_ident = self_ty_ident(&self_ty)?;
+        let self_name = LitStr::new(&self_ident.to_string(), self_ident.span());
 
-            continue;
-        }
+        self.context = Some(RpcContext {
+            self_ty,
+            self_ident,
+            self_name,
+        });
 
+        Ok(())
+    }
+}
+
+impl ParseMethod for Rpcs {
+    fn parse_method(&mut self, method: &mut ImplItemFn) -> syn::Result<()> {
         let Some(pos) = method.attrs.iter().position(|a| a.path().is_ident("rpc")) else {
-            continue;
+            return Ok(());
         };
 
         let rpc_attr = method.attrs.remove(pos);
         let stream_flag = parse_rpc_attr(&rpc_attr)?;
 
-        let (wrapper, descriptor, client) =
-            expand_method(&self_ty, &self_ident, &self_name, method, stream_flag)?;
+        // `parse_item` runs before the method walk, so the context is always present.
+        let cx = self
+            .context
+            .as_ref()
+            .expect("Rpcs::parse_item runs before parse_method");
 
-        wrappers.push(wrapper);
-        descriptors.push(descriptor);
-        client_methods.push(client);
+        let (wrapper, descriptor, client) = expand_method(
+            &cx.self_ty,
+            &cx.self_ident,
+            &cx.self_name,
+            method,
+            stream_flag,
+        )?;
+
+        self.wrappers.push(wrapper);
+        self.descriptors.push(descriptor);
+        self.client_methods.push(client);
+
+        Ok(())
     }
+}
 
-    let hooks_slice = crate::inject::hooks_slice_ident(&self_ident);
-    let hook_tokens: Vec<TokenStream> = hooks
-        .iter()
-        .enumerate()
-        .map(|(index, info)| {
-            crate::hook::generate_hook(&self_ty, &self_name, &hooks_slice, info, index)
-        })
-        .collect();
+impl ToTokens for Rpcs {
+    fn to_tokens(&self, out: &mut TokenStream) {
+        // `client_trait =` is superseded by capability-gated inherent methods; kept only for
+        // back-compat parsing.
+        let _ = &self.client_trait;
 
-    // The `client_trait =` (dyn-trait client) form is superseded by capability-gated inherent
-    // methods, which can't live behind a single object-safe trait; the arg is accepted but
-    // no longer changes codegen.
-    let _ = &args.client_trait;
-    let client_code = generate_client(&self_ident, &client_methods);
+        let Some(cx) = &self.context else {
+            return;
+        };
 
-    let rpc_registration = if descriptors.is_empty() {
-        quote!()
-    } else {
-        let count = descriptors.len();
+        if self.descriptors.is_empty() {
+            return;
+        }
+
+        let client_code = generate_client(&cx.self_ident, &self.client_methods);
+
+        let count = self.descriptors.len();
+        let descriptors = &self.descriptors;
+        let wrappers = &self.wrappers;
         let distributed_slice = overseerd_path("linkme::distributed_slice");
         let linkme_crate = overseerd_path("linkme");
         let rpc_descriptor = overseerd_daemon_path("RpcDescriptor");
         let rpc_group = overseerd_daemon_path("RpcGroup");
-        let rpcs_slice = args
+        let rpcs_slice = self
             .rpc_slice
             .clone()
-            .unwrap_or_else(|| format_ident!("{}Rpcs", self_ident));
+            .unwrap_or_else(|| format_ident!("{}Rpcs", cx.self_ident));
         let type_descriptor = overseerd_path("TypeDescriptor");
+        let self_ty = &cx.self_ty;
+        let self_name = &cx.self_name;
 
-        quote! {
-            static __OVERSEERD_RPCS: [#rpc_descriptor; #count] = [
-                #(#descriptors),*
-            ];
+        // Appended after the base output: the client (top-level) plus the wrappers and group
+        // registration in their own anonymous `const _ {}`.
+        out.extend(quote! {
+            #client_code
 
-            #[#distributed_slice(#rpcs_slice)]
-            #[linkme(crate = #linkme_crate)]
-            static __OVERSEERD_RPC_GROUP: #rpc_group = #rpc_group {
-                service: #type_descriptor::of::<#self_ty>(#self_name),
-                rpcs: &__OVERSEERD_RPCS,
+            const _: () = {
+                #(#wrappers)*
+
+                static __OVERSEERD_RPCS: [#rpc_descriptor; #count] = [
+                    #(#descriptors),*
+                ];
+
+                #[#distributed_slice(#rpcs_slice)]
+                #[linkme(crate = #linkme_crate)]
+                static __OVERSEERD_RPC_GROUP: #rpc_group = #rpc_group {
+                    service: #type_descriptor::of::<#self_ty>(#self_name),
+                    rpcs: &__OVERSEERD_RPCS,
+                };
             };
-        }
-    };
-
-    Ok(quote! {
-        #item
-
-        #client_code
-
-        const _: () = {
-            #(#wrappers)*
-
-            #rpc_registration
-
-            #(#hook_tokens)*
-        };
-    })
+        });
+    }
 }
 
 /// Parses the `#[rpc]` attribute, returning whether the `stream` flag is set.
@@ -702,18 +744,3 @@ fn handler_return_type() -> TokenStream {
     }
 }
 
-/// Extracts the named type ident from an impl's `Self` type.
-fn self_ty_ident(ty: &Type) -> syn::Result<syn::Ident> {
-    match ty {
-        Type::Path(path) => path
-            .path
-            .segments
-            .last()
-            .map(|segment| segment.ident.clone())
-            .ok_or_else(|| syn::Error::new_spanned(ty, "expected a named type")),
-        _ => Err(syn::Error::new_spanned(
-            ty,
-            "#[handlers] must be applied to an impl of a named type",
-        )),
-    }
-}

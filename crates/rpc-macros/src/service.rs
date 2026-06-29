@@ -17,7 +17,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ItemStruct, LitStr};
 
-use crate::{
+use overseerd_macros_core::{
     attr::ServiceArgs,
     di, handle, inject,
     paths::{overseerd_daemon_path, overseerd_path},

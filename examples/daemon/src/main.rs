@@ -17,7 +17,7 @@ use crate::components::{AppServer, DbConfig};
 use crate::service::Notifications;
 use overseerd::builtins::init_tracing;
 use overseerd::config::Toml;
-use overseerd::daemon::app;
+use overseerd::app;
 use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig};
 
 #[tokio::main]
@@ -49,6 +49,7 @@ async fn main() -> overseerd::daemon::Result<()> {
     // it is bound here at `app.server`. The supplied config source backs them all.
     let app = app! {
         name: "example-daemon",
+        protocol: overseerd::daemon::RpcPlugin,
         services: [Notifications],
         configs: [
             DbConfig => "app.db.reader",

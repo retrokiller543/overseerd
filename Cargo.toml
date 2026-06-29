@@ -29,6 +29,7 @@ overseerd-client = { path = "crates/client", version = "0.6.0" }
 overseerd-rpc = { path = "crates/rpc", version = "0.6.0" }
 overseerd-macros = { path = "crates/macros", version = "0.6.0" }
 overseerd-macros-core = { path = "crates/macros-core", version = "0.6.0" }
+overseerd-rpc-macros = { path = "crates/rpc-macros", version = "0.6.0" }
 overseerd-transport = { path = "crates/transport", version = "0.6.0" }
 
 # Common dependencies
@@ -69,14 +70,14 @@ categories.workspace = true
 [features]
 default = ["di-check", "daemon"]
 
-# Re-export the native RPC daemon (`overseerd-rpc`) through the facade for convenience.
-# Disable for a core-framework-only build (`default-features = false`); the daemon then
-# lives in its own `overseerd-rpc` crate.
-daemon = ["dep:overseerd-rpc"]
+# Re-export the native RPC daemon (`overseerd-rpc` + its macros) through the facade for
+# convenience. Disable for a core-framework-only build (`default-features = false`); the
+# daemon then lives in its own `overseerd-rpc` / `overseerd-rpc-macros` crates.
+daemon = ["dep:overseerd-rpc", "dep:overseerd-rpc-macros"]
 
 # Compile the generated client SDK (the RPC daemon's client). Opt in via
 # `overseerd = { features = ["client"] }`; no feature is needed in the user crate.
-client = ["daemon", "overseerd-macros/client", "overseerd-rpc/client"]
+client = ["daemon", "overseerd-rpc/client", "overseerd-rpc-macros/client"]
 
 # Emit compile-time dependency-injection checks (a `Wiring: Provide<Dep>` bound
 # per concrete dependency). A missing provider becomes a `cargo check` error.
@@ -86,6 +87,7 @@ di-check = [
     "overseerd-config/di-check",
     "overseerd-app/di-check",
     "overseerd-rpc?/di-check",
+    "overseerd-rpc-macros?/di-check",
 ]
 
 # Enable YAML config sources (`application.yaml`) alongside the default TOML.
@@ -108,6 +110,7 @@ overseerd-client = { workspace = true }
 overseerd-rpc = { workspace = true, optional = true }
 overseerd-transport = { workspace = true }
 overseerd-macros = { workspace = true }
+overseerd-rpc-macros = { workspace = true, optional = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }

@@ -14,7 +14,6 @@ categories.workspace = true
 proc-macro = true
 
 [features]
-client = ["overseerd-macros-core/client"]
 # Emit compile-time dependency-injection checks: `impl Provide<Self> for Wiring`
 # per component, plus a `Wiring: Provide<Dep>` bound per concrete dependency.
 di-check = ["overseerd-macros-core/di-check"]
