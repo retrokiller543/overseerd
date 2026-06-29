@@ -23,3 +23,12 @@ pub(crate) fn overseerd_daemon_path(item: &str) -> syn::Path {
     syn::parse_str(&format!("::{OVERSEERD_CRATE}::daemon::{item}"))
         .expect("valid overseerd daemon item path")
 }
+
+/// A path to a **protocol-agnostic client** item, rooted at the facade's `client` module
+/// (`::overseerd::client::<item>`). Generated client code (the capability traits,
+/// `ClientError`, `Encodes`/`Decodes`, `StreamArg`) roots here so it is identical across
+/// protocols — a generated client never names a specific protocol's crate.
+pub(crate) fn overseerd_client_path(item: &str) -> syn::Path {
+    syn::parse_str(&format!("::{OVERSEERD_CRATE}::client::{item}"))
+        .expect("valid overseerd client item path")
+}

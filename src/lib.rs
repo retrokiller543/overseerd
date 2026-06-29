@@ -194,27 +194,15 @@ pub mod daemon {
     #[doc(hidden)]
     pub use overseerd_rpc::__Stream;
 
-    /// The RPC byte-stream transport — the daemon's [`ProtocolTransport`] impl plus its
-    /// connect helpers. The agnostic client surface lives at [`overseerd::client`](crate::client);
+    /// The RPC byte-stream transport — the daemon's [`ProtocolTransport`](crate::client) impl
+    /// (`StreamClientTransport`), its response stream, and connect helpers. The agnostic client
+    /// surface (`Client` API, capability traits) lives at [`overseerd::client`](crate::client);
     /// this is the RPC carry that plugs into it. Gated behind the `client` feature.
     #[cfg(feature = "client")]
-    pub use overseerd_rpc::{StreamCall, StreamCallSink, StreamClientTransport, StreamSource, connect_tcp};
+    pub use overseerd_rpc::{RpcResponses, StreamClientTransport, connect_tcp};
 
     #[cfg(all(feature = "client", unix))]
     pub use overseerd_rpc::connect_unix;
-
-    /// The agnostic client surface, re-exported here under the daemon's historical names so
-    /// existing imports keep working; prefer [`overseerd::client`](crate::client).
-    #[cfg(feature = "client")]
-    pub use crate::client::{
-        BidiResponses, CallSink, CallSource, Client as ClientConnection, ClientCall, ClientError,
-        ErrorBody, ProtocolTransport as ClientTransport, Raw, Reply, ServerStream, StreamArg,
-    };
-
-    /// Re-exported so generated client traits can be annotated `#[async_trait]`. Hidden.
-    #[cfg(feature = "client")]
-    #[doc(hidden)]
-    pub use overseerd_rpc::async_trait;
 
     /// Deprecated alias for [`App`]. Renamed in 0.7.0; removed in 1.0.0.
     #[deprecated(since = "0.7.0", note = "renamed to `App`; removed in 1.0.0")]

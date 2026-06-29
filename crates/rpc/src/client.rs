@@ -427,13 +427,12 @@ where
     C: Decodes<Resp>,
 {
     match reply {
-        Some(Reply::Response(WireOutcome::Ok(bytes))) => {
-            codec.decode(bytes).map_err(|e| ClientError::Decode(e.message))
-        }
+        Some(Reply::Response(WireOutcome::Ok(bytes))) => codec
+            .decode(bytes)
+            .map_err(|e| ClientError::Decode(e.message)),
 
-        Some(Reply::Response(WireOutcome::Err { code, body })) | Some(Reply::Error { code, body }) => {
-            Err(ClientError::Remote(ErrorBody::new(code, body)))
-        }
+        Some(Reply::Response(WireOutcome::Err { code, body }))
+        | Some(Reply::Error { code, body }) => Err(ClientError::Remote(ErrorBody::new(code, body))),
 
         None | Some(Reply::End) => Err(ClientError::ConnectionClosed),
 
@@ -450,9 +449,11 @@ where
     C: Decodes<Resp>,
 {
     match reply {
-        Some(Reply::Item(bytes)) => {
-            Some(codec.decode(bytes).map_err(|e| ClientError::Decode(e.message)))
-        }
+        Some(Reply::Item(bytes)) => Some(
+            codec
+                .decode(bytes)
+                .map_err(|e| ClientError::Decode(e.message)),
+        ),
 
         Some(Reply::Error { code, body }) => {
             Some(Err(ClientError::Remote(ErrorBody::new(code, body))))

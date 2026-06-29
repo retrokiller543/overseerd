@@ -79,6 +79,28 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
         emit_default,
     );
 
+    // The per-service client struct (its methods are contributed by `#[handlers]` blocks as
+    // capability-partitioned impls). Emitted once here, since the struct is signature-
+    // independent — it just holds the transport. Gated on the `client` feature.
+    let client_struct = if cfg!(feature = "client") {
+        let client_ident = format_ident!("{}Client", self_ident);
+
+        quote! {
+            /// Generated RPC client: wraps a transport `C` and exposes one method per `#[rpc]`,
+            /// each available only when `C` supports that call shape's capability.
+            pub struct #client_ident<C>(pub C);
+
+            impl<C> #client_ident<C> {
+                /// Wraps a protocol transport (e.g. `StreamClientTransport`).
+                pub fn new(transport: C) -> Self {
+                    Self(transport)
+                }
+            }
+        }
+    } else {
+        quote!()
+    };
+
     let service_static = format_ident!(
         "__OVERSEERD_SERVICE_{}",
         self_ident.to_string().to_uppercase()
@@ -100,6 +122,8 @@ pub fn expand(args: ServiceArgs, mut item: ItemStruct) -> syn::Result<TokenStrea
 
     Ok(quote! {
         #item
+
+        #client_struct
 
         impl #component for #self_ident {
             const ID: &'static str = #id;

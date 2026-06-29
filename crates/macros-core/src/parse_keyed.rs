@@ -80,7 +80,10 @@ pub fn unknown_key_error<Ext: ParseKeyed>(key: &Ident, common: &[&str]) -> syn::
 
     syn::Error::new(
         key.span(),
-        format!("unknown argument `{key}`, expected one of: {}", keys.join(", ")),
+        format!(
+            "unknown argument `{key}`, expected one of: {}",
+            keys.join(", ")
+        ),
     )
 }
 

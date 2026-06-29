@@ -24,7 +24,7 @@ use syn::{
 use crate::{
     attr,
     attr::HandlersArgs,
-    paths::{overseerd_daemon_path, overseerd_path},
+    paths::{overseerd_client_path, overseerd_daemon_path, overseerd_path},
 };
 
 pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream> {
@@ -82,7 +82,11 @@ pub fn expand(args: HandlersArgs, mut item: ItemImpl) -> syn::Result<TokenStream
         })
         .collect();
 
-    let client_code = generate_client(&self_ident, &args.client_trait, &client_methods);
+    // The `client_trait =` (dyn-trait client) form is superseded by capability-gated inherent
+    // methods, which can't live behind a single object-safe trait; the arg is accepted but
+    // no longer changes codegen.
+    let _ = &args.client_trait;
+    let client_code = generate_client(&self_ident, &client_methods);
 
     let rpc_registration = if descriptors.is_empty() {
         quote!()
@@ -441,10 +445,24 @@ fn expand_method(
 /// client takes an `impl Stream` (ergonomic), while the `dyn`-compatible trait
 /// client takes a boxed `StreamArg<T>` so the method stays object-safe. They are
 /// identical for every other shape.
+/// Which client capability a generated method needs — selects the `impl<C: Cap>` block it
+/// lands in, so a method only exists when the protocol supports that call shape.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Capability {
+    Unary,
+    ServerStreaming,
+    ClientStreaming,
+    BidiStreaming,
+}
+
 struct ClientMethod {
     ident: syn::Ident,
+    capability: Capability,
+    /// The request message type bounded `C: Encodes<_>`.
+    encode_ty: TokenStream,
+    /// The response message type bounded `C: Decodes<_>`.
+    decode_ty: TokenStream,
     args: TokenStream,
-    args_trait: TokenStream,
     ret: TokenStream,
     body: TokenStream,
 }
@@ -476,10 +494,12 @@ fn client_method(
         &format!("{}.{}", self_ident, method_ident),
         method_ident.span(),
     );
-    let client_error = overseerd_daemon_path("ClientError");
-    let client_transport = overseerd_daemon_path("ClientTransport");
+    let client_error = overseerd_client_path("ClientError");
     let response_error = overseerd_daemon_path("ResponseError");
-    let raw = overseerd_daemon_path("Raw");
+    let raw = overseerd_client_path("Raw");
+    let stream_arg = overseerd_client_path("StreamArg");
+    let server_streaming = overseerd_client_path("ServerStreaming");
+    let bidi_streaming = overseerd_client_path("BidiStreaming");
 
     let payload_ty = param_types.iter().find_map(|ty| attr::payload_inner(ty));
     let (result_ok, result_err) = match attr::result_type_args(output) {
@@ -505,11 +525,12 @@ fn client_method(
         (None, ReturnType::Default) => syn::parse_quote!(()),
     };
 
-    // The optional request parameter and the value forwarded to a unary or
-    // server-streaming call (a no-payload method sends the unit body).
-    let (req_arg, call_arg) = match &payload_ty {
-        Some(req) => (quote!(, req: &#req), quote!(req)),
-        None => (quote!(), quote!(&())),
+    // The optional request parameter (by value now — the capability methods take `Req`) and
+    // the value forwarded to a unary or server-streaming call (a no-payload method sends the
+    // unit body, so the protocol must `Encodes<()>`).
+    let (req_arg, call_arg, unary_encode_ty) = match &payload_ty {
+        Some(req) => (quote!(, request: #req), quote!(request), quote!(#req)),
+        None => (quote!(), quote!(()), quote!(())),
     };
     let req_item_ty = req_item
         .as_ref()
@@ -517,122 +538,123 @@ fn client_method(
         .unwrap_or_else(|| quote!(()));
     let resp_item_ty = resp_item.clone().unwrap_or_else(|| success_ty.clone());
 
-    let (args, args_trait, ret, body) = match (streamed_input, streamed_output) {
-        (false, false) => {
-            let args = quote!(&self #req_arg);
-            let ret = quote!(::core::result::Result<#success_ty, #client_error<#err_ty>>);
-            let body = quote!(self.conn.call(#path, #call_arg).await);
+    // Each shape maps to a capability, the `Encodes`/`Decodes` message types it bounds, and a
+    // body delegating to the transport. The returned stream is the protocol's own associated
+    // type — `<C as ServerStreaming>::Responses<Item, ErrBody>`.
+    let (capability, encode_ty, decode_ty, args, ret, body) = match (
+        streamed_input,
+        streamed_output,
+    ) {
+        (false, false) => (
+            Capability::Unary,
+            unary_encode_ty,
+            quote!(#success_ty),
+            quote!(&self #req_arg),
+            quote!(::core::result::Result<#success_ty, #client_error<#err_ty>>),
+            quote!(self.0.unary(#path, #call_arg).await),
+        ),
 
-            (args.clone(), args, ret, body)
-        }
-
-        (false, true) => {
-            let server_stream = overseerd_daemon_path("ServerStream");
-            let args = quote!(&self #req_arg);
-            let ret = quote! {
+        (false, true) => (
+            Capability::ServerStreaming,
+            unary_encode_ty,
+            quote!(#resp_item_ty),
+            quote!(&self #req_arg),
+            quote! {
                 ::core::result::Result<
-                    #server_stream<<T as #client_transport>::Call, #resp_item_ty, #err_ty>,
+                    <C as #server_streaming>::Responses<#resp_item_ty, #err_ty>,
                     #client_error<#err_ty>,
                 >
-            };
-            let body = quote!(self.conn.server_stream(#path, #call_arg).await);
+            },
+            quote!(self.0.server_stream(#path, #call_arg).await),
+        ),
 
-            (args.clone(), args, ret, body)
-        }
-
-        // Client streaming mirrors the daemon: take the input stream, return the one
-        // response. The inherent client accepts any `impl Stream`; the trait client
-        // takes a boxed `StreamArg<T>` to stay object-safe.
-        (true, false) => {
-            let stream_trait = overseerd_daemon_path("__Stream");
-            let stream_arg = overseerd_daemon_path("StreamArg");
-            let ret = quote!(::core::result::Result<#success_ty, #client_error<#err_ty>>);
-            let body = quote! {
-                self.conn
-                    .client_stream::<#req_item_ty, #success_ty, #err_ty, _>(#path, input)
-                    .await
-            };
-            let args = quote! {
+        // Client streaming: an input stream in, the one response out. The method accepts
+        // anything convertible into a `StreamArg` — a bare `Stream` or an `.into()`'d arg.
+        (true, false) => (
+            Capability::ClientStreaming,
+            quote!(#req_item_ty),
+            quote!(#success_ty),
+            quote! {
                 &self,
-                input: impl #stream_trait<Item = #req_item_ty> + ::core::marker::Send + 'static
-            };
-            let args_trait = quote!(&self, input: #stream_arg<#req_item_ty>);
+                input: impl ::core::convert::Into<#stream_arg<#req_item_ty>> + ::core::marker::Send
+            },
+            quote!(::core::result::Result<#success_ty, #client_error<#err_ty>>),
+            quote!(self.0.client_stream(#path, input).await),
+        ),
 
-            (args, args_trait, ret, body)
-        }
-
-        // Bidi is symmetric too: an input stream in, a response stream out, pumped
-        // concurrently. The caller's input stream is their sink (push to a channel
-        // for cause-and-effect); the returned stream is read independently.
-        (true, true) => {
-            let stream_trait = overseerd_daemon_path("__Stream");
-            let stream_arg = overseerd_daemon_path("StreamArg");
-            let bidi_responses = overseerd_daemon_path("BidiResponses");
-            let ret = quote! {
+        // Bidi: input stream in, response stream out, pumped concurrently.
+        (true, true) => (
+            Capability::BidiStreaming,
+            quote!(#req_item_ty),
+            quote!(#resp_item_ty),
+            quote! {
+                &self,
+                input: impl ::core::convert::Into<#stream_arg<#req_item_ty>> + ::core::marker::Send
+            },
+            quote! {
                 ::core::result::Result<
-                    #bidi_responses<<T as #client_transport>::Call, #resp_item_ty, #err_ty>,
+                    <C as #bidi_streaming>::Responses<#resp_item_ty, #err_ty>,
                     #client_error<#err_ty>,
                 >
-            };
-            let body = quote! {
-                self.conn
-                    .bidi_stream::<#req_item_ty, #resp_item_ty, #err_ty, _>(#path, input)
-                    .await
-            };
-            let args = quote! {
-                &self,
-                input: impl #stream_trait<Item = #req_item_ty> + ::core::marker::Send + 'static
-            };
-            let args_trait = quote!(&self, input: #stream_arg<#req_item_ty>);
-
-            (args, args_trait, ret, body)
-        }
+            },
+            quote!(self.0.bidi_stream(#path, input).await),
+        ),
     };
 
     ClientMethod {
         ident: method_ident.clone(),
+        capability,
+        encode_ty,
+        decode_ty,
         args,
-        args_trait,
         ret,
         body,
     }
 }
 
-/// Assembles the per-service client: a `{Service}Client<T>` wrapper plus its
-/// methods, as either a plain inherent impl or — with `#[handlers(client_trait =
-/// Name)]` — a `dyn`-compatible trait `Name` and its impl. Emits nothing when the
-/// macro is built without the `client` feature or the block declares no `#[rpc]`s.
-fn generate_client(
-    self_ident: &syn::Ident,
-    client_trait: &Option<syn::Ident>,
-    methods: &[ClientMethod],
-) -> TokenStream {
+/// Emits the per-service client's *methods* as capability-partitioned `impl` blocks. The
+/// `{Service}Client<C>` struct itself is emitted by `#[service]` (once per type); each
+/// `#[handlers]` block contributes inherent methods, so multiple blocks compose.
+///
+/// Methods are grouped by the capability they need into separate `impl<C: Cap>
+/// {Service}Client<C>` blocks, so a method exists only when the protocol `C` supports that
+/// call shape (an unsupported one is simply absent, not a compile error). Each method adds
+/// its `C: Encodes<Req> + Decodes<Resp>` message bounds. Emits nothing without the `client`
+/// feature or when the block declares no `#[rpc]`s.
+fn generate_client(self_ident: &syn::Ident, methods: &[ClientMethod]) -> TokenStream {
     if !cfg!(feature = "client") || methods.is_empty() {
         return quote!();
     }
 
     let client_ident = format_ident!("{}Client", self_ident);
-    let client_connection = overseerd_daemon_path("ClientConnection");
-    let client_transport = overseerd_daemon_path("ClientTransport");
+    let encodes = overseerd_client_path("Encodes");
+    let decodes = overseerd_client_path("Decodes");
 
-    let scaffold = quote! {
-        pub struct #client_ident<T: #client_transport> {
-            conn: #client_connection<T>,
-        }
+    let capabilities = [
+        (Capability::Unary, overseerd_client_path("Unary")),
+        (
+            Capability::ServerStreaming,
+            overseerd_client_path("ServerStreaming"),
+        ),
+        (
+            Capability::ClientStreaming,
+            overseerd_client_path("ClientStreaming"),
+        ),
+        (
+            Capability::BidiStreaming,
+            overseerd_client_path("BidiStreaming"),
+        ),
+    ];
 
-        impl<T: #client_transport> #client_ident<T> {
-            /// Wraps an established client connection.
-            pub fn new(conn: #client_connection<T>) -> Self {
-                Self { conn }
-            }
-        }
-    };
-
-    match client_trait {
-        None => {
-            let methods = methods.iter().map(|m| {
+    let blocks = capabilities.iter().filter_map(|(capability, cap_trait)| {
+        let fns: Vec<TokenStream> = methods
+            .iter()
+            .filter(|m| m.capability == *capability)
+            .map(|m| {
                 let ClientMethod {
                     ident,
+                    encode_ty,
+                    decode_ty,
                     args,
                     ret,
                     body,
@@ -640,64 +662,28 @@ fn generate_client(
                 } = m;
 
                 quote! {
-                    pub async fn #ident(#args) -> #ret {
+                    pub async fn #ident(#args) -> #ret
+                    where
+                        C: #encodes<#encode_ty> + #decodes<#decode_ty>,
+                    {
                         #body
                     }
                 }
-            });
+            })
+            .collect();
 
-            quote! {
-                #scaffold
-
-                impl<T: #client_transport> #client_ident<T> {
-                    #(#methods)*
-                }
-            }
+        if fns.is_empty() {
+            return None;
         }
 
-        Some(trait_ident) => {
-            let async_trait = overseerd_daemon_path("async_trait::async_trait");
-            let signatures = methods.iter().map(|m| {
-                let ClientMethod {
-                    ident,
-                    args_trait,
-                    ret,
-                    ..
-                } = m;
-
-                quote!(async fn #ident(#args_trait) -> #ret;)
-            });
-            let implementations = methods.iter().map(|m| {
-                let ClientMethod {
-                    ident,
-                    args_trait,
-                    ret,
-                    body,
-                    ..
-                } = m;
-
-                quote! {
-                    async fn #ident(#args_trait) -> #ret {
-                        #body
-                    }
-                }
-            });
-
-            quote! {
-                #scaffold
-
-                #[#async_trait]
-                pub trait #trait_ident<T: #client_transport> {
-                    #(#signatures)*
-                }
-
-                #[#async_trait]
-                impl<T: #client_transport> #trait_ident<T> for #client_ident<T> {
-                    #(#implementations)*
-                }
+        Some(quote! {
+            impl<C: #cap_trait> #client_ident<C> {
+                #(#fns)*
             }
-        }
-    }
+        })
+    });
+
+    quote!( #(#blocks)* )
 }
 
 /// The erased `RpcHandler` return type, repeated by both wrapper forms.
