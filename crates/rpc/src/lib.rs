@@ -63,7 +63,7 @@ pub use tower;
 /// `ProtocolTransport`, …) lives in [`overseerd_client`]; this is the RPC carry that plugs
 /// into it. Gated behind the `client` feature.
 #[cfg(feature = "client")]
-pub use client::{StreamCall, StreamCallSink, StreamClientTransport, StreamSource, connect_tcp};
+pub use client::{RpcResponses, StreamClientTransport, connect_tcp};
 
 #[cfg(all(feature = "client", unix))]
 pub use client::connect_unix;

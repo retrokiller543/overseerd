@@ -8,6 +8,7 @@
 //!
 //! Usually consumed through the `overseerd` facade crate.
 
+pub mod codec;
 #[cfg(feature = "di")]
 mod di;
 pub mod error;
@@ -18,6 +19,7 @@ pub mod stream_codec;
 pub mod transport;
 pub mod transports;
 
+pub use codec::{CodecError, Decodes, Encodes};
 pub use error::{Error, Result};
 pub use frame::{CallId, CallResult, IncomingCall, PeerInfo};
 pub use protocol::{WireMessage, WireOutcome, WireRequest, WireResponse};

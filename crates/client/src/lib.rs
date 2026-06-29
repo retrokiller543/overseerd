@@ -37,6 +37,8 @@ use futures::Stream;
 use overseerd_transport::Error;
 use overseerd_transport::StatusCode;
 
+pub use overseerd_transport::{CodecError, Decodes, Encodes};
+
 // ---------------------------------------------------------------------------
 // Shared vocabulary: error currency and the streaming-input wrapper. These are
 // protocol-neutral, so they live in the contract crate.
@@ -228,23 +230,6 @@ where
 }
 
 // ---------------------------------------------------------------------------
-// Serialization seam. A protocol declares which message types it can carry by
-// implementing these — the framework never assumes serde (or any format).
-// ---------------------------------------------------------------------------
-
-/// A protocol can encode a `T` (a request, or a streamed request item) into a wire body.
-/// Implemented by a protocol for the types it supports — typically a blanket
-/// `impl<T: Serialize> Encodes<T>` (postcard/JSON) or `impl<T: Archive> Encodes<T>` (rkyv).
-pub trait Encodes<T>: Send + Sync {
-    fn encode(&self, value: T) -> Result<Vec<u8>, ClientError>;
-}
-
-/// A protocol can decode a `T` (a response, or a streamed response item) from a wire body.
-pub trait Decodes<T>: Send + Sync {
-    fn decode(&self, body: Vec<u8>) -> Result<T, ClientError>;
-}
-
-// ---------------------------------------------------------------------------
 // The capability contract. A protocol implements the traits it supports; the
 // serialization bounds are expressed through `Encodes`/`Decodes` on `Self`, so the
 // message types are whatever the protocol can carry — never a fixed serde bound.
@@ -268,8 +253,11 @@ pub trait Unary: Send + Sync {
 /// response stream is the protocol's own type — a contract that the result *is* a [`Stream`]
 /// of decoded items, not a box.
 pub trait ServerStreaming: Send + Sync {
-    /// The response stream this protocol yields for a server-streaming call.
-    type Responses<Resp, E>: Stream<Item = Result<Resp, ClientError<E>>> + Send;
+    /// The response stream this protocol yields for a server-streaming call. It exists only
+    /// when the protocol can decode `Resp` — the decoding is the protocol's, in the stream.
+    type Responses<Resp, E>: Stream<Item = Result<Resp, ClientError<E>>> + Send
+    where
+        Self: Decodes<Resp>;
 
     fn server_stream<Req, Resp, E>(
         &self,
@@ -300,8 +288,11 @@ pub trait ClientStreaming: Send + Sync {
 /// A bidirectional stream of requests and responses (HTTP/2, gRPC, custom RPC — *not*
 /// HTTP/1.1). The request stream is pumped concurrently with reading the response stream.
 pub trait BidiStreaming: Send + Sync {
-    /// The response stream this protocol yields for a bidirectional call.
-    type Responses<Resp, E>: Stream<Item = Result<Resp, ClientError<E>>> + Send;
+    /// The response stream this protocol yields for a bidirectional call. It exists only when
+    /// the protocol can decode `Resp`.
+    type Responses<Resp, E>: Stream<Item = Result<Resp, ClientError<E>>> + Send
+    where
+        Self: Decodes<Resp>;
 
     fn bidi_stream<Req, Resp, E, I>(
         &self,
