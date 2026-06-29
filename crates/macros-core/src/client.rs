@@ -17,7 +17,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, Type};
 
-use crate::paths::overseerd_client_path;
+use crate::paths::Paths;
 
 /// Which client capability a method needs — selects the `impl<C: Cap>` block it lands in, so
 /// the method exists only when the protocol `C` supports that call shape (an unsupported one is
@@ -57,6 +57,7 @@ impl ClientMethod {
     /// Assembles this method's argument list, return type, and body from its hint.
     fn build(
         &self,
+        paths: &Paths,
     ) -> (
         TokenStream,
         TokenStream,
@@ -64,12 +65,12 @@ impl ClientMethod {
         TokenStream,
         TokenStream,
     ) {
-        let client_error = overseerd_client_path("ClientError");
-        let stream_arg = overseerd_client_path("StreamArg");
-        let server_streaming = overseerd_client_path("ServerStreaming");
-        let bidi_streaming = overseerd_client_path("BidiStreaming");
+        let client_error = paths.client("ClientError");
+        let stream_arg = paths.client("StreamArg");
+        let server_streaming = paths.client("ServerStreaming");
+        let bidi_streaming = paths.client("BidiStreaming");
 
-        let raw = overseerd_client_path("Raw");
+        let raw = paths.client("Raw");
         let path = &self.path;
         let response = &self.response;
         let err = self.error_ty.clone().unwrap_or_else(|| quote!(#raw));
@@ -150,28 +151,23 @@ impl ClientMethod {
 /// `impl<C: Cap> {Service}Client<C>` blocks, each adding its `C: Encodes<Req> + Decodes<Resp>`
 /// message bounds. Emits nothing without the `client` feature or when no methods are
 /// contributed.
-pub fn generate_client(client_ident: &Ident, methods: &[ClientMethod]) -> TokenStream {
+pub fn generate_client(
+    client_ident: &Ident,
+    methods: &[ClientMethod],
+    paths: &Paths,
+) -> TokenStream {
     if !cfg!(feature = "client") || methods.is_empty() {
         return quote!();
     }
 
-    let encodes = overseerd_client_path("Encodes");
-    let decodes = overseerd_client_path("Decodes");
+    let encodes = paths.client("Encodes");
+    let decodes = paths.client("Decodes");
 
     let capabilities = [
-        (Capability::Unary, overseerd_client_path("Unary")),
-        (
-            Capability::ServerStreaming,
-            overseerd_client_path("ServerStreaming"),
-        ),
-        (
-            Capability::ClientStreaming,
-            overseerd_client_path("ClientStreaming"),
-        ),
-        (
-            Capability::BidiStreaming,
-            overseerd_client_path("BidiStreaming"),
-        ),
+        (Capability::Unary, paths.client("Unary")),
+        (Capability::ServerStreaming, paths.client("ServerStreaming")),
+        (Capability::ClientStreaming, paths.client("ClientStreaming")),
+        (Capability::BidiStreaming, paths.client("BidiStreaming")),
     ];
 
     let blocks = capabilities.iter().filter_map(|(capability, cap_trait)| {
@@ -180,7 +176,7 @@ pub fn generate_client(client_ident: &Ident, methods: &[ClientMethod]) -> TokenS
             .filter(|m| m.capability == *capability)
             .map(|m| {
                 let ident = &m.ident;
-                let (encode_ty, decode_ty, args, ret, body) = m.build();
+                let (encode_ty, decode_ty, args, ret, body) = m.build(paths);
 
                 quote! {
                     pub async fn #ident(#args) -> #ret

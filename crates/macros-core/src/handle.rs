@@ -10,7 +10,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
 
-use crate::paths::overseerd_path;
+use crate::paths::Paths;
 
 /// The pieces a `Component` impl needs for its handle: the associated-type and
 /// `into_handle` body to splice into the impl, plus an optional standalone
@@ -20,9 +20,9 @@ pub struct HandleImpl {
     pub injectable: TokenStream,
 }
 
-pub fn handle_impl(self_ident: &Ident, by_value: bool) -> HandleImpl {
+pub fn handle_impl(self_ident: &Ident, by_value: bool, paths: &Paths) -> HandleImpl {
     if by_value {
-        let injectable = overseerd_path("Injectable");
+        let injectable = paths.core("Injectable");
 
         HandleImpl {
             items: quote! {

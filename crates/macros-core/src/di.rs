@@ -13,7 +13,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
 
-use crate::paths::overseerd_path;
+use crate::paths::Paths;
 
 /// Whether compile-time DI checking is enabled for this build.
 pub fn enabled() -> bool {
@@ -22,13 +22,13 @@ pub fn enabled() -> bool {
 
 /// `impl Provide<Self> for Wiring {}`, registering a component as a provider of
 /// its own concrete type. Empty unless `di-check` is on.
-pub fn provide_impl(self_ident: &Ident) -> TokenStream {
+pub fn provide_impl(self_ident: &Ident, paths: &Paths) -> TokenStream {
     if !enabled() {
         return quote!();
     }
 
-    let provide = overseerd_path("Provide");
-    let wiring = overseerd_path("Wiring");
+    let provide = paths.core("Provide");
+    let wiring = paths.core("Wiring");
 
     quote! {
         impl #provide<#self_ident> for #wiring {}
@@ -39,14 +39,14 @@ pub fn provide_impl(self_ident: &Ident) -> TokenStream {
 /// all of `T`'s single dependencies (`targets`, concrete and trait-object) are
 /// provided, checked only where `app!` demands `T: Wired`. A type with no
 /// dependencies is unconditionally `Wired`. Empty unless `di-check` is on.
-pub fn wired_impl(self_ident: &Ident, targets: &[TokenStream]) -> TokenStream {
+pub fn wired_impl(self_ident: &Ident, targets: &[TokenStream], paths: &Paths) -> TokenStream {
     if !enabled() {
         return quote!();
     }
 
-    let wired = overseerd_path("Wired");
-    let provide = overseerd_path("Provide");
-    let wiring = overseerd_path("Wiring");
+    let wired = paths.core("Wired");
+    let provide = paths.core("Provide");
+    let wiring = paths.core("Wiring");
 
     if targets.is_empty() {
         quote! {
@@ -68,13 +68,13 @@ pub fn wired_impl(self_ident: &Ident, targets: &[TokenStream]) -> TokenStream {
 /// type-checks. Living on the trait (not each provider) means it is coherent no
 /// matter how many components `provide` it — provider *existence* is checked at
 /// runtime and by the source analyzer. Empty unless `di-check` is on.
-pub fn injectable_impl(trait_ident: &Ident) -> TokenStream {
+pub fn injectable_impl(trait_ident: &Ident, paths: &Paths) -> TokenStream {
     if !enabled() {
         return quote!();
     }
 
-    let provide = overseerd_path("Provide");
-    let wiring = overseerd_path("Wiring");
+    let provide = paths.core("Provide");
+    let wiring = paths.core("Wiring");
 
     quote! {
         impl #provide<dyn #trait_ident> for #wiring {}
@@ -85,13 +85,13 @@ pub fn injectable_impl(trait_ident: &Ident) -> TokenStream {
 /// `Wiring: Provide<T1> + Provide<T2> + ..`. Each `target` is a `Provide` type
 /// argument (e.g. `<Arc<T> as Injectable>::Target`). Empty unless `di-check` is
 /// on or there are no targets.
-pub fn assert(targets: &[TokenStream]) -> TokenStream {
+pub fn assert(targets: &[TokenStream], paths: &Paths) -> TokenStream {
     if !enabled() || targets.is_empty() {
         return quote!();
     }
 
-    let provide = overseerd_path("Provide");
-    let wiring = overseerd_path("Wiring");
+    let provide = paths.core("Provide");
+    let wiring = paths.core("Wiring");
 
     quote! {
         const _: () = {

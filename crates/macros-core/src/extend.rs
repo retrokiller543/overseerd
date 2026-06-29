@@ -30,6 +30,7 @@ use syn::parse::ParseStream;
 use syn::{Ident, ImplItemFn, Token};
 
 use crate::client::ClientMethod;
+use crate::paths::Paths;
 
 /// Phase 1 — parse the macro-invocation keyed args, a state machine over `key = value` (or
 /// bare-flag) entries. The driving arg type reads each key ident, tries its own common keys,
@@ -55,11 +56,12 @@ pub trait ParseKeyed: Default + ToTokens {
 }
 
 /// Phase 2 (optional) — a first pass over the whole annotated item `T` (an `ItemImpl`, or a
-/// struct/enum `DeriveInput`), to capture context the later phases and [`Expand`] need (the
-/// type ident, its name, generics, …) before per-method parsing.
+/// struct/enum `DeriveInput`), to capture context the later phases and emission need (the type
+/// ident, its name, generics, the resolved crate [`Paths`], …) before per-method parsing. The
+/// resolved `paths` are handed in here so an extension can store them for its `ToTokens`.
 pub trait ParseItem<T>: Default {
-    fn parse_item(&mut self, item: &T) -> syn::Result<()> {
-        let _ = item;
+    fn parse_item(&mut self, item: &T, paths: &Paths) -> syn::Result<()> {
+        let _ = (item, paths);
 
         Ok(())
     }

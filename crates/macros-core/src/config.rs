@@ -26,13 +26,25 @@ use syn::{
 };
 
 use crate::case::RenameRule;
-use crate::paths::overseerd_path;
+use crate::paths::Paths;
 
 /// Arguments of the `#[config(...)]` attribute on a config type.
 #[derive(Default)]
 pub struct ConfigArgs {
     name: Option<LitStr>,
     path: Option<LitStr>,
+    /// Override for the core `overseerd` facade root (`overseerd = ::path`).
+    overseerd: Option<syn::Path>,
+    /// Override for the plugin own-types root (`crate = ::path`).
+    krate: Option<syn::Path>,
+}
+
+impl ConfigArgs {
+    /// Resolves the crate [`Paths`] for this invocation: the macro's `default` roots with any
+    /// `overseerd =` / `crate =` overrides applied.
+    pub fn paths(&self, default: Paths) -> Paths {
+        default.resolve(self.overseerd.clone(), self.krate.clone())
+    }
 }
 
 impl Parse for ConfigArgs {
@@ -41,15 +53,24 @@ impl Parse for ConfigArgs {
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
-            input.parse::<Token![=]>()?;
 
             match key.to_string().as_str() {
-                "name" => args.name = Some(input.parse()?),
-                "path" => args.path = Some(input.parse()?),
+                "name" => {
+                    input.parse::<Token![=]>()?;
+                    args.name = Some(input.parse()?);
+                }
+                "path" => {
+                    input.parse::<Token![=]>()?;
+                    args.path = Some(input.parse()?);
+                }
+                "overseerd" => args.overseerd = Some(crate::attr::parse_path_override(input)?),
+                "crate" => args.krate = Some(crate::attr::parse_path_override(input)?),
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
-                        format!("unknown argument `{other}`, expected `name` or `path`"),
+                        format!(
+                            "unknown argument `{other}`, expected `name`, `path`, `overseerd`, or `crate`"
+                        ),
                     ));
                 }
             }
@@ -63,24 +84,24 @@ impl Parse for ConfigArgs {
     }
 }
 
-pub fn expand(args: ConfigArgs, mut item: DeriveInput) -> syn::Result<TokenStream> {
+pub fn expand(args: ConfigArgs, mut item: DeriveInput, paths: &Paths) -> syn::Result<TokenStream> {
     let ident = item.ident.clone();
 
     let name = args
         .name
         .unwrap_or_else(|| LitStr::new(&ident.to_string(), ident.span()));
-    let config_properties = overseerd_path("ConfigProperties");
-    let config_binding_descriptor = overseerd_path("ConfigBindingDescriptor");
-    let config_bindings = overseerd_path("CONFIG_BINDINGS");
-    let descriptor = overseerd_path("Descriptor");
-    let distributed_slice = overseerd_path("linkme::distributed_slice");
-    let linkme_crate = overseerd_path("linkme");
-    let type_descriptor = overseerd_path("TypeDescriptor");
+    let config_properties = paths.core("ConfigProperties");
+    let config_binding_descriptor = paths.core("ConfigBindingDescriptor");
+    let config_bindings = paths.core("CONFIG_BINDINGS");
+    let descriptor = paths.core("Descriptor");
+    let distributed_slice = paths.core("linkme::distributed_slice");
+    let linkme_crate = paths.core("linkme");
+    let type_descriptor = paths.core("TypeDescriptor");
 
     // Collect (and strip) the field-level `#[default = ".."]` attributes, then build the
     // `const DEFAULTS`. Stripping is required so the sibling `#[derive(Deserialize)]`
     // does not see the unknown attribute.
-    let defaults_const = build_defaults(&mut item)?;
+    let defaults_const = build_defaults(&mut item, paths)?;
 
     // A baked-in path exposes the binding on the type as `Descriptor<ConfigBindingDescriptor>`
     // and auto-registers it into the `CONFIG_BINDINGS` slice (picked up by
@@ -130,8 +151,8 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput) -> syn::Result<TokenStrea
 /// from `&'static` slices — no runtime allocation. A struct yields `DefaultSpec::Fields`; an
 /// enum yields `DefaultSpec::Variants`, including only variants that have at least one
 /// defaulted field.
-fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
-    let default_spec = overseerd_path("DefaultSpec");
+fn build_defaults(item: &mut DeriveInput, paths: &Paths) -> syn::Result<TokenStream> {
+    let default_spec = paths.core("DefaultSpec");
 
     // serde's container-level rename rules: `rename_all` renames a struct's fields or an
     // enum's variant tags; `rename_all_fields` (enum only) renames fields inside variants.
@@ -139,7 +160,7 @@ fn build_defaults(item: &mut DeriveInput) -> syn::Result<TokenStream> {
     let container_rename_all_fields = serde_rename_all(&item.attrs, "rename_all_fields")?;
     // The enum's serde tagging, so the merge can synthesize the matching shape (unused for
     // structs).
-    let enum_tagging = enum_tag_tokens(&item.attrs)?;
+    let enum_tagging = enum_tag_tokens(&item.attrs, paths)?;
 
     match &mut item.data {
         Data::Struct(data) => {
@@ -318,8 +339,8 @@ fn serde_rename_all(attrs: &[Attribute], arg: &str) -> syn::Result<Option<Rename
 /// Builds the `EnumTag` literal describing the type's serde enum representation, so the merge
 /// can synthesize a default variant in the shape serde deserializes. Reads `#[serde(untagged)]`,
 /// `#[serde(tag = "..")]`, and `#[serde(tag = "..", content = "..")]`; otherwise external.
-fn enum_tag_tokens(attrs: &[Attribute]) -> syn::Result<TokenStream> {
-    let enum_tag = overseerd_path("EnumTag");
+fn enum_tag_tokens(attrs: &[Attribute], paths: &Paths) -> syn::Result<TokenStream> {
+    let enum_tag = paths.core("EnumTag");
 
     if serde_flag(attrs, "untagged")? {
         return Ok(quote! { #enum_tag::Untagged });

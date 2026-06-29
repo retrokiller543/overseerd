@@ -11,26 +11,27 @@ use quote::{ToTokens, format_ident, quote};
 use syn::{Ident, LitStr};
 
 use crate::extend::ParseKeyed;
-use crate::{attr::ComponentArgs, paths::overseerd_path};
+use crate::{attr::ComponentArgs, paths::Paths};
 
 /// Emits the provider registrations for `self_ident` given the parsed args.
 /// Empty when the component provides nothing.
 pub fn generate_providers<Ext: ParseKeyed>(
     self_ident: &Ident,
     args: &ComponentArgs<Ext>,
+    paths: &Paths,
 ) -> TokenStream {
     if args.provide.is_empty() {
         return quote!();
     }
 
     let self_name = LitStr::new(&self_ident.to_string(), self_ident.span());
-    let boxed_component = overseerd_path("BoxedComponent");
-    let distributed_slice = overseerd_path("linkme::distributed_slice");
-    let linkme_crate = overseerd_path("linkme");
-    let provider_descriptor = overseerd_path("ProviderDescriptor");
-    let providers_slice = overseerd_path("PROVIDERS");
-    let type_descriptor = overseerd_path("TypeDescriptor");
-    let live = overseerd_path("Live");
+    let boxed_component = paths.core("BoxedComponent");
+    let distributed_slice = paths.core("linkme::distributed_slice");
+    let linkme_crate = paths.core("linkme");
+    let provider_descriptor = paths.core("ProviderDescriptor");
+    let providers_slice = paths.core("PROVIDERS");
+    let type_descriptor = paths.core("TypeDescriptor");
+    let live = paths.core("Live");
 
     // Qualifier defaults to the component's id (explicit `id`, else lowercased
     // type name), overridable with `qualifier = ".."`.

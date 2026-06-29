@@ -517,6 +517,7 @@ dependencies = [
  "overseerd-di",
  "overseerd-dirs",
  "overseerd-hooks",
+ "overseerd-macros",
  "serde",
  "thiserror",
  "tokio",

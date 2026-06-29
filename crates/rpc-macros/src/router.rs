@@ -18,7 +18,7 @@ use syn::parse::ParseStream;
 use syn::{Ident, LitStr};
 
 use overseerd_macros_core::attr::ComponentArgs;
-use overseerd_macros_core::paths::{overseerd_daemon_path, overseerd_path};
+use overseerd_macros_core::paths::Paths;
 use overseerd_macros_core::{ComponentContext, ComponentExt, NoExt, ParseItem, ParseKeyed, eat_eq};
 
 /// The `#[service]` args: the base component args extended with the RPC [`Router`]. (The
@@ -40,12 +40,13 @@ pub struct Router<T: ComponentExt = NoExt> {
     inner: T,
 }
 
-/// The component identity `Router` keeps to emit the service surface.
+/// The component identity (and resolved crate paths) `Router` keeps to emit the service surface.
 struct RouterContext {
     ident: Ident,
     type_name: LitStr,
     id: LitStr,
     name: LitStr,
+    paths: Paths,
 }
 
 impl<T: ComponentExt> ParseKeyed for Router<T> {
@@ -76,7 +77,7 @@ impl<T: ComponentExt> ParseKeyed for Router<T> {
 }
 
 impl<T: ComponentExt> ParseItem<ComponentContext> for Router<T> {
-    fn parse_item(&mut self, cx: &ComponentContext) -> syn::Result<()> {
+    fn parse_item(&mut self, cx: &ComponentContext, paths: &Paths) -> syn::Result<()> {
         // A service is always a singleton; reject a non-singleton scope on the component.
         if let Some(scope) = &cx.scope
             && scope != "Singleton"
@@ -92,10 +93,11 @@ impl<T: ComponentExt> ParseItem<ComponentContext> for Router<T> {
             type_name: cx.type_name.clone(),
             id: cx.id.clone(),
             name: cx.name.clone(),
+            paths: paths.clone(),
         });
 
         // Forward to the nested extension, if it also wants the identity.
-        self.inner.parse_item(cx)
+        self.inner.parse_item(cx, paths)
     }
 }
 
@@ -118,6 +120,7 @@ impl<T: ComponentExt> ToTokens for Router<T> {
             type_name,
             id,
             name,
+            paths,
         } = cx;
         let version = match &self.version {
             Some(v) => quote!(::core::option::Option::Some(#v)),
@@ -132,15 +135,15 @@ impl<T: ComponentExt> ToTokens for Router<T> {
             .rpc_slice
             .clone()
             .unwrap_or_else(|| format_ident!("{}Rpcs", ident));
-        let descriptor_trait = overseerd_path("Descriptor");
-        let distributed_slice = overseerd_path("linkme::distributed_slice");
-        let linkme_crate = overseerd_path("linkme");
-        let rpc_group = overseerd_daemon_path("RpcGroup");
-        let service_component = overseerd_path("ServiceComponent");
-        let service_descriptor = overseerd_daemon_path("ServiceDescriptor");
-        let service_rpcs = overseerd_daemon_path("ServiceRpcs");
-        let services_slice = overseerd_daemon_path("SERVICES");
-        let type_descriptor = overseerd_path("TypeDescriptor");
+        let descriptor_trait = paths.core("Descriptor");
+        let distributed_slice = paths.core("linkme::distributed_slice");
+        let linkme_crate = paths.core("linkme");
+        let rpc_group = paths.plugin("RpcGroup");
+        let service_component = paths.core("ServiceComponent");
+        let service_descriptor = paths.plugin("ServiceDescriptor");
+        let service_rpcs = paths.plugin("ServiceRpcs");
+        let services_slice = paths.plugin("SERVICES");
+        let type_descriptor = paths.core("TypeDescriptor");
         let inner = &self.inner;
 
         out.extend(quote! {

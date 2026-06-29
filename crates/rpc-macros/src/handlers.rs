@@ -15,13 +15,11 @@ use syn::{
     Attribute, FnArg, Ident, ImplItemFn, ItemImpl, LitStr, Meta, ReturnType, Type, spanned::Spanned,
 };
 
+use overseerd_macros_core::attr;
 use overseerd_macros_core::client::{Capability, ClientMethod};
 use overseerd_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
 use overseerd_macros_core::methods::self_ty_ident;
-use overseerd_macros_core::{
-    attr,
-    paths::{overseerd_daemon_path, overseerd_path},
-};
+use overseerd_macros_core::paths::Paths;
 
 /// The RPC handlers extension. Accumulates the impl's `#[rpc]` wrappers and descriptors and the
 /// captured impl context, then emits the wrappers and the RPC group registration. The client
@@ -45,6 +43,7 @@ struct RpcContext {
     self_ty: Type,
     self_ident: Ident,
     self_name: LitStr,
+    paths: Paths,
 }
 
 impl ParseKeyed for Rpcs {
@@ -74,7 +73,7 @@ impl ParseKeyed for Rpcs {
 }
 
 impl ParseItem<ItemImpl> for Rpcs {
-    fn parse_item(&mut self, item: &ItemImpl) -> syn::Result<()> {
+    fn parse_item(&mut self, item: &ItemImpl, paths: &Paths) -> syn::Result<()> {
         let self_ty = (*item.self_ty).clone();
         let self_ident = self_ty_ident(&self_ty)?;
         let self_name = LitStr::new(&self_ident.to_string(), self_ident.span());
@@ -83,6 +82,7 @@ impl ParseItem<ItemImpl> for Rpcs {
             self_ty,
             self_ident,
             self_name,
+            paths: paths.clone(),
         });
 
         Ok(())
@@ -110,6 +110,7 @@ impl ParseMethod for Rpcs {
             &cx.self_name,
             method,
             stream_flag,
+            &cx.paths,
         )?;
 
         self.wrappers.push(wrapper);
@@ -134,18 +135,19 @@ impl ToTokens for Rpcs {
             return;
         }
 
+        let paths = &cx.paths;
         let count = self.descriptors.len();
         let descriptors = &self.descriptors;
         let wrappers = &self.wrappers;
-        let distributed_slice = overseerd_path("linkme::distributed_slice");
-        let linkme_crate = overseerd_path("linkme");
-        let rpc_descriptor = overseerd_daemon_path("RpcDescriptor");
-        let rpc_group = overseerd_daemon_path("RpcGroup");
+        let distributed_slice = paths.core("linkme::distributed_slice");
+        let linkme_crate = paths.core("linkme");
+        let rpc_descriptor = paths.plugin("RpcDescriptor");
+        let rpc_group = paths.plugin("RpcGroup");
         let rpcs_slice = self
             .rpc_slice
             .clone()
             .unwrap_or_else(|| format_ident!("{}Rpcs", cx.self_ident));
-        let type_descriptor = overseerd_path("TypeDescriptor");
+        let type_descriptor = paths.core("TypeDescriptor");
         let self_ty = &cx.self_ty;
         let self_name = &cx.self_name;
 
@@ -231,6 +233,7 @@ fn expand_method(
     self_name: &LitStr,
     method: &ImplItemFn,
     stream_flag: bool,
+    paths: &Paths,
 ) -> syn::Result<(TokenStream, TokenStream, ClientMethod)> {
     if method.sig.asyncness.is_none() {
         return Err(syn::Error::new_spanned(
@@ -265,8 +268,8 @@ fn expand_method(
         .collect();
 
     let generics = &method.sig.generics;
-    let streaming = overseerd_daemon_path("Streaming");
-    let request_stream = overseerd_daemon_path("RequestStream");
+    let streaming = paths.plugin("Streaming");
+    let request_stream = paths.plugin("RequestStream");
 
     // Resolve each parameter into the concrete extractor type the dispatch
     // closure declares (so it always flows through `FromContext`), and detect the
@@ -359,7 +362,7 @@ fn expand_method(
         // A concrete return the macro cannot introspect: serialize each item as-is,
         // and recover the wire item type by projecting through the `Stream` trait so
         // the client stays well-typed (`<ReturnType as Stream>::Item`).
-        let stream_trait = overseerd_daemon_path("__Stream");
+        let stream_trait = paths.plugin("__Stream");
         let item = return_ty.map(|ty| syn::parse_quote!(<#ty as #stream_trait>::Item));
 
         (true, OutputWrap::Items, item, None)
@@ -392,17 +395,17 @@ fn expand_method(
     // `E: ResponseError`); any other `Responder` return goes through `Handler`.
     // Both erase to the same `RpcHandler` fn pointer.
     let dispatch = if attr::returns_result(&method.sig.output) {
-        overseerd_daemon_path("dispatch_fallible")
+        paths.plugin("dispatch_fallible")
     } else {
-        overseerd_daemon_path("dispatch_with")
+        paths.plugin("dispatch_with")
     };
-    let error = overseerd_daemon_path("Error");
-    let operation_kind = overseerd_daemon_path("OperationKind");
-    let response_stream = overseerd_daemon_path("ResponseStream");
-    let rpc_call_context = overseerd_daemon_path("RpcCallContext");
-    let rpc_descriptor = overseerd_daemon_path("RpcDescriptor");
-    let type_descriptor = overseerd_path("TypeDescriptor");
-    let ret = handler_return_type();
+    let error = paths.plugin("Error");
+    let operation_kind = paths.plugin("OperationKind");
+    let response_stream = paths.plugin("ResponseStream");
+    let rpc_call_context = paths.plugin("RpcCallContext");
+    let rpc_descriptor = paths.plugin("RpcDescriptor");
+    let type_descriptor = paths.core("TypeDescriptor");
+    let ret = handler_return_type(paths);
 
     let wrap = |inner: TokenStream| match output_wrap {
         OutputWrap::None => inner,
@@ -472,6 +475,7 @@ fn expand_method(
         &param_types,
         &method.sig.output,
         &stream_types,
+        paths,
     );
 
     Ok((wrapper, descriptor, client))
@@ -488,6 +492,7 @@ fn client_method(
     param_types: &[&Type],
     output: &ReturnType,
     stream: &StreamTypes,
+    paths: &Paths,
 ) -> ClientMethod {
     let StreamTypes {
         streamed_input,
@@ -497,7 +502,7 @@ fn client_method(
         stream_err,
     } = stream;
     let (streamed_input, streamed_output) = (*streamed_input, *streamed_output);
-    let response_error = overseerd_daemon_path("ResponseError");
+    let response_error = paths.plugin("ResponseError");
 
     let payload_ty = param_types.iter().find_map(|ty| attr::payload_inner(ty));
     let (result_ok, result_err) = match attr::result_type_args(output) {
@@ -542,9 +547,9 @@ fn client_method(
 }
 
 /// The erased `RpcHandler` return type, repeated by both wrapper forms.
-fn handler_return_type() -> TokenStream {
-    let error_response = overseerd_daemon_path("ErrorResponse");
-    let rpc_outcome = overseerd_daemon_path("RpcOutcome");
+fn handler_return_type(paths: &Paths) -> TokenStream {
+    let error_response = paths.plugin("ErrorResponse");
+    let rpc_outcome = paths.plugin("RpcOutcome");
 
     quote! {
         ::core::pin::Pin<

@@ -11,7 +11,7 @@ use quote::{format_ident, quote};
 use syn::{FnArg, ImplItemFn, LitStr, Meta, Path, Type};
 
 use crate::attr;
-use crate::paths::overseerd_path;
+use crate::paths::Paths;
 
 /// One hook parameter: its (kind-input) type and optional `#[config("path")]`.
 struct HookParamInfo {
@@ -97,27 +97,29 @@ fn take_config_path(attrs: &mut Vec<syn::Attribute>) -> syn::Result<Option<LitSt
 
 /// Emits a hook's deps reporter, erased call, and `HookDescriptor` (appended to the type's
 /// `{Type}Hooks` slice). `index` disambiguates multiple hooks on one type.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_hook(
     self_ty: &Type,
     name: &LitStr,
     hooks_slice: &syn::Ident,
     info: &HookInfo,
     index: usize,
+    paths: &Paths,
 ) -> TokenStream {
     let any = quote!(::core::any);
-    let hook_kind = overseerd_path("HookKind");
-    let hook_param = overseerd_path("HookParam");
-    let hook_descriptor = overseerd_path("HookDescriptor");
-    let resolver_ctx = overseerd_path("ResolverCtx");
-    let resolver_ctx_ext = overseerd_path("ResolverCtxExt");
-    let component_source = overseerd_path("ComponentSource");
-    let component = overseerd_path("Component");
-    let dependency_descriptor = overseerd_path("DependencyDescriptor");
-    let type_descriptor = overseerd_path("TypeDescriptor");
-    let hook_error = overseerd_path("HookError");
-    let hook_result = overseerd_path("HookResult");
-    let distributed_slice = overseerd_path("linkme::distributed_slice");
-    let linkme_crate = overseerd_path("linkme");
+    let hook_kind = paths.core("HookKind");
+    let hook_param = paths.core("HookParam");
+    let hook_descriptor = paths.core("HookDescriptor");
+    let resolver_ctx = paths.core("ResolverCtx");
+    let resolver_ctx_ext = paths.core("ResolverCtxExt");
+    let component_source = paths.core("ComponentSource");
+    let component = paths.core("Component");
+    let dependency_descriptor = paths.core("DependencyDescriptor");
+    let type_descriptor = paths.core("TypeDescriptor");
+    let hook_error = paths.core("HookError");
+    let hook_result = paths.core("HookResult");
+    let distributed_slice = paths.core("linkme::distributed_slice");
+    let linkme_crate = paths.core("linkme");
 
     let kind = &info.kind;
     let method = &info.ident;

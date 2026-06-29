@@ -28,7 +28,7 @@ use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Expr, Ident, LitBool, LitStr, Token, Type, braced, bracketed};
 
-use crate::{di, paths::overseerd_path};
+use crate::{di, paths::Paths};
 
 /// Parsed `app! { .. }`.
 pub struct AppInput {
@@ -44,6 +44,10 @@ pub struct AppInput {
     middleware: Vec<Expr>,
     guards: Vec<Expr>,
     error_handler: Option<Expr>,
+    /// Override for the core `overseerd` facade root (`overseerd: ::path`).
+    overseerd: Option<syn::Path>,
+    /// Override for the plugin own-types root (`crate: ::path`).
+    krate: Option<syn::Path>,
 }
 
 /// How a manager is supplied in the `managers` block: a pre-built instance, or settings the
@@ -179,6 +183,8 @@ impl Parse for AppInput {
         let mut middleware = Vec::new();
         let mut guards = Vec::new();
         let mut error_handler = None;
+        let mut overseerd = None;
+        let mut krate = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
@@ -194,13 +200,15 @@ impl Parse for AppInput {
                 "middleware" => middleware = bracketed_list::<Expr>(input)?,
                 "guards" => guards = bracketed_list::<Expr>(input)?,
                 "error_handler" => error_handler = Some(input.parse()?),
+                "overseerd" => overseerd = Some(input.parse()?),
+                "crate" => krate = Some(input.parse()?),
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
                             "unknown `app!` key `{other}`, expected `name`, `protocol`, \
                              `services`, `components`, `configs`, `managers`, `middleware`, \
-                             `guards`, or `error_handler`"
+                             `guards`, `error_handler`, `overseerd`, or `crate`"
                         ),
                     ));
                 }
@@ -227,6 +235,8 @@ impl Parse for AppInput {
             middleware,
             guards,
             error_handler,
+            overseerd,
+            krate,
         })
     }
 }
@@ -302,21 +312,27 @@ pub fn expand(input: AppInput) -> TokenStream {
         middleware,
         guards,
         error_handler,
+        overseerd,
+        krate,
     } = input;
+
+    // `app!` is a core macro; its emitted items are all core (`App`, `ConfigManager`, …),
+    // resolved against the `overseerd` facade unless overridden per-invocation.
+    let paths = &Paths::overseerd().resolve(overseerd, krate);
 
     let config_tys = configs.iter().map(|entry| &entry.ty);
     let config_paths = configs.iter().map(|entry| &entry.path);
 
     // The protocol-agnostic core `App`, specialized to the chosen protocol plugin.
-    let app_ty = overseerd_path("App");
-    let config_manager_path = overseerd_path("ConfigManager");
-    let directories_path = overseerd_path("DirectoriesManager");
-    let config_dynamic = overseerd_path("config::Dynamic");
+    let app_ty = paths.core("App");
+    let config_manager_path = paths.core("ConfigManager");
+    let directories_path = paths.core("DirectoriesManager");
+    let config_dynamic = paths.core("config::Dynamic");
 
     // Under `di-check`, assert each listed service's whole graph is satisfied —
     // discharged here at the use site, where every `Provide` impl is visible.
     let assertion = if di::enabled() && !services.is_empty() {
-        let wired = overseerd_path("Wired");
+        let wired = paths.core("Wired");
 
         quote! {
             const _: () = {

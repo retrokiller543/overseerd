@@ -13,6 +13,7 @@ use syn::{
 };
 
 use crate::extend::{NoExt, ParseKeyed, unknown_key_error};
+use crate::paths::Paths;
 
 /// The common component-macro keys, for the "unknown argument" diagnostic (the extension's
 /// keys are merged in by [`unknown_key_error`]).
@@ -27,7 +28,17 @@ const COMPONENT_KEYS: &[&str] = &[
     "factory",
     "default_factory",
     "provide",
+    "overseerd",
+    "crate",
 ];
+
+/// Parses an `overseerd = <path>` / `crate = <path>` override value into a [`syn::Path`]. Shared
+/// by the component and impl-block macros so the crate-root override is spelled identically.
+pub(crate) fn parse_path_override(input: ParseStream) -> syn::Result<syn::Path> {
+    input.parse::<Token![=]>()?;
+
+    input.parse()
+}
 
 /// The base arguments of a component macro, generic over an extension `Ext` (the struct-side
 /// analogue of [`MethodArgs`](crate::methods::MethodArgs)). `ComponentArgs<NoExt>` is
@@ -61,8 +72,20 @@ pub struct ComponentArgs<Ext: ParseKeyed = NoExt> {
     pub factory: Option<syn::Path>,
     /// Suppresses the field-injection default factory (`default_factory = false`).
     pub no_default_factory: bool,
+    /// Override for the core `overseerd` facade root (`overseerd = ::path`).
+    pub overseerd: Option<syn::Path>,
+    /// Override for the plugin own-types root (`crate = ::path`).
+    pub krate: Option<syn::Path>,
     /// The macro extension (its own keyed args, item pass, and emission).
     pub ext: Ext,
+}
+
+impl<Ext: ParseKeyed> ComponentArgs<Ext> {
+    /// Resolves the crate [`Paths`] for this invocation: the macro's `default` roots with any
+    /// `overseerd =` / `crate =` overrides applied.
+    pub fn paths(&self, default: Paths) -> Paths {
+        default.resolve(self.overseerd.clone(), self.krate.clone())
+    }
 }
 
 impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
@@ -91,6 +114,8 @@ impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
                     let value: syn::LitBool = input.parse()?;
                     args.no_default_factory = !value.value;
                 }
+                "overseerd" => args.overseerd = Some(parse_path_override(input)?),
+                "crate" => args.krate = Some(parse_path_override(input)?),
                 "scope" => {
                     input.parse::<Token![=]>()?;
                     let value: Ident = input.parse()?;

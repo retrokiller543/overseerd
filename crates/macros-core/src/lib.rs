@@ -74,7 +74,9 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(e) => return e.into_compile_error(),
     };
 
-    run::<ItemStruct, _>(item, |item| component::expand(args, item))
+    let paths = args.paths(Paths::overseerd());
+
+    run::<ItemStruct, _>(item, |item| component::expand(args, item, &paths))
 }
 
 /// `#[config]` expansion entry point.
@@ -85,7 +87,9 @@ pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(e) => return e.into_compile_error(),
     };
 
-    run::<DeriveInput, _>(item, |item| config::expand(args, item))
+    let paths = args.paths(Paths::overseerd());
+
+    run::<DeriveInput, _>(item, |item| config::expand(args, item, &paths))
 }
 
 /// `#[methods]` expansion entry point — the base impl macro with no extension.
@@ -96,10 +100,14 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(e) => return e.into_compile_error(),
     };
 
-    run::<ItemImpl, _>(item, |item| methods::expand(args, item))
+    let paths = args.paths(Paths::overseerd());
+
+    run::<ItemImpl, _>(item, |item| methods::expand(args, item, &paths))
 }
 
 /// `#[injectable]` expansion entry point.
 pub fn injectable(item: TokenStream) -> TokenStream {
-    run::<ItemTrait, _>(item, |item| Ok(injectable::expand(item)))
+    let paths = Paths::overseerd();
+
+    run::<ItemTrait, _>(item, |item| Ok(injectable::expand(item, &paths)))
 }

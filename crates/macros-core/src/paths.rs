@@ -50,6 +50,15 @@ pub struct Paths {
     plugin: Path,
 }
 
+impl Default for Paths {
+    /// The core-macro default: both roots at the `overseerd` facade. Macro crates with a
+    /// different default (the RPC macros use [`overseerd_daemon`](Paths::overseerd_daemon))
+    /// construct explicitly.
+    fn default() -> Self {
+        Self::overseerd()
+    }
+}
+
 impl Paths {
     /// Roots with an explicit `core` facade path and `plugin` own-types path.
     pub fn new(core: Path, plugin: Path) -> Self {
@@ -86,6 +95,20 @@ impl Paths {
     /// Overrides the plugin (own-types) root — the `crate = ::my_plugin` argument.
     pub fn with_plugin(mut self, plugin: Path) -> Self {
         self.plugin = plugin;
+
+        self
+    }
+
+    /// Applies optional per-invocation overrides (the `overseerd = ..` / `crate = ..` macro
+    /// args) onto these defaults, leaving unset roots unchanged.
+    pub fn resolve(mut self, core: Option<Path>, plugin: Option<Path>) -> Self {
+        if let Some(core) = core {
+            self.core = core;
+        }
+
+        if let Some(plugin) = plugin {
+            self.plugin = plugin;
+        }
 
         self
     }

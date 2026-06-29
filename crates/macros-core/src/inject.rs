@@ -20,7 +20,7 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{Expr, ExprLit, Field, Fields, ItemStruct, Lit, LitStr, Meta, spanned::Spanned};
 
-use crate::{attr, paths::overseerd_path};
+use crate::{attr, paths::Paths};
 
 /// The per-type factory slice identifier, `{Type}Factories`. The `#[component]` /
 /// `#[service]` macro declares it; each `#[init]` / `factory = ..` appends to it.
@@ -32,11 +32,15 @@ pub fn factories_slice_ident(self_ident: &syn::Ident) -> syn::Ident {
 /// `ComponentFactories` impl returning it. Module-level (and `pub`) so a `#[methods]`
 /// / `#[handlers]` block in another module can append to it via `use`. Mirrors the
 /// `{Service}Rpcs` slice + `ServiceRpcs` impl.
-pub fn factories_infrastructure(self_ident: &syn::Ident, slice: &syn::Ident) -> TokenStream {
-    let component_factories = overseerd_path("ComponentFactories");
-    let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
-    let distributed_slice = overseerd_path("linkme::distributed_slice");
-    let linkme_crate = overseerd_path("linkme");
+pub fn factories_infrastructure(
+    self_ident: &syn::Ident,
+    slice: &syn::Ident,
+    paths: &Paths,
+) -> TokenStream {
+    let component_factories = paths.core("ComponentFactories");
+    let component_factory_descriptor = paths.core("ComponentFactoryDescriptor");
+    let distributed_slice = paths.core("linkme::distributed_slice");
+    let linkme_crate = paths.core("linkme");
 
     quote! {
         #[#distributed_slice]
@@ -61,11 +65,15 @@ pub fn hooks_slice_ident(self_ident: &syn::Ident) -> syn::Ident {
 /// Declares the module-level `{Type}Hooks` distributed slice and the `ComponentHooks`
 /// impl returning it. Mirrors [`factories_infrastructure`]; empty when the type has no
 /// `#[hook]` methods.
-pub fn hooks_infrastructure(self_ident: &syn::Ident, slice: &syn::Ident) -> TokenStream {
-    let component_hooks = overseerd_path("ComponentHooks");
-    let hook_descriptor = overseerd_path("HookDescriptor");
-    let distributed_slice = overseerd_path("linkme::distributed_slice");
-    let linkme_crate = overseerd_path("linkme");
+pub fn hooks_infrastructure(
+    self_ident: &syn::Ident,
+    slice: &syn::Ident,
+    paths: &Paths,
+) -> TokenStream {
+    let component_hooks = paths.core("ComponentHooks");
+    let hook_descriptor = paths.core("HookDescriptor");
+    let distributed_slice = paths.core("linkme::distributed_slice");
+    let linkme_crate = paths.core("linkme");
 
     quote! {
         #[#distributed_slice]
@@ -81,6 +89,7 @@ pub fn hooks_infrastructure(self_ident: &syn::Ident, slice: &syn::Ident) -> Toke
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn field_injection_component(
     item: &mut ItemStruct,
     id: &LitStr,
@@ -89,24 +98,25 @@ pub fn field_injection_component(
     scope_variant: &syn::Ident,
     factories_slice: &syn::Ident,
     emit_default_factory: bool,
+    paths: &Paths,
 ) -> TokenStream {
     let self_ident = item.ident.clone();
-    let boxed_component = overseerd_path("BoxedComponent");
-    let component_construction_context = overseerd_path("ComponentConstructionContext");
-    let component_descriptor = overseerd_path("ComponentDescriptor");
-    let component_factories = overseerd_path("ComponentFactories");
-    let component_hooks = overseerd_path("ComponentHooks");
-    let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
-    let scope_path = overseerd_path(&format!("scope::{scope_variant}")); // Should not be hardcoded to a overseerd path, should assume the item is in scope so users can use their own scopes
-    let components_slice = overseerd_path("COMPONENTS");
-    let dependency_descriptor = overseerd_path("DependencyDescriptor");
-    let component = overseerd_path("Component");
-    let injectable = overseerd_path("Injectable");
-    let distributed_slice = overseerd_path("linkme::distributed_slice");
-    let linkme_crate = overseerd_path("linkme");
-    let result = overseerd_path("DiResult");
-    let type_descriptor = overseerd_path("TypeDescriptor");
-    let descriptor_trait = overseerd_path("Descriptor");
+    let boxed_component = paths.core("BoxedComponent");
+    let component_construction_context = paths.core("ComponentConstructionContext");
+    let component_descriptor = paths.core("ComponentDescriptor");
+    let component_factories = paths.core("ComponentFactories");
+    let component_hooks = paths.core("ComponentHooks");
+    let component_factory_descriptor = paths.core("ComponentFactoryDescriptor");
+    let scope_path = paths.core(&format!("scope::{scope_variant}")); // Should not be hardcoded to a overseerd path, should assume the item is in scope so users can use their own scopes
+    let components_slice = paths.core("COMPONENTS");
+    let dependency_descriptor = paths.core("DependencyDescriptor");
+    let component = paths.core("Component");
+    let injectable = paths.core("Injectable");
+    let distributed_slice = paths.core("linkme::distributed_slice");
+    let linkme_crate = paths.core("linkme");
+    let result = paths.core("DiResult");
+    let type_descriptor = paths.core("TypeDescriptor");
+    let descriptor_trait = paths.core("Descriptor");
 
     let mut inits = Vec::new();
     let mut dep_descriptors = Vec::new();
@@ -119,7 +129,7 @@ pub fn field_injection_component(
             dependency,
             check,
             wired,
-        } = plan_field(field);
+        } = plan_field(field, paths);
 
         inits.push(quote!(#prefix #value));
 
@@ -168,12 +178,12 @@ pub fn field_injection_component(
         let di_assert = if defer_di_assert {
             quote!()
         } else {
-            crate::di::assert(&checks)
+            crate::di::assert(&checks, paths)
         };
 
         // The lazy `Wired` predicate — every single dep, incl. trait objects —
         // checked when `app!` demands `T: Wired`.
-        let wired = crate::di::wired_impl(&self_ident, &wired_targets);
+        let wired = crate::di::wired_impl(&self_ident, &wired_targets, paths);
 
         quote! {
             #di_assert
@@ -224,7 +234,7 @@ pub fn field_injection_component(
         // nothing. It is trivially `Wired` — it has no constructed dependencies.
         let _ = (&construct, &dep_descriptors, &checks, &wired_targets);
 
-        crate::di::wired_impl(&self_ident, &[])
+        crate::di::wired_impl(&self_ident, &[], paths)
     };
 
     quote! {
@@ -255,16 +265,20 @@ pub fn field_injection_component(
 /// async factory through the build-time `Factory` machinery (so the path's
 /// signature need not be visible — its deps come from its parameters' `FromContainer`
 /// impls). Overrides the field-injection default.
-pub fn explicit_factory(factory_path: &syn::Path, factories_slice: &syn::Ident) -> TokenStream {
-    let component_construction_context = overseerd_path("ComponentConstructionContext");
-    let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
-    let dependency_descriptor = overseerd_path("DependencyDescriptor");
-    let dispatch_factory = overseerd_path("dispatch_factory");
-    let factory_dependencies = overseerd_path("factory_dependencies");
-    let boxed_component = overseerd_path("BoxedComponent");
-    let distributed_slice = overseerd_path("linkme::distributed_slice");
-    let linkme_crate = overseerd_path("linkme");
-    let result = overseerd_path("DiResult");
+pub fn explicit_factory(
+    factory_path: &syn::Path,
+    factories_slice: &syn::Ident,
+    paths: &Paths,
+) -> TokenStream {
+    let component_construction_context = paths.core("ComponentConstructionContext");
+    let component_factory_descriptor = paths.core("ComponentFactoryDescriptor");
+    let dependency_descriptor = paths.core("DependencyDescriptor");
+    let dispatch_factory = paths.core("dispatch_factory");
+    let factory_dependencies = paths.core("factory_dependencies");
+    let boxed_component = paths.core("BoxedComponent");
+    let distributed_slice = paths.core("linkme::distributed_slice");
+    let linkme_crate = paths.core("linkme");
+    let result = paths.core("DiResult");
 
     quote! {
         fn __overseerd_explicit_deps() -> ::std::vec::Vec<#dependency_descriptor> {
@@ -312,7 +326,7 @@ struct FieldPlan {
 
 /// Classifies a field and, as a side effect, strips the `#[default]` marker so
 /// the emitted struct stays valid.
-fn plan_field(field: &mut Field) -> FieldPlan {
+fn plan_field(field: &mut Field, paths: &Paths) -> FieldPlan {
     let had_default = field.attrs.iter().any(|a| a.path().is_ident("default"));
     field.attrs.retain(|a| !a.path().is_ident("default"));
 
@@ -350,14 +364,14 @@ fn plan_field(field: &mut Field) -> FieldPlan {
     });
     field.attrs.retain(|a| !a.path().is_ident("config"));
 
-    let cardinality = overseerd_path("Cardinality");
-    let dynamic_ty = overseerd_path("Dynamic");
-    let error = overseerd_path("DiError");
-    let injectable = overseerd_path("Injectable");
-    let type_descriptor = overseerd_path("TypeDescriptor");
-    let dependency_descriptor = overseerd_path("DependencyDescriptor");
-    let config_store = overseerd_path("ConfigStore");
-    let resolver_ctx_ext = overseerd_path("ResolverCtxExt");
+    let cardinality = paths.core("Cardinality");
+    let dynamic_ty = paths.core("Dynamic");
+    let error = paths.core("DiError");
+    let injectable = paths.core("Injectable");
+    let type_descriptor = paths.core("TypeDescriptor");
+    let dependency_descriptor = paths.core("DependencyDescriptor");
+    let config_store = paths.core("ConfigStore");
+    let resolver_ctx_ext = paths.core("ResolverCtxExt");
 
     let dep = |handle: &syn::Type,
                kind: TokenStream,

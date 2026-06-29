@@ -12,9 +12,10 @@ use quote::quote;
 use syn::ItemTrait;
 
 use crate::di;
+use crate::paths::Paths;
 
-pub fn expand(item: ItemTrait) -> TokenStream {
-    let provide = di::injectable_impl(&item.ident);
+pub fn expand(item: ItemTrait, paths: &Paths) -> TokenStream {
+    let provide = di::injectable_impl(&item.ident, paths);
 
     quote! {
         #item

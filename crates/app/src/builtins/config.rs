@@ -6,18 +6,20 @@
 //! them explicitly, e.g. `AppBuilder::config::<ServerConfig>("server")` (or the
 //! `configs:` key of the `app!{}` macro), and injects them as
 //! [`Cfg<ServerConfig>`](overseerd_config::Cfg).
+//!
+//! They use `#[config(overseerd = ::overseerd_config)]`: this crate lives *below* the
+//! facade and cannot reference `::overseerd::*`, so the macro's `overseerd =` override
+//! roots the generated `ConfigProperties` impl directly at `overseerd-config`. (Without
+//! a `path`, the macro emits only that impl — no descriptor or `linkme` registration —
+//! so `overseerd-config`'s re-export of `ConfigProperties` is all the override needs.)
 
 use serde::Deserialize;
 
-use overseerd_config::ConfigProperties;
+use overseerd_macros::config;
 
 /// Network binding settings for a daemon's transport, bound from a config subtree
 /// and injected as [`Cfg<ServerConfig>`](overseerd_config::Cfg).
-///
-/// `ConfigProperties` is implemented by hand (not via the `#[config]` attribute)
-/// because the attribute emits facade-crate paths the implementation crate cannot
-/// reference, and because the builtin carries no `#[config(path = "..")]`
-/// auto-binding by design.
+#[config(overseerd = ::overseerd_config)]
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
     /// The host or IP address the daemon binds its listener to.
@@ -29,9 +31,7 @@ pub struct ServerConfig {
 
 /// Tracing/logging settings consumed by the `init_tracing` helper, bound from a
 /// config subtree and injected as [`Cfg<LoggingConfig>`](overseerd_config::Cfg).
-///
-/// `ConfigProperties` is implemented by hand for the same reasons as
-/// [`ServerConfig`].
+#[config(overseerd = ::overseerd_config)]
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct LoggingConfig {
     /// An `EnvFilter`-style level directive (e.g. `"info"`, `"app=debug,info"`).
@@ -42,14 +42,6 @@ pub struct LoggingConfig {
 
     /// Whether to colorize the output with ANSI escape codes.
     pub ansi: bool,
-}
-
-impl ConfigProperties for ServerConfig {
-    const NAME: &'static str = "ServerConfig";
-}
-
-impl ConfigProperties for LoggingConfig {
-    const NAME: &'static str = "LoggingConfig";
 }
 
 impl Default for ServerConfig {

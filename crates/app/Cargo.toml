@@ -26,6 +26,7 @@ overseerd-di = { workspace = true }
 overseerd-hooks = { workspace = true }
 overseerd-config = { workspace = true }
 overseerd-dirs = { workspace = true }
+overseerd-macros = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }

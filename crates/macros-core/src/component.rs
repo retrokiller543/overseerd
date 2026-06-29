@@ -16,18 +16,20 @@ use syn::{ItemStruct, LitStr};
 
 use crate::attr::ComponentArgs;
 use crate::extend::{ComponentContext, ComponentExt};
-use crate::{di, handle, inject, paths::overseerd_path, provide};
+use crate::paths::Paths;
+use crate::{di, handle, inject, provide};
 
 pub fn expand<Ext: ComponentExt>(
     mut args: ComponentArgs<Ext>,
     mut item: ItemStruct,
+    paths: &Paths,
 ) -> syn::Result<TokenStream> {
     let self_ident = item.ident.clone();
-    let providers = provide::generate_providers(&self_ident, &args);
-    let handle = handle::handle_impl(&self_ident, args.by_value);
+    let providers = provide::generate_providers(&self_ident, &args, paths);
+    let handle = handle::handle_impl(&self_ident, args.by_value, paths);
     let handle_items = &handle.items;
     let injectable = &handle.injectable;
-    let provide_impl = di::provide_impl(&self_ident);
+    let provide_impl = di::provide_impl(&self_ident, paths);
 
     let id = args
         .id
@@ -47,9 +49,9 @@ pub fn expand<Ext: ComponentExt>(
         .factory_slice
         .clone()
         .unwrap_or_else(|| inject::factories_slice_ident(&self_ident));
-    let factories_infra = inject::factories_infrastructure(&self_ident, &factories_slice);
+    let factories_infra = inject::factories_infrastructure(&self_ident, &factories_slice, paths);
     let hooks_slice = inject::hooks_slice_ident(&self_ident);
-    let hooks_infra = inject::hooks_infrastructure(&self_ident, &hooks_slice);
+    let hooks_infra = inject::hooks_infrastructure(&self_ident, &hooks_slice, paths);
 
     // Hand the resolved identity to the extension before it emits, so its output (service
     // descriptor, route table, …) names the component consistently.
@@ -60,7 +62,7 @@ pub fn expand<Ext: ComponentExt>(
         name: name.clone(),
         scope: args.scope.clone(),
     };
-    args.ext.parse_item(&context)?;
+    args.ext.parse_item(&context, paths)?;
 
     // An explicit `factory = path` replaces the field-injection default; so does
     // `default_factory = false` (the manual case). Otherwise the default is emitted. The
@@ -68,7 +70,7 @@ pub fn expand<Ext: ComponentExt>(
     let explicit = args
         .factory
         .as_ref()
-        .map(|path| inject::explicit_factory(path, &factories_slice));
+        .map(|path| inject::explicit_factory(path, &factories_slice, paths));
     let emit_default = explicit.is_none() && !args.no_default_factory;
     let factory = inject::field_injection_component(
         &mut item,
@@ -78,8 +80,9 @@ pub fn expand<Ext: ComponentExt>(
         &scope_variant,
         &factories_slice,
         emit_default,
+        paths,
     );
-    let component = overseerd_path("Component");
+    let component = paths.core("Component");
 
     // The extension's appended surface (nothing for `#[component]`; the service header, RPC
     // slice, and client for `#[service]`).

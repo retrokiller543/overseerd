@@ -24,6 +24,7 @@ mod rpc;
 
 use overseerd_macros_core::expand_component;
 use overseerd_macros_core::methods::MethodArgs;
+use overseerd_macros_core::paths::Paths;
 use overseerd_macros_core::run;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
@@ -41,7 +42,11 @@ use syn::{ItemFn, ItemImpl, ItemStruct};
 pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = TokenStream2::from(attr);
     let out = match syn::parse2::<RouterComponent>(attr) {
-        Ok(args) => run::<ItemStruct, _>(item.into(), |item| expand_component(args, item)),
+        Ok(args) => {
+            let paths = args.paths(Paths::overseerd_daemon());
+
+            run::<ItemStruct, _>(item.into(), |item| expand_component(args, item, &paths))
+        }
 
         Err(e) => e.into_compile_error(),
     };
@@ -61,9 +66,13 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attr = TokenStream2::from(attr);
     let out = match syn::parse2::<MethodArgs<handlers::Rpcs>>(attr) {
-        Ok(args) => run::<ItemImpl, _>(item.into(), |item| {
-            overseerd_macros_core::methods::expand(args, item)
-        }),
+        Ok(args) => {
+            let paths = args.paths(Paths::overseerd_daemon());
+
+            run::<ItemImpl, _>(item.into(), |item| {
+                overseerd_macros_core::methods::expand(args, item, &paths)
+            })
+        }
 
         Err(e) => e.into_compile_error(),
     };

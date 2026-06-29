@@ -19,7 +19,7 @@ use crate::extend::{
 };
 use crate::hook::{self, HookInfo};
 use crate::inject::{factories_slice_ident, hooks_slice_ident};
-use crate::paths::overseerd_path;
+use crate::paths::Paths;
 
 /// The base arguments of an impl-block macro: the common `factory_slice` key plus the
 /// extension `Ext`, which contributes its own keyed args, per-method parsing, and emission.
@@ -27,7 +27,17 @@ use crate::paths::overseerd_path;
 #[derive(Default)]
 pub struct MethodArgs<Ext = NoExt> {
     factory_slice: Option<Ident>,
+    overseerd: Option<syn::Path>,
+    krate: Option<syn::Path>,
     ext: Ext,
+}
+
+impl<Ext: ParseKeyed> MethodArgs<Ext> {
+    /// Resolves the crate [`Paths`] for this invocation: the macro's `default` roots with any
+    /// `overseerd =` / `crate =` overrides applied.
+    pub fn paths(&self, default: Paths) -> Paths {
+        default.resolve(self.overseerd.clone(), self.krate.clone())
+    }
 }
 
 impl<Ext: ParseKeyed> Parse for MethodArgs<Ext> {
@@ -42,10 +52,15 @@ impl<Ext: ParseKeyed> Parse for MethodArgs<Ext> {
                     eat_eq(input)?;
                     args.factory_slice = Some(input.parse()?);
                 }
+                "overseerd" => args.overseerd = Some(crate::attr::parse_path_override(input)?),
+                "crate" => args.krate = Some(crate::attr::parse_path_override(input)?),
 
                 _ => {
                     if !args.ext.parse_keyed(&key, input)? {
-                        return Err(unknown_key_error::<Ext>(&key, &["factory_slice"]));
+                        return Err(unknown_key_error::<Ext>(
+                            &key,
+                            &["factory_slice", "overseerd", "crate"],
+                        ));
                     }
                 }
             }
@@ -60,7 +75,11 @@ impl<Ext: ParseKeyed> Parse for MethodArgs<Ext> {
 /// Expands an impl-block macro: runs the extension state machine over `item`, emitting the
 /// base output (the `#[init]` factory and `#[hook]` registrations) with the extension's
 /// contribution appended.
-pub fn expand<Ext>(mut args: MethodArgs<Ext>, mut item: ItemImpl) -> syn::Result<TokenStream>
+pub fn expand<Ext>(
+    mut args: MethodArgs<Ext>,
+    mut item: ItemImpl,
+    paths: &Paths,
+) -> syn::Result<TokenStream>
 where
     Ext: ParseItem<ItemImpl> + ParseMethod + ToTokens,
 {
@@ -69,8 +88,8 @@ where
     let self_name = LitStr::new(&self_ident.to_string(), self_ident.span());
 
     // Phase 2: a first pass over the whole impl, so the extension can capture context (the
-    // self type and name) before the per-method walk.
-    args.ext.parse_item(&item)?;
+    // self type, name, and resolved paths) before the per-method walk.
+    args.ext.parse_item(&item, paths)?;
 
     // Walk the methods: the base claims `#[hook]` and `#[init]` (stripping the markers);
     // everything else is offered to the extension's per-method pass, which may return a
@@ -120,20 +139,22 @@ where
         .unwrap_or_else(|| factories_slice_ident(&self_ident));
 
     let (marker, component) = match &init {
-        Some(info) => generate_init(&self_ty, &factories_slice, info),
+        Some(info) => generate_init(&self_ty, &factories_slice, info, paths),
         None => (quote!(), quote!()),
     };
 
     let hooks_slice = hooks_slice_ident(&self_ident);
-    let hook_tokens = hooks
-        .iter()
-        .enumerate()
-        .map(|(index, info)| hook::generate_hook(&self_ty, &self_name, &hooks_slice, info, index));
+    let hook_tokens = hooks.iter().enumerate().map(|(index, info)| {
+        hook::generate_hook(&self_ty, &self_name, &hooks_slice, info, index, paths)
+    });
 
     // The framework owns the generated client: emit the capability-partitioned methods from
     // the hints the extension contributed.
-    let client =
-        crate::client::generate_client(&crate::client::client_ident(&self_ident), &client_methods);
+    let client = crate::client::generate_client(
+        &crate::client::client_ident(&self_ident),
+        &client_methods,
+        paths,
+    );
 
     // Phase 4: the extension emits its own accumulated contribution, appended after the base.
     let ext = &args.ext;
@@ -197,17 +218,18 @@ fn generate_init(
     self_ty: &Type,
     factories_slice: &syn::Ident,
     info: &InitInfo,
+    paths: &Paths,
 ) -> (TokenStream, TokenStream) {
     let marked = &info.ident;
-    let component_construction_context = overseerd_path("ComponentConstructionContext");
-    let component_factory_descriptor = overseerd_path("ComponentFactoryDescriptor");
-    let dependency_descriptor = overseerd_path("DependencyDescriptor");
-    let dispatch_factory = overseerd_path("dispatch_factory");
-    let factory_dependencies = overseerd_path("factory_dependencies");
-    let boxed_component = overseerd_path("BoxedComponent");
-    let distributed_slice = overseerd_path("linkme::distributed_slice");
-    let linkme_crate = overseerd_path("linkme");
-    let result = overseerd_path("DiResult");
+    let component_construction_context = paths.core("ComponentConstructionContext");
+    let component_factory_descriptor = paths.core("ComponentFactoryDescriptor");
+    let dependency_descriptor = paths.core("DependencyDescriptor");
+    let dispatch_factory = paths.core("dispatch_factory");
+    let factory_dependencies = paths.core("factory_dependencies");
+    let boxed_component = paths.core("BoxedComponent");
+    let distributed_slice = paths.core("linkme::distributed_slice");
+    let linkme_crate = paths.core("linkme");
+    let result = paths.core("DiResult");
 
     // A fixed-name `init` associated fn, always `async`, forwards to the marked constructor —
     // normalizing a sync constructor to async (factories are async) and serving as the
