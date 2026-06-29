@@ -95,7 +95,7 @@ pub fn field_injection_component(
     id: &LitStr,
     name: &LitStr,
     defer_di_assert: bool,
-    scope_variant: &syn::Ident,
+    scope_path: &syn::Path,
     factories_slice: &syn::Ident,
     emit_default_factory: bool,
     paths: &Paths,
@@ -107,7 +107,6 @@ pub fn field_injection_component(
     let component_factories = paths.core("ComponentFactories");
     let component_hooks = paths.core("ComponentHooks");
     let component_factory_descriptor = paths.core("ComponentFactoryDescriptor");
-    let scope_path = paths.core(&format!("scope::{scope_variant}")); // Should not be hardcoded to a overseerd path, should assume the item is in scope so users can use their own scopes
     let components_slice = paths.core("COMPONENTS");
     let dependency_descriptor = paths.core("DependencyDescriptor");
     let component = paths.core("Component");

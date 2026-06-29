@@ -74,6 +74,8 @@ jobs:
           - overseerd-macros
           - overseerd-transport
           - overseerd-analyze
+          - overseerd-axum
+          - overseerd-axum-macros
     steps:
       - *checkout
       - *cache
@@ -110,3 +112,6 @@ jobs:
       - name: cargo build -p overseerd-example-daemon
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
         run: cargo build -p overseerd-example-daemon --locked
+      - name: cargo build -p overseerd-example-http
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo build -p overseerd-example-http --locked

@@ -3,6 +3,7 @@ members = [
     ".",
     "crates/*",
     "examples/daemon",
+    "examples/http",
 ]
 resolver = "3"
 
@@ -31,10 +32,17 @@ overseerd-macros = { path = "crates/macros", version = "0.6.0" }
 overseerd-macros-core = { path = "crates/macros-core", version = "0.6.0" }
 overseerd-rpc-macros = { path = "crates/rpc-macros", version = "0.6.0" }
 overseerd-transport = { path = "crates/transport", version = "0.6.0" }
+overseerd-axum = { path = "crates/axum", version = "0.6.0" }
+overseerd-axum-macros = { path = "crates/axum-macros", version = "0.6.0" }
 
 # Common dependencies
 arc-swap = "1.9.1"
 bitflags = "2"
+# The axum HTTP protocol. No TLS feature is enabled, keeping `openssl`/`rsa` out of the
+# dependency tree (project rule); terminate TLS at a reverse proxy instead.
+axum = "0.8"
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 notify = "6"
 thiserror = "2"
 toml = "1.1"
@@ -75,6 +83,10 @@ default = ["di-check", "daemon"]
 # daemon then lives in its own `overseerd-rpc` / `overseerd-rpc-macros` crates.
 daemon = ["dep:overseerd-rpc", "dep:overseerd-rpc-macros"]
 
+# Re-export the axum/HTTP protocol (`overseerd-axum` + its macros) through the facade's
+# `axum` module. Independent of `daemon`; enable both to host RPC and HTTP side by side.
+axum = ["dep:overseerd-axum", "dep:overseerd-axum-macros"]
+
 # Compile the generated client SDK (the RPC daemon's client). Opt in via
 # `overseerd = { features = ["client"] }`; no feature is needed in the user crate.
 client = ["daemon", "overseerd-rpc/client", "overseerd-rpc-macros/client"]
@@ -88,16 +100,18 @@ di-check = [
     "overseerd-app/di-check",
     "overseerd-rpc?/di-check",
     "overseerd-rpc-macros?/di-check",
+    "overseerd-axum?/di-check",
+    "overseerd-axum-macros?/di-check",
 ]
 
 # Enable YAML config sources (`application.yaml`) alongside the default TOML.
-yaml = ["overseerd-config/yaml", "overseerd-app/yaml", "overseerd-rpc?/yaml"]
+yaml = ["overseerd-config/yaml", "overseerd-app/yaml", "overseerd-rpc?/yaml", "overseerd-axum?/yaml"]
 
 # Provide the `init_tracing` helper, pulling in `tracing-subscriber`.
 tracing-subscriber = ["overseerd-app/tracing-subscriber"]
 
 # Watch config files and reload on change (`ConfigManager::watch_config`), via `notify`.
-watch = ["overseerd-config/watch", "overseerd-app/watch", "overseerd-rpc?/watch"]
+watch = ["overseerd-config/watch", "overseerd-app/watch", "overseerd-rpc?/watch", "overseerd-axum?/watch"]
 
 [dependencies]
 overseerd-core = { workspace = true }
@@ -108,9 +122,11 @@ overseerd-config = { workspace = true }
 overseerd-app = { workspace = true }
 overseerd-client = { workspace = true }
 overseerd-rpc = { workspace = true, optional = true }
+overseerd-axum = { workspace = true, optional = true }
 overseerd-transport = { workspace = true }
 overseerd-macros = { workspace = true }
 overseerd-rpc-macros = { workspace = true, optional = true }
+overseerd-axum-macros = { workspace = true, optional = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }

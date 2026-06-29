@@ -50,7 +50,8 @@ pub(crate) fn parse_path_override(input: ParseStream) -> syn::Result<syn::Path> 
 /// - `qualifier = ".."` — key for `HashMap<String, Arc<dyn Trait>>` injection;
 /// - `primary` — mark this the primary provider for every trait it provides;
 /// - `by_value` — store/inject this component as `Self` rather than `Arc<Self>`;
-/// - `scope = singleton | connection | request | transient` — the instance lifetime;
+/// - `scope = <ScopePath>` — the instance lifetime, named by a [`Scope`] marker type in scope
+///   (e.g. `Request` from a protocol's prelude, or a custom scope); omitted means singleton;
 /// - `factory_slice` / `factory` / `default_factory` — factory overrides.
 ///
 /// Any other key is delegated to the extension's [`parse_keyed`](ParseKeyed::parse_keyed)
@@ -63,9 +64,12 @@ pub struct ComponentArgs<Ext: ParseKeyed = NoExt> {
     pub qualifier: Option<LitStr>,
     pub primary: bool,
     pub by_value: bool,
-    /// The [`Scope`] marker-type ident (`Singleton`/`Connection`/`Request`/`Transient`) parsed
-    /// from `scope = ..`. `None` means the default (singleton).
-    pub scope: Option<Ident>,
+    /// The [`Scope`] marker-type **path** parsed from `scope = ..`, emitted as written so it
+    /// resolves in the caller's scope (a protocol's `Request`/`Connection` arrives through its
+    /// prelude; a custom scope works the same way). The lowercase keywords
+    /// `singleton`/`connection`/`request`/`transient` are accepted as aliases for the
+    /// like-named marker types. `None` means the default (singleton).
+    pub scope: Option<syn::Path>,
     /// Overrides the generated per-type factory slice name (`factory_slice = Ident`).
     pub factory_slice: Option<Ident>,
     /// An explicit async factory path (`factory = path::to::fn`).
@@ -118,25 +122,7 @@ impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
                 "crate" => args.krate = Some(parse_path_override(input)?),
                 "scope" => {
                     input.parse::<Token![=]>()?;
-                    let value: Ident = input.parse()?;
-
-                    let variant = match value.to_string().as_str() {
-                        "singleton" => "Singleton",
-                        "connection" => "Connection",
-                        "request" => "Request",
-                        "transient" => "Transient",
-                        other => {
-                            return Err(syn::Error::new(
-                                value.span(),
-                                format!(
-                                    "unknown scope `{other}`, expected `singleton`, \
-                                     `connection`, `request`, or `transient`"
-                                ),
-                            ));
-                        }
-                    };
-
-                    args.scope = Some(Ident::new(variant, value.span()));
+                    args.scope = Some(input.parse()?);
                 }
                 "provide" => {
                     input.parse::<Token![=]>()?;

@@ -1,0 +1,44 @@
+[package]
+name = "overseerd-axum"
+description = "The Overseerd axum/HTTP protocol plugin: controllers, route DI extractors, and the serve loop over the protocol-agnostic overseerd-app core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+# Compile the generated HTTP client (the controller client SDK).
+client = ["dep:overseerd-client", "dep:overseerd-transport", "dep:reqwest"]
+di-check = [
+    "overseerd-app/di-check",
+    "overseerd-di/di-check",
+    "overseerd-config/di-check",
+]
+yaml = ["overseerd-app/yaml", "overseerd-config/yaml"]
+watch = ["overseerd-app/watch", "overseerd-config/watch"]
+tracing-subscriber = ["overseerd-app/tracing-subscriber"]
+# WebSocket streaming (client/bidi). Scaffolded; not served yet.
+ws = ["axum/ws"]
+
+[dependencies]
+overseerd-app = { workspace = true }
+overseerd-core = { workspace = true }
+overseerd-di = { workspace = true }
+overseerd-config = { workspace = true }
+overseerd-client = { workspace = true, optional = true }
+overseerd-transport = { workspace = true, features = ["di"], optional = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+linkme = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+reqwest = { workspace = true, optional = true }

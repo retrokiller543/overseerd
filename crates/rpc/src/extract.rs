@@ -39,7 +39,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use overseerd_di::Injectable;
+use overseerd_di::FromContainer;
 
 use crate::{
     Error,
@@ -83,25 +83,27 @@ impl FromContext for Peer {
     }
 }
 
-/// Injects a component by its handle type `H` (`Arc<T>`, or a by-value
-/// `Injectable`) from the call's scope, resolving through the request → connection
-/// → singleton chain — and constructing a fresh instance when `H::Target` is a
-/// `Transient`. Fails if no such component is registered.
+/// Injects anything a constructor parameter can be — any [`FromContainer`] — from the call's
+/// scope: a component handle (`Arc<T>`, `Dep<T>`, a by-value injectable), every provider of a
+/// trait (`Vec<Arc<dyn T>>` / `HashMap<String, Arc<dyn T>>`), an optional component
+/// (`Option<Arc<T>>`), or a resolver-backed value such as `Cfg<T>`. Resolution walks the
+/// request → connection → singleton chain and constructs a fresh instance when the target is
+/// a `Transient`.
 ///
-/// This is how a handler reaches connection- and request-scoped components; the
-/// stateful service singleton itself still arrives through `&self`.
+/// This is how a handler reaches connection- and request-scoped components; the stateful
+/// service singleton itself still arrives through `&self`.
 pub struct Inject<H>(pub H);
 
 impl<H> FromContext for Inject<H>
 where
-    H: Injectable,
+    H: FromContainer,
 {
     async fn from_context(ctx: &RpcCallContext) -> crate::Result<Self> {
         ctx.scope()
-            .resolve::<H>()
+            .extract::<H>()
             .await
             .map(Inject)
-            .ok_or(Error::MissingComponent(std::any::type_name::<H>()))
+            .map_err(Error::from)
     }
 }
 

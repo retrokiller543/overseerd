@@ -91,7 +91,7 @@ impl Db {
     }
 }
 
-#[component(scope = request)]
+#[component(scope = overseerd::daemon::Request)]
 pub struct DbConnection {
     #[default]
     id: usize,

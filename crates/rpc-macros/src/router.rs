@@ -80,10 +80,13 @@ impl<T: ComponentExt> ParseItem<ComponentContext> for Router<T> {
     fn parse_item(&mut self, cx: &ComponentContext, paths: &Paths) -> syn::Result<()> {
         // A service is always a singleton; reject a non-singleton scope on the component.
         if let Some(scope) = &cx.scope
-            && scope != "Singleton"
+            && scope
+                .segments
+                .last()
+                .is_none_or(|seg| seg.ident != "Singleton")
         {
-            return Err(syn::Error::new(
-                scope.span(),
+            return Err(syn::Error::new_spanned(
+                scope,
                 "#[service] components are always singletons; `scope` is only valid on #[component]",
             ));
         }
@@ -104,7 +107,13 @@ impl<T: ComponentExt> ParseItem<ComponentContext> for Router<T> {
 impl<T: ComponentExt> ComponentExt for Router<T> {
     fn defers_factory(&self) -> bool {
         // A service's factory may be overridden by an `#[init]` in a `#[handlers]` impl, so the
-        // base defers its eager field-DI assertion (the service is `Wired`-checked via `app!`).
+        // base defers its eager field-DI assertion.
+        true
+    }
+
+    fn asserts_wired(&self) -> bool {
+        // A service is a router-class component: force its `Wired` graph check at its own
+        // definition, so a missing provider is caught there rather than at an `app!` listing.
         true
     }
 }

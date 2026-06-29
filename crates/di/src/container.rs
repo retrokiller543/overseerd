@@ -276,6 +276,27 @@ impl ScopeContainer {
         construct_transient::<H>(&self.registry, Some(Arc::clone(self))).await
     }
 
+    /// Extracts any [`FromContainer`](crate::FromContainer) value from this scope — the
+    /// request-time analogue of a factory parameter.
+    ///
+    /// Views the scope as a construction context parented at itself, so the *whole*
+    /// `FromContainer` set resolves the same way a constructor's parameters do: components
+    /// (`Arc<T>`, `Dep<T>`, by-value injectables, and `Vec`/`HashMap`/`Option` of providers)
+    /// through the scope chain, and resolver-backed values (`Cfg<T>`, and any future
+    /// resolver-sourced type) through the threaded resolvers. A protocol's `Inject` extractor
+    /// builds on this, so a handler can inject anything a constructor can — not just the
+    /// `Injectable` subset that [`resolve`](Self::resolve) covers.
+    pub async fn extract<H: crate::construct::FromContainer>(self: &Arc<Self>) -> crate::Result<H> {
+        let cx = ComponentConstructionContext::new(
+            &Transient,
+            Some(Arc::clone(self)),
+            Arc::clone(&self.registry),
+            self.resolvers.clone(),
+        );
+
+        H::from_container(&cx).await
+    }
+
     /// Single concrete-or-primary-provider lookup across this scope and its parents.
     pub(crate) fn resolve_built<H: Injectable>(&self) -> Option<H> {
         if let Some(handle) = self.store.resolve_local::<H>() {

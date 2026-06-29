@@ -232,6 +232,53 @@ pub mod daemon {
     }
 }
 
+/// The axum/HTTP protocol surface, namespaced so plugin items never collide with the facade
+/// root or with the RPC `daemon` module.
+///
+/// Build an HTTP app with `use overseerd::prelude::*;` (the core framework + `app!`) plus
+/// `use overseerd::axum::prelude::*;` (controllers, route attributes, the DI `Inject`
+/// extractor, and the common axum extractors). The controller macros
+/// (`#[controller]`/`#[handlers]`/`#[get]`/…) emit `::overseerd::axum::*` paths, so end users
+/// depend only on `overseerd` — never on `overseerd-axum` directly.
+#[cfg(feature = "axum")]
+pub mod axum {
+    pub use overseerd_axum::{
+        App, AppBuilder, Axum, AxumAppBuilder, AxumPlugin, CONTROLLERS, Controller,
+        ControllerDescriptor, Error, Inject, InjectRejection, Result, ScopeHandle,
+    };
+
+    /// The re-exported `axum` crate, so generated code and handlers reach axum's own types
+    /// (`Router`, `Json`, `extract::*`, `routing::*`, …) without a separate dependency.
+    pub use overseerd_axum::axum;
+
+    /// The axum protocol's component scope. A request-scoped component selects it with
+    /// `#[component(scope = overseerd::axum::scope::Request)]` (or `scope = Request` with the
+    /// prelude in scope).
+    pub mod scope {
+        pub use overseerd_axum::scope::Request;
+    }
+
+    /// The axum controller macros. Their generated code roots its own types at
+    /// `::overseerd::axum::*` and core types at `::overseerd::*`. (`app!`/`daemon!` are
+    /// protocol-agnostic core macros at the crate root, not here.)
+    pub use overseerd_axum_macros::{
+        controller, delete, get, handlers, head, options, patch, post, put, route,
+    };
+
+    /// Common imports for building an HTTP controller app: `use overseerd::axum::prelude::*;`
+    /// (pair with the crate-root `use overseerd::prelude::*;` for the core framework + `app!`).
+    pub mod prelude {
+        pub use super::axum::extract::{Json, Path, Query, State};
+        pub use super::axum::response::IntoResponse;
+        pub use super::axum::{Router, http};
+        pub use super::scope::Request;
+        pub use super::{
+            App, AxumAppBuilder, AxumPlugin, Controller, Inject, controller, delete, get, handlers,
+            head, options, patch, post, put, route,
+        };
+    }
+}
+
 /// The common imports for the **core framework**: `use overseerd::prelude::*;`. Pair with
 /// `use overseerd::daemon::prelude::*;` (or another plugin's prelude) for the protocol layer.
 pub mod prelude {
