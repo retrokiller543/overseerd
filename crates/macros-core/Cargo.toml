@@ -10,6 +10,14 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+# Emit the generated RPC client (the `cfg!(feature = "client")` gates in the service/handler
+# expansions). Forwarded from the macro crates' `client` feature.
+client = []
+# Emit the compile-time dependency-injection assertions. Forwarded from the macro crates'
+# `di-check` feature.
+di-check = []
+
 [dependencies]
 syn = { workspace = true }
 quote = { workspace = true }

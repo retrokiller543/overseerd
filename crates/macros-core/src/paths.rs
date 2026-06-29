@@ -17,6 +17,31 @@
 use quote::ToTokens;
 use syn::Path;
 
+pub(crate) const OVERSEERD_CRATE: &str = "overseerd";
+
+/// A path to a **core-framework** item, rooted at the always-present `overseerd` facade.
+/// Used for vocabulary, the DI engine, config, hooks, and transport — everything any plugin
+/// can rely on. (The fixed-root counterpart of [`Paths::core`]; the codegen will migrate to
+/// the parameterized [`Paths`] as the per-macro path overrides land.)
+pub(crate) fn overseerd_path(item: &str) -> Path {
+    syn::parse_str(&format!("::{OVERSEERD_CRATE}::{item}"))
+        .expect("valid overseerd facade item path")
+}
+
+/// A path to a **daemon (RPC) plugin** item, rooted at the facade's `daemon` module
+/// (`::overseerd::daemon::<item>`). The fixed-root counterpart of [`Paths::plugin`].
+pub(crate) fn overseerd_daemon_path(item: &str) -> Path {
+    syn::parse_str(&format!("::{OVERSEERD_CRATE}::daemon::{item}"))
+        .expect("valid overseerd daemon item path")
+}
+
+/// A path to a **protocol-agnostic client** item, rooted at the facade's `client` module
+/// (`::overseerd::client::<item>`). The fixed-root counterpart of [`Paths::client`].
+pub(crate) fn overseerd_client_path(item: &str) -> Path {
+    syn::parse_str(&format!("::{OVERSEERD_CRATE}::client::{item}"))
+        .expect("valid overseerd client item path")
+}
+
 /// The resolved crate roots a macro emits against. Construct with the macro crate's defaults
 /// (e.g. [`Paths::overseerd`] / [`Paths::overseerd_daemon`]) and override per-invocation.
 #[derive(Clone)]

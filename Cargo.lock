@@ -602,9 +602,8 @@ dependencies = [
 name = "overseerd-macros"
 version = "0.6.0"
 dependencies = [
+ "overseerd-macros-core",
  "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

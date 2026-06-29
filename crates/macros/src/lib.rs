@@ -45,34 +45,15 @@
 //!
 //! # Implementation
 //!
-//! Structure follows the dtolnay convention (see `thiserror-impl`): each
-//! `#[proc_macro_*]` entry point is thin, delegating to an `expand` function that
-//! returns `syn::Result`, with errors surfaced through
-//! `syn::Error::into_compile_error` rather than panics. Registration is done by
-//! emitting `#[linkme::distributed_slice]` elements into the per-kind descriptor
-//! slices that `AppBuilder::auto_discover` collects.
+//! Each `#[proc_macro_*]` entry point here is a thin shim: it forwards its token streams to
+//! the matching `expand` function in [`overseerd_macros_core`], the ordinary library that
+//! holds all the parsing and codegen (a proc-macro crate can only export proc-macros, so the
+//! reusable machinery lives there). Errors are surfaced as `compile_error!` by the core, not
+//! by panicking.
 
 extern crate proc_macro;
 
-mod app;
-mod attr;
-mod case;
-mod component;
-mod config;
-mod di;
-mod handle;
-mod handlers;
-mod hook;
-mod inject;
-mod injectable;
-mod methods;
-mod paths;
-mod provide;
-mod rpc;
-mod service;
-
 use proc_macro::TokenStream;
-use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 
 /// Declares a **system-constructed singleton component** on a struct.
 ///
@@ -145,12 +126,7 @@ use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// (an `#[init]` constructor for any component).
 #[proc_macro_attribute]
 pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as attr::ServiceArgs);
-    let item = parse_macro_input!(item as ItemStruct);
-
-    component::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    overseerd_macros_core::component(attr.into(), item.into()).into()
 }
 
 /// Implements the `ConfigProperties` trait for a config `struct` or `enum`, making it
@@ -184,12 +160,7 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as config::ConfigArgs);
-    let item = parse_macro_input!(item as syn::DeriveInput);
-
-    config::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    overseerd_macros_core::config(attr.into(), item.into()).into()
 }
 
 /// Declares a **service** on a struct: its identity, version, and a default
@@ -258,12 +229,7 @@ pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Emits a `compile_error!` if applied to anything but a struct.
 #[proc_macro_attribute]
 pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as attr::ServiceArgs);
-    let item = parse_macro_input!(item as ItemStruct);
-
-    service::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    overseerd_macros_core::service(attr.into(), item.into()).into()
 }
 
 /// Contributes the `#[rpc]` methods (and an optional `#[init]` constructor) of an
@@ -348,12 +314,7 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `Streaming<T>`, or `Payload<T>` alongside `Streaming<T>`).
 #[proc_macro_attribute]
 pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as attr::HandlersArgs);
-    let item = parse_macro_input!(item as ItemImpl);
-
-    handlers::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    overseerd_macros_core::handlers(attr.into(), item.into()).into()
 }
 
 /// Registers a component's lifecycle methods from an inherent `impl` block.
@@ -383,12 +344,7 @@ pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as attr::MethodsArgs);
-    let item = parse_macro_input!(item as ItemImpl);
-
-    methods::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    overseerd_macros_core::methods(attr.into(), item.into()).into()
 }
 
 /// Marks a method inside a `#[handlers]` impl as an RPC.
@@ -403,11 +359,7 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// arguments.
 #[proc_macro_attribute]
 pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as ItemFn);
-
-    rpc::expand_standalone(item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    overseerd_macros_core::rpc(item.into()).into()
 }
 
 /// Assembles an app and validates it from one declaration.
@@ -449,9 +401,7 @@ pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// app validates it — there is no separate list to maintain.
 #[proc_macro]
 pub fn app(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as app::AppInput);
-
-    app::expand(input).into()
+    overseerd_macros_core::app(input.into()).into()
 }
 
 /// Deprecated alias for [`app!`](macro@app). Renamed in 0.7.0; removed in 1.0.0.
@@ -461,9 +411,7 @@ pub fn app(input: TokenStream) -> TokenStream {
 )]
 #[proc_macro]
 pub fn daemon(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as app::AppInput);
-
-    app::expand(input).into()
+    overseerd_macros_core::app(input.into()).into()
 }
 
 /// Marks a trait as injectable as `Arc<dyn Trait>` (providers register with
@@ -475,7 +423,5 @@ pub fn daemon(input: TokenStream) -> TokenStream {
 /// passes through unchanged.
 #[proc_macro_attribute]
 pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as syn::ItemTrait);
-
-    injectable::expand(item).into()
+    overseerd_macros_core::injectable(item.into()).into()
 }
