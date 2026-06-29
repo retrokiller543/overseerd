@@ -32,10 +32,3 @@ pub use transports::{
 
 #[cfg(unix)]
 pub use transports::{UnixConnection, UnixResponder, UnixTransport};
-
-#[cfg(feature = "client")]
-pub use transports::{
-    BidiResponses, CallSink, CallSource, ClientCall, ClientConnection, ClientError,
-    ClientTransport, ErrorBody, Raw, Reply, ServerStream, StreamArg, StreamCall, StreamCallSink,
-    StreamClientTransport, StreamSource,
-};

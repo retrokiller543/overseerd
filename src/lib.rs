@@ -103,20 +103,9 @@ pub use overseerd_macros::{component, config, injectable, methods};
 #[doc(hidden)]
 pub use overseerd_di::linkme;
 
-/// Re-exported so generated client traits can be annotated `#[async_trait]`
-/// (for `dyn`-compatibility) without user crates depending on `async-trait`.
-#[cfg(feature = "client")]
-#[doc(hidden)]
-pub use async_trait;
-
-/// Re-exported so a `#[rpc(stream)]` handler returning a concrete (un-introspectable)
-/// stream type still yields a well-typed client: the generated code projects the wire item
-/// type as `<ReturnType as Stream>::Item` through this alias.
-#[doc(hidden)]
-pub use futures::Stream as __Stream;
-
 // ---------------------------------------------------------------------------
-// Transport: server endpoints, client wire protocol, custom-transport traits.
+// Transport substrate: server endpoints, wire types, custom-transport traits. The RPC
+// *client* lives under `daemon` (it is protocol-specific), not here.
 // ---------------------------------------------------------------------------
 pub use overseerd_transport::{
     CallId, CallResult, Connection, IncomingCall, MemoryCall, MemoryClient, MemoryConnection,
@@ -128,18 +117,8 @@ pub use overseerd_transport::{
 #[cfg(unix)]
 pub use overseerd_transport::UnixTransport;
 
-/// Client SDK runtime: the substrate-agnostic [`ClientTransport`] abstraction, the
-/// byte-stream implementation, and the typed [`ClientConnection`] the generated clients
-/// build on. Gated behind the `client` feature.
-#[cfg(feature = "client")]
-pub use overseerd_transport::{
-    BidiResponses, CallSink, CallSource, ClientCall, ClientConnection, ClientError,
-    ClientTransport, ErrorBody, Raw, Reply, ServerStream, StreamArg, StreamCall, StreamCallSink,
-    StreamClientTransport, StreamSource,
-};
-
-/// The full transport layer, including the framing codec and connection/responder types
-/// for building clients or custom transports.
+/// The full transport substrate, including the framing codec and connection/responder
+/// types for building custom transports.
 pub mod transport {
     pub use overseerd_transport::*;
 }
@@ -200,6 +179,26 @@ pub mod daemon {
 
     /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`.
     pub use overseerd_rpc::tower;
+
+    /// Re-exported so `#[rpc(stream)]` client codegen can project a concrete stream's item
+    /// type. Hidden; referenced only by generated code.
+    #[doc(hidden)]
+    pub use overseerd_rpc::__Stream;
+
+    /// The RPC client SDK: the substrate-agnostic [`ClientTransport`] abstraction, the
+    /// byte-stream implementation, and the typed [`ClientConnection`] generated clients
+    /// build on. Gated behind the `client` feature.
+    #[cfg(feature = "client")]
+    pub use overseerd_rpc::{
+        BidiResponses, CallSink, CallSource, ClientCall, ClientConnection, ClientError,
+        ClientTransport, ErrorBody, Raw, Reply, ServerStream, StreamArg, StreamCall,
+        StreamCallSink, StreamClientTransport, StreamSource,
+    };
+
+    /// Re-exported so generated client traits can be annotated `#[async_trait]`. Hidden.
+    #[cfg(feature = "client")]
+    #[doc(hidden)]
+    pub use overseerd_rpc::async_trait;
 
     /// Deprecated alias for [`App`]. Renamed in 0.7.0; removed in 1.0.0.
     #[deprecated(since = "0.7.0", note = "renamed to `App`; removed in 1.0.0")]

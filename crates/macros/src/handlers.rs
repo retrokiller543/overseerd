@@ -316,7 +316,7 @@ fn expand_method(
         // A concrete return the macro cannot introspect: serialize each item as-is,
         // and recover the wire item type by projecting through the `Stream` trait so
         // the client stays well-typed (`<ReturnType as Stream>::Item`).
-        let stream_trait = overseerd_path("__Stream");
+        let stream_trait = overseerd_daemon_path("__Stream");
         let item = return_ty.map(|ty| syn::parse_quote!(<#ty as #stream_trait>::Item));
 
         (true, OutputWrap::Items, item, None)
@@ -476,10 +476,10 @@ fn client_method(
         &format!("{}.{}", self_ident, method_ident),
         method_ident.span(),
     );
-    let client_error = overseerd_path("transport::ClientError");
-    let client_transport = overseerd_path("transport::ClientTransport");
+    let client_error = overseerd_daemon_path("ClientError");
+    let client_transport = overseerd_daemon_path("ClientTransport");
     let response_error = overseerd_daemon_path("ResponseError");
-    let raw = overseerd_path("transport::Raw");
+    let raw = overseerd_daemon_path("Raw");
 
     let payload_ty = param_types.iter().find_map(|ty| attr::payload_inner(ty));
     let (result_ok, result_err) = match attr::result_type_args(output) {
@@ -527,7 +527,7 @@ fn client_method(
         }
 
         (false, true) => {
-            let server_stream = overseerd_path("transport::ServerStream");
+            let server_stream = overseerd_daemon_path("ServerStream");
             let args = quote!(&self #req_arg);
             let ret = quote! {
                 ::core::result::Result<
@@ -544,8 +544,8 @@ fn client_method(
         // response. The inherent client accepts any `impl Stream`; the trait client
         // takes a boxed `StreamArg<T>` to stay object-safe.
         (true, false) => {
-            let stream_trait = overseerd_path("__Stream");
-            let stream_arg = overseerd_path("StreamArg");
+            let stream_trait = overseerd_daemon_path("__Stream");
+            let stream_arg = overseerd_daemon_path("StreamArg");
             let ret = quote!(::core::result::Result<#success_ty, #client_error<#err_ty>>);
             let body = quote! {
                 self.conn
@@ -565,9 +565,9 @@ fn client_method(
         // concurrently. The caller's input stream is their sink (push to a channel
         // for cause-and-effect); the returned stream is read independently.
         (true, true) => {
-            let stream_trait = overseerd_path("__Stream");
-            let stream_arg = overseerd_path("StreamArg");
-            let bidi_responses = overseerd_path("transport::BidiResponses");
+            let stream_trait = overseerd_daemon_path("__Stream");
+            let stream_arg = overseerd_daemon_path("StreamArg");
+            let bidi_responses = overseerd_daemon_path("BidiResponses");
             let ret = quote! {
                 ::core::result::Result<
                     #bidi_responses<<T as #client_transport>::Call, #resp_item_ty, #err_ty>,
@@ -612,8 +612,8 @@ fn generate_client(
     }
 
     let client_ident = format_ident!("{}Client", self_ident);
-    let client_connection = overseerd_path("transport::ClientConnection");
-    let client_transport = overseerd_path("transport::ClientTransport");
+    let client_connection = overseerd_daemon_path("ClientConnection");
+    let client_transport = overseerd_daemon_path("ClientTransport");
 
     let scaffold = quote! {
         pub struct #client_ident<T: #client_transport> {
@@ -656,7 +656,7 @@ fn generate_client(
         }
 
         Some(trait_ident) => {
-            let async_trait = overseerd_path("async_trait::async_trait");
+            let async_trait = overseerd_daemon_path("async_trait::async_trait");
             let signatures = methods.iter().map(|m| {
                 let ClientMethod {
                     ident,

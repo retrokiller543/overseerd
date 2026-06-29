@@ -73,15 +73,9 @@ default = ["di-check", "daemon"]
 # lives in its own `overseerd-rpc` crate.
 daemon = ["dep:overseerd-rpc"]
 
-# Compile the generated client SDK and the client-side transport. Opt in via
+# Compile the generated client SDK (the RPC daemon's client). Opt in via
 # `overseerd = { features = ["client"] }`; no feature is needed in the user crate.
-client = [
-    "daemon",
-    "overseerd-macros/client",
-    "overseerd-rpc?/client",
-    "overseerd-transport/client",
-    "dep:async-trait",
-]
+client = ["daemon", "overseerd-macros/client", "overseerd-rpc/client"]
 
 # Emit compile-time dependency-injection checks (a `Wiring: Provide<Dep>` bound
 # per concrete dependency). A missing provider becomes a `cargo check` error.
@@ -116,4 +110,3 @@ tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
-async-trait = { workspace = true, optional = true }

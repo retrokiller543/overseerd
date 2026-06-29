@@ -1,15 +1,26 @@
+//! The RPC protocol's client: the substrate-agnostic [`ClientTransport`] abstraction, the
+//! byte-stream implementation, and the typed [`ClientConnection`] the generated clients
+//! build on.
+//!
+//! These live in the RPC protocol crate (not `overseerd-transport`) because their
+//! vocabulary — `open(path, streaming_input, payload)` → [`Reply`], unary/stream semantics,
+//! postcard bodies — is RPC-specific. A different protocol defines its own client over the
+//! shared transport substrate (framing codec, `StatusCode`, OS streams).
+
+pub mod stream;
+
+pub use stream::{StreamCall, StreamCallSink, StreamClientTransport, StreamSource};
+
 use std::future::Future;
 use std::marker::PhantomData;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::error::Error;
-use crate::protocol::WireOutcome;
-use crate::status::StatusCode;
-use crate::stream_codec::{StreamDecode, StreamEncode};
-
-use super::client_stream::StreamClientTransport;
+use overseerd_transport::Error;
+use overseerd_transport::StatusCode;
+use overseerd_transport::WireOutcome;
+use overseerd_transport::{StreamDecode, StreamEncode};
 
 /// Marker for an error body whose payload type is not known statically (the
 /// generic call path). Typed clients substitute the method's declared error type.

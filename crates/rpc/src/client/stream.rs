@@ -7,14 +7,14 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
-use crate::error::Error;
-use crate::frame::CallId;
-use crate::protocol::{
+use overseerd_transport::CallId;
+use overseerd_transport::Error;
+use overseerd_transport::protocol::{
     WireMessage, WireRequest, WireResponse,
     codec::{read_message, write_message},
 };
 
-use super::client::{CallSink, CallSource, ClientCall, ClientError, ClientTransport, Reply};
+use super::{CallSink, CallSource, ClientCall, ClientError, ClientTransport, Reply};
 
 /// Outbound frames buffered per call before the read loop backpressures.
 const REPLY_BUFFER: usize = 32;

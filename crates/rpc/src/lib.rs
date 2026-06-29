@@ -6,6 +6,8 @@
 //! (`overseerd` is always present for the core macros + vocabulary), or reach it through
 //! the `overseerd` facade's `daemon` feature.
 
+#[cfg(feature = "client")]
+pub mod client;
 pub mod descriptors;
 pub mod error;
 pub mod extract;
@@ -55,3 +57,29 @@ pub use linkme;
 
 /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`.
 pub use tower;
+
+/// The RPC client SDK: the substrate-agnostic [`ClientTransport`](client::ClientTransport)
+/// abstraction, the byte-stream implementation, and the typed
+/// [`ClientConnection`](client::ClientConnection) the generated clients build on. Gated
+/// behind the `client` feature.
+#[cfg(feature = "client")]
+pub use client::{
+    BidiResponses, CallSink, CallSource, ClientCall, ClientConnection, ClientError,
+    ClientTransport, ErrorBody, Raw, Reply, ServerStream, StreamArg, StreamCall, StreamCallSink,
+    StreamClientTransport, StreamSource,
+};
+
+/// The transport substrate, re-exported for generated client code and custom transports.
+pub mod transport {
+    pub use overseerd_transport::*;
+}
+
+/// Re-exported so a `#[rpc(stream)]` handler returning a concrete (un-introspectable) stream
+/// type still yields a well-typed client.
+#[doc(hidden)]
+pub use futures::Stream as __Stream;
+
+/// Re-exported so generated client traits can be annotated `#[async_trait]`.
+#[cfg(feature = "client")]
+#[doc(hidden)]
+pub use async_trait;

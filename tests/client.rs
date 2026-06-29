@@ -14,12 +14,10 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf};
 
 use overseerd::daemon::{
-    App, ErrorResponse, Payload, ResponseError, ResponseStream, Streaming, handlers, service,
+    App, ClientConnection, ClientError, ErrorResponse, Payload, ResponseError, ResponseStream,
+    StreamClientTransport, Streaming, handlers, service,
 };
-use overseerd::{
-    ClientConnection, ClientError, StreamClientTransport,
-    transport::{PeerInfo, StreamConnection, Transport},
-};
+use overseerd::transport::{PeerInfo, StreamConnection, Transport};
 
 // ---------------------------------------------------------------------------
 // A service covering every return shape the client codegen must handle.
