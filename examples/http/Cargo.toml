@@ -14,4 +14,5 @@ tracing.workspace = true
 
 [dev-dependencies]
 tower = { workspace = true }
+futures = { workspace = true }
 http-body-util = "0.1"

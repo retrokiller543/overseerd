@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use http_body_util::BodyExt;
+use overseerd::axum::Ndjson;
 use overseerd::axum::axum::body::Body;
 use overseerd::axum::axum::extract::Path;
 use overseerd::axum::axum::http::{Request, StatusCode};
@@ -82,6 +83,17 @@ impl TestController {
     #[get("/ticket")]
     async fn ticket(&self, Inject(ticket): Inject<Arc<Ticket>>) -> Json<u64> {
         Json(ticket.id)
+    }
+
+    /// Server-streaming: returns a streamed NDJSON body. `streamed` marks it for the client; the
+    /// framing is the `Ndjson` wrapper the handler returns, not a macro-chosen format. The server
+    /// side is just an `IntoResponse`.
+    #[get("/count/{n}", streamed)]
+    async fn count(
+        &self,
+        Path(n): Path<u64>,
+    ) -> Ndjson<futures::stream::Iter<std::ops::Range<u64>>> {
+        Ndjson(futures::stream::iter(0..n))
     }
 }
 
@@ -162,4 +174,30 @@ async fn request_scoped_injection() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(body_string(response).await, "42");
+}
+
+#[tokio::test]
+async fn server_streaming_ndjson_body() {
+    let router = router().await;
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/api/count/3")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/x-ndjson")
+    );
+    // Three items, each its own JSON line.
+    assert_eq!(body_string(response).await, "0\n1\n2\n");
 }

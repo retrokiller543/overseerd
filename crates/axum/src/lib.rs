@@ -18,6 +18,7 @@ pub mod extract;
 pub mod plugin;
 pub mod protocol;
 pub mod scope;
+pub mod stream;
 
 pub use controller::{CONTROLLERS, Controller, ControllerDescriptor};
 pub use error::{Error, Result};
@@ -33,6 +34,7 @@ pub use overseerd_axum_macros::{
 };
 pub use plugin::{AxumAppBuilder, AxumPlugin};
 pub use protocol::Axum;
+pub use stream::{Ndjson, RawStream};
 
 /// The axum app type: an [`App`](overseerd_app::App) specialized to [`AxumPlugin`].
 /// `App::builder(name)` resolves through this alias without a turbofish.

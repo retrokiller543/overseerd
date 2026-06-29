@@ -16,14 +16,13 @@ default = []
 # but transport-agnostic. Pick a backend (`reqwest` / `hyper`) to actually issue requests.
 client = [
     "dep:overseerd-client",
-    "dep:overseerd-transport",
     "dep:http",
     "dep:serde_urlencoded",
     "overseerd-axum-macros/client",
 ]
 # Client backends — independent so a user picks one (or both). Each pulls in only its stack.
 reqwest = ["client", "dep:reqwest"]
-hyper = ["client", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes"]
+hyper = ["client", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 di-check = [
     "overseerd-app/di-check",
     "overseerd-di/di-check",
@@ -47,8 +46,11 @@ overseerd-core = { workspace = true }
 overseerd-di = { workspace = true }
 overseerd-config = { workspace = true }
 overseerd-client = { workspace = true, optional = true }
-overseerd-transport = { workspace = true, features = ["di"], optional = true }
+# Non-optional: `StreamFormat` (server-side streamed bodies) uses its `CodecError`, and the
+# client codecs build on its `Encodes`/`Decodes`. Lightweight and already in the tree.
+overseerd-transport = { workspace = true }
 axum = { workspace = true }
+bytes = { workspace = true }
 tower = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -63,4 +65,3 @@ reqwest = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
-bytes = { workspace = true, optional = true }

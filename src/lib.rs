@@ -245,7 +245,8 @@ pub mod daemon {
 pub mod axum {
     pub use overseerd_axum::{
         App, AppBuilder, Axum, AxumAppBuilder, AxumPlugin, CONTROLLERS, Controller,
-        ControllerDescriptor, Error, Inject, InjectRejection, Result, ScopeHandle,
+        ControllerDescriptor, Error, Inject, InjectRejection, Ndjson, RawStream, Result,
+        ScopeHandle,
     };
 
     /// The re-exported `axum` crate, so generated code and handlers reach axum's own types

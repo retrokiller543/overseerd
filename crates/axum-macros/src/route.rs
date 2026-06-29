@@ -21,19 +21,26 @@ pub const ROUTE_ATTRS: &[&str] = &[
 /// `MethodRouter::<verb>` chaining method).
 const VERBS: &[&str] = &["get", "post", "put", "delete", "patch", "head", "options"];
 
-/// A parsed route binding: the `axum::routing` verb to mount under, and the (relative) path.
+/// A parsed route binding: the `axum::routing` verb to mount under, the (relative) path, and
+/// whether the route's response is streamed.
 pub struct RouteAttr {
     /// The lowercase verb ident (`get`, `post`, …) naming the `axum::routing` constructor.
     pub verb: Ident,
 
     /// The route path, relative to the controller's base (e.g. `"/{id}"`, or `""` for the base).
     pub path: LitStr,
+
+    /// The `streamed` flag: the handler's return is a streamed response (a concrete stream type,
+    /// or a wrapper like `Sse<impl Stream>` / `Ndjson<impl Stream>`). It marks the route as
+    /// server-streaming for the client; the framing comes from the return type, never hard-wired.
+    pub streamed: bool,
 }
 
-/// The arguments of the raw `#[route(METHOD, "/path")]` attribute.
+/// The arguments of the raw `#[route(METHOD, "/path"[, streamed])]` attribute.
 struct RouteArgs {
     method: Ident,
     path: LitStr,
+    streamed: bool,
 }
 
 impl Parse for RouteArgs {
@@ -41,9 +48,65 @@ impl Parse for RouteArgs {
         let method: Ident = input.parse()?;
         input.parse::<Token![,]>()?;
         let path: LitStr = input.parse()?;
+        let streamed = parse_trailing_streamed(input)?;
 
-        Ok(RouteArgs { method, path })
+        Ok(RouteArgs {
+            method,
+            path,
+            streamed,
+        })
     }
+}
+
+/// The arguments of a verb shorthand (`#[get("/path"[, streamed])]`, `#[get(streamed)]`, `#[get]`).
+struct ShorthandArgs {
+    path: LitStr,
+    streamed: bool,
+}
+
+impl Parse for ShorthandArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        // A bare `streamed` (no path) mounts at the controller base and streams.
+        if input.peek(Ident) {
+            expect_streamed(input)?;
+
+            return Ok(ShorthandArgs {
+                path: LitStr::new("", input.span()),
+                streamed: true,
+            });
+        }
+
+        let path: LitStr = input.parse()?;
+        let streamed = parse_trailing_streamed(input)?;
+
+        Ok(ShorthandArgs { path, streamed })
+    }
+}
+
+/// Consumes an optional trailing `, streamed`.
+fn parse_trailing_streamed(input: ParseStream) -> syn::Result<bool> {
+    if input.is_empty() {
+        return Ok(false);
+    }
+
+    input.parse::<Token![,]>()?;
+    expect_streamed(input)?;
+
+    Ok(true)
+}
+
+/// Parses the `streamed` keyword, erroring on any other identifier.
+fn expect_streamed(input: ParseStream) -> syn::Result<()> {
+    let ident: Ident = input.parse()?;
+
+    if ident != "streamed" {
+        return Err(syn::Error::new_spanned(
+            &ident,
+            "unknown route flag; the only flag is `streamed`",
+        ));
+    }
+
+    Ok(())
 }
 
 /// Whether `ident` names a route attribute this crate claims.
@@ -53,8 +116,9 @@ pub fn is_route_attr(attr: &Attribute) -> bool {
         .is_some_and(|ident| ROUTE_ATTRS.iter().any(|name| ident == name))
 }
 
-/// Parses a route attribute into its verb and path. The shorthand verb attributes take an
-/// optional path literal (absent means the controller base); `route` takes `METHOD, "/path"`.
+/// Parses a route attribute into its verb, path, and `streamed` flag. The shorthand verb
+/// attributes take an optional path literal (absent means the controller base) and an optional
+/// `streamed` flag; `route` takes `METHOD, "/path"[, streamed]`.
 pub fn parse_route_attr(attr: &Attribute) -> syn::Result<RouteAttr> {
     let name = attr
         .path()
@@ -69,19 +133,26 @@ pub fn parse_route_attr(attr: &Attribute) -> syn::Result<RouteAttr> {
         return Ok(RouteAttr {
             verb,
             path: args.path,
+            streamed: args.streamed,
         });
     }
 
-    // A verb shorthand: the verb is the attribute name. The path is optional — `#[get]` with
-    // no arguments mounts at the controller base.
-    let path = match &attr.meta {
-        Meta::Path(_) => LitStr::new("", attr.path().span()),
-        _ => attr.parse_args::<LitStr>()?,
+    // A verb shorthand: the verb is the attribute name. `#[get]` with no arguments mounts at the
+    // controller base.
+    let (path, streamed) = match &attr.meta {
+        Meta::Path(_) => (LitStr::new("", attr.path().span()), false),
+
+        _ => {
+            let args: ShorthandArgs = attr.parse_args()?;
+
+            (args.path, args.streamed)
+        }
     };
 
     Ok(RouteAttr {
         verb: format_ident!("{}", name),
         path,
+        streamed,
     })
 }
 

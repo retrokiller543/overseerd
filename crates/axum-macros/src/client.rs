@@ -44,6 +44,12 @@ pub fn build_client_method(
     output: &ReturnType,
     paths: &Paths,
 ) -> Option<ClientMethod> {
+    // A `streamed` route is server-streaming; the unary client method does not apply (the
+    // streaming client is its own work). Skip it — the server route is unaffected.
+    if route.streamed {
+        return None;
+    }
+
     let mut path_ty: Option<Type> = None;
     let mut body: Option<(BodyKind, Type)> = None;
 

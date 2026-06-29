@@ -237,6 +237,9 @@ fn build_route(
         quote!()
     };
 
+    // The handler's return is an `IntoResponse` as-written — a unary body, or an explicit
+    // streamed wrapper (`Ndjson`/`RawStream`/`Sse`/…). The framing is whatever the handler
+    // returns; the macro never wraps or picks a format.
     let handler = if takes_self {
         let call = quote!(<#self_ty>::#method_ident(&__svc, #(#arg_idents),*)#dotawait);
 
