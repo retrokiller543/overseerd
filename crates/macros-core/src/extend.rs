@@ -29,6 +29,8 @@ use quote::ToTokens;
 use syn::parse::ParseStream;
 use syn::{Ident, ImplItemFn, Token};
 
+use crate::client::ClientMethod;
+
 /// Phase 1 — parse the macro-invocation keyed args, a state machine over `key = value` (or
 /// bare-flag) entries. The driving arg type reads each key ident, tries its own common keys,
 /// and otherwise calls [`parse_keyed`](Self::parse_keyed) with the already-read key.
@@ -66,11 +68,17 @@ pub trait ParseItem<T>: Default {
 /// Phase 3 (impl macros) — one pass per method. Inspect the method, update accumulated state,
 /// and strip the extension's own marker attribute if present (the base has already claimed and
 /// stripped `#[init]`/`#[hook]`).
+///
+/// Returns an optional [`ClientMethod`] hint as a byproduct: `Some(..)` makes the method part
+/// of the framework's generated client (the framework owns the client emission — see
+/// [`client`](crate::client)); `None` opts it out (a non-client method, or a method this
+/// extension doesn't claim). The protocol fills the hint from its own signature analysis; the
+/// framework assembles and emits the client.
 pub trait ParseMethod: Default {
-    fn parse_method(&mut self, method: &mut ImplItemFn) -> syn::Result<()> {
+    fn parse_method(&mut self, method: &mut ImplItemFn) -> syn::Result<Option<ClientMethod>> {
         let _ = method;
 
-        Ok(())
+        Ok(None)
     }
 }
 

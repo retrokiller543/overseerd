@@ -15,6 +15,7 @@
 //! [`overseerd-macros`]: https://docs.rs/overseerd-macros
 
 pub mod attr;
+pub mod client;
 pub mod di;
 pub mod extend;
 pub mod handle;
@@ -30,6 +31,7 @@ mod component;
 mod config;
 mod injectable;
 
+pub use client::{Capability, ClientMethod};
 pub use extend::{
     ComponentContext, ComponentExt, NoExt, ParseItem, ParseKeyed, ParseMethod, eat_comma, eat_eq,
     unknown_key_error,

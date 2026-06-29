@@ -15,7 +15,7 @@ proc-macro = true
 
 [features]
 # Emit the generated RPC client (the `cfg!(feature = "client")` gates in #[service]/#[handlers]).
-client = []
+client = ["overseerd-macros-core/client"]
 # Emit the compile-time dependency-injection assertions (forwarded to macros-core, where the
 # `di::enabled()` / field-injection assertions read the feature).
 di-check = ["overseerd-macros-core/di-check"]

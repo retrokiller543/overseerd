@@ -13,6 +13,7 @@ use quote::{ToTokens, format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, LitStr, ReturnType, Type};
 
+use crate::client::ClientMethod;
 use crate::extend::{
     NoExt, ParseItem, ParseKeyed, ParseMethod, eat_comma, eat_eq, unknown_key_error,
 };
@@ -72,9 +73,11 @@ where
     args.ext.parse_item(&item)?;
 
     // Walk the methods: the base claims `#[hook]` and `#[init]` (stripping the markers);
-    // everything else is offered to the extension's per-method pass.
+    // everything else is offered to the extension's per-method pass, which may return a
+    // client-method hint the framework will emit into the generated client.
     let mut init: Option<InitInfo> = None;
     let mut hooks: Vec<HookInfo> = Vec::new();
+    let mut client_methods: Vec<ClientMethod> = Vec::new();
 
     for impl_item in &mut item.items {
         let ImplItem::Fn(method) = impl_item else {
@@ -105,8 +108,11 @@ where
             continue;
         }
 
-        // Phase 3: the extension inspects (and may claim) the method.
-        args.ext.parse_method(method)?;
+        // Phase 3: the extension inspects (and may claim) the method, optionally returning a
+        // client-method hint as a byproduct.
+        if let Some(client) = args.ext.parse_method(method)? {
+            client_methods.push(client);
+        }
     }
 
     let factories_slice = args
@@ -124,7 +130,12 @@ where
         .enumerate()
         .map(|(index, info)| hook::generate_hook(&self_ty, &self_name, &hooks_slice, info, index));
 
-    // Phase 4: the extension emits its accumulated contribution, appended after the base.
+    // The framework owns the generated client: emit the capability-partitioned methods from
+    // the hints the extension contributed.
+    let client =
+        crate::client::generate_client(&crate::client::client_ident(&self_ident), &client_methods);
+
+    // Phase 4: the extension emits its own accumulated contribution, appended after the base.
     let ext = &args.ext;
 
     Ok(quote! {
@@ -137,6 +148,8 @@ where
 
             #(#hook_tokens)*
         };
+
+        #client
 
         #ext
     })
