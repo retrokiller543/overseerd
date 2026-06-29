@@ -234,8 +234,10 @@ fn assemble(
 
     ClientMethod {
         ident: method_ident.clone(),
-        // Unused by HTTP transports (the URI lives in the built request), but kept for logging.
-        path: format!("{} {}", route.verb, route.path.value()),
+        // Empty: the method and the full URI live in the `http::Request` envelope the
+        // `request_builder` constructs, so the capability's `path` arg carries nothing for HTTP
+        // (it exists for RPC's `"Service.method"` routing). The transport reads `request.uri()`.
+        path: String::new(),
         capability: Capability::Unary,
         request,
         encode_as,
