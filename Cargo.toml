@@ -25,6 +25,7 @@ overseerd-di = { path = "crates/di", version = "0.6.0" }
 overseerd-dirs = { path = "crates/dirs", version = "0.6.0" }
 overseerd-hooks = { path = "crates/hooks", version = "0.6.0" }
 overseerd-app = { path = "crates/app", version = "0.6.0" }
+overseerd-client = { path = "crates/client", version = "0.6.0" }
 overseerd-rpc = { path = "crates/rpc", version = "0.6.0" }
 overseerd-macros = { path = "crates/macros", version = "0.6.0" }
 overseerd-macros-core = { path = "crates/macros-core", version = "0.6.0" }
@@ -103,6 +104,7 @@ overseerd-hooks = { workspace = true }
 overseerd-dirs = { workspace = true }
 overseerd-config = { workspace = true }
 overseerd-app = { workspace = true }
+overseerd-client = { workspace = true }
 overseerd-rpc = { workspace = true, optional = true }
 overseerd-transport = { workspace = true }
 overseerd-macros = { workspace = true }

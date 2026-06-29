@@ -123,6 +123,15 @@ pub mod transport {
     pub use overseerd_transport::*;
 }
 
+/// The protocol-agnostic **client** core: the [`ProtocolTransport`](client::ProtocolTransport)
+/// abstraction and the typed [`Client`](client::Client) surface generated clients build on.
+/// Always available (like [`app`]-layer items); a protocol (the RPC `daemon`, …) supplies a
+/// `ProtocolTransport` impl. Generated client code roots here, so it is identical across
+/// protocols.
+pub mod client {
+    pub use overseerd_client::*;
+}
+
 /// Application directory kinds (`Config`, `Data`, `Cache`, `State`, `Runtime`, `Tmp`), the
 /// typed [`Dir`] wrapper, and the [`DirectoriesManager`]. Inject `Dir<dirs::Config>`.
 pub mod dirs {
@@ -185,14 +194,21 @@ pub mod daemon {
     #[doc(hidden)]
     pub use overseerd_rpc::__Stream;
 
-    /// The RPC client SDK: the substrate-agnostic [`ClientTransport`] abstraction, the
-    /// byte-stream implementation, and the typed [`ClientConnection`] generated clients
-    /// build on. Gated behind the `client` feature.
+    /// The RPC byte-stream transport — the daemon's [`ProtocolTransport`] impl plus its
+    /// connect helpers. The agnostic client surface lives at [`overseerd::client`](crate::client);
+    /// this is the RPC carry that plugs into it. Gated behind the `client` feature.
     #[cfg(feature = "client")]
-    pub use overseerd_rpc::{
-        BidiResponses, CallSink, CallSource, ClientCall, ClientConnection, ClientError,
-        ClientTransport, ErrorBody, Raw, Reply, ServerStream, StreamArg, StreamCall,
-        StreamCallSink, StreamClientTransport, StreamSource,
+    pub use overseerd_rpc::{StreamCall, StreamCallSink, StreamClientTransport, StreamSource, connect_tcp};
+
+    #[cfg(all(feature = "client", unix))]
+    pub use overseerd_rpc::connect_unix;
+
+    /// The agnostic client surface, re-exported here under the daemon's historical names so
+    /// existing imports keep working; prefer [`overseerd::client`](crate::client).
+    #[cfg(feature = "client")]
+    pub use crate::client::{
+        BidiResponses, CallSink, CallSource, Client as ClientConnection, ClientCall, ClientError,
+        ErrorBody, ProtocolTransport as ClientTransport, Raw, Reply, ServerStream, StreamArg,
     };
 
     /// Re-exported so generated client traits can be annotated `#[async_trait]`. Hidden.

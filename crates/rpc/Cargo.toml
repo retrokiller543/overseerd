@@ -12,7 +12,7 @@ categories.workspace = true
 
 [features]
 default = []
-client = ["dep:async-trait"]
+client = ["dep:async-trait", "dep:overseerd-client"]
 di-check = [
     "overseerd-app/di-check",
     "overseerd-di/di-check",
@@ -25,6 +25,7 @@ tracing-subscriber = ["overseerd-app/tracing-subscriber"]
 
 [dependencies]
 overseerd-app = { workspace = true }
+overseerd-client = { workspace = true, optional = true }
 overseerd-core = { workspace = true }
 overseerd-di = { workspace = true }
 overseerd-hooks = { workspace = true }

@@ -7,14 +7,15 @@ use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
+use overseerd_client::{
+    CallSink, CallSource, Client, ClientCall, ClientError, ProtocolTransport, Reply,
+};
 use overseerd_transport::CallId;
 use overseerd_transport::Error;
 use overseerd_transport::protocol::{
     WireMessage, WireRequest, WireResponse,
     codec::{read_message, write_message},
 };
-
-use super::{CallSink, CallSource, ClientCall, ClientError, ClientTransport, Reply};
 
 /// Outbound frames buffered per call before the read loop backpressures.
 const REPLY_BUFFER: usize = 32;
@@ -64,7 +65,7 @@ impl<W> Drop for StreamClientTransport<W> {
     }
 }
 
-impl<W> ClientTransport for StreamClientTransport<W>
+impl<W> ProtocolTransport for StreamClientTransport<W>
 where
     W: AsyncWrite + Unpin + Send + 'static,
 {
@@ -284,4 +285,32 @@ fn is_disconnect(e: &std::io::Error) -> bool {
             | std::io::ErrorKind::ConnectionAborted
             | std::io::ErrorKind::BrokenPipe
     )
+}
+
+/// Connects over TCP and wraps the split stream in a byte-stream [`ProtocolTransport`],
+/// returning a ready [`Client`]. The RPC counterpart of the agnostic
+/// [`Client::new`](overseerd_client::Client::new) over an arbitrary transport.
+pub async fn connect_tcp(
+    addr: impl tokio::net::ToSocketAddrs,
+) -> Result<Client<StreamClientTransport<tokio::net::tcp::OwnedWriteHalf>>, ClientError> {
+    let stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .map_err(|e| ClientError::Transport(Error::Io(e)))?;
+    let (read, write) = stream.into_split();
+
+    Ok(Client::new(StreamClientTransport::new(read, write)))
+}
+
+/// Connects over a Unix socket and wraps the split stream in a byte-stream
+/// [`ProtocolTransport`], returning a ready [`Client`].
+#[cfg(unix)]
+pub async fn connect_unix(
+    path: impl AsRef<std::path::Path>,
+) -> Result<Client<StreamClientTransport<tokio::net::unix::OwnedWriteHalf>>, ClientError> {
+    let stream = tokio::net::UnixStream::connect(path)
+        .await
+        .map_err(|e| ClientError::Transport(Error::Io(e)))?;
+    let (read, write) = stream.into_split();
+
+    Ok(Client::new(StreamClientTransport::new(read, write)))
 }

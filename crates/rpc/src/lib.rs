@@ -58,16 +58,15 @@ pub use linkme;
 /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`.
 pub use tower;
 
-/// The RPC client SDK: the substrate-agnostic [`ClientTransport`](client::ClientTransport)
-/// abstraction, the byte-stream implementation, and the typed
-/// [`ClientConnection`](client::ClientConnection) the generated clients build on. Gated
-/// behind the `client` feature.
+/// The RPC byte-stream [`ProtocolTransport`](overseerd_client::ProtocolTransport)
+/// implementation and its connect helpers. The agnostic client surface (`Client`,
+/// `ProtocolTransport`, …) lives in [`overseerd_client`]; this is the RPC carry that plugs
+/// into it. Gated behind the `client` feature.
 #[cfg(feature = "client")]
-pub use client::{
-    BidiResponses, CallSink, CallSource, ClientCall, ClientConnection, ClientError,
-    ClientTransport, ErrorBody, Raw, Reply, ServerStream, StreamArg, StreamCall, StreamCallSink,
-    StreamClientTransport, StreamSource,
-};
+pub use client::{StreamCall, StreamCallSink, StreamClientTransport, StreamSource, connect_tcp};
+
+#[cfg(all(feature = "client", unix))]
+pub use client::connect_unix;
 
 /// The transport substrate, re-exported for generated client code and custom transports.
 pub mod transport {

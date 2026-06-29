@@ -492,6 +492,7 @@ version = "0.6.0"
 dependencies = [
  "futures",
  "overseerd-app",
+ "overseerd-client",
  "overseerd-config",
  "overseerd-core",
  "overseerd-di",
@@ -520,6 +521,14 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "overseerd-client"
+version = "0.6.0"
+dependencies = [
+ "futures",
+ "overseerd-transport",
 ]
 
 [[package]]
@@ -617,6 +626,7 @@ dependencies = [
  "futures",
  "linkme",
  "overseerd-app",
+ "overseerd-client",
  "overseerd-config",
  "overseerd-core",
  "overseerd-di",
