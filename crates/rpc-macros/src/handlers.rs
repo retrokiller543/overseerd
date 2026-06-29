@@ -539,6 +539,7 @@ fn client_method(
         path: format!("{self_ident}.{method_ident}"),
         capability,
         request: payload_ty,
+        encode_as: None,
         req_item: req_item.clone(),
         resp_item: resp_item.clone(),
         response,

@@ -40,8 +40,15 @@ pub struct ClientMethod {
     pub path: String,
     /// The call shape.
     pub capability: Capability,
-    /// The unary/server-streaming request value type, or `None` for a no-body call.
+    /// The unary/server-streaming request value type the method *takes*, or `None` for a
+    /// no-body call. For HTTP this is the raw `T` (e.g. `SumIn`), the ergonomic surface; the
+    /// wire body type it is encoded as may differ — see [`encode_as`](Self::encode_as).
     pub request: Option<Type>,
+    /// Overrides the wire body type (`Encodes<B>` and the request envelope's `B`) when it
+    /// differs from the [`request`](Self::request) param type. `None` encodes the param type
+    /// as-is (RPC). HTTP sets it to the `HttpBody` wrapper (`Json<T>`/`Form<T>`) while the
+    /// param stays the raw `T`, and the `request_builder` wraps it.
+    pub encode_as: Option<TokenStream>,
     /// The client/bidi-streaming request *item* type (`None` for non-streaming-input).
     pub req_item: Option<Type>,
     /// The server/bidi-streaming response *item* type (`None` for non-streaming-output).
@@ -95,11 +102,14 @@ impl ClientMethod {
         let err = self.error_ty.clone().unwrap_or_else(|| quote!(#raw));
 
         // The unary/server-stream request param and the value forwarded (a no-body call sends
-        // the unit body, so the protocol must `Encodes<()>`).
-        let (req_arg, call_arg, unary_encode) = match &self.request {
+        // the unit body, so the protocol must `Encodes<()>`). The *wire body* type
+        // (`unary_encode`) may differ from the param type when `encode_as` is set — HTTP takes a
+        // raw `T` but encodes `Json<T>`.
+        let (req_arg, call_arg, request_ty) = match &self.request {
             Some(req) => (quote!(, request: #req), quote!(request), quote!(#req)),
             None => (quote!(), quote!(()), quote!(())),
         };
+        let unary_encode = self.encode_as.clone().unwrap_or(request_ty);
 
         // Leading path/query parameters (HTTP); empty for RPC. Spliced before the body param
         // and visible to `request_builder`.

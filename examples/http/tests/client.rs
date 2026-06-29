@@ -43,6 +43,12 @@ impl Api {
     async fn sum(&self, Json(input): Json<SumIn>) -> Json<i64> {
         Json(input.a + input.b)
     }
+
+    /// Two path params: the client exposes them as dedicated named args (`a`, `b`).
+    #[get("/pair/{a}/{b}")]
+    async fn pair(&self, Path((a, b)): Path<(i64, i64)>) -> Json<i64> {
+        Json(a * b)
+    }
 }
 
 #[tokio::test]
@@ -71,12 +77,14 @@ async fn generated_client_round_trips_over_reqwest() {
     assert_eq!(echoed.msg, "hello");
     assert_eq!(echoed.len, 5);
 
-    // JSON-body route: `POST /api/sum`.
-    let summed = client
-        .sum(Json(SumIn { a: 2, b: 40 }))
-        .await
-        .expect("sum call");
+    // JSON-body route: `POST /api/sum`. The client takes the raw `SumIn`, not `Json<SumIn>` —
+    // the wrapping happens inside the generated request builder.
+    let summed = client.sum(SumIn { a: 2, b: 40 }).await.expect("sum call");
     assert_eq!(*summed, 42);
+
+    // Two path params surface as dedicated named args: `GET /api/pair/{a}/{b}`.
+    let product = client.pair(6, 7).await.expect("pair call");
+    assert_eq!(*product, 42);
 
     shutdown.shutdown();
     let _ = server.await;
