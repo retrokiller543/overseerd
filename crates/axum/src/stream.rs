@@ -141,7 +141,7 @@ where
                             state.buffer.extend_from_slice(&chunk);
 
                             if state.buffer.len() > MAX_NDJSON_LINE_BYTES
-                                && !state.buffer.iter().any(|&b| b == b'\n')
+                                && !state.buffer.contains(&b'\n')
                             {
                                 tracing::warn!(
                                     target: "overseerd::axum",
