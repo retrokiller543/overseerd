@@ -88,6 +88,11 @@ impl Calc {
     }
 
     #[rpc]
+    async fn fail_before_stream() -> Result<ResponseStream<u32>, CalcError> {
+        Err(CalcError::Negative)
+    }
+
+    #[rpc]
     async fn sum(mut input: Streaming<u32>) -> overseerd::daemon::Result<u32> {
         let mut total = 0;
 
@@ -221,6 +226,30 @@ async fn server_stream_collects_items() {
     }
 
     assert_eq!(items, vec![0, 1, 2, 3]);
+}
+
+#[tokio::test]
+async fn server_stream_pre_stream_error_preserves_remote_body() {
+    let client = start().await;
+
+    let mut stream = client.fail_before_stream().await.expect("stream handle");
+
+    match stream.next().await {
+        Some(Err(ClientError::Remote(err))) => {
+            let body: CalcErrorBody = postcard::from_bytes(err.raw()).expect("decode body");
+
+            assert_eq!(
+                body,
+                CalcErrorBody {
+                    reason: "operands must be non-negative".to_string(),
+                }
+            );
+        }
+
+        other => panic!("expected remote stream error, got {other:?}"),
+    }
+
+    assert!(stream.next().await.is_none());
 }
 
 #[tokio::test]
