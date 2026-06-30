@@ -46,7 +46,7 @@ impl Default for TraceId {
 }
 
 /// Connection-scoped component; depends on the framework-seeded peer.
-#[component(scope = connection)]
+#[component(scope = overseerd::daemon::Connection)]
 struct ConnState {
     _peer: PeerInfo,
     #[default]
@@ -54,7 +54,7 @@ struct ConnState {
 }
 
 /// Request-scoped component; depends on the connection-scoped one.
-#[component(scope = request)]
+#[component(scope = overseerd::daemon::Request)]
 struct ReqState {
     conn: Arc<ConnState>,
     #[default]
@@ -62,7 +62,7 @@ struct ReqState {
 }
 
 /// Transient component, rebuilt on each resolution.
-#[component(scope = transient)]
+#[component(scope = overseerd::scope::Transient)]
 struct Trace {
     #[default]
     id: TraceId,

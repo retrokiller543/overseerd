@@ -98,8 +98,8 @@ pub struct ComponentContext {
     pub id: syn::LitStr,
     /// The resolved display name (the `name = ..` override, else the ident).
     pub name: syn::LitStr,
-    /// The scope marker ident from `scope = ..`, if specified (`None` = default singleton).
-    pub scope: Option<Ident>,
+    /// The scope marker path from `scope = ..`, if specified (`None` = default singleton).
+    pub scope: Option<syn::Path>,
 }
 
 /// A **component** macro extension: the struct-side analogue of an impl extension. It is a
@@ -112,6 +112,15 @@ pub trait ComponentExt: ParseKeyed + ParseItem<ComponentContext> + ToTokens {
     /// in a separate impl — as a service is), so the base defers its *eager* field-dependency
     /// assertion to that path. Default: no (assert eagerly). A `Router` (service) returns true.
     fn defers_factory(&self) -> bool {
+        false
+    }
+
+    /// Whether this is a **router-class** component — a service, a controller, or any future
+    /// protocol entry point. The base then forces the lazy `Wired` graph check at the
+    /// component's own definition (a missing provider becomes a `cargo check` error there),
+    /// rather than deferring it to an `app!` listing. Default: no. The RPC `Router` and the
+    /// axum controller router return true.
+    fn asserts_wired(&self) -> bool {
         false
     }
 }

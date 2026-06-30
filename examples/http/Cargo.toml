@@ -1,0 +1,18 @@
+[package]
+name = "overseerd-example-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+overseerd = { path = "../..", default-features = false, features = ["axum", "reqwest", "tracing-subscriber"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+tracing.workspace = true
+
+[dev-dependencies]
+tower = { workspace = true }
+futures = { workspace = true }
+http-body-util = "0.1"

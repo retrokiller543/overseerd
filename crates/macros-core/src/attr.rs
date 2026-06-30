@@ -40,6 +40,26 @@ pub(crate) fn parse_path_override(input: ParseStream) -> syn::Result<syn::Path> 
     input.parse()
 }
 
+fn parse_scope_path(input: ParseStream) -> syn::Result<syn::Path> {
+    let path: syn::Path = input.parse()?;
+
+    if path.leading_colon.is_none()
+        && path.segments.len() == 1
+        && let Some(segment) = path.segments.first()
+        && segment.arguments.is_empty()
+    {
+        return Ok(match segment.ident.to_string().as_str() {
+            "singleton" => syn::parse_quote!(Singleton),
+            "connection" => syn::parse_quote!(Connection),
+            "request" => syn::parse_quote!(Request),
+            "transient" => syn::parse_quote!(Transient),
+            _ => path,
+        });
+    }
+
+    Ok(path)
+}
+
 /// The base arguments of a component macro, generic over an extension `Ext` (the struct-side
 /// analogue of [`MethodArgs`](crate::methods::MethodArgs)). `ComponentArgs<NoExt>` is
 /// `#[component]`; `ComponentArgs<Router>` is `#[service]`. All base keys are optional:
@@ -50,7 +70,8 @@ pub(crate) fn parse_path_override(input: ParseStream) -> syn::Result<syn::Path> 
 /// - `qualifier = ".."` — key for `HashMap<String, Arc<dyn Trait>>` injection;
 /// - `primary` — mark this the primary provider for every trait it provides;
 /// - `by_value` — store/inject this component as `Self` rather than `Arc<Self>`;
-/// - `scope = singleton | connection | request | transient` — the instance lifetime;
+/// - `scope = <ScopePath>` — the instance lifetime, named by a [`Scope`] marker type in scope
+///   (e.g. `Request` from a protocol's prelude, or a custom scope); omitted means singleton;
 /// - `factory_slice` / `factory` / `default_factory` — factory overrides.
 ///
 /// Any other key is delegated to the extension's [`parse_keyed`](ParseKeyed::parse_keyed)
@@ -63,9 +84,12 @@ pub struct ComponentArgs<Ext: ParseKeyed = NoExt> {
     pub qualifier: Option<LitStr>,
     pub primary: bool,
     pub by_value: bool,
-    /// The [`Scope`] marker-type ident (`Singleton`/`Connection`/`Request`/`Transient`) parsed
-    /// from `scope = ..`. `None` means the default (singleton).
-    pub scope: Option<Ident>,
+    /// The [`Scope`] marker-type **path** parsed from `scope = ..`, emitted as written so it
+    /// resolves in the caller's scope (a protocol's `Request`/`Connection` arrives through its
+    /// prelude; a custom scope works the same way). The lowercase keywords
+    /// `singleton`/`connection`/`request`/`transient` are accepted as aliases for the
+    /// like-named marker types. `None` means the default (singleton).
+    pub scope: Option<syn::Path>,
     /// Overrides the generated per-type factory slice name (`factory_slice = Ident`).
     pub factory_slice: Option<Ident>,
     /// An explicit async factory path (`factory = path::to::fn`).
@@ -118,25 +142,7 @@ impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
                 "crate" => args.krate = Some(parse_path_override(input)?),
                 "scope" => {
                     input.parse::<Token![=]>()?;
-                    let value: Ident = input.parse()?;
-
-                    let variant = match value.to_string().as_str() {
-                        "singleton" => "Singleton",
-                        "connection" => "Connection",
-                        "request" => "Request",
-                        "transient" => "Transient",
-                        other => {
-                            return Err(syn::Error::new(
-                                value.span(),
-                                format!(
-                                    "unknown scope `{other}`, expected `singleton`, \
-                                     `connection`, `request`, or `transient`"
-                                ),
-                            ));
-                        }
-                    };
-
-                    args.scope = Some(Ident::new(variant, value.span()));
+                    args.scope = Some(parse_scope_path(input)?);
                 }
                 "provide" => {
                     input.parse::<Token![=]>()?;
@@ -249,7 +255,8 @@ pub fn response_body_type(output: &ReturnType) -> Type {
 }
 
 /// The last path-segment ident of a simple path type (e.g. `Foo` of `a::b::Foo<T>`).
-fn type_name(ty: &Type) -> Option<&Ident> {
+/// Public so a protocol's macro crate can classify handler-parameter extractor types.
+pub fn type_name(ty: &Type) -> Option<&Ident> {
     match ty {
         Type::Path(path) => path.path.segments.last().map(|segment| &segment.ident),
         _ => None,
@@ -258,8 +265,9 @@ fn type_name(ty: &Type) -> Option<&Ident> {
 
 /// The first type argument of `Name<T, ..>` when the last path segment is `name`.
 /// Used by the client codegen to recover request/response payload types from the
-/// extractor and `Responder` wrappers in a handler signature.
-fn first_type_arg(ty: &Type, name: &str) -> Option<Type> {
+/// extractor and `Responder` wrappers in a handler signature. Public so a protocol's macro
+/// crate can peel its own extractor wrappers (`Path<T>`, `Json<T>`, …).
+pub fn first_type_arg(ty: &Type, name: &str) -> Option<Type> {
     if let Type::Path(path) = ty
         && let Some(segment) = path.path.segments.last()
         && segment.ident == name

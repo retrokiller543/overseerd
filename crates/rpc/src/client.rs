@@ -266,10 +266,16 @@ impl<W> Unary for StreamClientTransport<W>
 where
     W: AsyncWrite + Unpin + Send + 'static,
 {
-    async fn unary<Req, Resp, E>(&self, path: &str, request: Req) -> Result<Resp, ClientError<E>>
+    // RPC carries only a body on the wire, so both envelopes are pure passthroughs — the
+    // request is the body, the response is the decoded value — keeping the call identical to a
+    // bare `unary(path, body) -> Resp`.
+    type Request<B> = B;
+    type Response<R> = R;
+
+    async fn unary<B, Resp, E>(&self, path: &str, request: B) -> Result<Resp, ClientError<E>>
     where
-        Self: Encodes<Req> + Decodes<Resp>,
-        Req: Send,
+        Self: Encodes<B> + Decodes<Resp>,
+        B: Send,
         Resp: Send,
     {
         let payload = self.encode(request).map_err(encode_err)?;

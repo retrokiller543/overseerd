@@ -186,10 +186,11 @@ pub mod daemon {
     /// The RPC component scopes.
     pub use overseerd_rpc::scope::{Connection, Request};
 
-    /// The RPC daemon macros. Their generated code roots its own types at
-    /// `::overseerd::daemon::*` and core types at `::overseerd::*`. (`app!`/`daemon!` are
-    /// protocol-agnostic core macros at the crate root, not here.)
-    pub use overseerd_rpc_macros::{handlers, rpc, service};
+    /// The RPC daemon macros, re-exported through `overseerd-rpc` (which owns them). With the
+    /// facade's `daemon` feature, `overseerd-rpc/facade` is on, so their generated code roots
+    /// plugin types at `::overseerd::daemon::*` and core types at `::overseerd::*`.
+    /// (`app!`/`daemon!` are protocol-agnostic core macros at the crate root, not here.)
+    pub use overseerd_rpc::{handlers, rpc, service};
 
     /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`.
     pub use overseerd_rpc::tower;
@@ -229,6 +230,38 @@ pub mod daemon {
 
         #[cfg(unix)]
         pub use overseerd_transport::UnixTransport;
+    }
+}
+
+/// The axum/HTTP protocol surface, namespaced so plugin items never collide with the facade
+/// root or with the RPC `daemon` module.
+///
+/// Build an HTTP app with `use overseerd::prelude::*;` (the core framework + `app!`) plus
+/// `use overseerd::axum::prelude::*;` (controllers, route attributes, the DI `Inject`
+/// extractor, and the common axum extractors). The controller macros
+/// (`#[controller]`/`#[handlers]`/`#[get]`/…) emit `::overseerd::axum::*` paths, so end users
+/// depend only on `overseerd` — never on `overseerd-axum` directly.
+#[cfg(feature = "axum")]
+pub mod axum {
+    /// The whole `overseerd-axum` surface, glob-re-exported so the facade never drifts behind the
+    /// protocol crate: the controller types/macros, the framing wrappers, the `axum` crate and
+    /// `http` re-exports, the `scope` module, and (with the `client` feature) the `client` module
+    /// and `__Stream` the generated client names. The protocol crate's root *is* the curated API.
+    /// With the facade's `axum` feature, `overseerd-axum/facade` is on, so the macros' generated
+    /// code roots plugin types at `::overseerd::axum::*` and core types at `::overseerd::*`.
+    pub use overseerd_axum::*;
+
+    /// Common imports for building an HTTP controller app: `use overseerd::axum::prelude::*;`
+    /// (pair with the crate-root `use overseerd::prelude::*;` for the core framework + `app!`).
+    pub mod prelude {
+        pub use super::axum::extract::{Json, Path, Query, State};
+        pub use super::axum::response::IntoResponse;
+        pub use super::axum::{Router, http};
+        pub use super::scope::Request;
+        pub use super::{
+            App, AxumAppBuilder, AxumPlugin, Controller, Inject, controller, delete, get, handlers,
+            head, options, patch, post, put, route,
+        };
     }
 }
 

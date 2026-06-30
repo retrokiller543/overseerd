@@ -1,0 +1,67 @@
+[package]
+name = "overseerd-axum"
+description = "The Overseerd axum/HTTP protocol plugin: controllers, route DI extractors, and the serve loop over the protocol-agnostic overseerd-app core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+# Compile the generated HTTP client SDK: the body/response envelopes and the codec, protocol
+# but transport-agnostic. Pick a backend (`reqwest` / `hyper`) to actually issue requests.
+client = [
+    "dep:overseerd-client",
+    "dep:http",
+    "dep:serde_urlencoded",
+    "overseerd-axum-macros/client",
+]
+# Client backends — independent so a user picks one (or both). Each pulls in only its stack.
+reqwest = ["client", "dep:reqwest"]
+hyper = ["client", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
+di-check = [
+    "overseerd-app/di-check",
+    "overseerd-di/di-check",
+    "overseerd-config/di-check",
+    "overseerd-axum-macros/di-check",
+]
+yaml = ["overseerd-app/yaml", "overseerd-config/yaml"]
+watch = ["overseerd-app/watch", "overseerd-config/watch"]
+tracing-subscriber = ["overseerd-app/tracing-subscriber"]
+# WebSocket streaming (client/bidi). Scaffolded; not served yet.
+ws = ["axum/ws"]
+# Set by the `overseerd` facade: root the macros' generated plugin types at
+# `::overseerd::axum::*`. Off (the default) keeps them at this standalone crate
+# (`::overseerd_axum::*`), so depending on `overseerd-axum` directly works.
+facade = ["overseerd-axum-macros/facade"]
+
+[dependencies]
+overseerd-app = { workspace = true }
+overseerd-axum-macros = { workspace = true }
+overseerd-core = { workspace = true }
+overseerd-di = { workspace = true }
+overseerd-config = { workspace = true }
+overseerd-client = { workspace = true, optional = true }
+# Non-optional: `StreamFormat` (server-side streamed bodies) uses its `CodecError`, and the
+# client codecs build on its `Encodes`/`Decodes`. Lightweight and already in the tree.
+overseerd-transport = { workspace = true }
+axum = { workspace = true }
+bytes = { workspace = true }
+tower = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+linkme = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true, optional = true }
+serde_urlencoded = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+http-body-util = { workspace = true, optional = true }

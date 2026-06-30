@@ -46,6 +46,11 @@ pub enum Error {
 
     #[error("transport error: {0}")]
     Transport(#[from] overseerd_transport::Error),
+
+    /// A dependency extraction failure when an `Inject` extractor resolves a parameter — a
+    /// missing component/provider, or a resolver-backed value (e.g. `Cfg<T>`) unavailable.
+    #[error(transparent)]
+    Di(#[from] overseerd_di::Error),
 }
 
 impl From<overseerd_app::Error> for Error {

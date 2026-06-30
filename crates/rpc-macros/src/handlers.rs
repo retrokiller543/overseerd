@@ -539,10 +539,21 @@ fn client_method(
         path: format!("{self_ident}.{method_ident}"),
         capability,
         request: payload_ty,
+        encode_as: None,
         req_item: req_item.clone(),
         resp_item: resp_item.clone(),
         response,
         error_ty,
+        // RPC is a pure passthrough: no extra args, both envelopes are the body/decoded value,
+        // and no request build, response map, or override step.
+        extra_args: Vec::new(),
+        request_envelope: None,
+        request_builder: None,
+        response_envelope: None,
+        response_mapper: None,
+        override_bounds: None,
+        override_ret: None,
+        override_body: None,
     }
 }
 

@@ -41,10 +41,13 @@ pub fn expand<Ext: ComponentExt>(
         .unwrap_or_else(|| LitStr::new(&self_ident.to_string(), self_ident.span()));
     let type_name = LitStr::new(&self_ident.to_string(), self_ident.span());
 
-    let scope_variant = args
+    // The scope marker path: the user's `scope = <Path>` emitted verbatim (resolved in their
+    // scope), or the framework's `Singleton` anchor when omitted. Raw — no rewriting — so a
+    // protocol's `Request`/`Connection` (or any custom scope) is whatever the path names.
+    let scope_path = args
         .scope
         .clone()
-        .unwrap_or_else(|| syn::Ident::new("Singleton", self_ident.span()));
+        .unwrap_or_else(|| paths.core("scope::Singleton"));
     let factories_slice = args
         .factory_slice
         .clone()
@@ -77,12 +80,22 @@ pub fn expand<Ext: ComponentExt>(
         &id,
         &name,
         args.ext.defers_factory(),
-        &scope_variant,
+        &scope_path,
         &factories_slice,
         emit_default,
         paths,
     );
     let component = paths.core("Component");
+
+    // A router-class component (a service, a controller) forces the lazy `Wired` graph check
+    // at its own definition — a missing dependency provider is an error here, not deferred to
+    // an `app!` listing. A router is an app-local protocol entry point, so its providers are
+    // visible at its definition.
+    let assert_wired = if args.ext.asserts_wired() {
+        crate::di::assert_wired(&self_ident, paths)
+    } else {
+        quote!()
+    };
 
     // The extension's appended surface (nothing for `#[component]`; the service header, RPC
     // slice, and client for `#[service]`).
@@ -90,6 +103,8 @@ pub fn expand<Ext: ComponentExt>(
 
     Ok(quote! {
         #item
+
+        #assert_wired
 
         impl #component for #self_ident {
             const ID: &'static str = #id;

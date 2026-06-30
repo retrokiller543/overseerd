@@ -81,6 +81,31 @@ pub fn injectable_impl(trait_ident: &Ident, paths: &Paths) -> TokenStream {
     }
 }
 
+/// Forces the lazy [`Wired`](wired_impl) predicate for `self_ident` at this point: an uncalled
+/// `fn _() where Self: Wired {}`, so the whole-graph dependency check (including trait-object
+/// providers) is discharged at the type's own definition rather than deferred to an `app!`
+/// listing. Empty unless `di-check` is on.
+///
+/// Suited to an app-local router type (a `#[controller]`) whose dependencies are provided in
+/// the same binary; the providers' `Provide` impls are visible at the definition.
+pub fn assert_wired(self_ident: &Ident, paths: &Paths) -> TokenStream {
+    if !enabled() {
+        return quote!();
+    }
+
+    let wired = paths.core("Wired");
+
+    quote! {
+        const _: () = {
+            fn __overseerd_assert_wired<T: #wired>() {}
+
+            fn __overseerd_check() {
+                __overseerd_assert_wired::<#self_ident>();
+            }
+        };
+    }
+}
+
 /// An uncalled assertion that every `target` is provided, as the bound
 /// `Wiring: Provide<T1> + Provide<T2> + ..`. Each `target` is a `Provide` type
 /// argument (e.g. `<Arc<T> as Injectable>::Target`). Empty unless `di-check` is

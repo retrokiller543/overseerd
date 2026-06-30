@@ -20,6 +20,13 @@ pub mod scope;
 
 pub use error::{Error, Result};
 pub use plugin::{RpcAppBuilder, RpcPlugin};
+
+/// The RPC daemon macros (`#[service]`, `#[handlers]`, `#[rpc]`), owned by this protocol crate.
+/// Their generated code roots plugin types at this crate (`::overseerd_rpc::*`) by default, or
+/// at `::overseerd::daemon::*` under the `facade` feature — so they work whether `overseerd-rpc`
+/// is used directly or through the `overseerd` facade. The core macros (`app!`, `#[component]`,
+/// …) come from `overseerd` (the always-present core).
+pub use overseerd_rpc_macros::{handlers, rpc, service};
 pub use protocol::Rpc;
 pub use router::RpcRouter;
 pub use routes::ResolvedService;
