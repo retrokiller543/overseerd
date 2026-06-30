@@ -171,6 +171,25 @@ impl GreetSocket {
 
         GreetResponse { message, count }
     }
+
+    /// `dest = "greet_ticketed"` — like the HTTP `/greet/{who}/ticket` route, this mixes the JSON
+    /// payload with route-level **dependency injection**: `Inject` resolves a fresh per-message
+    /// [`RequestTicket`] from the message's request scope (parented at the socket's connection
+    /// scope), proving ws handlers get the same request-scoped DI as REST handlers.
+    #[message("greet_ticketed")]
+    async fn greet_ticketed(
+        &self,
+        msg: WsGreet,
+        Inject(ticket): Inject<Arc<RequestTicket>>,
+    ) -> TicketResponse {
+        let (message, count) = self.greeter.greet(&msg.who);
+
+        TicketResponse {
+            message,
+            count,
+            ticket: ticket.id,
+        }
+    }
 }
 
 #[tokio::main]

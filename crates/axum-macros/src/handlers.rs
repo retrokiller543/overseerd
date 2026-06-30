@@ -499,10 +499,12 @@ fn build_route(
 
 /// Builds the message-route builder fragment for one `#[message("dest")]` method.
 ///
-/// A ws handler takes `&self` and at most one payload parameter (decoded from the frame's JSON
-/// `payload`), and returns a serializable value (encoded into the reply's `ok`). The fragment
-/// evaluates — with the controller singleton `svc: Arc<Self>` in scope — to a `WsRoute` whose
-/// type-erased handler decodes the payload, runs the method, and encodes the response.
+/// A ws handler takes `&self`, any number of `Inject<T>` parameters (resolved from the message's
+/// `Request` scope — the same DI a REST route gets), and at most one *payload* parameter (any other
+/// type, decoded from the frame's JSON `payload`); it returns a serializable value (encoded into the
+/// reply's `ok`). The fragment evaluates — with the controller singleton `svc: Arc<Self>` in scope —
+/// to a `WsRoute` whose type-erased handler resolves the injects, decodes the payload, runs the
+/// method, and encodes the response.
 fn build_ws_route(
     self_ty: &Type,
     method: &ImplItemFn,
@@ -521,29 +523,59 @@ fn build_ws_route(
         ));
     }
 
-    let payload_types: Vec<&Type> = method
-        .sig
-        .inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            FnArg::Typed(typed) => Some(typed.ty.as_ref()),
-            FnArg::Receiver(_) => None,
-        })
-        .collect();
-
-    if payload_types.len() > 1 {
-        return Err(syn::Error::new_spanned(
-            &method.sig.inputs,
-            "a ws message method takes at most one payload parameter (the frame carries one \
-             JSON payload); DI in ws handlers is not yet supported",
-        ));
-    }
-
     let ws_route = paths.plugin("WsRoute");
     let ws_value = paths.plugin("ws::WsValue");
     let ws_future = paths.plugin("ws::WsFuture");
+    let inject = paths.plugin("Inject");
+    let scope_container = paths.plugin("__ScopeContainer");
     let decode_payload = paths.plugin("ws::decode_payload");
     let encode_response = paths.plugin("ws::encode_response");
+    let dispatch_error = paths.plugin("WsDispatchError");
+
+    // Classify each typed parameter: an `Inject<T>` resolves from the per-message scope; anything
+    // else is the (single) JSON payload. Build the per-arg bindings and the call list in order.
+    let mut bindings: Vec<TokenStream> = Vec::new();
+    let mut call_args: Vec<Ident> = Vec::new();
+    let mut payload_seen = false;
+
+    for (i, arg) in method.sig.inputs.iter().enumerate() {
+        let FnArg::Typed(typed) = arg else {
+            continue;
+        };
+
+        let ident = format_ident!("__a{i}");
+        let ty = typed.ty.as_ref();
+
+        match inject_inner(ty) {
+            Some(handle) => bindings.push(quote! {
+                let #ident = #inject(
+                    __scope.extract::<#handle>().await.map_err(|__e| {
+                        #dispatch_error::Inject(::std::string::ToString::to_string(&__e))
+                    })?,
+                );
+            }),
+
+            None => {
+                if payload_seen {
+                    return Err(syn::Error::new_spanned(
+                        ty,
+                        "a ws message method takes at most one payload parameter (the frame \
+                         carries one JSON payload); other parameters must be `Inject<T>`",
+                    ));
+                }
+
+                payload_seen = true;
+                bindings.push(quote!(let #ident: #ty = #decode_payload(__payload)?;));
+            }
+        }
+
+        call_args.push(ident);
+    }
+
+    // No payload parameter: the frame's payload is ignored (silence the unused binding).
+    if !payload_seen {
+        bindings.insert(0, quote!(let _ = &__payload;));
+    }
 
     let method_ident = &method.sig.ident;
     let dotawait = if method.sig.asyncness.is_some() {
@@ -552,20 +584,10 @@ fn build_ws_route(
         quote!()
     };
 
-    // Decode the single payload param (if any) before invoking the handler.
-    let (decode, call_args) = match payload_types.first() {
-        Some(ty) => (
-            quote!(let __arg: #ty = #decode_payload(__payload)?;),
-            quote!(__arg),
-        ),
-
-        None => (quote!(let _ = &__payload;), quote!()),
-    };
-
     let invoke = if takes_self {
-        quote!(<#self_ty>::#method_ident(&__svc, #call_args)#dotawait)
+        quote!(<#self_ty>::#method_ident(&__svc, #(#call_args),*)#dotawait)
     } else {
-        quote!(<#self_ty>::#method_ident(#call_args)#dotawait)
+        quote!(<#self_ty>::#method_ident(#(#call_args),*)#dotawait)
     };
 
     let builder = quote! {{
@@ -573,20 +595,46 @@ fn build_ws_route(
 
         #ws_route::new(
             #destination,
-            ::std::sync::Arc::new(move |__payload: #ws_value| -> #ws_future {
-                let __svc = ::std::sync::Arc::clone(&__svc);
+            ::std::sync::Arc::new(
+                move |__payload: #ws_value, __scope: ::std::sync::Arc<#scope_container>| -> #ws_future {
+                    let __svc = ::std::sync::Arc::clone(&__svc);
 
-                ::std::boxed::Box::pin(async move {
-                    #decode
-                    let __resp = #invoke;
+                    ::std::boxed::Box::pin(async move {
+                        #(#bindings)*
+                        let __resp = #invoke;
 
-                    #encode_response(&__resp)
-                })
-            }),
+                        #encode_response(&__resp)
+                    })
+                },
+            ),
         )
     }};
 
     Ok(WsRouteSpec { builder })
+}
+
+/// If `ty` is `Inject<H>` (the axum DI extractor), returns its inner handle type `H`; otherwise
+/// `None`. Recognized by the last path segment being `Inject` with a single type argument, so it
+/// matches `Inject<..>`, `axum::Inject<..>`, or the fully-qualified form alike.
+fn inject_inner(ty: &Type) -> Option<&Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+
+    if segment.ident != "Inject" {
+        return None;
+    }
+
+    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+
+    args.args.iter().find_map(|arg| match arg {
+        GenericArgument::Type(inner) => Some(inner),
+
+        _ => None,
+    })
 }
 
 /// Finds and strips a `#[stream]` parameter (a streamed request body), returning its position

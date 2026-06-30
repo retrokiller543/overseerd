@@ -49,6 +49,12 @@ pub use stream::{Ndjson, RawStream, StreamBody, StreamEncode, chunk_u8};
 #[doc(hidden)]
 pub use futures::Stream as __Stream;
 
+/// Re-exported so `#[message]` ws-handler codegen can name the per-message scope container the
+/// generated handler resolves its `Inject<T>` parameters from. Referenced only by generated code.
+#[cfg(feature = "ws")]
+#[doc(hidden)]
+pub use overseerd_di::ScopeContainer as __ScopeContainer;
+
 /// The axum app type: an [`App`](overseerd_app::App) specialized to [`AxumPlugin`].
 /// `App::builder(name)` resolves through this alias without a turbofish.
 pub type App = overseerd_app::App<AxumPlugin>;

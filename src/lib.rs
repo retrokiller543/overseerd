@@ -263,8 +263,10 @@ pub mod axum {
             head, options, patch, post, put, route,
         };
 
-        /// WebSocket controller imports (`#[controller(ws = ..)]` + `#[message]`), available with
-        /// the `ws` feature.
+        /// WebSocket controller imports (`#[controller(ws = ..)]` + `#[message]`, the per-connection
+        /// [`Connection`](super::scope::Connection) scope), available with the `ws` feature.
+        #[cfg(feature = "ws")]
+        pub use super::scope::Connection;
         #[cfg(feature = "ws")]
         pub use super::{JsonWs, WebsocketController, WebsocketProtocol, message};
     }

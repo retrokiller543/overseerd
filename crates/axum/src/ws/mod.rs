@@ -21,6 +21,7 @@ use axum::extract::ws::WebSocket;
 use futures::future::BoxFuture;
 use overseerd_app::AppRuntime;
 use overseerd_core::TypeDescriptor;
+use overseerd_di::ScopeContainer;
 
 pub use json::JsonWs;
 
@@ -31,9 +32,12 @@ pub type WsValue = serde_json::Value;
 /// The boxed future a [`WsHandlerFn`] returns — a decoded, dispatched, re-encoded message response.
 pub type WsFuture = BoxFuture<'static, Result<WsValue, WsDispatchError>>;
 
-/// A type-erased message handler: decodes the JSON payload into the handler's parameter, runs the
-/// controller method (the singleton captured by `Arc`), and encodes the response back to JSON.
-pub type WsHandlerFn = Arc<dyn Fn(WsValue) -> WsFuture + Send + Sync>;
+/// A type-erased message handler. It is handed the decoded JSON payload and the message's
+/// [`Request`-scope](crate::scope::Request) container, so it can decode the payload into the
+/// handler's parameter *and* resolve the handler's `Inject<T>` parameters from the scope chain
+/// (request → connection → singleton) — the same DI a REST route gets — before running the
+/// controller method (the singleton captured by `Arc`) and encoding the response back to JSON.
+pub type WsHandlerFn = Arc<dyn Fn(WsValue, Arc<ScopeContainer>) -> WsFuture + Send + Sync>;
 
 /// What can go wrong dispatching one message, independent of the wire protocol framing it.
 #[derive(Debug, thiserror::Error)]
@@ -45,6 +49,10 @@ pub enum WsDispatchError {
     /// The payload could not be decoded into the handler's parameter type.
     #[error("decoding ws payload: {0}")]
     Decode(String),
+
+    /// An `Inject<T>` parameter could not be resolved from the message scope.
+    #[error("injecting ws dependency: {0}")]
+    Inject(String),
 
     /// The handler's response could not be encoded.
     #[error("encoding ws response: {0}")]
@@ -142,11 +150,19 @@ pub trait WebsocketController {
 /// top without changing this seam.
 pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
     /// Builds the protocol's routing from the controllers registered to it. Called once per
-    /// `register_ws` entrypoint at app build.
+    /// `register_ws` entrypoint at app build. The protocol keeps whatever it needs from `runtime`
+    /// (e.g. a clone, to open per-message [`Request`](crate::scope::Request) scopes while serving).
     fn build(controllers: &[WsControllerDescriptor], runtime: &AppRuntime) -> Self;
 
     /// Drives one upgraded connection until the peer closes it or graceful shutdown fires.
-    fn serve(self: Arc<Self>, socket: WebSocket, shutdown: WsShutdown) -> impl Future<Output = ()> + Send;
+    /// `connection` is this socket's [`Connection`](crate::scope::Connection) scope (opened once by
+    /// the framework); the protocol parents each per-message scope at it.
+    fn serve(
+        self: Arc<Self>,
+        socket: WebSocket,
+        connection: Arc<ScopeContainer>,
+        shutdown: WsShutdown,
+    ) -> impl Future<Output = ()> + Send;
 }
 
 /// A connection-side graceful-shutdown signal. A protocol's [`serve`](WebsocketProtocol::serve) loop
@@ -206,16 +222,35 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
     let (tx, rx) = tokio::sync::watch::channel(false);
     let proto = Arc::new(P::build(&controllers, runtime));
     let shutdown = WsShutdown(rx);
+    let runtime = runtime.clone();
 
-    // The pre-built generic upgrade handler: it upgrades, then hands the socket to the protocol,
-    // which owns the read→decode→dispatch→encode→send loop.
+    // The pre-built generic upgrade handler: it upgrades, opens this socket's `Connection` scope,
+    // and hands the socket to the protocol, which owns the read→decode→dispatch→encode→send loop.
     let route_handler = move |ws: WebSocketUpgrade| {
         let proto = Arc::clone(&proto);
         let shutdown = shutdown.clone();
+        let runtime = runtime.clone();
 
         async move {
             ws.on_upgrade(move |socket| async move {
-                proto.serve(socket, shutdown).await;
+                let connection = match runtime
+                    .open_scope(&crate::scope::Connection, Arc::clone(runtime.root()), Vec::new())
+                    .await
+                {
+                    Ok(scope) => scope,
+
+                    Err(error) => {
+                        tracing::error!(
+                            target: "overseerd::axum",
+                            %error,
+                            "ws connection scope build failed; closing socket"
+                        );
+
+                        return;
+                    }
+                };
+
+                proto.serve(socket, connection, shutdown).await;
             })
         }
     };

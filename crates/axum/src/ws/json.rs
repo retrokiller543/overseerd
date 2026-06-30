@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
 use overseerd_app::AppRuntime;
+use overseerd_di::ScopeContainer;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
@@ -20,9 +21,11 @@ use super::{
 };
 
 /// The baseline JSON-envelope protocol: a flat destination → handler table, point-to-point
-/// request/response over one socket.
+/// request/response over one socket. Holds a clone of the [`AppRuntime`] so it can open a fresh
+/// per-message [`Request`](crate::scope::Request) scope for handler DI.
 pub struct JsonWs {
     routes: HashMap<&'static str, WsHandlerFn>,
+    runtime: AppRuntime,
 }
 
 /// An inbound call frame.
@@ -68,10 +71,18 @@ impl WebsocketProtocol for JsonWs {
             }
         }
 
-        Self { routes }
+        Self {
+            routes,
+            runtime: runtime.clone(),
+        }
     }
 
-    async fn serve(self: Arc<Self>, mut socket: WebSocket, mut shutdown: WsShutdown) {
+    async fn serve(
+        self: Arc<Self>,
+        mut socket: WebSocket,
+        connection: Arc<ScopeContainer>,
+        mut shutdown: WsShutdown,
+    ) {
         loop {
             tokio::select! {
                 _ = shutdown.wait() => {
@@ -83,7 +94,7 @@ impl WebsocketProtocol for JsonWs {
                 inbound = socket.recv() => {
                     match inbound {
                         Some(Ok(Message::Text(text))) => {
-                            let reply = self.handle_text(text.as_str()).await;
+                            let reply = self.handle_text(text.as_str(), &connection).await;
 
                             if let Some(reply) = reply
                                 && socket.send(Message::Text(Utf8Bytes::from(reply))).await.is_err()
@@ -112,7 +123,11 @@ impl WebsocketProtocol for JsonWs {
 impl JsonWs {
     /// Routes one inbound text frame and renders its reply. Returns `None` for a frame that can't be
     /// parsed at all (no `dest` to correlate a reply against) — it is dropped with a warning.
-    async fn handle_text(&self, text: &str) -> Option<String> {
+    ///
+    /// Opens a fresh per-message [`Request`](crate::scope::Request) scope parented at the socket's
+    /// `connection` scope, so a handler's `Inject<T>` resolves request-scoped components per message
+    /// (and connection-/singleton-scoped ones through the chain).
+    async fn handle_text(&self, text: &str, connection: &Arc<ScopeContainer>) -> Option<String> {
         let inbound: Inbound = match serde_json::from_str(text) {
             Ok(inbound) => inbound,
 
@@ -124,64 +139,56 @@ impl JsonWs {
         };
 
         let result = match self.routes.get(inbound.dest.as_str()) {
-            Some(handler) => handler(inbound.payload).await,
+            Some(handler) => match self
+                .runtime
+                .open_scope(&crate::scope::Request, Arc::clone(connection), Vec::new())
+                .await
+            {
+                Ok(scope) => handler(inbound.payload, scope).await,
+
+                Err(error) => Err(WsDispatchError::Inject(error.to_string())),
+            },
 
             None => Err(WsDispatchError::NotFound(inbound.dest.clone())),
         };
 
-        let outbound = match result {
-            Ok(value) => Outbound {
-                dest: &inbound.dest,
-                id: inbound.id,
-                ok: Some(value),
-                error: None,
-            },
-
-            Err(error) => Outbound {
-                dest: &inbound.dest,
-                id: inbound.id,
-                ok: None,
-                error: Some(error.to_string()),
-            },
-        };
-
-        serde_json::to_string(&outbound).ok()
+        render_reply(&inbound.dest, inbound.id, result)
     }
+}
+
+/// Renders a dispatch result into the JSON reply frame (correlating the request `id`): a `{ok}`
+/// frame on success, a `{error}` frame on failure. Pure (no scope), so the framing is unit-testable.
+fn render_reply(
+    dest: &str,
+    id: Option<u64>,
+    result: Result<WsValue, WsDispatchError>,
+) -> Option<String> {
+    let outbound = match result {
+        Ok(value) => Outbound {
+            dest,
+            id,
+            ok: Some(value),
+            error: None,
+        },
+
+        Err(error) => Outbound {
+            dest,
+            id,
+            ok: None,
+            error: Some(error.to_string()),
+        },
+    };
+
+    serde_json::to_string(&outbound).ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A `JsonWs` with one in-memory `echo` route, bypassing the DI/macro plumbing.
-    fn echo_protocol() -> JsonWs {
-        let mut routes: HashMap<&'static str, WsHandlerFn> = HashMap::new();
-
-        routes.insert(
-            "echo",
-            Arc::new(|payload: WsValue| {
-                Box::pin(async move {
-                    let text = payload
-                        .get("text")
-                        .and_then(WsValue::as_str)
-                        .unwrap_or_default()
-                        .to_string();
-
-                    super::super::encode_response(&serde_json::json!({ "echo": text }))
-                })
-            }),
-        );
-
-        JsonWs { routes }
-    }
-
-    #[tokio::test]
-    async fn dispatches_to_handler_and_echoes_id() {
-        let proto = echo_protocol();
-
-        let reply = proto
-            .handle_text(r#"{"dest":"echo","id":7,"payload":{"text":"hi"}}"#)
-            .await
+    #[test]
+    fn ok_result_renders_an_ok_frame_echoing_the_id() {
+        let reply = render_reply("echo", Some(7), Ok(serde_json::json!({ "echo": "hi" })))
             .expect("a reply frame");
         let value: WsValue = serde_json::from_str(&reply).expect("valid json reply");
 
@@ -191,14 +198,14 @@ mod tests {
         assert!(value.get("error").is_none());
     }
 
-    #[tokio::test]
-    async fn unknown_destination_is_an_error_frame() {
-        let proto = echo_protocol();
-
-        let reply = proto
-            .handle_text(r#"{"dest":"nope","id":1,"payload":{}}"#)
-            .await
-            .expect("a reply frame");
+    #[test]
+    fn error_result_renders_an_error_frame() {
+        let reply = render_reply(
+            "nope",
+            Some(1),
+            Err(WsDispatchError::NotFound("nope".to_string())),
+        )
+        .expect("a reply frame");
         let value: WsValue = serde_json::from_str(&reply).expect("valid json reply");
 
         assert_eq!(value["dest"], "nope");
@@ -207,10 +214,14 @@ mod tests {
         assert!(value.get("ok").is_none());
     }
 
-    #[tokio::test]
-    async fn unparseable_frame_is_dropped() {
-        let proto = echo_protocol();
+    #[test]
+    fn inbound_frame_parses_dest_id_and_payload() {
+        let inbound: Inbound =
+            serde_json::from_str(r#"{"dest":"chat.send","id":9,"payload":{"text":"hi"}}"#)
+                .expect("parse");
 
-        assert!(proto.handle_text("not json").await.is_none());
+        assert_eq!(inbound.dest, "chat.send");
+        assert_eq!(inbound.id, Some(9));
+        assert_eq!(inbound.payload["text"], "hi");
     }
 }

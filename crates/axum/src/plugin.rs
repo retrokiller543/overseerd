@@ -12,7 +12,7 @@ use overseerd_di::ComponentDescriptor;
 use crate::controller::{CONTROLLERS, ControllerDescriptor};
 use crate::extract::ScopeHandle;
 use crate::protocol::Axum;
-use crate::scope::Request as RequestScope;
+use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
 
 /// The axum HTTP protocol plugin.
 ///
@@ -63,7 +63,9 @@ impl ProtocolPlugin for AxumPlugin {
     type Protocol = Axum;
     type Error = crate::Error;
 
-    const SCOPES: &'static [&'static dyn Scope] = &[&RequestScope];
+    // Root→leaf: `Connection` (WebSocket-only) outlives `Request`. A plain HTTP request opens only
+    // `Request` (parented at root); a ws message opens `Request` parented at its `Connection`.
+    const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
 
     fn build(self, runtime: &AppRuntime) -> crate::Result<Axum> {
         // Merge every controller's routes. Each builder resolves its controller singleton
