@@ -23,11 +23,37 @@ use crate::scope::Request as RequestScope;
 #[derive(Default)]
 pub struct AxumPlugin {
     controllers: Vec<ControllerDescriptor>,
+
+    /// Discovered `#[controller(ws = ..)]` descriptors. Only mounted for protocols a user opts into
+    /// via [`register_ws`](AxumAppBuilder::register_ws).
+    #[cfg(feature = "ws")]
+    ws_controllers: Vec<crate::ws::WsControllerDescriptor>,
+
+    /// Opt-in ws endpoints: each pairs a protocol type with the path to mount its upgrade handler.
+    #[cfg(feature = "ws")]
+    ws_registrations: Vec<WsRegistration>,
+}
+
+/// One opt-in ws endpoint: a protocol type (by [`TypeId`](std::any::TypeId)) bound to a path, with a
+/// monomorphized mount fn that builds the protocol and its path-scoped router.
+#[cfg(feature = "ws")]
+struct WsRegistration {
+    path: String,
+    protocol: std::any::TypeId,
+    mount: fn(
+        &str,
+        Vec<crate::ws::WsControllerDescriptor>,
+        &AppRuntime,
+    ) -> (axum::Router, crate::ws::WebsocketHandler),
 }
 
 impl Plugin for AxumPlugin {
     fn auto_discover(&mut self) {
         self.controllers.extend(CONTROLLERS.iter().copied());
+
+        #[cfg(feature = "ws")]
+        self.ws_controllers
+            .extend(crate::ws::WS_CONTROLLERS.iter().copied());
     }
 
     fn register(&self, _registry: &mut AppRegistry) {}
@@ -48,6 +74,31 @@ impl ProtocolPlugin for AxumPlugin {
         for descriptor in &self.controllers {
             router = router.merge((descriptor.router)(runtime));
         }
+
+        // WebSocket endpoints are opt-in: for each `register_ws::<P>(path)`, select the ws
+        // controllers that speak `P`, let `P::build` set up its own routing, and merge the
+        // path-scoped router. The protocol owns dispatch; we only mount it and keep its handle.
+        #[cfg(feature = "ws")]
+        let ws_endpoints = {
+            let mut endpoints = Vec::with_capacity(self.ws_registrations.len());
+
+            for registration in &self.ws_registrations {
+                let controllers: Vec<crate::ws::WsControllerDescriptor> = self
+                    .ws_controllers
+                    .iter()
+                    .copied()
+                    .filter(|descriptor| (descriptor.protocol)() == registration.protocol)
+                    .collect();
+
+                let (ws_router, handler) =
+                    (registration.mount)(&registration.path, controllers, runtime);
+
+                router = router.merge(ws_router);
+                endpoints.push(handler);
+            }
+
+            endpoints
+        };
 
         // The bridge: a per-request layer that opens the Request scope (parented at the
         // singleton root) and inserts its handle into the request extensions. `Inject`
@@ -84,7 +135,12 @@ impl ProtocolPlugin for AxumPlugin {
             },
         ));
 
-        Ok(Axum::new(router))
+        let axum = Axum::new(router);
+
+        #[cfg(feature = "ws")]
+        let axum = axum.with_ws_endpoints(ws_endpoints);
+
+        Ok(axum)
     }
 }
 
@@ -102,6 +158,16 @@ pub trait AxumAppBuilder {
 
     /// Manually registers a raw controller header (prefer [`controller`](Self::controller)).
     fn controller_descriptor(self, descriptor: &'static ControllerDescriptor) -> Self;
+
+    /// Opts the app into a WebSocket protocol `P`, mounting its upgrade handler at `path`. Only
+    /// `#[controller(ws = P)]` controllers speaking `P` are then served, under `path` (the path
+    /// can't be inferred, so it is given here). Call it once per protocol to run, e.g., a STOMP
+    /// endpoint and a `JsonWs` endpoint on different paths in one server. Rejects two protocols on
+    /// the same path at build.
+    #[cfg(feature = "ws")]
+    fn register_ws<P>(self, path: impl Into<String>) -> Self
+    where
+        P: crate::ws::WebsocketProtocol;
 }
 
 impl AxumAppBuilder for AppBuilder<AxumPlugin> {
@@ -118,6 +184,33 @@ impl AxumAppBuilder for AppBuilder<AxumPlugin> {
 
     fn controller_descriptor(mut self, descriptor: &'static ControllerDescriptor) -> Self {
         self.protocol_mut().controllers.push(*descriptor);
+
+        self
+    }
+
+    #[cfg(feature = "ws")]
+    fn register_ws<P>(mut self, path: impl Into<String>) -> Self
+    where
+        P: crate::ws::WebsocketProtocol,
+    {
+        let path = path.into();
+
+        let duplicate = self
+            .protocol_mut()
+            .ws_registrations
+            .iter()
+            .any(|registration| registration.path == path);
+
+        assert!(
+            !duplicate,
+            "register_ws: a websocket protocol is already mounted at `{path}`"
+        );
+
+        self.protocol_mut().ws_registrations.push(WsRegistration {
+            path,
+            protocol: std::any::TypeId::of::<P>(),
+            mount: crate::ws::mount_ws::<P>,
+        });
 
         self
     }

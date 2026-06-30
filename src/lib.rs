@@ -262,6 +262,11 @@ pub mod axum {
             App, AxumAppBuilder, AxumPlugin, Controller, Inject, controller, delete, get, handlers,
             head, options, patch, post, put, route,
         };
+
+        /// WebSocket controller imports (`#[controller(ws = ..)]` + `#[message]`), available with
+        /// the `ws` feature.
+        #[cfg(feature = "ws")]
+        pub use super::{JsonWs, WebsocketController, WebsocketProtocol, message};
     }
 }
 

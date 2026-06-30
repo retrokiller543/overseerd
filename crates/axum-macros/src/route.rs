@@ -21,6 +21,20 @@ pub const ROUTE_ATTRS: &[&str] = &[
 /// `MethodRouter::<verb>` chaining method).
 const VERBS: &[&str] = &["get", "post", "put", "delete", "patch", "head", "options"];
 
+/// The WebSocket message attribute: `#[message("destination")]`. Claimed by `#[handlers]` on a ws
+/// controller (`#[controller(ws = ..)]`); on its own it emits a `compile_error!` like the verbs.
+pub const MESSAGE_ATTR: &str = "message";
+
+/// Whether `attr` is a `#[message(..)]` attribute.
+pub fn is_message_attr(attr: &Attribute) -> bool {
+    attr.path().is_ident(MESSAGE_ATTR)
+}
+
+/// Parses `#[message("destination")]` into its destination literal.
+pub fn parse_message_attr(attr: &Attribute) -> syn::Result<LitStr> {
+    attr.parse_args()
+}
+
 /// A parsed route binding: the `axum::routing` verb to mount under, the (relative) path, and
 /// whether the route's response is streamed.
 pub struct RouteAttr {
@@ -178,8 +192,8 @@ fn normalize_verb(method: &Ident) -> syn::Result<Ident> {
 pub fn expand_standalone(item: ItemFn) -> syn::Result<TokenStream> {
     Ok(quote! {
         ::core::compile_error!(
-            "route attributes (#[get], #[post], #[route(..)], …) are only valid on a method \
-             inside a #[handlers] impl of a #[controller]"
+            "route attributes (#[get], #[post], #[route(..)], #[message(..)], …) are only valid on \
+             a method inside a #[handlers] impl of a #[controller]"
         );
 
         #item

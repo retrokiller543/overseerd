@@ -19,9 +19,17 @@ pub mod plugin;
 pub mod protocol;
 pub mod scope;
 pub mod stream;
+#[cfg(feature = "ws")]
+pub mod ws;
 
 pub use controller::{CONTROLLERS, Controller, ControllerDescriptor};
 pub use error::{Error, Result};
+
+#[cfg(feature = "ws")]
+pub use ws::{
+    JsonWs, WS_CONTROLLERS, WebsocketController, WebsocketHandler, WebsocketProtocol,
+    WsControllerDescriptor, WsDispatchError, WsRoute, WsShutdown,
+};
 
 pub use extract::{Inject, InjectRejection, ScopeHandle};
 /// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
@@ -30,7 +38,7 @@ pub use extract::{Inject, InjectRejection, ScopeHandle};
 /// so they work whether `overseerd-axum` is used directly or through the `overseerd` facade. The
 /// core macros (`app!`, `#[component]`, …) come from `overseerd` (the always-present core).
 pub use overseerd_axum_macros::{
-    controller, delete, get, handlers, head, options, patch, post, put, route,
+    controller, delete, get, handlers, head, message, options, patch, post, put, route,
 };
 pub use plugin::{AxumAppBuilder, AxumPlugin};
 pub use protocol::Axum;

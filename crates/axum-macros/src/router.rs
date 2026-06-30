@@ -31,6 +31,11 @@ pub struct AxumRouter<T: ComponentExt = NoExt> {
     /// `routes_slice = Ident` — the per-controller route slice (default `{Controller}Routes`).
     routes_slice: Option<Ident>,
 
+    /// `ws = WsProto` — marks this a WebSocket controller speaking the named protocol. When set,
+    /// the controller surface is the `WebsocketController` flavour (message routing) instead of the
+    /// HTTP `Controller` one. The protocol is a raw path resolved in the caller's scope.
+    ws: Option<syn::Path>,
+
     /// The base-resolved component identity (captured in the item pass).
     context: Option<ControllerContext>,
 
@@ -64,13 +69,20 @@ impl<T: ComponentExt> ParseKeyed for AxumRouter<T> {
                 Ok(true)
             }
 
+            "ws" => {
+                eat_eq(input)?;
+                self.ws = Some(input.parse()?);
+
+                Ok(true)
+            }
+
             // Unknown to the controller — offer it to the nested extension.
             _ => self.inner.parse_keyed(key, input),
         }
     }
 
     fn expected_keys() -> &'static [&'static str] {
-        &["path", "routes_slice"]
+        &["path", "routes_slice", "ws"]
     }
 }
 
@@ -121,6 +133,20 @@ impl<T: ComponentExt> ToTokens for AxumRouter<T> {
             return;
         };
 
+        // A `ws = P` controller emits the WebSocket surface (message routing, `WebsocketController`);
+        // a plain controller emits the HTTP surface (`Controller`). They are mutually exclusive.
+        match &self.ws {
+            Some(protocol) => self.ws_tokens(cx, protocol, out),
+
+            None => self.http_tokens(cx, out),
+        }
+    }
+}
+
+impl<T: ComponentExt> AxumRouter<T> {
+    /// Emits the HTTP controller surface: the `{Controller}Routes` slice, the [`Controller`] impl,
+    /// and the `ControllerDescriptor` registration.
+    fn http_tokens(&self, cx: &ControllerContext, out: &mut TokenStream) {
         let ControllerContext {
             ident,
             type_name,
@@ -206,6 +232,96 @@ impl<T: ComponentExt> ToTokens for AxumRouter<T> {
                 #[#distributed_slice(#controllers_slice)]
                 #[linkme(crate = #linkme_crate)]
                 static #controller_static: #controller_descriptor = __OVERSEERD_CONTROLLER_DESCRIPTOR;
+            };
+
+            #inner
+        });
+    }
+
+    /// Emits the WebSocket controller surface: the `{Controller}WsRoutes` slice (message-route
+    /// builders contributed by `#[handlers]` `#[message]` blocks), the [`WebsocketController`] impl
+    /// naming `protocol`, and the `WsControllerDescriptor` registration. The upgrade path is *not*
+    /// emitted here — it is supplied by `register_ws`.
+    fn ws_tokens(&self, cx: &ControllerContext, protocol: &syn::Path, out: &mut TokenStream) {
+        let ControllerContext {
+            ident,
+            type_name,
+            id,
+            name,
+            paths,
+        } = cx;
+
+        let ws_routes_slice = self
+            .routes_slice
+            .clone()
+            .unwrap_or_else(|| format_ident!("{}WsRoutes", ident));
+
+        let app_runtime = paths.core("AppRuntime");
+        let descriptor_trait = paths.core("Descriptor");
+        let type_descriptor = paths.core("TypeDescriptor");
+        let distributed_slice = paths.core("linkme::distributed_slice");
+        let linkme_crate = paths.core("linkme");
+        let ws_controller_trait = paths.plugin("WebsocketController");
+        let ws_descriptor = paths.plugin("WsControllerDescriptor");
+        let ws_controllers_slice = paths.plugin("WS_CONTROLLERS");
+        let ws_route = paths.plugin("WsRoute");
+
+        let controller_static = format_ident!(
+            "__OVERSEERD_WS_CONTROLLER_{}",
+            ident.to_string().to_uppercase()
+        );
+        let client_struct = client_struct(ident);
+        let inner = &self.inner;
+
+        out.extend(quote! {
+            #client_struct
+
+            #[#distributed_slice]
+            #[linkme(crate = #linkme_crate)]
+            #[allow(non_upper_case_globals)]
+            pub static #ws_routes_slice:
+                [fn(::std::sync::Arc<#ident>) -> ::std::vec::Vec<#ws_route>];
+
+            impl #ws_controller_trait for #ident {
+                type Protocol = #protocol;
+
+                fn ws_routes(runtime: & #app_runtime) -> ::std::vec::Vec<#ws_route> {
+                    // The controller is a singleton built into the root scope at app build, so it
+                    // resolves once here and is captured (cheaply, by `Arc`) in each message
+                    // handler — no per-message controller lookup.
+                    let svc = runtime
+                        .root()
+                        .get::<#ident>()
+                        .expect("ws controller singleton missing from the root scope");
+
+                    let mut routes = ::std::vec::Vec::new();
+
+                    for group in #ws_routes_slice {
+                        routes.extend(group(::std::sync::Arc::clone(&svc)));
+                    }
+
+                    routes
+                }
+            }
+
+            const _: () = {
+                const __OVERSEERD_WS_CONTROLLER_DESCRIPTOR: #ws_descriptor =
+                    #ws_descriptor {
+                        id: #id,
+                        name: #name,
+                        ty: #type_descriptor::of::<#ident>(#type_name),
+                        protocol: || ::std::any::TypeId::of::<#protocol>(),
+                        protocol_name: || ::std::any::type_name::<#protocol>(),
+                        routes: <#ident as #ws_controller_trait>::ws_routes,
+                    };
+
+                impl #descriptor_trait<#ws_descriptor> for #ident {
+                    const DESCRIPTOR: #ws_descriptor = __OVERSEERD_WS_CONTROLLER_DESCRIPTOR;
+                }
+
+                #[#distributed_slice(#ws_controllers_slice)]
+                #[linkme(crate = #linkme_crate)]
+                static #controller_static: #ws_descriptor = __OVERSEERD_WS_CONTROLLER_DESCRIPTOR;
             };
 
             #inner

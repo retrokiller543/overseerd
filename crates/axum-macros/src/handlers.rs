@@ -34,8 +34,12 @@ pub struct AxumHandlers {
     /// Captured during [`ParseItem`]: the impl's self type and resolved paths.
     context: Option<HandlerContext>,
 
-    /// Accumulated per route-attributed method (during [`ParseMethod`]).
+    /// Accumulated per HTTP route-attributed method (during [`ParseMethod`]).
     routes: Vec<RouteSpec>,
+
+    /// Accumulated per `#[message]` ws handler method (during [`ParseMethod`]). A block is either
+    /// HTTP (`routes`) or WebSocket (`ws_routes`); mixing the two is a compile error.
+    ws_routes: Vec<WsRouteSpec>,
 }
 
 /// The impl context `AxumHandlers` needs to emit (captured in the item pass).
@@ -53,6 +57,12 @@ struct RouteSpec {
     verb: Ident,
     path: LitStr,
     handler: TokenStream,
+}
+
+/// One ws message route claimed from a `#[message("dest")]` method: its destination and the
+/// `Arc<Self> -> WsRoute` builder fragment.
+struct WsRouteSpec {
+    builder: TokenStream,
 }
 
 impl ParseKeyed for AxumHandlers {
@@ -102,6 +112,22 @@ impl ParseItem<ItemImpl> for AxumHandlers {
 
 impl ParseMethod for AxumHandlers {
     fn parse_method(&mut self, method: &mut ImplItemFn) -> syn::Result<Option<ClientMethod>> {
+        // A `#[message("dest")]` method is a ws handler — a different surface from HTTP routes. It
+        // contributes no HTTP `ClientMethod` hint (the ws client comes from the ws transport).
+        if let Some(pos) = method.attrs.iter().position(route::is_message_attr) {
+            let attr = method.attrs.remove(pos);
+            let destination = route::parse_message_attr(&attr)?;
+
+            let cx = self
+                .context
+                .as_ref()
+                .expect("AxumHandlers::parse_item runs before parse_method");
+            let spec = build_ws_route(&cx.self_ty, method, &destination, &cx.paths)?;
+            self.ws_routes.push(spec);
+
+            return Ok(None);
+        }
+
         let Some(pos) = method.attrs.iter().position(route::is_route_attr) else {
             return Ok(None);
         };
@@ -212,6 +238,25 @@ impl ToTokens for AxumHandlers {
             return;
         };
 
+        // A block is either HTTP routes or ws messages, never both — the two register into
+        // different per-controller slices and assert different controller traits.
+        if !self.routes.is_empty() && !self.ws_routes.is_empty() {
+            out.extend(quote! {
+                ::core::compile_error!(
+                    "a #[handlers] block mixes HTTP route attributes with #[message] handlers; \
+                     split them into separate impl blocks"
+                );
+            });
+
+            return;
+        }
+
+        if !self.ws_routes.is_empty() {
+            self.ws_tokens(cx, out);
+
+            return;
+        }
+
         if self.routes.is_empty() {
             return;
         }
@@ -221,6 +266,7 @@ impl ToTokens for AxumHandlers {
         let axum = paths.plugin("axum");
         let distributed_slice = paths.core("linkme::distributed_slice");
         let linkme_crate = paths.core("linkme");
+        let controller_trait = paths.plugin("Controller");
         let routes_slice = self
             .routes_slice
             .clone()
@@ -254,6 +300,12 @@ impl ToTokens for AxumHandlers {
 
         out.extend(quote! {
             const _: () = {
+                // A `#[get]`/`#[post]`/… block only belongs on a REST `#[controller]`; assert it so a
+                // route attribute on a `#[controller(ws = ..)]` fails clearly here, not on the
+                // missing route slice.
+                fn __overseerd_assert_controller<T: #controller_trait>() {}
+                let _ = __overseerd_assert_controller::<#self_ty>;
+
                 fn __overseerd_axum_route_group(
                     svc: ::std::sync::Arc<#self_ty>,
                 ) -> #axum::Router {
@@ -267,6 +319,47 @@ impl ToTokens for AxumHandlers {
                 #[linkme(crate = #linkme_crate)]
                 static __OVERSEERD_AXUM_ROUTE_GROUP: fn(::std::sync::Arc<#self_ty>) -> #axum::Router =
                     __overseerd_axum_route_group;
+            };
+        });
+    }
+}
+
+impl AxumHandlers {
+    /// Emits a ws controller's message-route group: a `fn(Arc<Self>) -> Vec<WsRoute>` builder
+    /// appended to the controller's `{Controller}WsRoutes` slice, plus a `WebsocketController`
+    /// assertion so a `#[message]` block on a non-ws `#[controller]` fails clearly here.
+    fn ws_tokens(&self, cx: &HandlerContext, out: &mut TokenStream) {
+        let paths = &cx.paths;
+        let self_ty = &cx.self_ty;
+        let distributed_slice = paths.core("linkme::distributed_slice");
+        let linkme_crate = paths.core("linkme");
+        let ws_controller_trait = paths.plugin("WebsocketController");
+        let ws_route = paths.plugin("WsRoute");
+        let ws_routes_slice = self
+            .routes_slice
+            .clone()
+            .unwrap_or_else(|| format_ident!("{}WsRoutes", cx.self_ident));
+
+        let builders = self.ws_routes.iter().map(|spec| &spec.builder);
+
+        out.extend(quote! {
+            const _: () = {
+                fn __overseerd_assert_ws_controller<T: #ws_controller_trait>() {}
+                let _ = __overseerd_assert_ws_controller::<#self_ty>;
+
+                fn __overseerd_ws_route_group(
+                    svc: ::std::sync::Arc<#self_ty>,
+                ) -> ::std::vec::Vec<#ws_route> {
+                    let _ = &svc;
+
+                    ::std::vec![ #(#builders),* ]
+                }
+
+                #[#distributed_slice(#ws_routes_slice)]
+                #[linkme(crate = #linkme_crate)]
+                static __OVERSEERD_WS_ROUTE_GROUP:
+                    fn(::std::sync::Arc<#self_ty>) -> ::std::vec::Vec<#ws_route> =
+                    __overseerd_ws_route_group;
             };
         });
     }
@@ -402,6 +495,98 @@ fn build_route(
         path: route_attr.path.clone(),
         handler,
     })
+}
+
+/// Builds the message-route builder fragment for one `#[message("dest")]` method.
+///
+/// A ws handler takes `&self` and at most one payload parameter (decoded from the frame's JSON
+/// `payload`), and returns a serializable value (encoded into the reply's `ok`). The fragment
+/// evaluates — with the controller singleton `svc: Arc<Self>` in scope — to a `WsRoute` whose
+/// type-erased handler decodes the payload, runs the method, and encodes the response.
+fn build_ws_route(
+    self_ty: &Type,
+    method: &ImplItemFn,
+    destination: &LitStr,
+    paths: &Paths,
+) -> syn::Result<WsRouteSpec> {
+    let takes_self = matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)));
+
+    if let Some(FnArg::Receiver(receiver)) = method.sig.inputs.first()
+        && (receiver.reference.is_none() || receiver.mutability.is_some())
+    {
+        return Err(syn::Error::new_spanned(
+            receiver,
+            "ws message methods may take `&self` only (the controller singleton is shared; \
+             `self` by value and `&mut self` are not allowed)",
+        ));
+    }
+
+    let payload_types: Vec<&Type> = method
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            FnArg::Typed(typed) => Some(typed.ty.as_ref()),
+            FnArg::Receiver(_) => None,
+        })
+        .collect();
+
+    if payload_types.len() > 1 {
+        return Err(syn::Error::new_spanned(
+            &method.sig.inputs,
+            "a ws message method takes at most one payload parameter (the frame carries one \
+             JSON payload); DI in ws handlers is not yet supported",
+        ));
+    }
+
+    let ws_route = paths.plugin("WsRoute");
+    let ws_value = paths.plugin("ws::WsValue");
+    let ws_future = paths.plugin("ws::WsFuture");
+    let decode_payload = paths.plugin("ws::decode_payload");
+    let encode_response = paths.plugin("ws::encode_response");
+
+    let method_ident = &method.sig.ident;
+    let dotawait = if method.sig.asyncness.is_some() {
+        quote!(.await)
+    } else {
+        quote!()
+    };
+
+    // Decode the single payload param (if any) before invoking the handler.
+    let (decode, call_args) = match payload_types.first() {
+        Some(ty) => (
+            quote!(let __arg: #ty = #decode_payload(__payload)?;),
+            quote!(__arg),
+        ),
+
+        None => (quote!(let _ = &__payload;), quote!()),
+    };
+
+    let invoke = if takes_self {
+        quote!(<#self_ty>::#method_ident(&__svc, #call_args)#dotawait)
+    } else {
+        quote!(<#self_ty>::#method_ident(#call_args)#dotawait)
+    };
+
+    let builder = quote! {{
+        let __svc = ::std::sync::Arc::clone(&svc);
+
+        #ws_route::new(
+            #destination,
+            ::std::sync::Arc::new(move |__payload: #ws_value| -> #ws_future {
+                let __svc = ::std::sync::Arc::clone(&__svc);
+
+                ::std::boxed::Box::pin(async move {
+                    #decode
+                    let __resp = #invoke;
+
+                    #encode_response(&__resp)
+                })
+            }),
+        )
+    }};
+
+    Ok(WsRouteSpec { builder })
 }
 
 /// Finds and strips a `#[stream]` parameter (a streamed request body), returning its position

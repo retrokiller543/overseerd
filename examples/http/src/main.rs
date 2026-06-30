@@ -3,6 +3,10 @@
 //! dependency injection (`Inject`), a singleton dependency field-injected into the
 //! controller, and a request-scoped component reachable only from a route.
 //!
+//! It also serves a **WebSocket** controller (`#[controller(ws = JsonWs)]`) on `/ws`, opted in
+//! with `register_ws::<JsonWs>("/ws")`. Each `#[message("dest")]` method answers a JSON frame
+//! `{ "dest": "<dest>", "id": <n>, "payload": <json> }` with `{ "dest", "id", "ok": <json> }`.
+//!
 //! Run it, then exercise the routes:
 //!
 //! ```text
@@ -10,6 +14,10 @@
 //! curl localhost:3001/greet/world
 //! curl -X POST localhost:3001/greet -H 'content-type: application/json' -d '"there"'
 //! curl localhost:3001/greet/world/ticket
+//!
+//! # WebSocket (using websocat: https://github.com/vi/websocat)
+//! echo '{"dest":"greet","id":1,"payload":{"who":"world"}}' | websocat ws://localhost:3001/ws
+//! # → {"dest":"greet","id":1,"ok":{"message":"Hello, world!","count":1}}
 //! ```
 
 use std::net::SocketAddr;
@@ -140,6 +148,31 @@ impl GreetController {
     }
 }
 
+/// A WebSocket greeting request, decoded from a frame's JSON `payload`.
+#[derive(Deserialize)]
+struct WsGreet {
+    who: String,
+}
+
+/// A WebSocket controller, speaking the JSON-envelope protocol. Like a REST controller, it is a
+/// singleton holding the shared [`Greeter`]; its `#[message]` methods route on the frame's `dest`.
+#[controller(ws = JsonWs)]
+struct GreetSocket {
+    greeter: Greeter,
+}
+
+#[handlers]
+impl GreetSocket {
+    /// `dest = "greet"` — greets the payload's `who`, reusing the same shared [`Greeter`] the HTTP
+    /// controller uses, so the greeting count is shared across HTTP and WebSocket callers.
+    #[message("greet")]
+    async fn greet(&self, msg: WsGreet) -> GreetResponse {
+        let (message, count) = self.greeter.greet(&msg.who);
+
+        GreetResponse { message, count }
+    }
+}
+
 #[tokio::main]
 async fn main() -> overseerd::axum::Result<()> {
     overseerd::builtins::init_tracing(&Default::default()).ok();
@@ -147,10 +180,14 @@ async fn main() -> overseerd::axum::Result<()> {
     // No `controllers:` listing: a `#[controller]` registers itself (its DI component and its
     // route table) into link-time slices that `auto_discover` folds in, and its dependency
     // graph is checked at its own definition. `app!` only needs the protocol.
+    //
+    // WebSockets are opt-in: `register_ws::<JsonWs>("/ws")` activates the JSON ws protocol and
+    // mounts its upgrade handler at `/ws`, serving every `#[controller(ws = JsonWs)]` controller.
     let app = app! {
         name: "example-http",
         protocol: AxumPlugin,
     }
+    .register_ws::<JsonWs>("/ws")
     .build()
     .await?;
 

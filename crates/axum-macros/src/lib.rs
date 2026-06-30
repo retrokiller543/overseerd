@@ -146,3 +146,11 @@ pub fn options(_attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn route(_attr: TokenStream, item: TokenStream) -> TokenStream {
     run::<ItemFn, _>(item.into(), route::expand_standalone).into()
 }
+
+/// Marks a WebSocket message handler inside a `#[handlers]` impl of a `#[controller(ws = ..)]`:
+/// `#[message("destination")]`. A marker consumed and stripped by `#[handlers]`; used on its own it
+/// emits a `compile_error!`.
+#[proc_macro_attribute]
+pub fn message(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    run::<ItemFn, _>(item.into(), route::expand_standalone).into()
+}
