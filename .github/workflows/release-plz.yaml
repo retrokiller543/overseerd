@@ -20,7 +20,10 @@ jobs:
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'retrokiller543' }}
+    # Only publish after the release PR itself is merged. Ordinary feature merges still run the
+    # `release-plz-pr` job below to create/update the release PR, but must not try to publish the
+    # pre-bump workspace versions.
+    if: ${{ github.repository_owner == 'retrokiller543' && contains(github.event.head_commit.message, 'chore: release') }}
     permissions:
       contents: write
       pull-requests: read
