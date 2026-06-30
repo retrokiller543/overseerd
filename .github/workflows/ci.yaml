@@ -69,11 +69,18 @@ jobs:
       matrix:
         crate:
           - overseerd
-          - overseerd-config
           - overseerd-core
-          - overseerd-macros
+          - overseerd-di
+          - overseerd-hooks
+          - overseerd-config
+          - overseerd-app
+          - overseerd-dirs
           - overseerd-transport
-          - overseerd-analyze
+          - overseerd-client
+          - overseerd-rpc
+          - overseerd-macros
+          - overseerd-macros-core
+          - overseerd-rpc-macros
           - overseerd-axum
           - overseerd-axum-macros
     steps:

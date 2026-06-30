@@ -465,7 +465,11 @@ where
             Some(Err(ClientError::Remote(ErrorBody::new(code, body))))
         }
 
-        Some(Reply::Response(_)) => Some(Err(ClientError::Decode(
+        Some(Reply::Response(WireOutcome::Err { code, body })) => {
+            Some(Err(ClientError::Remote(ErrorBody::new(code, body))))
+        }
+
+        Some(Reply::Response(WireOutcome::Ok(_))) => Some(Err(ClientError::Decode(
             "unexpected unary response in stream".into(),
         ))),
 
