@@ -106,6 +106,10 @@ impl Unary for HyperClient {
             .to_bytes()
             .to_vec();
 
+        if !status.is_success() {
+            return Err(super::remote_error(status, body_bytes).typed());
+        }
+
         let decoded = self
             .decode(body_bytes)
             .map_err(|e| ClientError::Decode(e.to_string()))?;

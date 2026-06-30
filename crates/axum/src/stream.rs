@@ -25,6 +25,8 @@ use overseerd_transport::CodecError;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+const MAX_NDJSON_LINE_BYTES: usize = 1024 * 1024;
+
 /// A newline-delimited-JSON streamed response (`application/x-ndjson`): each item of the wrapped
 /// stream is serialized to one JSON line.
 pub struct Ndjson<S>(pub S);
@@ -104,9 +106,31 @@ where
                         continue;
                     }
 
+                    if line.len() > MAX_NDJSON_LINE_BYTES {
+                        tracing::warn!(
+                            target: "overseerd::axum",
+                            len = line.len(),
+                            limit = MAX_NDJSON_LINE_BYTES,
+                            "stream item exceeded maximum NDJSON line length; ending stream"
+                        );
+
+                        return None;
+                    }
+
                     line
                 } else if state.done {
                     if state.buffer.is_empty() {
+                        return None;
+                    }
+
+                    if state.buffer.len() > MAX_NDJSON_LINE_BYTES {
+                        tracing::warn!(
+                            target: "overseerd::axum",
+                            len = state.buffer.len(),
+                            limit = MAX_NDJSON_LINE_BYTES,
+                            "stream item exceeded maximum NDJSON line length; ending stream"
+                        );
+
                         return None;
                     }
 
@@ -115,6 +139,19 @@ where
                     match state.body.next().await {
                         Some(Ok(chunk)) => {
                             state.buffer.extend_from_slice(&chunk);
+
+                            if state.buffer.len() > MAX_NDJSON_LINE_BYTES
+                                && !state.buffer.iter().any(|&b| b == b'\n')
+                            {
+                                tracing::warn!(
+                                    target: "overseerd::axum",
+                                    len = state.buffer.len(),
+                                    limit = MAX_NDJSON_LINE_BYTES,
+                                    "stream item exceeded maximum NDJSON line length; ending stream"
+                                );
+
+                                return None;
+                            }
 
                             continue;
                         }
@@ -240,4 +277,23 @@ where
     S: Stream<Item = u8> + Send + 'static,
 {
     stream.ready_chunks(8192).map(Bytes::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use futures::StreamExt;
+
+    use super::{MAX_NDJSON_LINE_BYTES, ndjson_decode};
+
+    #[tokio::test]
+    async fn ndjson_decode_stops_on_oversized_line_without_newline() {
+        let body = futures::stream::iter([Ok::<_, std::convert::Infallible>(Bytes::from(vec![
+            b'x';
+            MAX_NDJSON_LINE_BYTES + 1
+        ]))]);
+        let mut decoded = Box::pin(ndjson_decode::<_, _, String>(body));
+
+        assert!(decoded.next().await.is_none());
+    }
 }

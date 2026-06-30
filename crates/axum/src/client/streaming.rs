@@ -46,8 +46,9 @@ pub trait HttpStreaming: Send + Sync {
 
 /// A transport that can send a **streamed request body** and return the unary response: the
 /// client-streaming dual of [`HttpStreaming`]. The request carries a stream of framed body chunks
-/// (`http::Request<S>` with the frame stream as its body); the response is decoded like a unary
-/// call (status + headers in the [`HttpResponse`] envelope). Implemented by `reqwest` and `hyper`.
+/// (`http::Request<S>` with the frame stream as its body); successful responses are decoded like
+/// unary calls (status + headers in the [`HttpResponse`] envelope), while non-success statuses
+/// become [`ClientError::Remote`]. Implemented by `reqwest`.
 pub trait HttpClientStreaming: Send + Sync {
     fn send_stream<S, Resp, E>(
         &self,

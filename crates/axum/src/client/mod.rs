@@ -23,6 +23,27 @@ pub use streaming::{HttpClientStreaming, HttpStreaming, StreamDecode, encode_str
 /// Re-exported so generated streaming-client code names the codec without a separate dep.
 pub use overseerd_transport::{Decodes, Encodes};
 
+/// Percent-encodes one URI path segment according to RFC 3986. Generated clients call this for
+/// every route `Path<T>` substitution before building the request URI.
+pub fn encode_path_segment(value: impl std::fmt::Display) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+    let value = value.to_string();
+    let mut out = String::with_capacity(value.len());
+
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(HEX[(byte >> 4) as usize] as char);
+            out.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+
+    out
+}
+
 /// Maps a non-success HTTP response into a [`ClientError::Remote`](overseerd_client::ClientError),
 /// carrying the framework status (the HTTP status code in its custom section) and the raw error
 /// body. Used by the streaming transports, where a pre-stream failure has no response envelope to

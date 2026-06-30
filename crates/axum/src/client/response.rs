@@ -8,10 +8,9 @@ use http::{HeaderMap, StatusCode};
 ///
 /// It [`Deref`]s and [`AsRef`]s into the body, so the body reads through transparently
 /// (`response.field`, `&*response`) while [`status`](Self::status) and
-/// [`headers`](Self::headers) expose the rest. An HTTP error *status* (4xx/5xx) is a normal
-/// value here — `Ok(HttpResponse { status, .. })` — not a
-/// [`ClientError`](overseerd_client::ClientError); that is reserved for transport/decode
-/// failures.
+/// [`headers`](Self::headers) expose the rest. Bundled clients return this envelope for
+/// successful HTTP statuses; non-success statuses are surfaced as
+/// [`ClientError::Remote`](overseerd_client::ClientError::Remote) with the raw error body.
 pub struct HttpResponse<R> {
     status: StatusCode,
     headers: HeaderMap,

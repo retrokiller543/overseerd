@@ -5,11 +5,13 @@
 
 use futures::{Stream, StreamExt};
 use overseerd::axum::Ndjson;
-use overseerd::axum::axum::Json;
 use overseerd::axum::axum::extract::Path;
+use overseerd::axum::axum::{Json, http};
 use overseerd::axum::client::ReqwestClient;
 use overseerd::axum::prelude::*;
+use overseerd::client::{ClientError, Unary};
 use overseerd::prelude::*;
+use overseerd::transport::PredefinedCode;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
@@ -45,6 +47,11 @@ impl Api {
         let len = msg.len();
 
         Json(EchoOut { msg, len })
+    }
+
+    #[get("/missing")]
+    async fn missing(&self) -> http::StatusCode {
+        http::StatusCode::NOT_FOUND
     }
 
     #[post("/sum")]
@@ -153,10 +160,34 @@ async fn generated_client_round_trips_over_reqwest() {
     assert_eq!(echoed.msg, "hello");
     assert_eq!(echoed.len, 5);
 
+    let encoded = "hello/world ?#å".to_string();
+    let echoed = client
+        .echo(encoded.clone())
+        .await
+        .expect("encoded echo call");
+    assert_eq!(echoed.msg, encoded);
+
     // JSON-body route: `POST /api/sum`. The client takes the raw `SumIn`, not `Json<SumIn>` —
     // the wrapping happens inside the generated request builder.
     let summed = client.sum(SumIn { a: 2, b: 40 }).await.expect("sum call");
     assert_eq!(*summed, 42);
+
+    let backend = ReqwestClient::new(format!("http://{addr}"));
+    let request = http::Request::builder()
+        .method(http::Method::GET)
+        .uri("/api/missing")
+        .body(())
+        .expect("request");
+
+    match Unary::unary::<(), EchoOut, overseerd::client::Raw>(&backend, "", request).await {
+        Err(ClientError::Remote(error)) => {
+            assert_eq!(error.code().predefined(), PredefinedCode::NotFound);
+            assert_eq!(error.code().custom(), 404);
+        }
+
+        Ok(_) => panic!("expected remote 404, got success"),
+        Err(other) => panic!("expected remote 404, got {other:?}"),
+    }
 
     // Two path params surface as dedicated named args: `GET /api/pair/{a}/{b}`.
     let product = client.pair(6, 7).await.expect("pair call");

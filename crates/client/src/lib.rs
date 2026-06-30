@@ -252,9 +252,9 @@ pub trait Unary: Send + Sync {
     /// The response envelope this transport returns, over a decoded body `R`. The dual of
     /// [`Request`](Self::Request): RPC returns the body straight (`type Response<R> = R`); HTTP
     /// returns an `HttpResponse<R>` that carries the status and headers yet `Deref`s/`AsRef`s
-    /// into `R`, so the body stays one `.` away while status/headers remain reachable. An HTTP
-    /// error *status* is an `Ok(HttpResponse { .. })` with that status — [`ClientError`] is kept
-    /// for transport/decode failures. A generated client pins it with a `Response<R> = ..` bound.
+    /// into `R`, so the body stays one `.` away while status/headers remain reachable. HTTP
+    /// implementations may map non-success statuses into [`ClientError::Remote`] before decoding
+    /// the success body. A generated client pins it with a `Response<R> = ..` bound.
     type Response<R>;
 
     fn unary<B, Resp, E>(

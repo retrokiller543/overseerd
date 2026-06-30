@@ -40,6 +40,26 @@ pub(crate) fn parse_path_override(input: ParseStream) -> syn::Result<syn::Path> 
     input.parse()
 }
 
+fn parse_scope_path(input: ParseStream) -> syn::Result<syn::Path> {
+    let path: syn::Path = input.parse()?;
+
+    if path.leading_colon.is_none()
+        && path.segments.len() == 1
+        && let Some(segment) = path.segments.first()
+        && segment.arguments.is_empty()
+    {
+        return Ok(match segment.ident.to_string().as_str() {
+            "singleton" => syn::parse_quote!(Singleton),
+            "connection" => syn::parse_quote!(Connection),
+            "request" => syn::parse_quote!(Request),
+            "transient" => syn::parse_quote!(Transient),
+            _ => path,
+        });
+    }
+
+    Ok(path)
+}
+
 /// The base arguments of a component macro, generic over an extension `Ext` (the struct-side
 /// analogue of [`MethodArgs`](crate::methods::MethodArgs)). `ComponentArgs<NoExt>` is
 /// `#[component]`; `ComponentArgs<Router>` is `#[service]`. All base keys are optional:
@@ -122,7 +142,7 @@ impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
                 "crate" => args.krate = Some(parse_path_override(input)?),
                 "scope" => {
                     input.parse::<Token![=]>()?;
-                    args.scope = Some(input.parse()?);
+                    args.scope = Some(parse_scope_path(input)?);
                 }
                 "provide" => {
                     input.parse::<Token![=]>()?;

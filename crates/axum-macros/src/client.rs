@@ -111,9 +111,13 @@ fn request_builder(
 ) -> TokenStream {
     let http = paths.plugin("http");
     let http_body = paths.plugin("client::HttpBody");
+    let encode_path_segment = paths.plugin("client::encode_path_segment");
     let controller_trait = paths.plugin("Controller");
     let verb = format_ident!("{}", route.verb.to_string().to_uppercase());
     let base = quote!(<#controller as #controller_trait>::BASE);
+    let subst = subst
+        .iter()
+        .map(|subst| quote!(#encode_path_segment(&#subst)));
     let uri = quote!(::std::format!(#fmt, #base #(, #subst)*));
 
     quote! {{
@@ -253,6 +257,7 @@ pub fn build_client_stream_method(
     let encode_stream = paths.plugin("client::encode_stream");
     let http_client_streaming = paths.plugin("client::HttpClientStreaming");
     let http_response = paths.plugin("client::HttpResponse");
+    let encode_path_segment = paths.plugin("client::encode_path_segment");
     let controller_trait = paths.plugin("Controller");
     let client_error = paths.client("ClientError");
     let decodes = paths.client("Decodes");
@@ -261,6 +266,9 @@ pub fn build_client_stream_method(
     let verb = format_ident!("{}", route.verb.to_string().to_uppercase());
     let base = quote!(<#controller as #controller_trait>::BASE);
     let subst = &path_plan.subst;
+    let subst = subst
+        .iter()
+        .map(|subst| quote!(#encode_path_segment(&#subst)));
     let uri = quote!(::std::format!(#fmt, #base #(, #subst)*));
 
     let request = ClientMethodOverrideBody {
@@ -582,6 +590,7 @@ fn assemble(
     let http = paths.plugin("http");
     let http_body = paths.plugin("client::HttpBody");
     let http_response = paths.plugin("client::HttpResponse");
+    let encode_path_segment = paths.plugin("client::encode_path_segment");
     let controller_trait = paths.plugin("Controller");
 
     // The decoded response body: peel a `Json<T>` return to `T`, else the bare return type.
@@ -592,6 +601,9 @@ fn assemble(
     let verb = format_ident!("{}", route.verb.to_string().to_uppercase());
     let base = quote!(<#controller as #controller_trait>::BASE);
     let subst = &path_plan.subst;
+    let subst = subst
+        .iter()
+        .map(|subst| quote!(#encode_path_segment(&#subst)));
     let uri = quote!(::std::format!(#fmt, #base #(, #subst)*));
 
     // The body: the raw `T` is the param, but the wire body is its `HttpBody` wrapper
@@ -686,6 +698,7 @@ fn hole_ident(hole: &str, index: usize) -> Ident {
     if !name.is_empty()
         && name.chars().all(|c| c.is_alphanumeric() || c == '_')
         && !name.chars().next().is_some_and(|c| c.is_numeric())
+        && syn::parse_str::<Ident>(name).is_ok()
     {
         format_ident!("{}", name)
     } else {
@@ -751,7 +764,7 @@ fn parse_template(template: &str) -> (String, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_template;
+    use super::{hole_ident, parse_template};
 
     /// The `format!` string starts with `{}` for `BASE`, each param hole is a positional `{}`,
     /// and the hole names are recovered in order — matching matchit 0.8's `{name}` syntax.
@@ -789,5 +802,11 @@ mod tests {
 
         assert_eq!(fmt, "{}/lit/{{x}}/{}");
         assert_eq!(holes, vec!["id".to_string()]);
+    }
+
+    #[test]
+    fn keyword_holes_fall_back_to_generated_param_name() {
+        assert_eq!(hole_ident("type", 0).to_string(), "path0");
+        assert_eq!(hole_ident("self", 1).to_string(), "path1");
     }
 }

@@ -90,6 +90,10 @@ impl Unary for ReqwestClient {
         let headers = response.headers().clone();
         let body_bytes = response.bytes().await.map_err(net_err)?.to_vec();
 
+        if !status.is_success() {
+            return Err(super::remote_error(status, body_bytes).typed());
+        }
+
         let decoded = self
             .decode(body_bytes)
             .map_err(|e| ClientError::Decode(e.to_string()))?;
@@ -160,11 +164,15 @@ impl HttpClientStreaming for ReqwestClient {
             .await
             .map_err(net_err)?;
 
-        // A client-streaming call returns a unary response; like `unary`, an error status rides
-        // in the envelope rather than as a `ClientError`.
+        // A client-streaming call returns a unary response. Preserve non-success statuses as
+        // remote errors before decoding the success body.
         let status = response.status();
         let headers = response.headers().clone();
         let body_bytes = response.bytes().await.map_err(net_err)?.to_vec();
+
+        if !status.is_success() {
+            return Err(super::remote_error(status, body_bytes).typed());
+        }
 
         let decoded = self
             .decode(body_bytes)
