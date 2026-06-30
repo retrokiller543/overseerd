@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use overseerd_config::{
-    ConfigError, ConfigErrorKind, ConfigStr, ConfigValue, DefaultSpec, EnumTag, MapResolver,
-    ResolverChain, from_value,
+    ConfigStr, ConfigValue, DefaultSpec, EnumTag, MapResolver, ResolverChain, TemplateError,
+    TemplateErrorKind, from_value,
 };
 use serde::Deserialize;
 
@@ -38,11 +38,11 @@ fn resolvers(pairs: &[(&str, &str)]) -> ResolverChain {
     ResolverChain(vec![Box::new(MapResolver(map))])
 }
 
-/// The failure kind behind a `ConfigError`, regardless of path context.
-fn kind(error: &ConfigError) -> &ConfigErrorKind {
+/// The failure kind behind a `TemplateError`, regardless of path context.
+fn kind(error: &TemplateError) -> &TemplateErrorKind {
     match error {
-        ConfigError::At { kind, .. } => kind,
-        ConfigError::Bare(kind) => kind,
+        TemplateError::At { kind, .. } => kind,
+        TemplateError::Bare(kind) => kind,
     }
 }
 
@@ -90,7 +90,7 @@ fn unknown_namespace_key_errors() {
 
     assert!(matches!(
         kind(&error),
-        ConfigErrorKind::UnknownNamespaceKey { key } if key == "@nope"
+        TemplateErrorKind::UnknownNamespaceKey { key } if key == "@nope"
     ));
 }
 
@@ -111,7 +111,7 @@ fn namespace_key_never_consults_the_config_tree() {
 
     assert!(matches!(
         kind(&error),
-        ConfigErrorKind::UnknownNamespaceKey { .. }
+        TemplateErrorKind::UnknownNamespaceKey { .. }
     ));
 }
 

@@ -5,7 +5,8 @@
 
 use std::sync::Arc;
 
-use overseerd::{Daemon, Dep, component};
+use overseerd::daemon::App;
+use overseerd::{Dep, component};
 
 /// The reloadable target. `id` distinguishes the original instance (built with
 /// `Default`) from a swapped-in replacement.
@@ -47,7 +48,7 @@ impl ConsumerB {
 
 #[tokio::test]
 async fn dep_swap_is_shared_across_two_injection_sites() {
-    let daemon = Daemon::builder("dep-swap")
+    let daemon = App::builder("dep-swap")
         .auto_discover()
         .build()
         .await

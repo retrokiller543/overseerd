@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use overseerd::config::Toml;
-use overseerd::{ConfigManager, Daemon, Shutdown, Startup, component, methods};
+use overseerd::daemon::App;
+use overseerd::{ConfigManager, Shutdown, Startup, component, methods};
 
 /// Records that its startup and shutdown hooks ran.
 #[component]
@@ -15,6 +16,25 @@ struct LifecycleComponent {
     started: AtomicUsize,
     #[default]
     stopped: AtomicUsize,
+}
+
+/// Fails startup after recording it, and records whether cleanup ran.
+#[component]
+struct FailingStartupComponent {
+    #[default]
+    started: AtomicUsize,
+    #[default]
+    stopped: AtomicUsize,
+}
+
+impl FailingStartupComponent {
+    fn started(&self) -> usize {
+        self.started.load(Ordering::SeqCst)
+    }
+
+    fn stopped(&self) -> usize {
+        self.stopped.load(Ordering::SeqCst)
+    }
 }
 
 impl LifecycleComponent {
@@ -30,14 +50,33 @@ impl LifecycleComponent {
 #[methods]
 impl LifecycleComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::Result<()> {
+    async fn on_start(&self) -> overseerd::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::Result<()> {
+    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+        self.stopped.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+}
+
+#[methods]
+impl FailingStartupComponent {
+    #[hook(Startup)]
+    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+        self.started.fetch_add(1, Ordering::SeqCst);
+
+        Err(overseerd::daemon::Error::MissingComponent(
+            "startup rejected",
+        ))
+    }
+
+    #[hook(Shutdown)]
+    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -46,9 +85,9 @@ impl LifecycleComponent {
 
 #[tokio::test]
 async fn startup_and_shutdown_hooks_fire() {
-    let daemon = Daemon::builder("lifecycle-test")
+    let daemon = App::builder("lifecycle-test")
         .config_source(ConfigManager::<Toml>::empty())
-        .auto_discover()
+        .component::<LifecycleComponent>()
         .build()
         .await
         .expect("daemon builds");
@@ -88,4 +127,25 @@ async fn startup_and_shutdown_hooks_fire() {
         1,
         "shutdown hook fired on graceful stop"
     );
+}
+
+#[tokio::test]
+async fn startup_failure_runs_shutdown_hooks_before_returning() {
+    let daemon = App::builder("startup-failure-cleanup-test")
+        .config_source(ConfigManager::<Toml>::empty())
+        .component::<FailingStartupComponent>()
+        .build()
+        .await
+        .expect("daemon builds");
+
+    let component = daemon
+        .container()
+        .get::<FailingStartupComponent>()
+        .expect("component built");
+
+    let result = daemon.run().await;
+
+    assert!(result.is_err(), "startup failure is returned");
+    assert_eq!(component.started(), 1, "startup hook ran once");
+    assert_eq!(component.stopped(), 1, "shutdown hook cleaned up");
 }

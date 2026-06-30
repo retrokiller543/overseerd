@@ -11,7 +11,11 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-client = []
+# Make `PeerInfo` an Overseerd DI injectable (so a connection-scoped component can depend
+# on it). Pulls in `overseerd-di`; off by default so the transport stays standalone.
+di = ["dep:overseerd-di"]
+# Additionally emit the compile-time `Provide<PeerInfo>` impl for di-check.
+di-check = ["di", "overseerd-di/di-check"]
 
 [dependencies]
 bitflags = { workspace = true }
@@ -22,3 +26,4 @@ futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 tracing = { workspace = true }
+overseerd-di = { workspace = true, optional = true }

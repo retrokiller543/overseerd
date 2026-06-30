@@ -8,8 +8,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use overseerd::config::Toml;
+use overseerd::daemon::App;
 use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{Cfg, ConfigManager, Daemon, component, config};
+use overseerd::{Cfg, ConfigManager, component, config};
 use serde::Deserialize;
 
 #[config(path = "svc")]
@@ -65,7 +66,7 @@ async fn reload_swaps_only_the_changed_binding() {
 
     let manager = ConfigManager::<Toml>::load_in(&config_dir, &[]).expect("load config");
 
-    let daemon = Daemon::builder("config-reload-test")
+    let daemon = App::builder("config-reload-test")
         .config_source(manager)
         .auto_discover()
         .build()

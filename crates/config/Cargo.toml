@@ -1,6 +1,6 @@
 [package]
 name = "overseerd-config"
-description = "Configuration loading (TOML/YAML) for the overseerd daemon framework."
+description = "Configuration for the Overseerd framework: format-agnostic loading (TOML/YAML) plus the DI-integrated Cfg/ConfigManager/reload layer."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,10 +14,22 @@ categories.workspace = true
 default = ["toml"]
 toml = ["dep:toml"]
 yaml = ["dep:serde_yaml_ng"]
+di-check = ["overseerd-di/di-check"]
+# Watch config files and reload on change (`ConfigManager::watch_config`), via `notify`.
+watch = ["dep:notify"]
 
 [dependencies]
+overseerd-core = { workspace = true }
+overseerd-di = { workspace = true }
+overseerd-dirs = { workspace = true }
+overseerd-hooks = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+arc-swap = { workspace = true }
+linkme = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
 toml = { workspace = true, optional = true }
 serde_yaml_ng = { workspace = true, optional = true }
+notify = { workspace = true, optional = true }

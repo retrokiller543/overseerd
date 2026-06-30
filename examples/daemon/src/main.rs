@@ -14,13 +14,13 @@ mod notifiers;
 mod service;
 
 use crate::components::{AppServer, DbConfig};
-use crate::service::Notifications;
+use overseerd::app;
 use overseerd::builtins::init_tracing;
 use overseerd::config::Toml;
-use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig, daemon};
+use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig};
 
 #[tokio::main]
-async fn main() -> overseerd::Result<()> {
+async fn main() -> overseerd::daemon::Result<()> {
     const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
 
     let dir_manager = DirectoriesManager::from_path(CRATE_PATH.into());
@@ -42,19 +42,21 @@ async fn main() -> overseerd::Result<()> {
     println!("server would bind to {}", server.addr);
     println!("server socket resolves to {}", server.socket.display());
 
-    // `app.greet` auto-registers via its `#[config(path = "app.greet")]`; the two
-    // `DbConfig` bindings share one type at different paths, so they are listed
-    // explicitly. The framework `ServerConfig` builtin carries no auto-binding, so
-    // it is bound here at `app.server`. The supplied config source backs them all.
-    let daemon = daemon! {
+    let app = app! {
         name: "example-daemon",
-        services: [Notifications],
+        protocol: overseerd::daemon::RpcPlugin,
+
+        // `app.greet` auto-registers via its `#[config(path = "app.greet")]`; the two
+        // `DbConfig` bindings share one type at different paths, so they are listed
+        // explicitly. The framework `ServerConfig` builtin carries no auto-binding, so
+        // it is bound here at `app.server`. The supplied config source backs them all.
         configs: [
             DbConfig => "app.db.reader",
             DbConfig => "app.db.writer",
             ServerConfig => "app.server",
             LoggingConfig => "logging"
         ],
+
         managers: {
             config: config,
             directories: dir_manager,
@@ -63,7 +65,7 @@ async fn main() -> overseerd::Result<()> {
     .build()
     .await?;
 
-    println!("{daemon}");
+    println!("{app}");
 
     Ok(())
 }

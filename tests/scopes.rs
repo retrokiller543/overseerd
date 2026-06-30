@@ -11,10 +11,8 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use overseerd::{
-    CallResult, Daemon, Inject, MemoryClient, MemoryConnectionHandle, PeerInfo, component,
-    handlers, service,
-};
+use overseerd::daemon::{App, Inject, handlers, service};
+use overseerd::{CallResult, MemoryClient, MemoryConnectionHandle, PeerInfo, component};
 
 static CONNECTION_IDS: AtomicU64 = AtomicU64::new(1);
 static REQUEST_IDS: AtomicU64 = AtomicU64::new(1);
@@ -48,7 +46,7 @@ impl Default for TraceId {
 }
 
 /// Connection-scoped component; depends on the framework-seeded peer.
-#[component(scope = connection)]
+#[component(scope = overseerd::daemon::Connection)]
 struct ConnState {
     _peer: PeerInfo,
     #[default]
@@ -56,7 +54,7 @@ struct ConnState {
 }
 
 /// Request-scoped component; depends on the connection-scoped one.
-#[component(scope = request)]
+#[component(scope = overseerd::daemon::Request)]
 struct ReqState {
     conn: Arc<ConnState>,
     #[default]
@@ -64,7 +62,7 @@ struct ReqState {
 }
 
 /// Transient component, rebuilt on each resolution.
-#[component(scope = transient)]
+#[component(scope = overseerd::scope::Transient)]
 struct Trace {
     #[default]
     id: TraceId,
@@ -77,7 +75,7 @@ struct ScopeSvc;
 impl ScopeSvc {
     /// Returns (connection id, request id) for this call.
     #[rpc]
-    async fn ids(Inject(req): Inject<Arc<ReqState>>) -> overseerd::Result<(u64, u64)> {
+    async fn ids(Inject(req): Inject<Arc<ReqState>>) -> overseerd::daemon::Result<(u64, u64)> {
         Ok((req.conn.id.0, req.id.0))
     }
 
@@ -86,7 +84,7 @@ impl ScopeSvc {
     async fn two_traces(
         Inject(a): Inject<Arc<Trace>>,
         Inject(b): Inject<Arc<Trace>>,
-    ) -> overseerd::Result<(u64, u64)> {
+    ) -> overseerd::daemon::Result<(u64, u64)> {
         Ok((a.id.0, b.id.0))
     }
 }
@@ -96,7 +94,7 @@ impl ScopeSvc {
 async fn start() -> MemoryClient {
     let (client, transport) = MemoryClient::pair();
 
-    let daemon = Daemon::builder("scopes-test")
+    let daemon = App::builder("scopes-test")
         .auto_discover()
         .build()
         .await

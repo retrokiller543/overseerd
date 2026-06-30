@@ -1,0 +1,21 @@
+[package]
+name = "overseerd-example-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+overseerd = { path = "../..", default-features = false, features = ["axum", "ws", "reqwest", "hyper", "tungstenite", "tracing-subscriber"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+tracing.workspace = true
+
+[dev-dependencies]
+tower = { workspace = true }
+futures = { workspace = true }
+http-body-util = "0.1"
+serde_json = { workspace = true }
+# WebSocket client for the end-to-end ws test. No TLS feature, so openssl/rsa stay out of the tree.
+tokio-tungstenite = { workspace = true }

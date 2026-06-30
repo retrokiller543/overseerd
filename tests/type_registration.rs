@@ -9,9 +9,8 @@
 //! unrelated to registration).
 #![cfg(not(feature = "client"))]
 
-use overseerd::{
-    CallResult, Daemon, MemoryClient, MemoryConnectionHandle, Payload, handlers, service,
-};
+use overseerd::daemon::{App, Payload, RpcAppBuilder, handlers, service};
+use overseerd::{CallResult, MemoryClient, MemoryConnectionHandle};
 
 /// A service whose RPCs are contributed by two separate `#[handlers]` blocks.
 #[service(id = "typed_svc", version = "0.1")]
@@ -40,7 +39,7 @@ async fn start() -> MemoryConnectionHandle {
 
     // No auto_discover(): the service, its factory, and both RPC groups come from
     // the type alone.
-    let daemon = Daemon::builder("test")
+    let daemon = App::builder("test")
         .service::<TypedSvc>()
         .build()
         .await

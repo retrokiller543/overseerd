@@ -1,12 +1,9 @@
 [workspace]
 members = [
     ".",
-    "crates/analyze",
-    "crates/config",
-    "crates/core",
-    "crates/macros",
-    "crates/transport",
+    "crates/*",
     "examples/daemon",
+    "examples/http",
 ]
 resolver = "3"
 
@@ -25,12 +22,36 @@ categories = ["network-programming", "asynchronous"]
 # strips the `path` and resolves the dependency by version instead.
 overseerd-config = { path = "crates/config", version = "0.6.0" }
 overseerd-core = { path = "crates/core", version = "0.6.0" }
+overseerd-di = { path = "crates/di", version = "0.6.0" }
+overseerd-dirs = { path = "crates/dirs", version = "0.6.0" }
+overseerd-hooks = { path = "crates/hooks", version = "0.6.0" }
+overseerd-app = { path = "crates/app", version = "0.6.0" }
+overseerd-client = { path = "crates/client", version = "0.6.0" }
+overseerd-rpc = { path = "crates/rpc", version = "0.6.0" }
 overseerd-macros = { path = "crates/macros", version = "0.6.0" }
+overseerd-macros-core = { path = "crates/macros-core", version = "0.6.0" }
+overseerd-rpc-macros = { path = "crates/rpc-macros", version = "0.6.0" }
 overseerd-transport = { path = "crates/transport", version = "0.6.0" }
+overseerd-axum = { path = "crates/axum", version = "0.6.0" }
+overseerd-axum-macros = { path = "crates/axum-macros", version = "0.6.0" }
 
 # Common dependencies
 arc-swap = "1.9.1"
 bitflags = "2"
+# The axum HTTP protocol. No TLS feature is enabled, keeping `openssl`/`rsa` out of the
+# dependency tree (project rule); terminate TLS at a reverse proxy instead.
+axum = "0.8"
+serde_json = "1"
+serde_urlencoded = "0.7"
+http = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# hyper as a client: the legacy/util client + body helpers. Plain HTTP connector only (no TLS
+# feature), keeping openssl/rsa out — terminate TLS at a proxy, or use the reqwest backend.
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+http-body-util = "0.1"
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+bytes = "1"
 notify = "6"
 thiserror = "2"
 toml = "1.1"
@@ -64,36 +85,71 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["di-check"]
+default = ["di-check", "daemon"]
 
-# Compile the generated client SDK and the client-side transport. Opt in via
-# `overseerd = { features = ["client"] }`; no feature is needed in the user crate.
+# Re-export the native RPC daemon through the facade for convenience. The protocol crate owns
+# its own macros; the facade just enables its `facade` feature (so its codegen roots at
+# `::overseerd::daemon::*`) and re-exports it. Disable for a core-framework-only build
+# (`default-features = false`); the daemon then lives in its own `overseerd-rpc` crate.
+daemon = ["dep:overseerd-rpc", "overseerd-rpc/facade"]
+
+# Re-export the axum/HTTP protocol through the facade's `axum` module. Independent of `daemon`;
+# enable both to host RPC and HTTP side by side.
+axum = ["dep:overseerd-axum", "overseerd-axum/facade"]
+
+# WebSocket controllers for the axum protocol (`#[controller(ws = ..)]`, `register_ws`). Opt-in,
+# since WebSockets pull in extra machinery a plain HTTP app does not need. Implies `axum`.
+ws = ["axum", "overseerd-axum/ws"]
+
+# Compile the generated client SDK. Protocol-neutral: it turns on the client *surface* of
+# whichever protocol(s) are enabled — `client` + `daemon` gives the (self-contained) RPC
+# client; `client` + `axum` gives the HTTP client codegen, which needs a backend selected
+# below (`reqwest` / `hyper`). The `?` activations fire only for a protocol that is present.
 client = [
-    "overseerd-macros/client",
-    "overseerd-core/client",
-    "overseerd-transport/client",
-    "dep:async-trait",
+    "overseerd-rpc?/client",
+    "overseerd-axum?/client",
 ]
+
+# HTTP client backends — independent, so a user picks one (or both). Each implies `client`.
+reqwest = ["client", "overseerd-axum?/reqwest"]
+hyper = ["client", "overseerd-axum?/hyper"]
+tungstenite = ["client", "ws", "overseerd-axum?/tungstenite"]
 
 # Emit compile-time dependency-injection checks (a `Wiring: Provide<Dep>` bound
 # per concrete dependency). A missing provider becomes a `cargo check` error.
-di-check = ["overseerd-macros/di-check", "overseerd-core/di-check"]
+di-check = [
+    "overseerd-macros/di-check",
+    "overseerd-di/di-check",
+    "overseerd-config/di-check",
+    "overseerd-app/di-check",
+    "overseerd-rpc?/di-check",
+    "overseerd-axum?/di-check",
+]
 
 # Enable YAML config sources (`application.yaml`) alongside the default TOML.
-yaml = ["overseerd-core/yaml"]
+yaml = ["overseerd-config/yaml", "overseerd-app/yaml", "overseerd-rpc?/yaml", "overseerd-axum?/yaml"]
 
 # Provide the `init_tracing` helper, pulling in `tracing-subscriber`.
-tracing-subscriber = ["overseerd-core/tracing-subscriber"]
+tracing-subscriber = ["overseerd-app/tracing-subscriber"]
 
 # Watch config files and reload on change (`ConfigManager::watch_config`), via `notify`.
-watch = ["overseerd-core/watch"]
+watch = ["overseerd-config/watch", "overseerd-app/watch", "overseerd-rpc?/watch", "overseerd-axum?/watch"]
 
 [dependencies]
 overseerd-core = { workspace = true }
+overseerd-di = { workspace = true }
+overseerd-hooks = { workspace = true }
+overseerd-dirs = { workspace = true }
+overseerd-config = { workspace = true }
+overseerd-app = { workspace = true }
+overseerd-client = { workspace = true }
+overseerd-rpc = { workspace = true, optional = true }
+overseerd-axum = { workspace = true, optional = true }
 overseerd-transport = { workspace = true }
+# The facade depends only on the *core* macros crate; each protocol crate owns and re-exports
+# its own macros (the facade reaches them through the protocol crate).
 overseerd-macros = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
-async-trait = { workspace = true, optional = true }

@@ -4,7 +4,7 @@ use serde::de::{
     SeqAccess, VariantAccess, Visitor,
 };
 
-use crate::error::{ConfigError, ConfigErrorKind};
+use crate::error::{TemplateError, TemplateErrorKind};
 use crate::resolve::{ResolveCtx, ResolverChain, render_str};
 use crate::value::{ConfigStr, ConfigValue, StrKind};
 
@@ -17,7 +17,7 @@ use crate::value::{ConfigStr, ConfigValue, StrKind};
 pub fn from_value<T: DeserializeOwned>(
     root: &ConfigValue,
     resolvers: &ResolverChain,
-) -> Result<T, ConfigError> {
+) -> Result<T, TemplateError> {
     from_value_in(root, root, resolvers)
 }
 
@@ -31,7 +31,7 @@ pub fn from_value_in<T: DeserializeOwned>(
     root: &ConfigValue,
     value: &ConfigValue,
     resolvers: &ResolverChain,
-) -> Result<T, ConfigError> {
+) -> Result<T, TemplateError> {
     let mut ctx = ResolveCtx::new(root, resolvers);
     let de = ValueDeserializer {
         value,
@@ -56,17 +56,17 @@ pub struct ValueDeserializer<'cfg, 'ctx, 'r> {
 
 impl<'cfg, 'ctx, 'r> ValueDeserializer<'cfg, 'ctx, 'r> {
     /// Stamps a failure with this node's path (or leaves it bare at the root).
-    fn err(&self, kind: ConfigErrorKind) -> ConfigError {
+    fn err(&self, kind: TemplateErrorKind) -> TemplateError {
         if self.path.is_empty() {
-            ConfigError::Bare(kind)
+            TemplateError::Bare(kind)
         } else {
-            ConfigError::at(self.path.clone(), kind)
+            TemplateError::at(self.path.clone(), kind)
         }
     }
 
     /// A `TypeMismatch` for this node against the `expected` label.
-    fn mismatch(&self, expected: &'static str) -> ConfigError {
-        self.err(ConfigErrorKind::TypeMismatch {
+    fn mismatch(&self, expected: &'static str) -> TemplateError {
+        self.err(TemplateErrorKind::TypeMismatch {
             expected,
             found: self.value.type_label(),
         })
@@ -77,7 +77,7 @@ impl<'cfg, 'ctx, 'r> ValueDeserializer<'cfg, 'ctx, 'r> {
     ///
     /// A full placeholder resolves to its raw value (type chosen by the caller); a
     /// templated or literal leaf renders to one string.
-    fn scalar_source(&mut self, s: &ConfigStr) -> Result<(StrKind, String), ConfigError> {
+    fn scalar_source(&mut self, s: &ConfigStr) -> Result<(StrKind, String), TemplateError> {
         match s.kind {
             StrKind::FullPlaceholder => {
                 let placeholder = s.as_full().expect("full kind implies one placeholder");
@@ -96,7 +96,7 @@ impl<'cfg, 'ctx, 'r> ValueDeserializer<'cfg, 'ctx, 'r> {
 
     /// Resolves an integer node to `i128`, narrowing happens in the caller. A
     /// templated placeholder is rejected (it can only be a string).
-    fn int_value(&mut self, target: &'static str) -> Result<i128, ConfigError> {
+    fn int_value(&mut self, target: &'static str) -> Result<i128, TemplateError> {
         match self.value {
             ConfigValue::Int(n) => Ok(*n),
 
@@ -104,11 +104,11 @@ impl<'cfg, 'ctx, 'r> ValueDeserializer<'cfg, 'ctx, 'r> {
                 let (kind, raw) = self.scalar_source(s)?;
 
                 if kind == StrKind::Templated {
-                    return Err(self.err(ConfigErrorKind::PartialInNonString { target }));
+                    return Err(self.err(TemplateErrorKind::PartialInNonString { target }));
                 }
 
                 raw.parse::<i128>()
-                    .map_err(|_| self.err(ConfigErrorKind::ParseAs { target, value: raw }))
+                    .map_err(|_| self.err(TemplateErrorKind::ParseAs { target, value: raw }))
             }
 
             _ => Err(self.mismatch(target)),
@@ -116,7 +116,7 @@ impl<'cfg, 'ctx, 'r> ValueDeserializer<'cfg, 'ctx, 'r> {
     }
 
     /// Resolves a float node to `f64`. A templated placeholder is rejected.
-    fn float_value(&mut self, target: &'static str) -> Result<f64, ConfigError> {
+    fn float_value(&mut self, target: &'static str) -> Result<f64, TemplateError> {
         match self.value {
             ConfigValue::Float(f) => Ok(*f),
             ConfigValue::Int(n) => Ok(*n as f64),
@@ -125,11 +125,11 @@ impl<'cfg, 'ctx, 'r> ValueDeserializer<'cfg, 'ctx, 'r> {
                 let (kind, raw) = self.scalar_source(s)?;
 
                 if kind == StrKind::Templated {
-                    return Err(self.err(ConfigErrorKind::PartialInNonString { target }));
+                    return Err(self.err(TemplateErrorKind::PartialInNonString { target }));
                 }
 
                 raw.parse::<f64>()
-                    .map_err(|_| self.err(ConfigErrorKind::ParseAs { target, value: raw }))
+                    .map_err(|_| self.err(TemplateErrorKind::ParseAs { target, value: raw }))
             }
 
             _ => Err(self.mismatch(target)),
@@ -154,7 +154,7 @@ macro_rules! deserialize_int {
             let n = self.int_value(stringify!($ty))?;
 
             let narrowed = <$ty>::try_from(n).map_err(|_| {
-                self.err(ConfigErrorKind::OutOfRange {
+                self.err(TemplateErrorKind::OutOfRange {
                     target: stringify!($ty),
                     value: n,
                 })
@@ -166,7 +166,7 @@ macro_rules! deserialize_int {
 }
 
 impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx, 'r> {
-    type Error = ConfigError;
+    type Error = TemplateError;
 
     fn deserialize_bool<V: Visitor<'de>>(mut self, visitor: V) -> Result<V::Value, Self::Error> {
         match self.value {
@@ -176,11 +176,11 @@ impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx
                 let (kind, raw) = self.scalar_source(s)?;
 
                 if kind == StrKind::Templated {
-                    return Err(self.err(ConfigErrorKind::PartialInNonString { target: "bool" }));
+                    return Err(self.err(TemplateErrorKind::PartialInNonString { target: "bool" }));
                 }
 
                 let parsed = raw.parse::<bool>().map_err(|_| {
-                    self.err(ConfigErrorKind::ParseAs {
+                    self.err(TemplateErrorKind::ParseAs {
                         target: "bool",
                         value: raw,
                     })
@@ -212,7 +212,7 @@ impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx
         let n = self.int_value("u128")?;
 
         let narrowed = u128::try_from(n).map_err(|_| {
-            self.err(ConfigErrorKind::OutOfRange {
+            self.err(TemplateErrorKind::OutOfRange {
                 target: "u128",
                 value: n,
             })
@@ -244,7 +244,7 @@ impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx
 
         match (first, chars.next()) {
             (Some(c), None) => visitor.visit_char(c),
-            _ => Err(self.err(ConfigErrorKind::ParseAs {
+            _ => Err(self.err(TemplateErrorKind::ParseAs {
                 target: "char",
                 value: rendered,
             })),
@@ -428,7 +428,7 @@ struct SeqWalk<'cfg, 'ctx, 'r> {
 }
 
 impl<'de, 'cfg, 'ctx, 'r> SeqAccess<'de> for SeqWalk<'cfg, 'ctx, 'r> {
-    type Error = ConfigError;
+    type Error = TemplateError;
 
     fn next_element_seed<T: DeserializeSeed<'de>>(
         &mut self,
@@ -471,7 +471,7 @@ struct MapWalk<'cfg, 'ctx, 'r> {
 }
 
 impl<'de, 'cfg, 'ctx, 'r> MapAccess<'de> for MapWalk<'cfg, 'ctx, 'r> {
-    type Error = ConfigError;
+    type Error = TemplateError;
 
     fn next_key_seed<K: DeserializeSeed<'de>>(
         &mut self,
@@ -481,7 +481,7 @@ impl<'de, 'cfg, 'ctx, 'r> MapAccess<'de> for MapWalk<'cfg, 'ctx, 'r> {
             return Ok(None);
         }
 
-        let key: StrDeserializer<'_, ConfigError> =
+        let key: StrDeserializer<'_, TemplateError> =
             self.entries[self.index].0.as_str().into_deserializer();
 
         seed.deserialize(key).map(Some)
@@ -524,14 +524,14 @@ struct EnumWalk<'cfg, 'ctx, 'r> {
 }
 
 impl<'de, 'cfg, 'ctx, 'r> EnumAccess<'de> for EnumWalk<'cfg, 'ctx, 'r> {
-    type Error = ConfigError;
+    type Error = TemplateError;
     type Variant = VariantWalk<'cfg, 'ctx, 'r>;
 
     fn variant_seed<V: DeserializeSeed<'de>>(
         self,
         seed: V,
     ) -> Result<(V::Value, Self::Variant), Self::Error> {
-        let variant_de: StrDeserializer<'_, ConfigError> =
+        let variant_de: StrDeserializer<'_, TemplateError> =
             self.variant.as_str().into_deserializer();
         let variant = seed.deserialize(variant_de)?;
         let access = VariantWalk {
@@ -553,14 +553,14 @@ struct VariantWalk<'cfg, 'ctx, 'r> {
 }
 
 impl<'de, 'cfg, 'ctx, 'r> VariantAccess<'de> for VariantWalk<'cfg, 'ctx, 'r> {
-    type Error = ConfigError;
+    type Error = TemplateError;
 
     fn unit_variant(self) -> Result<(), Self::Error> {
         match self.value {
             None | Some(ConfigValue::Null) => Ok(()),
-            Some(other) => Err(ConfigError::at(
+            Some(other) => Err(TemplateError::at(
                 self.path,
-                ConfigErrorKind::TypeMismatch {
+                TemplateErrorKind::TypeMismatch {
                     expected: "unit variant",
                     found: other.type_label(),
                 },
@@ -573,9 +573,9 @@ impl<'de, 'cfg, 'ctx, 'r> VariantAccess<'de> for VariantWalk<'cfg, 'ctx, 'r> {
         seed: T,
     ) -> Result<T::Value, Self::Error> {
         let value = self.value.ok_or_else(|| {
-            ConfigError::at(
+            TemplateError::at(
                 self.path.clone(),
-                ConfigErrorKind::TypeMismatch {
+                TemplateErrorKind::TypeMismatch {
                     expected: "newtype variant",
                     found: "unit",
                 },
@@ -595,9 +595,9 @@ impl<'de, 'cfg, 'ctx, 'r> VariantAccess<'de> for VariantWalk<'cfg, 'ctx, 'r> {
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
         let value = self.value.ok_or_else(|| {
-            ConfigError::at(
+            TemplateError::at(
                 self.path.clone(),
-                ConfigErrorKind::TypeMismatch {
+                TemplateErrorKind::TypeMismatch {
                     expected: "tuple variant",
                     found: "unit",
                 },
@@ -618,9 +618,9 @@ impl<'de, 'cfg, 'ctx, 'r> VariantAccess<'de> for VariantWalk<'cfg, 'ctx, 'r> {
         visitor: V,
     ) -> Result<V::Value, Self::Error> {
         let value = self.value.ok_or_else(|| {
-            ConfigError::at(
+            TemplateError::at(
                 self.path.clone(),
-                ConfigErrorKind::TypeMismatch {
+                TemplateErrorKind::TypeMismatch {
                     expected: "struct variant",
                     found: "unit",
                 },

@@ -8,9 +8,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use overseerd::config::Toml;
+use overseerd::daemon::App;
 use overseerd::dirs::{Config, DirectoriesManager};
 use overseerd::{
-    Cfg, CfgNext, ConfigManager, ConfigReload, Daemon, HookOutcome, component, config, methods,
+    Cfg, CfgNext, ConfigManager, ConfigReload, HookOutcome, component, config, methods,
 };
 use serde::Deserialize;
 
@@ -57,7 +58,7 @@ impl Watcher {
     async fn on_reload(
         &self,
         #[config("svc")] next: CfgNext<SvcCfg>,
-    ) -> overseerd::Result<HookOutcome> {
+    ) -> overseerd::daemon::Result<HookOutcome> {
         self.last_seen.store(next.value, Ordering::SeqCst);
         self.fired.fetch_add(1, Ordering::SeqCst);
 
@@ -84,7 +85,7 @@ impl OtherWatcher {
     async fn on_reload(
         &self,
         #[config("other")] _next: CfgNext<OtherCfg>,
-    ) -> overseerd::Result<HookOutcome> {
+    ) -> overseerd::daemon::Result<HookOutcome> {
         self.fired.fetch_add(1, Ordering::SeqCst);
 
         Ok(HookOutcome::Reloaded)
@@ -104,7 +105,7 @@ impl RestartWatcher {
     async fn on_reload(
         &self,
         #[config("svc")] _next: CfgNext<SvcCfg>,
-    ) -> overseerd::Result<HookOutcome> {
+    ) -> overseerd::daemon::Result<HookOutcome> {
         let _ = self.marker;
 
         Ok(HookOutcome::RestartRequired("needs restart"))
@@ -132,7 +133,7 @@ async fn config_reload_hooks_fire_only_for_changed_configs() {
 
     let manager = ConfigManager::<Toml>::load_in(&config_dir, &[]).expect("load config");
 
-    let daemon = Daemon::builder("hooks-test")
+    let daemon = App::builder("hooks-test")
         .config_source(manager)
         .auto_discover()
         .build()
