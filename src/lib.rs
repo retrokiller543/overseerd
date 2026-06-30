@@ -257,6 +257,10 @@ pub mod axum {
     /// share. The generated client builds `http::Request` against it.
     pub use overseerd_axum::axum::http;
 
+    /// Re-exported so streaming-client codegen names the `Stream` it returns. Generated code only.
+    #[doc(hidden)]
+    pub use overseerd_axum::__Stream;
+
     /// The generated HTTP **client** runtime: the body family, the response envelope, and the
     /// `reqwest` backend. Gated on the `client` feature (so it is "axum + client"); the
     /// controller macros emit their client methods against `::overseerd::axum::client::*`.

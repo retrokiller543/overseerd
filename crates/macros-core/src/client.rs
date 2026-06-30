@@ -75,26 +75,35 @@ pub struct ClientMethod {
     /// Maps the call result before returning. `None` returns it unchanged; `Some(expr)` is applied
     /// as `.map(#expr)` — for a protocol whose response needs a post-step the codec can't express.
     pub response_mapper: Option<TokenStream>,
+
+    /// **Override** — replaces the whole where-clause for this method (`C: ..`) when the standard
+    /// capability bound does not fit. HTTP server-streaming sets `C: HttpStreaming + Encodes<B>`,
+    /// since it calls an HTTP-specific capability rather than the agnostic one. `None` uses the
+    /// capability default (`C: <Cap> + Encodes<..> + Decodes<..>`).
+    pub override_bounds: Option<TokenStream>,
+    /// **Override** — replaces the method's return type. `None` uses the capability default.
+    pub override_ret: Option<TokenStream>,
+    /// **Override** — replaces the method body. `None` uses the capability default
+    /// (`self.0.<call>(..)`). The framework still assembles the signature; only the body is the
+    /// protocol's, for a call the standard capability cannot express (e.g. byte stream + decode).
+    pub override_body: Option<TokenStream>,
 }
 
 impl ClientMethod {
-    /// Assembles this method's argument list, return type, and body from its hint.
-    fn build(
-        &self,
-        paths: &Paths,
-    ) -> (
-        TokenStream,
-        TokenStream,
-        TokenStream,
-        TokenStream,
-        TokenStream,
-        TokenStream,
-    ) {
+    /// Assembles this method's `(args, return type, body, where-bounds)` from its hint. The
+    /// override hints ([`override_ret`](Self::override_ret) / `override_body` / `override_bounds`)
+    /// replace the capability-derived pieces when a method's call cannot be expressed by the
+    /// standard capability (e.g. HTTP server-streaming, which calls an HTTP-specific capability
+    /// and decodes the body stream).
+    fn build(&self, paths: &Paths) -> (TokenStream, TokenStream, TokenStream, TokenStream) {
         let client_error = paths.client("ClientError");
         let stream_arg = paths.client("StreamArg");
         let server_streaming = paths.client("ServerStreaming");
+        let client_streaming = paths.client("ClientStreaming");
         let bidi_streaming = paths.client("BidiStreaming");
         let unary = paths.client("Unary");
+        let encodes = paths.client("Encodes");
+        let decodes = paths.client("Decodes");
 
         let raw = paths.client("Raw");
         let path = &self.path;
@@ -128,17 +137,14 @@ impl ClientMethod {
             .clone()
             .unwrap_or_else(|| self.response.clone());
 
-        // (encode_ty, decode_ty, args, ret, body, where_extra)
-        match self.capability {
+        // The capability default `(args, ret, body, bounds)`. Bounds carry the full `C: ..`
+        // predicate (capability + message codecs), so one `impl<C>` block can host every method.
+        let (args, ret, body, bounds) = match self.capability {
             Capability::Unary => {
-                // The value handed to `unary`: the protocol's builder (HTTP's `http::Request`),
-                // or the body argument passed straight through (RPC).
                 let call = self
                     .request_builder
                     .clone()
                     .unwrap_or_else(|| call_arg.clone());
-
-                // The pinned envelopes: a richer type, or the body/decoded value itself.
                 let req_env = self
                     .request_envelope
                     .clone()
@@ -147,26 +153,25 @@ impl ClientMethod {
                     .response_envelope
                     .clone()
                     .unwrap_or_else(|| quote!(#response));
-
                 let map = match &self.response_mapper {
                     Some(mapper) => quote!(.map(#mapper)),
                     None => quote!(),
                 };
 
                 (
-                    unary_encode.clone(),
-                    quote!(#response),
                     quote!(&self #extra_params #req_arg),
                     quote!(::core::result::Result<#resp_env, #client_error<#err>>),
                     quote!(self.0.unary(#path, #call).await #map),
-                    quote!(, C: #unary<Request<#unary_encode> = #req_env, Response<#response> = #resp_env>),
+                    quote! {
+                        C: #unary<Request<#unary_encode> = #req_env, Response<#response> = #resp_env>
+                            + #encodes<#unary_encode>
+                            + #decodes<#response>
+                    },
                 )
             }
 
             Capability::ServerStreaming => (
-                unary_encode,
-                quote!(#resp_item),
-                quote!(&self #req_arg),
+                quote!(&self #extra_params #req_arg),
                 quote! {
                     ::core::result::Result<
                         <C as #server_streaming>::Responses<#resp_item, #err>,
@@ -174,26 +179,22 @@ impl ClientMethod {
                     >
                 },
                 quote!(self.0.server_stream(#path, #call_arg).await),
-                quote!(),
+                quote!(C: #server_streaming + #encodes<#unary_encode> + #decodes<#resp_item>),
             ),
 
             Capability::ClientStreaming => (
-                quote!(#req_item),
-                quote!(#response),
                 quote! {
-                    &self,
+                    &self #extra_params,
                     input: impl ::core::convert::Into<#stream_arg<#req_item>> + ::core::marker::Send
                 },
                 quote!(::core::result::Result<#response, #client_error<#err>>),
                 quote!(self.0.client_stream(#path, input).await),
-                quote!(),
+                quote!(C: #client_streaming + #encodes<#req_item> + #decodes<#response>),
             ),
 
             Capability::BidiStreaming => (
-                quote!(#req_item),
-                quote!(#resp_item),
                 quote! {
-                    &self,
+                    &self #extra_params,
                     input: impl ::core::convert::Into<#stream_arg<#req_item>> + ::core::marker::Send
                 },
                 quote! {
@@ -203,19 +204,26 @@ impl ClientMethod {
                     >
                 },
                 quote!(self.0.bidi_stream(#path, input).await),
-                quote!(),
+                quote!(C: #bidi_streaming + #encodes<#req_item> + #decodes<#resp_item>),
             ),
-        }
+        };
+
+        // Override hints replace the capability-derived pieces for a special call.
+        let ret = self.override_ret.clone().unwrap_or(ret);
+        let body = self.override_body.clone().unwrap_or(body);
+        let bounds = self.override_bounds.clone().unwrap_or(bounds);
+
+        (args, ret, body, bounds)
     }
 }
 
-/// Emits a service's client *methods* as capability-partitioned `impl` blocks. The
-/// `{Service}Client<C>` struct itself is emitted once by the component-variant macro (e.g. the
-/// RPC `Router`); each impl-block macro contributes inherent methods here, so multiple blocks
-/// compose. Methods are grouped by the capability they need into separate
-/// `impl<C: Cap> {Service}Client<C>` blocks, each adding its `C: Encodes<Req> + Decodes<Resp>`
-/// message bounds. Emits nothing without the `client` feature or when no methods are
-/// contributed.
+/// Emits a service's client *methods* into a single `impl<C> {Service}Client<C>` block, each
+/// method carrying its own `where C: ..` bound (the capability + message codecs, or a hint
+/// override). The `{Service}Client<C>` struct itself is emitted once by the component-variant
+/// macro (e.g. the RPC `Router`); each impl-block macro contributes methods here, so multiple
+/// blocks compose. A method is usable only when `C` satisfies its bound — an unsupported call
+/// shape is a bound error at the call site, never a missing method at definition. Emits nothing
+/// without the `client` feature or when no methods are contributed.
 pub fn generate_client(
     client_ident: &Ident,
     methods: &[ClientMethod],
@@ -225,47 +233,25 @@ pub fn generate_client(
         return quote!();
     }
 
-    let encodes = paths.client("Encodes");
-    let decodes = paths.client("Decodes");
+    let fns = methods.iter().map(|m| {
+        let ident = &m.ident;
+        let (args, ret, body, bounds) = m.build(paths);
 
-    let capabilities = [
-        (Capability::Unary, paths.client("Unary")),
-        (Capability::ServerStreaming, paths.client("ServerStreaming")),
-        (Capability::ClientStreaming, paths.client("ClientStreaming")),
-        (Capability::BidiStreaming, paths.client("BidiStreaming")),
-    ];
-
-    let blocks = capabilities.iter().filter_map(|(capability, cap_trait)| {
-        let fns: Vec<TokenStream> = methods
-            .iter()
-            .filter(|m| m.capability == *capability)
-            .map(|m| {
-                let ident = &m.ident;
-                let (encode_ty, decode_ty, args, ret, body, where_extra) = m.build(paths);
-
-                quote! {
-                    pub async fn #ident(#args) -> #ret
-                    where
-                        C: #encodes<#encode_ty> + #decodes<#decode_ty> #where_extra,
-                    {
-                        #body
-                    }
-                }
-            })
-            .collect();
-
-        if fns.is_empty() {
-            return None;
-        }
-
-        Some(quote! {
-            impl<C: #cap_trait> #client_ident<C> {
-                #(#fns)*
+        quote! {
+            pub async fn #ident(#args) -> #ret
+            where
+                #bounds,
+            {
+                #body
             }
-        })
+        }
     });
 
-    quote!( #(#blocks)* )
+    quote! {
+        impl<C> #client_ident<C> {
+            #(#fns)*
+        }
+    }
 }
 
 /// The conventional client struct name for a service type, `{Type}Client`.

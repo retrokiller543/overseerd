@@ -9,6 +9,7 @@
 
 mod body;
 mod response;
+mod streaming;
 
 #[cfg(feature = "hyper")]
 mod hyper_backend;
@@ -17,6 +18,44 @@ mod reqwest_backend;
 
 pub use body::{HttpBody, OctetStream};
 pub use response::HttpResponse;
+pub use streaming::{HttpStreaming, StreamDecode};
+
+/// Re-exported so generated streaming-client code names the codec without a separate dep.
+pub use overseerd_transport::{Decodes, Encodes};
+
+/// Maps a non-success HTTP response into a [`ClientError::Remote`](overseerd_client::ClientError),
+/// carrying the framework status (the HTTP status code in its custom section) and the raw error
+/// body. Used by the streaming transports, where a pre-stream failure has no response envelope to
+/// surface the status on — it is the outer `Result`'s `Err`.
+///
+// TODO: the `transport::StatusCode` is RPC's compact packed wire status, not an HTTP fit;
+// folding `http::StatusCode` into its custom section is a leak. A future change should give the
+// HTTP client a protocol-native error/status type (e.g. `HttpError` carrying `http::StatusCode`)
+// rather than reusing the RPC status. Kept as-is for now intentionally.
+pub(crate) fn remote_error(
+    status: axum::http::StatusCode,
+    body: Vec<u8>,
+) -> overseerd_client::ClientError {
+    use overseerd_transport::{Flags, PredefinedCode, StatusCode};
+
+    let predefined = if status.is_server_error() {
+        PredefinedCode::Internal
+    } else if status == axum::http::StatusCode::NOT_FOUND {
+        PredefinedCode::NotFound
+    } else if status == axum::http::StatusCode::UNAUTHORIZED
+        || status == axum::http::StatusCode::FORBIDDEN
+    {
+        PredefinedCode::Unauthorized
+    } else if status.is_client_error() {
+        PredefinedCode::BadInput
+    } else {
+        PredefinedCode::Empty
+    };
+
+    let code = StatusCode::new_with_custom(predefined, Flags::empty(), status.as_u16());
+
+    overseerd_client::ClientError::Remote(overseerd_client::ErrorBody::new(code, body))
+}
 
 #[cfg(feature = "hyper")]
 pub use hyper_backend::HyperClient;

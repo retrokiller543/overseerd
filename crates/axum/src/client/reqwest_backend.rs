@@ -1,11 +1,14 @@
 //! The `reqwest` client backend.
 
+use bytes::Bytes;
+use futures::StreamExt;
+use futures::stream::BoxStream;
 use http::Request;
 use overseerd_client::{ClientError, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
-use super::{HttpBody, HttpResponse};
+use super::{HttpBody, HttpResponse, HttpStreaming};
 
 /// An HTTP client transport backed by [`reqwest`].
 ///
@@ -91,6 +94,46 @@ impl Unary for ReqwestClient {
             .map_err(|e| ClientError::Decode(e.to_string()))?;
 
         Ok(HttpResponse::new(status, headers, decoded))
+    }
+}
+
+impl HttpStreaming for ReqwestClient {
+    type ByteStream = BoxStream<'static, Result<Bytes, ClientError>>;
+
+    async fn open_stream<B>(&self, request: Request<B>) -> Result<Self::ByteStream, ClientError>
+    where
+        Self: Encodes<B>,
+        B: Send,
+    {
+        let (parts, body) = request.into_parts();
+        let bytes = self
+            .encode(body)
+            .map_err(|e| ClientError::Encode(e.to_string()))?;
+
+        let url = format!("{}{}", self.base_url, parts.uri);
+
+        let response = self
+            .client
+            .request(parts.method, url)
+            .headers(parts.headers)
+            .body(bytes)
+            .send()
+            .await
+            .map_err(net_err)?;
+
+        // A non-success status is a pre-stream failure (the handler errored before streaming);
+        // surface it as the outer `Err` rather than streaming an error body as items.
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.bytes().await.map_err(net_err)?.to_vec();
+
+            return Err(super::remote_error(status, body));
+        }
+
+        Ok(response
+            .bytes_stream()
+            .map(|chunk| chunk.map_err(net_err))
+            .boxed())
     }
 }
 

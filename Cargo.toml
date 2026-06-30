@@ -44,7 +44,7 @@ axum = "0.8"
 serde_json = "1"
 serde_urlencoded = "0.7"
 http = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 # hyper as a client: the legacy/util client + body helpers. Plain HTTP connector only (no TLS
 # feature), keeping openssl/rsa out — terminate TLS at a proxy, or use the reqwest backend.
 hyper = { version = "1", features = ["client", "http1"] }

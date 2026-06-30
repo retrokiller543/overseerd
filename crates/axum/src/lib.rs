@@ -36,6 +36,11 @@ pub use plugin::{AxumAppBuilder, AxumPlugin};
 pub use protocol::Axum;
 pub use stream::{Ndjson, RawStream};
 
+/// Re-exported so streaming-client codegen can project a concrete stream's item type
+/// (`<S as Stream>::Item`) and name the item stream it returns. Referenced only by generated code.
+#[doc(hidden)]
+pub use futures::Stream as __Stream;
+
 /// The axum app type: an [`App`](overseerd_app::App) specialized to [`AxumPlugin`].
 /// `App::builder(name)` resolves through this alias without a turbofish.
 pub type App = overseerd_app::App<AxumPlugin>;

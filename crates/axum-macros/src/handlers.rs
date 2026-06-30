@@ -11,7 +11,10 @@
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::parse::ParseStream;
-use syn::{FnArg, Ident, ImplItemFn, ItemImpl, LitStr, Type};
+use syn::{
+    FnArg, GenericArgument, GenericParam, Ident, ImplItemFn, ItemImpl, LitStr, PathArguments,
+    ReturnType, Type, TypeParamBound, parse_quote,
+};
 
 use overseerd_macros_core::client::ClientMethod;
 use overseerd_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
@@ -40,6 +43,9 @@ struct HandlerContext {
     self_ty: Type,
     self_ident: Ident,
     paths: Paths,
+    /// The impl's generic type/const parameter idents, for the `use<..>` precise-capture the
+    /// macro injects on streamed `impl Stream` returns (lifetimes are intentionally omitted).
+    capture: Vec<Ident>,
 }
 
 /// One route claimed from a method: its verb, its relative path, and the handler closure.
@@ -72,11 +78,22 @@ impl ParseItem<ItemImpl> for AxumHandlers {
     fn parse_item(&mut self, item: &ItemImpl, paths: &Paths) -> syn::Result<()> {
         let self_ty = (*item.self_ty).clone();
         let self_ident = self_ty_ident(&self_ty)?;
+        let capture = item
+            .generics
+            .params
+            .iter()
+            .filter_map(|param| match param {
+                GenericParam::Type(ty) => Some(ty.ident.clone()),
+                GenericParam::Const(konst) => Some(konst.ident.clone()),
+                GenericParam::Lifetime(_) => None,
+            })
+            .collect();
 
         self.context = Some(HandlerContext {
             self_ty,
             self_ident,
             paths: paths.clone(),
+            capture,
         });
 
         Ok(())
@@ -98,6 +115,13 @@ impl ParseMethod for AxumHandlers {
             .as_ref()
             .expect("AxumHandlers::parse_item runs before parse_method");
 
+        // A streamed handler usually returns `impl Stream<..>` from `&self`; inject `use<..>` so
+        // the opaque type does not capture `self`'s lifetime (edition 2024). Must run before the
+        // argument types are borrowed, since it mutates the signature.
+        if route_attr.streamed {
+            add_use_capture(&mut method.sig.output, &cx.capture);
+        }
+
         let arg_types: Vec<&Type> = method
             .sig
             .inputs
@@ -108,19 +132,33 @@ impl ParseMethod for AxumHandlers {
             })
             .collect();
 
+        // Every route hands a `ClientMethod` hint to the framework's `generate_client` — unary
+        // and server-streaming alike. A `streamed` route's hint carries the override hints
+        // (bounds/body/return) for its HTTP-specific call; a normal route's is the unary form.
+        let hint = if route_attr.streamed {
+            client::build_stream_client_method(
+                &cx.self_ident,
+                &method.sig.ident,
+                &route_attr,
+                &arg_types,
+                &method.sig.output,
+                &cx.paths,
+            )
+        } else {
+            client::build_client_method(
+                &cx.self_ident,
+                &method.sig.ident,
+                &route_attr,
+                &arg_types,
+                &method.sig.output,
+                &cx.paths,
+            )
+        };
+
         let spec = build_route(&cx.self_ty, method, &route_attr)?;
         self.routes.push(spec);
 
-        // The framework owns client generation; hand back the hint (or `None` to skip the
-        // client method while keeping the server route).
-        Ok(client::build_client_method(
-            &cx.self_ident,
-            &method.sig.ident,
-            &route_attr,
-            &arg_types,
-            &method.sig.output,
-            &cx.paths,
-        ))
+        Ok(hint)
     }
 }
 
@@ -265,4 +303,47 @@ fn build_route(
         path: route_attr.path.clone(),
         handler,
     })
+}
+
+/// Injects `use<#capture>` precise capturing onto the `impl Trait` in a streamed route's return,
+/// so an `impl Stream<Item = ..>` returned from an `&self` handler does not capture `self`'s
+/// lifetime under edition 2024. A no-op for a concrete return type.
+fn add_use_capture(output: &mut ReturnType, capture: &[Ident]) {
+    if let ReturnType::Type(_, ty) = output {
+        inject_capture(ty, capture);
+    }
+}
+
+/// Recurses into the first type argument of `Wrapper<..>` — descending through an outer
+/// `Result<Ok, _>` to the `Ok` arm — and, on reaching an `impl Trait`, appends `use<#capture>`
+/// (unless a precise capture is already present). Recursion (rather than returning a `&mut`)
+/// sidesteps the conditional-reborrow the borrow checker rejects.
+fn inject_capture(ty: &mut Type, capture: &[Ident]) {
+    let Type::Path(type_path) = ty else {
+        return;
+    };
+    let Some(segment) = type_path.path.segments.last_mut() else {
+        return;
+    };
+    let is_result = segment.ident == "Result";
+    let PathArguments::AngleBracketed(args) = &mut segment.arguments else {
+        return;
+    };
+    let Some(GenericArgument::Type(inner)) = args.args.first_mut() else {
+        return;
+    };
+
+    if is_result {
+        // The wrapper is inside the `Ok` of a `Result<Ndjson<..>, E>` pre-stream-failure return.
+        inject_capture(inner, capture);
+    } else if let Type::ImplTrait(impl_trait) = inner {
+        let has_capture = impl_trait
+            .bounds
+            .iter()
+            .any(|bound| matches!(bound, TypeParamBound::PreciseCapture(_)));
+
+        if !has_capture {
+            impl_trait.bounds.push(parse_quote!(use<#(#capture),*>));
+        }
+    }
 }

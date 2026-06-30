@@ -1,8 +1,10 @@
 //! The `hyper` client backend.
 
 use bytes::Bytes;
+use futures::StreamExt;
+use futures::stream::BoxStream;
 use http::{Request, Uri};
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, BodyStream, Full};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
@@ -10,7 +12,7 @@ use overseerd_client::{ClientError, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
-use super::{HttpBody, HttpResponse};
+use super::{HttpBody, HttpResponse, HttpStreaming};
 
 /// An HTTP client transport backed by `hyper` (via `hyper-util`'s pooled client).
 ///
@@ -31,6 +33,35 @@ impl HyperClient {
             client: Client::builder(TokioExecutor::new()).build_http(),
             base_url: base_url.into(),
         }
+    }
+
+    /// Encodes the body and resolves the path-only URI against the base authority, producing the
+    /// concrete `hyper` request. Shared by the unary and streaming calls.
+    fn build_request<B, E>(
+        &self,
+        request: Request<B>,
+    ) -> Result<Request<Full<Bytes>>, ClientError<E>>
+    where
+        Self: Encodes<B>,
+    {
+        let (parts, body) = request.into_parts();
+        let bytes = self
+            .encode(body)
+            .map_err(|e| ClientError::Encode(e.to_string()))?;
+
+        let uri: Uri = format!("{}{}", self.base_url, parts.uri)
+            .parse()
+            .map_err(|e: http::uri::InvalidUri| ClientError::Encode(e.to_string()))?;
+
+        let mut builder = Request::builder().method(parts.method).uri(uri);
+
+        if let Some(headers) = builder.headers_mut() {
+            *headers = parts.headers;
+        }
+
+        builder
+            .body(Full::new(Bytes::from(bytes)))
+            .map_err(|e| ClientError::Encode(e.to_string()))
     }
 }
 
@@ -62,26 +93,7 @@ impl Unary for HyperClient {
         B: Send,
         Resp: Send,
     {
-        let (parts, body) = request.into_parts();
-        let bytes = self
-            .encode(body)
-            .map_err(|e| ClientError::Encode(e.to_string()))?;
-
-        // The macro builds a path-only URI; resolve it against the base authority.
-        let uri: Uri = format!("{}{}", self.base_url, parts.uri)
-            .parse()
-            .map_err(|e: http::uri::InvalidUri| ClientError::Encode(e.to_string()))?;
-
-        let mut builder = Request::builder().method(parts.method).uri(uri);
-
-        if let Some(headers) = builder.headers_mut() {
-            *headers = parts.headers;
-        }
-
-        let request = builder
-            .body(Full::new(Bytes::from(bytes)))
-            .map_err(|e| ClientError::Encode(e.to_string()))?;
-
+        let request = self.build_request(request)?;
         let response = self.client.request(request).await.map_err(net_err)?;
         let status = response.status();
         let headers = response.headers().clone();
@@ -99,6 +111,46 @@ impl Unary for HyperClient {
             .map_err(|e| ClientError::Decode(e.to_string()))?;
 
         Ok(HttpResponse::new(status, headers, decoded))
+    }
+}
+
+impl HttpStreaming for HyperClient {
+    type ByteStream = BoxStream<'static, Result<Bytes, ClientError>>;
+
+    async fn open_stream<B>(&self, request: Request<B>) -> Result<Self::ByteStream, ClientError>
+    where
+        Self: Encodes<B>,
+        B: Send,
+    {
+        let request = self.build_request(request)?;
+        let response = self.client.request(request).await.map_err(net_err)?;
+
+        // A non-success status is a pre-stream failure; surface it as the outer `Err` rather than
+        // streaming an error body as items.
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response
+                .into_body()
+                .collect()
+                .await
+                .map_err(net_err)?
+                .to_bytes()
+                .to_vec();
+
+            return Err(super::remote_error(status, body));
+        }
+
+        // Body frames → data-chunk stream; trailer frames are dropped.
+        let stream = BodyStream::new(response.into_body())
+            .filter_map(|frame| async move {
+                match frame {
+                    Ok(frame) => frame.into_data().ok().map(Ok),
+                    Err(error) => Some(Err(net_err(error))),
+                }
+            })
+            .boxed();
+
+        Ok(stream)
     }
 }
 
