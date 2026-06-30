@@ -7,6 +7,7 @@ use futures::{SinkExt, StreamExt};
 use overseerd_client::{ClientError, ErrorBody};
 use overseerd_transport::Error as TransportError;
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::{Duration, MissedTickBehavior};
 use tokio_tungstenite::tungstenite::Message;
 
 use super::{
@@ -55,6 +56,9 @@ where
 
         tokio::spawn(async move {
             let mut pending: HashMap<P::Key, Pending> = HashMap::new();
+            let mut prune = tokio::time::interval(Duration::from_secs(30));
+
+            prune.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
             loop {
                 tokio::select! {
@@ -62,6 +66,8 @@ where
                         let Some(command) = command else {
                             break;
                         };
+
+                        prune_pending(&mut pending);
 
                         if write.send(Message::Text(command.frame.into())).await.is_err() {
                             let _ = command.reply.send(Err(ClientError::ConnectionClosed));
@@ -108,6 +114,10 @@ where
                                 break;
                             }
                         }
+                    }
+
+                    _ = prune.tick() => {
+                        prune_pending(&mut pending);
                     }
                 }
             }
@@ -160,6 +170,10 @@ fn fail_pending<K>(pending: HashMap<K, Pending>, error: ClientError<WsStatus>) {
     }
 }
 
+fn prune_pending<K>(pending: &mut HashMap<K, Pending>) {
+    pending.retain(|_, reply| !reply.is_closed());
+}
+
 fn clone_client_error(error: &ClientError<WsStatus>) -> ClientError<WsStatus> {
     match error {
         ClientError::Transport(_) => ClientError::Transport(TransportError::Closed),
@@ -177,4 +191,29 @@ where
     T: std::fmt::Display,
 {
     ClientError::Transport(TransportError::Io(std::io::Error::other(error.to_string())))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use tokio::sync::oneshot;
+
+    use super::{Pending, prune_pending};
+
+    #[test]
+    fn prune_pending_removes_calls_after_receiver_is_dropped() {
+        let (closed_tx, closed_rx) = oneshot::channel();
+        let (open_tx, _open_rx) = oneshot::channel();
+        let mut pending: HashMap<u64, Pending> = HashMap::new();
+
+        pending.insert(1, closed_tx);
+        pending.insert(2, open_tx);
+        drop(closed_rx);
+
+        prune_pending(&mut pending);
+
+        assert!(!pending.contains_key(&1));
+        assert!(pending.contains_key(&2));
+    }
 }
