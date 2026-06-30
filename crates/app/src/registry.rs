@@ -99,13 +99,25 @@ impl AppRegistry {
                     None => {
                         let bound_paths = paths.cloned().unwrap_or_default();
 
-                        if bound_paths.len() != 1 {
-                            return Err(Error::AmbiguousConfig {
-                                component: c.name.to_string(),
-                                type_name: (dep.ty.type_name)().to_string(),
-                                count: bound_paths.len(),
-                                paths: bound_paths.join(", "),
-                            });
+                        match bound_paths.as_slice() {
+                            [_] => {}
+
+                            [] => {
+                                return Err(Error::MissingConfig {
+                                    component: c.name.to_string(),
+                                    type_name: (dep.ty.type_name)().to_string(),
+                                    path: "<unqualified>".to_string(),
+                                });
+                            }
+
+                            _ => {
+                                return Err(Error::AmbiguousConfig {
+                                    component: c.name.to_string(),
+                                    type_name: (dep.ty.type_name)().to_string(),
+                                    count: bound_paths.len(),
+                                    paths: bound_paths.join(", "),
+                                });
+                            }
                         }
                     }
                 }
@@ -156,5 +168,117 @@ impl AppRegistry {
 impl fmt::Display for AppRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.write_components(f)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+
+    use overseerd_config::{ConfigBinding, ConfigProperties};
+    use overseerd_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
+    use overseerd_di::{
+        BoxedComponent, ComponentConstructionContext, ComponentDescriptor,
+        ComponentFactoryDescriptor, Singleton,
+    };
+
+    use super::AppRegistry;
+    use crate::Error;
+
+    #[derive(serde::Deserialize)]
+    struct TestConfig;
+
+    impl ConfigProperties for TestConfig {
+        const NAME: &'static str = "TestConfig";
+    }
+
+    fn fake_factory<'a>(
+        _: &'a mut ComponentConstructionContext,
+    ) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + 'a>> {
+        Box::pin(async { unreachable!("registry validation does not construct components") })
+    }
+
+    fn config_deps() -> Vec<DependencyDescriptor> {
+        vec![DependencyDescriptor {
+            name: "cfg",
+            ty: TypeDescriptor::of::<TestConfig>("TestConfig"),
+            cardinality: Cardinality::One,
+            optional: false,
+            dynamic: false,
+            qualifier: None,
+            config: true,
+        }]
+    }
+
+    static CONFIG_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+        construct: fake_factory,
+        dependencies: config_deps,
+        default: false,
+    }];
+
+    fn config_factories() -> &'static [ComponentFactoryDescriptor] {
+        &CONFIG_FACTORY
+    }
+
+    fn component() -> ComponentDescriptor {
+        ComponentDescriptor {
+            id: "needs_config",
+            name: "NeedsConfig",
+            ty: TypeDescriptor::of::<()>("NeedsConfig"),
+            scope: &Singleton,
+            factories: config_factories,
+            hooks: overseerd_hooks::no_hooks,
+        }
+    }
+
+    #[test]
+    fn missing_unqualified_config_binding_is_missing_not_ambiguous() {
+        let registry = AppRegistry {
+            components: vec![component()],
+            providers: Vec::new(),
+            config_bindings: Vec::new(),
+        };
+
+        let err = registry.validate().expect_err("config binding is missing");
+
+        assert!(matches!(
+            err,
+            Error::MissingConfig {
+                component,
+                type_name,
+                path,
+            } if component == "NeedsConfig"
+                && type_name.ends_with("TestConfig")
+                && path == "<unqualified>"
+        ));
+    }
+
+    #[test]
+    fn multiple_unqualified_config_bindings_are_ambiguous() {
+        let registry = AppRegistry {
+            components: vec![component()],
+            providers: Vec::new(),
+            config_bindings: vec![
+                ConfigBinding::of::<TestConfig>("one"),
+                ConfigBinding::of::<TestConfig>("two"),
+            ],
+        };
+
+        let err = registry
+            .validate()
+            .expect_err("config binding is ambiguous");
+
+        assert!(matches!(
+            err,
+            Error::AmbiguousConfig {
+                component,
+                type_name,
+                count: 2,
+                paths,
+            } if component == "NeedsConfig"
+                && type_name.ends_with("TestConfig")
+                && paths == "one, two"
+        ));
     }
 }

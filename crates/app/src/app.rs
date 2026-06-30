@@ -510,7 +510,7 @@ impl<P: ProtocolPlugin> App<P> {
             ..
         } = self;
 
-        run_lifecycle::<Startup>(runtime.hooks(), true).await?;
+        run_startup(runtime.hooks()).await?;
 
         let trigger_tasks = spawn_reload_triggers(reloader, reload_triggers);
 
@@ -546,7 +546,7 @@ impl<P: ProtocolPlugin> App<P> {
             ..
         } = self;
 
-        run_lifecycle::<Startup>(runtime.hooks(), true).await?;
+        run_startup(runtime.hooks()).await?;
 
         let trigger_tasks = spawn_reload_triggers(reloader, reload_triggers);
 
@@ -562,6 +562,18 @@ impl<P: ProtocolPlugin> App<P> {
         run_lifecycle::<Shutdown>(runtime.hooks(), false).await.ok();
 
         Ok(())
+    }
+}
+
+async fn run_startup(hooks: &HookManager) -> crate::Result<()> {
+    match run_lifecycle::<Startup>(hooks, true).await {
+        Ok(()) => Ok(()),
+
+        Err(error) => {
+            run_lifecycle::<Shutdown>(hooks, false).await.ok();
+
+            Err(error)
+        }
     }
 }
 

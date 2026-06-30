@@ -32,13 +32,17 @@ where
 /// response body as raw [`Bytes`] chunks. Implemented by the `reqwest` and `hyper` backends, so
 /// a generated streaming client is transport-generic.
 pub trait HttpStreaming: Send + Sync {
-    /// The byte-chunk stream of a streamed response body.
-    type ByteStream: Stream<Item = Result<Bytes, ClientError>> + Send + Unpin + 'static;
+    /// The byte-chunk stream of a streamed response body. Errors carry the HTTP status (the HTTP
+    /// client's protocol status is [`http::StatusCode`]); a byte-chunk failure is a transport error.
+    type ByteStream: Stream<Item = Result<Bytes, ClientError<http::StatusCode>>>
+        + Send
+        + Unpin
+        + 'static;
 
     fn open_stream<B>(
         &self,
         request: http::Request<B>,
-    ) -> impl std::future::Future<Output = Result<Self::ByteStream, ClientError>> + Send
+    ) -> impl std::future::Future<Output = Result<Self::ByteStream, ClientError<http::StatusCode>>> + Send
     where
         Self: Encodes<B>,
         B: Send;
@@ -53,7 +57,9 @@ pub trait HttpClientStreaming: Send + Sync {
     fn send_stream<S, Resp, E>(
         &self,
         request: http::Request<S>,
-    ) -> impl std::future::Future<Output = Result<HttpResponse<Resp>, ClientError<E>>> + Send
+    ) -> impl std::future::Future<
+        Output = Result<HttpResponse<Resp>, ClientError<http::StatusCode, E>>,
+    > + Send
     where
         Self: Decodes<Resp>,
         S: Stream<Item = Result<Bytes, CodecError>> + Send + 'static,
@@ -73,7 +79,7 @@ pub trait StreamDecode<T> {
     /// Turns a byte-chunk stream into a stream of decoded items.
     fn decode_stream<S>(body: S) -> impl Stream<Item = T> + Send
     where
-        S: Stream<Item = Result<Bytes, ClientError>> + Send + Unpin + 'static;
+        S: Stream<Item = Result<Bytes, ClientError<http::StatusCode>>> + Send + Unpin + 'static;
 }
 
 /// NDJSON decoding: buffer bytes, split on `\n`, decode each line as JSON — across arbitrary
@@ -84,7 +90,7 @@ where
 {
     fn decode_stream<S>(body: S) -> impl Stream<Item = T> + Send
     where
-        S: Stream<Item = Result<Bytes, ClientError>> + Send + Unpin + 'static,
+        S: Stream<Item = Result<Bytes, ClientError<http::StatusCode>>> + Send + Unpin + 'static,
     {
         // The same buffering NDJSON engine the server's `StreamBody` extractor uses.
         crate::stream::ndjson_decode(body)
@@ -96,7 +102,7 @@ where
 impl<W> StreamDecode<Bytes> for RawStream<W> {
     fn decode_stream<S>(body: S) -> impl Stream<Item = Bytes> + Send
     where
-        S: Stream<Item = Result<Bytes, ClientError>> + Send + Unpin + 'static,
+        S: Stream<Item = Result<Bytes, ClientError<http::StatusCode>>> + Send + Unpin + 'static,
     {
         body.take_while(|chunk| {
             if let Err(error) = chunk {

@@ -97,6 +97,7 @@ impl ClientMethod {
     /// and decodes the body stream).
     fn build(&self, paths: &Paths) -> (TokenStream, TokenStream, TokenStream, TokenStream) {
         let client_error = paths.client("ClientError");
+        let transport = paths.client("Transport");
         let stream_arg = paths.client("StreamArg");
         let server_streaming = paths.client("ServerStreaming");
         let client_streaming = paths.client("ClientStreaming");
@@ -109,6 +110,11 @@ impl ClientMethod {
         let path = &self.path;
         let response = &self.response;
         let err = self.error_ty.clone().unwrap_or_else(|| quote!(#raw));
+
+        // The transport's protocol-defined status, threaded into every `ClientError<S, E>`. It is
+        // a projection off the bound `C` (every capability requires `C: Transport`), so the client
+        // surfaces RPC's packed status or HTTP's `http::StatusCode` without naming either.
+        let status = quote!(<C as #transport>::Status);
 
         // The unary/server-stream request param and the value forwarded (a no-body call sends
         // the unit body, so the protocol must `Encodes<()>`). The *wire body* type
@@ -160,7 +166,7 @@ impl ClientMethod {
 
                 (
                     quote!(&self #extra_params #req_arg),
-                    quote!(::core::result::Result<#resp_env, #client_error<#err>>),
+                    quote!(::core::result::Result<#resp_env, #client_error<#status, #err>>),
                     quote!(self.0.unary(#path, #call).await #map),
                     quote! {
                         C: #unary<Request<#unary_encode> = #req_env, Response<#response> = #resp_env>
@@ -175,7 +181,7 @@ impl ClientMethod {
                 quote! {
                     ::core::result::Result<
                         <C as #server_streaming>::Responses<#resp_item, #err>,
-                        #client_error<#err>,
+                        #client_error<#status, #err>,
                     >
                 },
                 quote!(self.0.server_stream(#path, #call_arg).await),
@@ -187,7 +193,7 @@ impl ClientMethod {
                     &self #extra_params,
                     input: impl ::core::convert::Into<#stream_arg<#req_item>> + ::core::marker::Send
                 },
-                quote!(::core::result::Result<#response, #client_error<#err>>),
+                quote!(::core::result::Result<#response, #client_error<#status, #err>>),
                 quote!(self.0.client_stream(#path, input).await),
                 quote!(C: #client_streaming + #encodes<#req_item> + #decodes<#response>),
             ),
@@ -200,7 +206,7 @@ impl ClientMethod {
                 quote! {
                     ::core::result::Result<
                         <C as #bidi_streaming>::Responses<#resp_item, #err>,
-                        #client_error<#err>,
+                        #client_error<#status, #err>,
                     >
                 },
                 quote!(self.0.bidi_stream(#path, input).await),

@@ -45,37 +45,17 @@ pub fn encode_path_segment(value: impl std::fmt::Display) -> String {
 }
 
 /// Maps a non-success HTTP response into a [`ClientError::Remote`](overseerd_client::ClientError),
-/// carrying the framework status (the HTTP status code in its custom section) and the raw error
-/// body. Used by the streaming transports, where a pre-stream failure has no response envelope to
-/// surface the status on — it is the outer `Result`'s `Err`.
-///
-// TODO: the `transport::StatusCode` is RPC's compact packed wire status, not an HTTP fit;
-// folding `http::StatusCode` into its custom section is a leak. A future change should give the
-// HTTP client a protocol-native error/status type (e.g. `HttpError` carrying `http::StatusCode`)
-// rather than reusing the RPC status. Kept as-is for now intentionally.
+/// carrying the genuine [`http::StatusCode`](axum::http::StatusCode) and the raw error body. The
+/// HTTP client's protocol status *is* the HTTP status — no folding into the RPC packed status — so
+/// a caller inspects `error.code()` as an `http::StatusCode` directly. Used by the streaming
+/// transports, where a pre-stream failure has no response envelope to surface the status on (it is
+/// the outer `Result`'s `Err`).
+#[cfg(any(feature = "reqwest", feature = "hyper"))]
 pub(crate) fn remote_error(
     status: axum::http::StatusCode,
     body: Vec<u8>,
-) -> overseerd_client::ClientError {
-    use overseerd_transport::{Flags, PredefinedCode, StatusCode};
-
-    let predefined = if status.is_server_error() {
-        PredefinedCode::Internal
-    } else if status == axum::http::StatusCode::NOT_FOUND {
-        PredefinedCode::NotFound
-    } else if status == axum::http::StatusCode::UNAUTHORIZED
-        || status == axum::http::StatusCode::FORBIDDEN
-    {
-        PredefinedCode::Unauthorized
-    } else if status.is_client_error() {
-        PredefinedCode::BadInput
-    } else {
-        PredefinedCode::Empty
-    };
-
-    let code = StatusCode::new_with_custom(predefined, Flags::empty(), status.as_u16());
-
-    overseerd_client::ClientError::Remote(overseerd_client::ErrorBody::new(code, body))
+) -> overseerd_client::ClientError<axum::http::StatusCode> {
+    overseerd_client::ClientError::Remote(overseerd_client::ErrorBody::new(status, body))
 }
 
 #[cfg(feature = "hyper")]

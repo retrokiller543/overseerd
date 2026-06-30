@@ -35,7 +35,6 @@ use std::marker::PhantomData;
 use futures::Stream;
 
 use overseerd_transport::Error;
-use overseerd_transport::StatusCode;
 
 pub use overseerd_transport::{CodecError, Decodes, Encodes};
 
@@ -53,19 +52,21 @@ pub struct Raw;
 /// (the markers are only carried for type inference).
 type Variance<T> = PhantomData<fn() -> T>;
 
-/// The client mirror of the server's error response: a status code plus the raw error body
-/// bytes. The body is deserialized into `T` lazily and best-effort, so a body the handler
-/// serialized as a different type (or as raw, non-postcard bytes) degrades to a failed
-/// `deserialize` while `code`/`raw` stay usable.
-pub struct ErrorBody<T = Raw> {
-    code: StatusCode,
+/// The client mirror of the server's error response: a protocol-defined status `S` plus the raw
+/// error body bytes. The status is opaque to the framework (the protocol picks `S`; RPC uses its
+/// packed `transport::StatusCode`, HTTP uses `http::StatusCode`) — only the caller interprets it.
+/// The body is deserialized into `T` lazily and best-effort, so a body the handler serialized as a
+/// different type (or as raw, non-postcard bytes) degrades to a failed `deserialize` while
+/// `code`/`raw` stay usable.
+pub struct ErrorBody<S, T = Raw> {
+    code: S,
     body: Vec<u8>,
     _marker: Variance<T>,
 }
 
-impl<T> ErrorBody<T> {
-    /// Wraps a status code and raw body bytes. Public so protocol impls can build it.
-    pub fn new(code: StatusCode, body: Vec<u8>) -> Self {
+impl<S, T> ErrorBody<S, T> {
+    /// Wraps a status and raw body bytes. Public so protocol impls can build it.
+    pub fn new(code: S, body: Vec<u8>) -> Self {
         Self {
             code,
             body,
@@ -73,7 +74,11 @@ impl<T> ErrorBody<T> {
         }
     }
 
-    pub fn code(&self) -> StatusCode {
+    /// The protocol-defined status. Opaque to the framework; the caller interprets it.
+    pub fn code(&self) -> S
+    where
+        S: Copy,
+    {
         self.code
     }
 
@@ -85,20 +90,20 @@ impl<T> ErrorBody<T> {
         self.body
     }
 
-    /// Re-types the body marker without touching the bytes, e.g. to attach a known body type
-    /// to an otherwise [`Raw`] error.
-    pub fn cast<U>(self) -> ErrorBody<U> {
+    /// Re-types the body marker without touching the bytes (or the status), e.g. to attach a known
+    /// body type to an otherwise [`Raw`] error.
+    pub fn cast<U>(self) -> ErrorBody<S, U> {
         ErrorBody::new(self.code, self.body)
     }
 }
 
-impl<T> Clone for ErrorBody<T> {
+impl<S: Clone, T> Clone for ErrorBody<S, T> {
     fn clone(&self) -> Self {
-        Self::new(self.code, self.body.clone())
+        Self::new(self.code.clone(), self.body.clone())
     }
 }
 
-impl<T> std::fmt::Debug for ErrorBody<T> {
+impl<S: std::fmt::Debug, T> std::fmt::Debug for ErrorBody<S, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ErrorBody")
             .field("code", &self.code)
@@ -113,23 +118,23 @@ impl<T> std::fmt::Debug for ErrorBody<T> {
 ///
 /// Debug/Display/Error are implemented by hand so no bound is placed on `E` (it lives only as
 /// a phantom marker inside [`ErrorBody`]).
-pub enum ClientError<E = Raw> {
+pub enum ClientError<S, E = Raw> {
     Transport(Error),
     Encode(String),
     Decode(String),
-    Remote(ErrorBody<E>),
+    Remote(ErrorBody<S, E>),
     ConnectionClosed,
 }
 
-impl ClientError<Raw> {
-    /// Re-types an untyped error's body marker; used by generated clients to attach their
-    /// declared error type.
-    pub fn typed<E>(self) -> ClientError<E> {
+impl<S> ClientError<S, Raw> {
+    /// Re-types an untyped error's body marker (keeping its status `S`); used by generated clients
+    /// to attach their declared error type.
+    pub fn typed<E>(self) -> ClientError<S, E> {
         retype(self)
     }
 }
 
-impl<E> std::fmt::Debug for ClientError<E> {
+impl<S: std::fmt::Debug, E> std::fmt::Debug for ClientError<S, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ClientError::Transport(e) => f.debug_tuple("Transport").field(e).finish(),
@@ -145,7 +150,7 @@ impl<E> std::fmt::Debug for ClientError<E> {
     }
 }
 
-impl<E> std::fmt::Display for ClientError<E> {
+impl<S: std::fmt::Debug, E> std::fmt::Display for ClientError<S, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ClientError::Transport(e) => write!(f, "transport: {e}"),
@@ -154,14 +159,14 @@ impl<E> std::fmt::Display for ClientError<E> {
 
             ClientError::Decode(s) => write!(f, "decoding response: {s}"),
 
-            ClientError::Remote(b) => write!(f, "remote error (status {:#010x})", b.code().raw()),
+            ClientError::Remote(b) => write!(f, "remote error (status {:?})", b.code),
 
             ClientError::ConnectionClosed => write!(f, "connection closed before response"),
         }
     }
 }
 
-impl<E> std::error::Error for ClientError<E> {
+impl<S: std::fmt::Debug, E> std::error::Error for ClientError<S, E> {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             ClientError::Transport(e) => Some(e),
@@ -171,16 +176,16 @@ impl<E> std::error::Error for ClientError<E> {
     }
 }
 
-impl<E> From<Error> for ClientError<E> {
+impl<S, E> From<Error> for ClientError<S, E> {
     fn from(e: Error) -> Self {
         ClientError::Transport(e)
     }
 }
 
-/// Re-labels an untyped error onto a typed error of the same shape. The only arm carrying `E`
-/// is `Remote`, whose body bytes are re-marked, not re-decoded. Used by protocol impls and
-/// generated clients.
-pub fn retype<E>(err: ClientError) -> ClientError<E> {
+/// Re-labels an untyped error onto a typed error of the same shape, preserving its status `S`. The
+/// only arm carrying `E` is `Remote`, whose body bytes are re-marked, not re-decoded. Used by
+/// protocol impls and generated clients.
+pub fn retype<S, E>(err: ClientError<S, Raw>) -> ClientError<S, E> {
     match err {
         ClientError::Transport(e) => ClientError::Transport(e),
 
@@ -235,9 +240,20 @@ where
 // message types are whatever the protocol can carry — never a fixed serde bound.
 // ---------------------------------------------------------------------------
 
+/// The base every capability shares: a transport carries a protocol-defined [`Status`](Self::Status)
+/// on its errors. The framework never interprets it — it is set by the handler author and read by
+/// the client caller — so it is a bare associated type with no bounds. RPC sets it to its packed
+/// `transport::StatusCode`; HTTP sets it to `http::StatusCode`. Every capability requires this, so a
+/// transport declares its status once and it threads through every call shape's errors.
+pub trait Transport: Send + Sync {
+    /// The protocol-defined status carried on this transport's error responses. Opaque to the
+    /// framework.
+    type Status;
+}
+
 /// One request, one response. Every protocol supports this. The implementation owns body
 /// encoding (via [`Encodes`]) and response parsing (via [`Decodes`]).
-pub trait Unary: Send + Sync {
+pub trait Unary: Transport {
     /// The request envelope this transport accepts, over a body type `B`.
     ///
     /// This is the seam that lets one generated client shape span very different wire
@@ -261,7 +277,7 @@ pub trait Unary: Send + Sync {
         &self,
         path: &str,
         request: Self::Request<B>,
-    ) -> impl Future<Output = Result<Self::Response<Resp>, ClientError<E>>> + Send
+    ) -> impl Future<Output = Result<Self::Response<Resp>, ClientError<Self::Status, E>>> + Send
     where
         Self: Encodes<B> + Decodes<Resp>,
         B: Send,
@@ -271,10 +287,10 @@ pub trait Unary: Send + Sync {
 /// One request, a stream of responses (HTTP/1.1 chunked/SSE, HTTP/2, gRPC, custom RPC). The
 /// response stream is the protocol's own type — a contract that the result *is* a [`Stream`]
 /// of decoded items, not a box.
-pub trait ServerStreaming: Send + Sync {
+pub trait ServerStreaming: Transport {
     /// The response stream this protocol yields for a server-streaming call. It exists only
     /// when the protocol can decode `Resp` — the decoding is the protocol's, in the stream.
-    type Responses<Resp, E>: Stream<Item = Result<Resp, ClientError<E>>> + Send
+    type Responses<Resp, E>: Stream<Item = Result<Resp, ClientError<Self::Status, E>>> + Send
     where
         Self: Decodes<Resp>;
 
@@ -282,7 +298,7 @@ pub trait ServerStreaming: Send + Sync {
         &self,
         path: &str,
         request: Req,
-    ) -> impl Future<Output = Result<Self::Responses<Resp, E>, ClientError<E>>> + Send
+    ) -> impl Future<Output = Result<Self::Responses<Resp, E>, ClientError<Self::Status, E>>> + Send
     where
         Self: Encodes<Req> + Decodes<Resp>,
         Req: Send,
@@ -291,12 +307,12 @@ pub trait ServerStreaming: Send + Sync {
 
 /// A stream of requests, one response (HTTP/2, gRPC, custom RPC — *not* HTTP/1.1, which has
 /// no streamed request body, so it does not implement this trait).
-pub trait ClientStreaming: Send + Sync {
+pub trait ClientStreaming: Transport {
     fn client_stream<Req, Resp, E, I>(
         &self,
         path: &str,
         requests: I,
-    ) -> impl Future<Output = Result<Resp, ClientError<E>>> + Send
+    ) -> impl Future<Output = Result<Resp, ClientError<Self::Status, E>>> + Send
     where
         Self: Encodes<Req> + Decodes<Resp>,
         Req: Send + 'static,
@@ -306,10 +322,10 @@ pub trait ClientStreaming: Send + Sync {
 
 /// A bidirectional stream of requests and responses (HTTP/2, gRPC, custom RPC — *not*
 /// HTTP/1.1). The request stream is pumped concurrently with reading the response stream.
-pub trait BidiStreaming: Send + Sync {
+pub trait BidiStreaming: Transport {
     /// The response stream this protocol yields for a bidirectional call. It exists only when
     /// the protocol can decode `Resp`.
-    type Responses<Resp, E>: Stream<Item = Result<Resp, ClientError<E>>> + Send
+    type Responses<Resp, E>: Stream<Item = Result<Resp, ClientError<Self::Status, E>>> + Send
     where
         Self: Decodes<Resp>;
 
@@ -317,7 +333,7 @@ pub trait BidiStreaming: Send + Sync {
         &self,
         path: &str,
         requests: I,
-    ) -> impl Future<Output = Result<Self::Responses<Resp, E>, ClientError<E>>> + Send
+    ) -> impl Future<Output = Result<Self::Responses<Resp, E>, ClientError<Self::Status, E>>> + Send
     where
         Self: Encodes<Req> + Decodes<Resp>,
         Req: Send + 'static,

@@ -14,7 +14,6 @@ mod notifiers;
 mod service;
 
 use crate::components::{AppServer, DbConfig};
-use crate::service::Notifications;
 use overseerd::app;
 use overseerd::builtins::init_tracing;
 use overseerd::config::Toml;
@@ -43,20 +42,21 @@ async fn main() -> overseerd::daemon::Result<()> {
     println!("server would bind to {}", server.addr);
     println!("server socket resolves to {}", server.socket.display());
 
-    // `app.greet` auto-registers via its `#[config(path = "app.greet")]`; the two
-    // `DbConfig` bindings share one type at different paths, so they are listed
-    // explicitly. The framework `ServerConfig` builtin carries no auto-binding, so
-    // it is bound here at `app.server`. The supplied config source backs them all.
     let app = app! {
         name: "example-daemon",
         protocol: overseerd::daemon::RpcPlugin,
-        services: [Notifications],
+
+        // `app.greet` auto-registers via its `#[config(path = "app.greet")]`; the two
+        // `DbConfig` bindings share one type at different paths, so they are listed
+        // explicitly. The framework `ServerConfig` builtin carries no auto-binding, so
+        // it is bound here at `app.server`. The supplied config source backs them all.
         configs: [
             DbConfig => "app.db.reader",
             DbConfig => "app.db.writer",
             ServerConfig => "app.server",
             LoggingConfig => "logging"
         ],
+
         managers: {
             config: config,
             directories: dir_manager,

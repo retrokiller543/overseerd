@@ -24,8 +24,8 @@ use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
 use overseerd_client::{
-    BidiStreaming, ClientError, ClientStreaming, ErrorBody, ServerStreaming, StreamArg, Unary,
-    retype,
+    BidiStreaming, ClientError, ClientStreaming, ErrorBody, ServerStreaming, StreamArg, Transport,
+    Unary, retype,
 };
 use overseerd_transport::protocol::{
     WireMessage, WireRequest, WireResponse,
@@ -112,7 +112,7 @@ where
         path: &str,
         streaming_input: bool,
         payload: Vec<u8>,
-    ) -> Result<RpcCall<W>, ClientError> {
+    ) -> Result<RpcCall<W>, ClientError<StatusCode>> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel(REPLY_BUFFER);
         let request = WireMessage::Request(WireRequest {
@@ -182,13 +182,13 @@ impl<W> RpcSink<W>
 where
     W: AsyncWrite + Unpin + Send + 'static,
 {
-    async fn write_frame(&self, msg: &WireMessage) -> Result<(), ClientError> {
+    async fn write_frame(&self, msg: &WireMessage) -> Result<(), ClientError<StatusCode>> {
         let mut write = self.write.lock().await;
 
         write_message(&mut *write, msg).await.map_err(Into::into)
     }
 
-    async fn send(&mut self, payload: Vec<u8>) -> Result<(), ClientError> {
+    async fn send(&mut self, payload: Vec<u8>) -> Result<(), ClientError<StatusCode>> {
         self.write_frame(&WireMessage::StreamItem {
             id: self.id,
             payload,
@@ -196,13 +196,13 @@ where
         .await
     }
 
-    async fn finish(&mut self) -> Result<(), ClientError> {
+    async fn finish(&mut self) -> Result<(), ClientError<StatusCode>> {
         self.write_frame(&WireMessage::StreamEnd { id: self.id })
             .await
     }
 
     #[allow(dead_code)]
-    async fn cancel(self) -> Result<(), ClientError> {
+    async fn cancel(self) -> Result<(), ClientError<StatusCode>> {
         self.write_frame(&WireMessage::StreamCancel { id: self.id })
             .await?;
 
@@ -262,6 +262,14 @@ where
 // Capabilities: RPC supports all four call shapes.
 // ---------------------------------------------------------------------------
 
+// RPC's status is the packed wire `StatusCode` carried on `WireOutcome::Err`/`StreamError`.
+impl<W> Transport for StreamClientTransport<W>
+where
+    W: Send + 'static,
+{
+    type Status = StatusCode;
+}
+
 impl<W> Unary for StreamClientTransport<W>
 where
     W: AsyncWrite + Unpin + Send + 'static,
@@ -272,7 +280,11 @@ where
     type Request<B> = B;
     type Response<R> = R;
 
-    async fn unary<B, Resp, E>(&self, path: &str, request: B) -> Result<Resp, ClientError<E>>
+    async fn unary<B, Resp, E>(
+        &self,
+        path: &str,
+        request: B,
+    ) -> Result<Resp, ClientError<StatusCode, E>>
     where
         Self: Encodes<B> + Decodes<Resp>,
         B: Send,
@@ -299,7 +311,7 @@ where
         &self,
         path: &str,
         request: Req,
-    ) -> Result<Self::Responses<Resp, E>, ClientError<E>>
+    ) -> Result<Self::Responses<Resp, E>, ClientError<StatusCode, E>>
     where
         Self: Encodes<Req> + Decodes<Resp>,
         Req: Send,
@@ -321,7 +333,7 @@ where
         &self,
         path: &str,
         requests: I,
-    ) -> Result<Resp, ClientError<E>>
+    ) -> Result<Resp, ClientError<StatusCode, E>>
     where
         Self: Encodes<Req> + Decodes<Resp>,
         Req: Send + 'static,
@@ -356,7 +368,7 @@ where
         &self,
         path: &str,
         requests: I,
-    ) -> Result<Self::Responses<Resp, E>, ClientError<E>>
+    ) -> Result<Self::Responses<Resp, E>, ClientError<StatusCode, E>>
     where
         Self: Encodes<Req> + Decodes<Resp>,
         Req: Send + 'static,
@@ -369,7 +381,7 @@ where
 
         // Pump the request stream on its own task so sending and receiving run concurrently.
         let codec = self.clone();
-        tokio::spawn(async move {
+        let pump = tokio::spawn(async move {
             while let Some(item) = input.next().await {
                 let Ok(bytes) = codec.encode(item) else {
                     break;
@@ -383,7 +395,7 @@ where
             let _ = sink.finish().await;
         });
 
-        Ok(RpcResponses::new(self.clone(), source))
+        Ok(RpcResponses::new(self.clone(), source).with_pump(pump))
     }
 }
 
@@ -392,6 +404,7 @@ where
 pub struct RpcResponses<W, Resp, E> {
     transport: StreamClientTransport<W>,
     source: RpcSource,
+    pump: Option<JoinHandle<()>>,
     _marker: PhantomData<fn() -> (Resp, E)>,
 }
 
@@ -400,7 +413,21 @@ impl<W, Resp, E> RpcResponses<W, Resp, E> {
         Self {
             transport,
             source,
+            pump: None,
             _marker: PhantomData,
+        }
+    }
+
+    fn with_pump(mut self, pump: JoinHandle<()>) -> Self {
+        self.pump = Some(pump);
+        self
+    }
+}
+
+impl<W, Resp, E> Drop for RpcResponses<W, Resp, E> {
+    fn drop(&mut self) {
+        if let Some(pump) = &self.pump {
+            pump.abort();
         }
     }
 }
@@ -409,7 +436,7 @@ impl<W, Resp, E> Stream for RpcResponses<W, Resp, E>
 where
     StreamClientTransport<W>: Decodes<Resp>,
 {
-    type Item = Result<Resp, ClientError<E>>;
+    type Item = Result<Resp, ClientError<StatusCode, E>>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
@@ -423,12 +450,15 @@ where
 }
 
 /// Maps a body encode failure onto a client error.
-fn encode_err<E>(e: CodecError) -> ClientError<E> {
+fn encode_err<E>(e: CodecError) -> ClientError<StatusCode, E> {
     ClientError::Encode(e.message)
 }
 
 /// Decodes the single response of a unary or client-streaming call.
-fn decode_unary<C, Resp, E>(codec: &C, reply: Option<Reply>) -> Result<Resp, ClientError<E>>
+fn decode_unary<C, Resp, E>(
+    codec: &C,
+    reply: Option<Reply>,
+) -> Result<Resp, ClientError<StatusCode, E>>
 where
     C: Decodes<Resp>,
 {
@@ -450,7 +480,10 @@ where
 
 /// Decodes the next item of a streaming call: `None` at end-of-stream, a terminal error as
 /// `Some(Err(..))`.
-fn decode_item<C, Resp, E>(codec: &C, reply: Option<Reply>) -> Option<Result<Resp, ClientError<E>>>
+fn decode_item<C, Resp, E>(
+    codec: &C,
+    reply: Option<Reply>,
+) -> Option<Result<Resp, ClientError<StatusCode, E>>>
 where
     C: Decodes<Resp>,
 {
@@ -558,7 +591,7 @@ fn is_disconnect(e: &std::io::Error) -> bool {
 /// client (`FooClient::new(transport)`).
 pub async fn connect_tcp(
     addr: impl tokio::net::ToSocketAddrs,
-) -> Result<StreamClientTransport<tokio::net::tcp::OwnedWriteHalf>, ClientError> {
+) -> Result<StreamClientTransport<tokio::net::tcp::OwnedWriteHalf>, ClientError<StatusCode>> {
     let stream = tokio::net::TcpStream::connect(addr)
         .await
         .map_err(|e| ClientError::Transport(Error::Io(e)))?;
@@ -571,7 +604,7 @@ pub async fn connect_tcp(
 #[cfg(unix)]
 pub async fn connect_unix(
     path: impl AsRef<std::path::Path>,
-) -> Result<StreamClientTransport<tokio::net::unix::OwnedWriteHalf>, ClientError> {
+) -> Result<StreamClientTransport<tokio::net::unix::OwnedWriteHalf>, ClientError<StatusCode>> {
     let stream = tokio::net::UnixStream::connect(path)
         .await
         .map_err(|e| ClientError::Transport(Error::Io(e)))?;

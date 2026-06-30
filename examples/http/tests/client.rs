@@ -11,7 +11,6 @@ use overseerd::axum::client::ReqwestClient;
 use overseerd::axum::prelude::*;
 use overseerd::client::{ClientError, Unary};
 use overseerd::prelude::*;
-use overseerd::transport::PredefinedCode;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
@@ -181,8 +180,10 @@ async fn generated_client_round_trips_over_reqwest() {
 
     match Unary::unary::<(), EchoOut, overseerd::client::Raw>(&backend, "", request).await {
         Err(ClientError::Remote(error)) => {
-            assert_eq!(error.code().predefined(), PredefinedCode::NotFound);
-            assert_eq!(error.code().custom(), 404);
+            // The HTTP client surfaces the genuine `http::StatusCode` — no folding into the RPC
+            // packed status.
+            assert_eq!(error.code(), http::StatusCode::NOT_FOUND);
+            assert_eq!(error.code().as_u16(), 404);
         }
 
         Ok(_) => panic!("expected remote 404, got success"),

@@ -138,20 +138,23 @@ where
                 } else {
                     match state.body.next().await {
                         Some(Ok(chunk)) => {
-                            state.buffer.extend_from_slice(&chunk);
+                            let pending_line_len = match chunk.iter().position(|&b| b == b'\n') {
+                                Some(newline) => state.buffer.len() + newline,
+                                None => state.buffer.len() + chunk.len(),
+                            };
 
-                            if state.buffer.len() > MAX_NDJSON_LINE_BYTES
-                                && !state.buffer.contains(&b'\n')
-                            {
+                            if pending_line_len > MAX_NDJSON_LINE_BYTES {
                                 tracing::warn!(
                                     target: "overseerd::axum",
-                                    len = state.buffer.len(),
+                                    len = pending_line_len,
                                     limit = MAX_NDJSON_LINE_BYTES,
                                     "stream item exceeded maximum NDJSON line length; ending stream"
                                 );
 
                                 return None;
                             }
+
+                            state.buffer.extend_from_slice(&chunk);
 
                             continue;
                         }
@@ -292,6 +295,16 @@ mod tests {
             b'x';
             MAX_NDJSON_LINE_BYTES + 1
         ]))]);
+        let mut decoded = Box::pin(ndjson_decode::<_, _, String>(body));
+
+        assert!(decoded.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn ndjson_decode_stops_on_oversized_line_with_newline() {
+        let mut line = vec![b'x'; MAX_NDJSON_LINE_BYTES + 1];
+        line.push(b'\n');
+        let body = futures::stream::iter([Ok::<_, std::convert::Infallible>(Bytes::from(line))]);
         let mut decoded = Box::pin(ndjson_decode::<_, _, String>(body));
 
         assert!(decoded.next().await.is_none());

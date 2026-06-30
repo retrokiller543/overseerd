@@ -5,7 +5,7 @@ use futures::Stream;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use http::Request;
-use overseerd_client::{ClientError, Unary};
+use overseerd_client::{ClientError, Transport, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
@@ -56,6 +56,11 @@ impl<R: DeserializeOwned> Decodes<R> for ReqwestClient {
     }
 }
 
+/// The HTTP client's protocol status is the genuine [`http::StatusCode`].
+impl Transport for ReqwestClient {
+    type Status = http::StatusCode;
+}
+
 impl Unary for ReqwestClient {
     type Request<B> = Request<B>;
     type Response<R> = HttpResponse<R>;
@@ -64,7 +69,7 @@ impl Unary for ReqwestClient {
         &self,
         _path: &str,
         request: Request<B>,
-    ) -> Result<HttpResponse<Resp>, ClientError<E>>
+    ) -> Result<HttpResponse<Resp>, ClientError<http::StatusCode, E>>
     where
         Self: Encodes<B> + Decodes<Resp>,
         B: Send,
@@ -103,9 +108,12 @@ impl Unary for ReqwestClient {
 }
 
 impl HttpStreaming for ReqwestClient {
-    type ByteStream = BoxStream<'static, Result<Bytes, ClientError>>;
+    type ByteStream = BoxStream<'static, Result<Bytes, ClientError<http::StatusCode>>>;
 
-    async fn open_stream<B>(&self, request: Request<B>) -> Result<Self::ByteStream, ClientError>
+    async fn open_stream<B>(
+        &self,
+        request: Request<B>,
+    ) -> Result<Self::ByteStream, ClientError<http::StatusCode>>
     where
         Self: Encodes<B>,
         B: Send,
@@ -146,7 +154,7 @@ impl HttpClientStreaming for ReqwestClient {
     async fn send_stream<S, Resp, E>(
         &self,
         request: Request<S>,
-    ) -> Result<HttpResponse<Resp>, ClientError<E>>
+    ) -> Result<HttpResponse<Resp>, ClientError<http::StatusCode, E>>
     where
         Self: Decodes<Resp>,
         S: Stream<Item = Result<Bytes, CodecError>> + Send + 'static,
@@ -182,8 +190,9 @@ impl HttpClientStreaming for ReqwestClient {
     }
 }
 
-/// Maps a reqwest network failure onto the transport arm of [`ClientError`].
-fn net_err<E>(error: reqwest::Error) -> ClientError<E> {
+/// Maps a reqwest network failure onto the transport arm of [`ClientError`] (status `S` and error
+/// body `E` are inferred from the call site; the transport arm carries neither).
+fn net_err<S, E>(error: reqwest::Error) -> ClientError<S, E> {
     ClientError::Transport(overseerd_transport::Error::Io(std::io::Error::other(
         error.to_string(),
     )))

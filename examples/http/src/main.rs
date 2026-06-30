@@ -149,7 +149,7 @@ async fn main() -> overseerd::axum::Result<()> {
     // graph is checked at its own definition. `app!` only needs the protocol.
     let app = app! {
         name: "example-http",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: AxumPlugin,
     }
     .build()
     .await?;

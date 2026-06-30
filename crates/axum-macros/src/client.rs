@@ -170,6 +170,7 @@ pub fn build_stream_client_method(
     );
 
     let client_error = paths.client("ClientError");
+    let http = paths.plugin("http");
     let encodes = paths.client("Encodes");
     let http_streaming = paths.plugin("client::HttpStreaming");
     let stream_decode = paths.plugin("client::StreamDecode");
@@ -185,7 +186,7 @@ pub fn build_stream_client_method(
         ret: quote! {
             ::core::result::Result<
                 impl #stream_trait<Item = #item>,
-                #client_error,
+                #client_error<#http::StatusCode>,
             >
         },
         body: quote! {{
@@ -273,7 +274,7 @@ pub fn build_client_stream_method(
 
     let request = ClientMethodOverrideBody {
         bounds: quote!(C: #http_client_streaming + #decodes<#response>),
-        ret: quote!(::core::result::Result<#http_response<#response>, #client_error>),
+        ret: quote!(::core::result::Result<#http_response<#response>, #client_error<#http::StatusCode>>),
         body: quote! {{
             // The agnostic `StreamArg` carries the input stream; frame it NDJSON and send it as a
             // streamed request body.
@@ -675,7 +676,11 @@ fn assemble(
 /// return type, or `()` for no return.
 fn response_type(output: &ReturnType) -> Type {
     match output {
-        ReturnType::Type(_, ty) => first_type_arg(ty, "Json").unwrap_or_else(|| (**ty).clone()),
+        ReturnType::Type(_, ty) => {
+            let inner = first_type_arg(ty, "Result").unwrap_or_else(|| (**ty).clone());
+
+            first_type_arg(&inner, "Json").unwrap_or(inner)
+        }
 
         ReturnType::Default => syn::parse_quote!(()),
     }
@@ -764,7 +769,9 @@ fn parse_template(template: &str) -> (String, Vec<String>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{hole_ident, parse_template};
+    use quote::quote;
+
+    use super::{hole_ident, parse_template, response_type};
 
     /// The `format!` string starts with `{}` for `BASE`, each param hole is a positional `{}`,
     /// and the hole names are recovered in order — matching matchit 0.8's `{name}` syntax.
@@ -808,5 +815,13 @@ mod tests {
     fn keyword_holes_fall_back_to_generated_param_name() {
         assert_eq!(hole_ident("type", 0).to_string(), "path0");
         assert_eq!(hole_ident("self", 1).to_string(), "path1");
+    }
+
+    #[test]
+    fn response_type_peels_result_then_json() {
+        let output = syn::parse_quote!(-> Result<Json<User>, HandlerError>);
+        let ty = response_type(&output);
+
+        assert_eq!(quote!(#ty).to_string(), "User");
     }
 }

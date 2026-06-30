@@ -14,7 +14,8 @@ use overseerd_app::{AppRuntime, Protocol, Serve, ShutdownSignal};
 use overseerd_core::TypeDescriptor;
 use overseerd_di::{BoxedComponent, ScopeContainer};
 use overseerd_transport::{
-    CallResult, Connection, PeerInfo, Respond, RespondStream, ResponseSink, Transport,
+    CallResult, Connection, Error as TransportError, PeerInfo, Respond, RespondStream,
+    ResponseSink, Transport,
 };
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -77,6 +78,10 @@ where
 
         info!(target: "overseerd::daemon", app = runtime.name(), transport = transport_name, "serve starting");
 
+        let connection_cancel = CancellationToken::new();
+        let mut connections = JoinSet::new();
+        let mut serve_error = None;
+
         loop {
             tokio::select! {
                 result = transport.accept() => {
@@ -88,29 +93,53 @@ where
                             let error_handler = self.error_handler.clone();
                             let needs_peer = self.needs_peer;
                             let runtime = runtime.clone();
-                            tokio::spawn(async move {
-                                serve_connection(conn, service, error_handler, needs_peer, runtime)
+                            let cancel = connection_cancel.clone();
+                            connections.spawn(async move {
+                                serve_connection(conn, service, error_handler, needs_peer, runtime, cancel)
                                     .await;
                             });
                         }
 
                         Err(e) => {
                             error!(target: "overseerd::daemon", error = %e, "transport accept failed");
-                            return Err(e.into());
+
+                            if matches!(e, TransportError::Closed) {
+                                break;
+                            }
+
+                            connection_cancel.cancel();
+                            serve_error = Some(e.into());
+                            break;
                         }
+                    }
+                }
+
+                result = connections.join_next(), if !connections.is_empty() => {
+                    if let Some(Err(e)) = result {
+                        warn!(target: "overseerd::daemon", error = %e, "connection task failed");
                     }
                 }
 
                 _ = shutdown.wait() => {
                     info!(target: "overseerd::daemon", "shutdown signal received");
+                    connection_cancel.cancel();
                     break;
                 }
             }
         }
 
+        while let Some(result) = connections.join_next().await {
+            if let Err(e) = result {
+                warn!(target: "overseerd::daemon", error = %e, "connection task failed during shutdown");
+            }
+        }
+
         info!(target: "overseerd::daemon", transport = transport_name, "serve stopped");
 
-        Ok(())
+        match serve_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 }
 
@@ -131,6 +160,7 @@ async fn serve_connection<C: Connection>(
     error_handler: Option<Arc<dyn ErrorHandler>>,
     needs_peer: bool,
     runtime: AppRuntime,
+    shutdown: CancellationToken,
 ) {
     debug!(target: "overseerd::daemon", "connection established");
 
@@ -165,7 +195,16 @@ async fn serve_connection<C: Connection>(
     debug!(target: "overseerd::daemon", "connection ready");
 
     loop {
-        match conn.recv().await {
+        let recv = tokio::select! {
+            result = conn.recv() => result,
+
+            _ = shutdown.cancelled() => {
+                debug!(target: "overseerd::daemon", "connection shutdown requested");
+                break;
+            }
+        };
+
+        match recv {
             Ok(Some((call, responder))) => {
                 let path = call.path;
                 let service = service.clone();

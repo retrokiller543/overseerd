@@ -8,7 +8,7 @@ use http_body_util::{BodyExt, BodyStream, Full};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
-use overseerd_client::{ClientError, Unary};
+use overseerd_client::{ClientError, Transport, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
@@ -40,7 +40,7 @@ impl HyperClient {
     fn build_request<B, E>(
         &self,
         request: Request<B>,
-    ) -> Result<Request<Full<Bytes>>, ClientError<E>>
+    ) -> Result<Request<Full<Bytes>>, ClientError<http::StatusCode, E>>
     where
         Self: Encodes<B>,
     {
@@ -79,6 +79,11 @@ impl<R: DeserializeOwned> Decodes<R> for HyperClient {
     }
 }
 
+/// The HTTP client's protocol status is the genuine [`http::StatusCode`].
+impl Transport for HyperClient {
+    type Status = http::StatusCode;
+}
+
 impl Unary for HyperClient {
     type Request<B> = Request<B>;
     type Response<R> = HttpResponse<R>;
@@ -87,7 +92,7 @@ impl Unary for HyperClient {
         &self,
         _path: &str,
         request: Request<B>,
-    ) -> Result<HttpResponse<Resp>, ClientError<E>>
+    ) -> Result<HttpResponse<Resp>, ClientError<http::StatusCode, E>>
     where
         Self: Encodes<B> + Decodes<Resp>,
         B: Send,
@@ -119,9 +124,12 @@ impl Unary for HyperClient {
 }
 
 impl HttpStreaming for HyperClient {
-    type ByteStream = BoxStream<'static, Result<Bytes, ClientError>>;
+    type ByteStream = BoxStream<'static, Result<Bytes, ClientError<http::StatusCode>>>;
 
-    async fn open_stream<B>(&self, request: Request<B>) -> Result<Self::ByteStream, ClientError>
+    async fn open_stream<B>(
+        &self,
+        request: Request<B>,
+    ) -> Result<Self::ByteStream, ClientError<http::StatusCode>>
     where
         Self: Encodes<B>,
         B: Send,
@@ -158,8 +166,9 @@ impl HttpStreaming for HyperClient {
     }
 }
 
-/// Maps a hyper network failure onto the transport arm of [`ClientError`].
-fn net_err<T, E>(error: T) -> ClientError<E>
+/// Maps a hyper network failure onto the transport arm of [`ClientError`] (status `S` and error
+/// body `E` are inferred from the call site; the transport arm carries neither).
+fn net_err<T, S, E>(error: T) -> ClientError<S, E>
 where
     T: std::fmt::Display,
 {
