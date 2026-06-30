@@ -18,7 +18,7 @@ mod reqwest_backend;
 
 pub use body::{HttpBody, OctetStream};
 pub use response::HttpResponse;
-pub use streaming::{HttpStreaming, StreamDecode};
+pub use streaming::{HttpClientStreaming, HttpStreaming, StreamDecode, encode_stream};
 
 /// Re-exported so generated streaming-client code names the codec without a separate dep.
 pub use overseerd_transport::{Decodes, Encodes};

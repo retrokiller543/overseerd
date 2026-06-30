@@ -146,15 +146,11 @@ pub fn build_stream_client_method(
     method_ident: &Ident,
     route: &RouteAttr,
     arg_types: &[&Type],
-    output: &ReturnType,
+    wrapper_unit: TokenStream,
+    item: Type,
     paths: &Paths,
 ) -> Option<ClientMethod> {
-    if !route.streamed {
-        return None;
-    }
-
     let inputs = classify(arg_types)?;
-    let (wrapper_unit, item) = stream_wrapper_and_item(output, paths)?;
 
     let (_req_param, encode_ty, body_value) = body_parts(&inputs.body, paths);
     let (fmt, holes) = parse_template(&route.path.value());
@@ -226,46 +222,212 @@ struct ClientMethodOverrideBody {
     body: TokenStream,
 }
 
+/// Builds the [`ClientMethod`] hint for a **client-streaming** route (a `#[stream]` request body):
+/// the client takes `input: impl Into<StreamArg<T>>` (reusing the agnostic `ClientStreaming`
+/// args), frames it NDJSON, and sends it as a streamed body for a unary response. `item` is the
+/// `#[stream]` parameter's stream item type; `arg_types` excludes that parameter (path params
+/// only). `None` if a path/return is not classifiable, or a `Json`/`Form` body also appears (the
+/// stream *is* the body).
+pub fn build_client_stream_method(
+    controller: &Ident,
+    method_ident: &Ident,
+    route: &RouteAttr,
+    arg_types: &[&Type],
+    item: Type,
+    output: &ReturnType,
+    paths: &Paths,
+) -> Option<ClientMethod> {
+    let inputs = classify(arg_types)?;
+
+    if inputs.body.is_some() {
+        return None;
+    }
+
+    let (fmt, holes) = parse_template(&route.path.value());
+    let path_plan = plan_path(&holes, inputs.path_ty)?;
+    let response = response_type(output);
+
+    let http = paths.plugin("http");
+    let ndjson = paths.plugin("Ndjson");
+    let stream_encode = paths.plugin("StreamEncode");
+    let encode_stream = paths.plugin("client::encode_stream");
+    let http_client_streaming = paths.plugin("client::HttpClientStreaming");
+    let http_response = paths.plugin("client::HttpResponse");
+    let controller_trait = paths.plugin("Controller");
+    let client_error = paths.client("ClientError");
+    let decodes = paths.client("Decodes");
+    let stream_arg = paths.client("StreamArg");
+
+    let verb = format_ident!("{}", route.verb.to_string().to_uppercase());
+    let base = quote!(<#controller as #controller_trait>::BASE);
+    let subst = &path_plan.subst;
+    let uri = quote!(::std::format!(#fmt, #base #(, #subst)*));
+
+    let request = ClientMethodOverrideBody {
+        bounds: quote!(C: #http_client_streaming + #decodes<#response>),
+        ret: quote!(::core::result::Result<#http_response<#response>, #client_error>),
+        body: quote! {{
+            // The agnostic `StreamArg` carries the input stream; frame it NDJSON and send it as a
+            // streamed request body.
+            let __stream = ::core::convert::Into::<#stream_arg<#item>>::into(input).into_inner();
+            let __body = #encode_stream::<#ndjson<()>, #item, _>(__stream);
+
+            let __request = #http::Request::builder()
+                .method(#http::Method::#verb)
+                .uri(#uri)
+                .header(
+                    #http::header::CONTENT_TYPE,
+                    <#ndjson<()> as #stream_encode<#item>>::CONTENT_TYPE,
+                )
+                .body(__body)
+                .expect("client request is valid by construction");
+
+            #http_client_streaming::send_stream(&self.0, __request).await
+        }},
+    };
+
+    Some(ClientMethod {
+        ident: method_ident.clone(),
+        path: String::new(),
+        capability: Capability::ClientStreaming,
+        request: None,
+        encode_as: None,
+        // Drives the `ClientStreaming` arm's `input: impl Into<StreamArg<#item>>` argument.
+        req_item: Some(item),
+        resp_item: None,
+        response,
+        error_ty: None,
+        extra_args: path_plan.args,
+        request_envelope: None,
+        request_builder: None,
+        response_envelope: None,
+        response_mapper: None,
+        override_bounds: Some(request.bounds),
+        override_ret: Some(request.ret),
+        override_body: Some(request.body),
+    })
+}
+
 /// From a streamed return type `Wrapper<impl Stream<Item = T>>` (or `Wrapper<ConcreteStream>`),
 /// recovers `(Wrapper<()>, Item)`: the framing wrapper with its stream parameter erased (the
 /// `StreamDecode` marker) and the decoded item type. The item is read from a `Stream<Item = T>`
 /// `impl Trait` binding, or projected as `<ConcreteStream as Stream>::Item`.
-fn stream_wrapper_and_item(output: &ReturnType, paths: &Paths) -> Option<(TokenStream, Type)> {
+/// How the macro wraps a bare `impl Stream<..>` return server-side (it is not `IntoResponse`
+/// itself). The inferred framing of the **shorthand registry**.
+pub(crate) enum ServerWrap {
+    /// `T != u8` → `Ndjson(stream)`.
+    Ndjson,
+    /// `T == u8` → `RawStream(chunk_u8(stream))`.
+    RawU8,
+}
+
+/// A classified server-streaming return.
+pub(crate) struct StreamReturn {
+    /// How to wrap the handler's return server-side; `None` when the return is already
+    /// `IntoResponse` (an explicit wrapper, or a flagged opaque type).
+    pub server_wrap: Option<ServerWrap>,
+    /// Whether the stream sits inside an outer `Result<.., E>` (a pre-stream failure). The server
+    /// wrap then maps over the `Result` rather than wrapping it.
+    pub in_result: bool,
+    /// The client decode `(Wrapper<()>, item)`, or `None` for a flagged-opaque return — server
+    /// passes it through but the macro can't generate a client method for an unknown wire format.
+    pub client: Option<(TokenStream, Type)>,
+}
+
+/// The streaming **shorthand registry** — the single, extensible place that maps a
+/// server-streaming return to its wire framing. Built-in shorthands (peeling an outer
+/// `Result<.., E>` pre-stream-failure first):
+///
+/// - `Ndjson<S>`                  → NDJSON, client item `S::Item`   (already `IntoResponse`)
+/// - `RawStream<S>`               → raw bytes, client item `Bytes`  (already `IntoResponse`)
+/// - bare `impl Stream<Item = u8>`      → raw bytes (macro wraps `RawStream`)
+/// - bare `impl Stream<Item = T>` (T≠u8) → NDJSON   (macro wraps `Ndjson`)
+///
+/// Add a built-in by extending the matches here. Anything else is server-streaming **only** with
+/// the `streamed` route flag — the server passes it through (the user's own `IntoResponse` wire
+/// format) and no client method is generated.
+pub(crate) fn classify_stream_return(
+    output: &ReturnType,
+    streamed: bool,
+    paths: &Paths,
+) -> Option<StreamReturn> {
     let ReturnType::Type(_, ty) = output else {
         return None;
     };
 
-    // A handler may declare a pre-stream failure as `Result<Wrapper<Stream>, E>` — peel that
-    // outer `Result` to the wrapper. The server's `E` is a pre-stream error, which the client
-    // already models as the outer `ClientError`; only the wrapper + item shape matters here.
-    let wrapper = first_type_arg(ty, "Result").unwrap_or_else(|| (**ty).clone());
-    let Type::Path(type_path) = &wrapper else {
-        return None;
-    };
-    let segment = type_path.path.segments.last()?;
-    let PathArguments::AngleBracketed(args) = &segment.arguments else {
-        return None;
-    };
-    let GenericArgument::Type(inner) = args.args.first()? else {
-        return None;
+    // Peel an outer `Result<Inner, E>` (a pre-stream failure); the client models `E` as the
+    // outer `ClientError`, so only the inner stream shape matters here.
+    let (inner, in_result) = match first_type_arg(ty, "Result") {
+        Some(ok) => (ok, true),
+        None => ((**ty).clone(), false),
     };
 
-    // The wrapper with its stream parameter erased: `Ndjson<..>` → `Ndjson<()>`.
-    let mut bare = type_path.clone();
-    bare.path.segments.last_mut()?.arguments = PathArguments::None;
-    let wrapper_unit = quote!(#bare<()>);
+    // A known framing wrapper — already `IntoResponse`, so no server wrap; the client decodes via
+    // `<Wrapper<()> as StreamDecode<item>>`.
+    if let Type::Path(type_path) = &inner
+        && let Some(segment) = type_path.path.segments.last()
+        && matches!(segment.ident.to_string().as_str(), "Ndjson" | "RawStream")
+        && let PathArguments::AngleBracketed(args) = &segment.arguments
+        && let Some(GenericArgument::Type(stream_ty)) = args.args.first()
+    {
+        let mut bare = type_path.clone();
+        bare.path.segments.last_mut()?.arguments = PathArguments::None;
 
-    let item = match inner {
-        Type::ImplTrait(impl_trait) => stream_item_binding(impl_trait)?,
+        return Some(StreamReturn {
+            server_wrap: None,
+            in_result,
+            client: Some((quote!(#bare<()>), stream_item(stream_ty, paths)?)),
+        });
+    }
+
+    // A bare `impl Stream<Item = T>` — the macro wraps it server-side: raw bytes when `T = u8`,
+    // NDJSON otherwise. The item is read *raw* (a `Result<T, E>` item stays intact, so the client
+    // mirrors it) — unlike RPC's fallible-stream peeling.
+    if let Type::ImplTrait(impl_trait) = &inner
+        && let Some(item) = stream_item_binding(impl_trait)
+    {
+        let ndjson = paths.plugin("Ndjson");
+        let raw = paths.plugin("RawStream");
+
+        if type_name(&item).is_some_and(|name| name == "u8") {
+            let bytes = paths.plugin("axum::body::Bytes");
+
+            return Some(StreamReturn {
+                server_wrap: Some(ServerWrap::RawU8),
+                in_result,
+                client: Some((quote!(#raw<()>), syn::parse_quote!(#bytes))),
+            });
+        }
+
+        return Some(StreamReturn {
+            server_wrap: Some(ServerWrap::Ndjson),
+            in_result,
+            client: Some((quote!(#ndjson<()>), item)),
+        });
+    }
+
+    // An opaque/custom return is server-streaming only when explicitly flagged; the server passes
+    // it through, and no client method is generated (the wire format is the user's own).
+    streamed.then_some(StreamReturn {
+        server_wrap: None,
+        in_result,
+        client: None,
+    })
+}
+
+/// The item type `T` of a stream type — `<S as Stream>::Item`. Read from a `Stream<Item = T>`
+/// `impl Trait` binding, or projected on a concrete stream type. Shared by the server-streaming
+/// return analysis and the client-streaming `#[stream]` parameter analysis.
+pub(crate) fn stream_item(ty: &Type, paths: &Paths) -> Option<Type> {
+    match ty {
+        Type::ImplTrait(impl_trait) => stream_item_binding(impl_trait),
 
         concrete => {
             let stream = paths.plugin("__Stream");
 
-            syn::parse_quote!(<#concrete as #stream>::Item)
+            Some(syn::parse_quote!(<#concrete as #stream>::Item))
         }
-    };
-
-    Some((wrapper_unit, item))
+    }
 }
 
 /// The `T` of a `Stream<Item = T>` bound within an `impl Trait`.

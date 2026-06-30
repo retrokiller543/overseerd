@@ -58,30 +58,33 @@ impl Api {
         Json(a * b)
     }
 
-    /// Pattern 1 — infallible items: the client mirrors `impl Stream<Item = u64>`, fallible only
-    /// in the outer pre-stream `Result`. The macro injects `use<>` so the `&self` return compiles.
-    #[get("/ticks/{n}", streamed)]
-    async fn ticks(&self, Path(n): Path<u64>) -> Ndjson<impl Stream<Item = u64>> {
-        Ndjson(futures::stream::iter(0..n))
+    /// Pattern 1 — inferred framing, infallible items: a bare `impl Stream<Item = u64>` (no
+    /// wrapper, no `streamed` flag) is the shorthand for NDJSON. The macro wraps `Ndjson`
+    /// server-side and injects `use<>` so the `&self` return compiles; the client mirrors
+    /// `impl Stream<Item = u64>`.
+    #[get("/ticks/{n}")]
+    async fn ticks(&self, Path(n): Path<u64>) -> impl Stream<Item = u64> {
+        futures::stream::iter(0..n)
     }
 
-    /// Pattern 2 — fallible items (`Result<u64, ItemError>`): a mid-stream domain error surfaces
-    /// as an `Err` *item*; the stream continues.
-    #[get("/fallible", streamed)]
-    async fn fallible(&self) -> Ndjson<impl Stream<Item = Result<u64, ItemError>>> {
-        Ndjson(futures::stream::iter(vec![
+    /// Pattern 2 — inferred framing, fallible items (`Result<u64, ItemError>`): a mid-stream
+    /// domain error surfaces as an `Err` *item*; the stream continues.
+    #[get("/fallible")]
+    async fn fallible(&self) -> impl Stream<Item = Result<u64, ItemError>> {
+        futures::stream::iter(vec![
             Ok(1),
             Ok(2),
             Err(ItemError {
                 reason: "boom".into(),
             }),
             Ok(4),
-        ]))
+        ])
     }
 
-    /// Pattern 3 — outer `Result` (pre-stream failure): the handler may fail before streaming;
-    /// the client surfaces that as the outer call's `Err`, items stay infallible `u64`.
-    #[get("/maybe/{ok}", streamed)]
+    /// Pattern 3 — explicit `Ndjson` wrapper inside an outer `Result` (pre-stream failure): a
+    /// known wrapper needs no `streamed` flag; the client surfaces the failure as the outer
+    /// call's `Err`, items stay infallible `u64`.
+    #[get("/maybe/{ok}")]
     async fn maybe(
         &self,
         Path(ok): Path<u64>,
@@ -93,22 +96,34 @@ impl Api {
         Ok(Ndjson(futures::stream::iter(0..ok)))
     }
 
-    /// Pattern 4 — both: a pre-stream failure (outer `Result`) and fallible items.
-    #[get("/both/{ok}", streamed)]
+    /// Pattern 4 — both: a pre-stream failure (outer `Result`) and fallible items, via the
+    /// inferred framing inside the `Result`.
+    #[get("/both/{ok}")]
     async fn both(
         &self,
         Path(ok): Path<u64>,
-    ) -> Result<Ndjson<impl Stream<Item = Result<u64, ItemError>>>, http::StatusCode> {
+    ) -> Result<impl Stream<Item = Result<u64, ItemError>>, http::StatusCode> {
         if ok == 0 {
             return Err(http::StatusCode::IM_A_TEAPOT);
         }
 
-        Ok(Ndjson(futures::stream::iter(vec![
+        Ok(futures::stream::iter(vec![
             Ok(1),
             Err(ItemError {
                 reason: "boom".into(),
             }),
-        ])))
+        ]))
+    }
+
+    /// Client-streaming: the client sends a stream of items as the request body; `#[stream]` marks
+    /// the body parameter, the server reads it (axum body streaming) and returns one response.
+    #[post("/collect")]
+    async fn collect(&self, #[stream] items: impl Stream<Item = u64>) -> Json<u64> {
+        let sum = items
+            .fold(0u64, |acc, item| async move { acc + item })
+            .await;
+
+        Json(sum)
     }
 }
 
@@ -200,6 +215,14 @@ async fn generated_client_round_trips_over_reqwest() {
     assert_eq!(items.len(), 2);
     assert_eq!(items[0], Ok(1));
     assert!(items[1].is_err());
+
+    // Client-streaming: the client sends a stream of `u64` as the request body; the server folds
+    // them and returns one response.
+    let total = client
+        .collect(futures::stream::iter(vec![1u64, 2, 3, 4]))
+        .await
+        .expect("collect call");
+    assert_eq!(*total, 10);
 
     shutdown.shutdown();
     let _ = server.await;

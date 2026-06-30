@@ -1,6 +1,7 @@
 //! The `reqwest` client backend.
 
 use bytes::Bytes;
+use futures::Stream;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use http::Request;
@@ -8,7 +9,7 @@ use overseerd_client::{ClientError, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
-use super::{HttpBody, HttpResponse, HttpStreaming};
+use super::{HttpBody, HttpClientStreaming, HttpResponse, HttpStreaming};
 
 /// An HTTP client transport backed by [`reqwest`].
 ///
@@ -134,6 +135,42 @@ impl HttpStreaming for ReqwestClient {
             .bytes_stream()
             .map(|chunk| chunk.map_err(net_err))
             .boxed())
+    }
+}
+
+impl HttpClientStreaming for ReqwestClient {
+    async fn send_stream<S, Resp, E>(
+        &self,
+        request: Request<S>,
+    ) -> Result<HttpResponse<Resp>, ClientError<E>>
+    where
+        Self: Decodes<Resp>,
+        S: Stream<Item = Result<Bytes, CodecError>> + Send + 'static,
+        Resp: Send,
+    {
+        let (parts, body) = request.into_parts();
+        let url = format!("{}{}", self.base_url, parts.uri);
+
+        let response = self
+            .client
+            .request(parts.method, url)
+            .headers(parts.headers)
+            .body(reqwest::Body::wrap_stream(body))
+            .send()
+            .await
+            .map_err(net_err)?;
+
+        // A client-streaming call returns a unary response; like `unary`, an error status rides
+        // in the envelope rather than as a `ClientError`.
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body_bytes = response.bytes().await.map_err(net_err)?.to_vec();
+
+        let decoded = self
+            .decode(body_bytes)
+            .map_err(|e| ClientError::Decode(e.to_string()))?;
+
+        Ok(HttpResponse::new(status, headers, decoded))
     }
 }
 

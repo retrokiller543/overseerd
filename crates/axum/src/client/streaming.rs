@@ -7,13 +7,26 @@
 //! appears in its signature, mirroring the RPC client. A new framing is just another
 //! [`StreamDecode`] impl, so nothing is hard-wired.
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use overseerd_client::ClientError;
-use overseerd_transport::Encodes;
+use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
-use crate::stream::{Ndjson, RawStream};
+use crate::client::HttpResponse;
+use crate::stream::{Ndjson, RawStream, StreamEncode};
+
+/// Frames an item stream into the body chunks of a client-streaming request, per the framing `F`
+/// (e.g. `Ndjson<()>`). Called by the generated client so the per-call `StreamExt::map` lives
+/// here, not in emitted code.
+pub fn encode_stream<F, T, S>(input: S) -> impl Stream<Item = Result<Bytes, CodecError>> + Send
+where
+    F: StreamEncode<T>,
+    S: Stream<Item = T> + Send + 'static,
+    T: Send + 'static,
+{
+    input.map(|item| <F as StreamEncode<T>>::encode(item))
+}
 
 /// A transport that can open a streamed HTTP response: it sends `request` and yields the
 /// response body as raw [`Bytes`] chunks. Implemented by the `reqwest` and `hyper` backends, so
@@ -29,6 +42,21 @@ pub trait HttpStreaming: Send + Sync {
     where
         Self: Encodes<B>,
         B: Send;
+}
+
+/// A transport that can send a **streamed request body** and return the unary response: the
+/// client-streaming dual of [`HttpStreaming`]. The request carries a stream of framed body chunks
+/// (`http::Request<S>` with the frame stream as its body); the response is decoded like a unary
+/// call (status + headers in the [`HttpResponse`] envelope). Implemented by `reqwest` and `hyper`.
+pub trait HttpClientStreaming: Send + Sync {
+    fn send_stream<S, Resp, E>(
+        &self,
+        request: http::Request<S>,
+    ) -> impl std::future::Future<Output = Result<HttpResponse<Resp>, ClientError<E>>> + Send
+    where
+        Self: Decodes<Resp>,
+        S: Stream<Item = Result<Bytes, CodecError>> + Send + 'static,
+        Resp: Send;
 }
 
 /// Deframes a stream of raw body chunks into typed items, per a wire framing. Pluggable: a new
@@ -57,82 +85,8 @@ where
     where
         S: Stream<Item = Result<Bytes, ClientError>> + Send + Unpin + 'static,
     {
-        // State threaded through `unfold`: the body, a pending buffer, and whether the body is
-        // drained (so a trailing unterminated line is still decoded once).
-        struct State<S> {
-            body: S,
-            buffer: BytesMut,
-            done: bool,
-        }
-
-        futures::stream::unfold(
-            State {
-                body,
-                buffer: BytesMut::new(),
-                done: false,
-            },
-            |mut state| async move {
-                loop {
-                    // A complete line, or the trailing line once the body is drained.
-                    let line = if let Some(newline) = state.buffer.iter().position(|&b| b == b'\n')
-                    {
-                        let line = state.buffer.split_to(newline);
-                        let _ = state.buffer.split_to(1);
-
-                        if line.is_empty() {
-                            continue;
-                        }
-
-                        line
-                    } else if state.done {
-                        if state.buffer.is_empty() {
-                            return None;
-                        }
-
-                        state.buffer.split()
-                    } else {
-                        match state.body.next().await {
-                            Some(Ok(chunk)) => {
-                                state.buffer.extend_from_slice(&chunk);
-
-                                continue;
-                            }
-
-                            Some(Err(error)) => {
-                                tracing::warn!(
-                                    target: "overseerd::axum",
-                                    %error,
-                                    "stream transport error; ending stream"
-                                );
-
-                                return None;
-                            }
-
-                            None => {
-                                state.done = true;
-
-                                continue;
-                            }
-                        }
-                    };
-
-                    // Decode the line into `T`, or end the stream (logged) on a JSON error.
-                    match serde_json::from_slice::<T>(&line) {
-                        Ok(item) => return Some((item, state)),
-
-                        Err(error) => {
-                            tracing::warn!(
-                                target: "overseerd::axum",
-                                %error,
-                                "stream item failed to decode; ending stream"
-                            );
-
-                            return None;
-                        }
-                    }
-                }
-            },
-        )
+        // The same buffering NDJSON engine the server's `StreamBody` extractor uses.
+        crate::stream::ndjson_decode(body)
     }
 }
 

@@ -115,10 +115,21 @@ impl ParseMethod for AxumHandlers {
             .as_ref()
             .expect("AxumHandlers::parse_item runs before parse_method");
 
-        // A streamed handler usually returns `impl Stream<..>` from `&self`; inject `use<..>` so
-        // the opaque type does not capture `self`'s lifetime (edition 2024). Must run before the
-        // argument types are borrowed, since it mutates the signature.
-        if route_attr.streamed {
+        // Claim a `#[stream]` request-body parameter (client-streaming), stripping its marker.
+        let stream_param = take_stream_param(method, &cx.paths)?;
+
+        // Classify a server-streaming return via the shorthand registry (only when not already
+        // client-streaming — bidi is deferred). Read before `add_use_capture` mutates the output.
+        let stream_return = if stream_param.is_some() {
+            None
+        } else {
+            client::classify_stream_return(&method.sig.output, route_attr.streamed, &cx.paths)
+        };
+
+        // A server-streaming handler usually returns `impl Stream<..>` from `&self`; inject
+        // `use<..>` so the opaque type does not capture `self`'s lifetime (edition 2024). Must run
+        // before the argument types are borrowed, since it mutates the signature.
+        if stream_return.is_some() {
             add_use_capture(&mut method.sig.output, &cx.capture);
         }
 
@@ -132,18 +143,41 @@ impl ParseMethod for AxumHandlers {
             })
             .collect();
 
-        // Every route hands a `ClientMethod` hint to the framework's `generate_client` — unary
-        // and server-streaming alike. A `streamed` route's hint carries the override hints
-        // (bounds/body/return) for its HTTP-specific call; a normal route's is the unary form.
-        let hint = if route_attr.streamed {
-            client::build_stream_client_method(
+        // Every route hands a `ClientMethod` hint to the framework's `generate_client`. The kind
+        // is chosen by shape: a `#[stream]` param → client-streaming; a streamed return →
+        // server-streaming; otherwise unary. Each carries the override hints its call needs.
+        let hint = if let Some((index, item)) = &stream_param {
+            // Path classification excludes the `#[stream]` body parameter.
+            let path_args: Vec<&Type> = arg_types
+                .iter()
+                .enumerate()
+                .filter_map(|(i, ty)| (i != *index).then_some(*ty))
+                .collect();
+
+            client::build_client_stream_method(
                 &cx.self_ident,
                 &method.sig.ident,
                 &route_attr,
-                &arg_types,
+                &path_args,
+                item.clone(),
                 &method.sig.output,
                 &cx.paths,
             )
+        } else if let Some(stream) = &stream_return {
+            // A known framing yields a client method; a flagged-opaque return (no decode) does not.
+            match &stream.client {
+                Some((wrapper_unit, item)) => client::build_stream_client_method(
+                    &cx.self_ident,
+                    &method.sig.ident,
+                    &route_attr,
+                    &arg_types,
+                    wrapper_unit.clone(),
+                    item.clone(),
+                    &cx.paths,
+                ),
+
+                None => None,
+            }
         } else {
             client::build_client_method(
                 &cx.self_ident,
@@ -155,7 +189,17 @@ impl ParseMethod for AxumHandlers {
             )
         };
 
-        let spec = build_route(&cx.self_ty, method, &route_attr)?;
+        let server_wrap = stream_return.as_ref().and_then(|s| s.server_wrap.as_ref());
+        let in_result = stream_return.as_ref().is_some_and(|s| s.in_result);
+        let spec = build_route(
+            &cx.self_ty,
+            method,
+            &route_attr,
+            stream_param.as_ref(),
+            server_wrap,
+            in_result,
+            &cx.paths,
+        )?;
         self.routes.push(spec);
 
         Ok(hint)
@@ -238,6 +282,10 @@ fn build_route(
     self_ty: &Type,
     method: &ImplItemFn,
     route_attr: &RouteAttr,
+    stream_param: Option<&(usize, Type)>,
+    server_wrap: Option<&client::ServerWrap>,
+    in_result: bool,
+    paths: &Paths,
 ) -> syn::Result<RouteSpec> {
     let takes_self = match method.sig.inputs.first() {
         Some(FnArg::Receiver(receiver)) => {
@@ -268,6 +316,31 @@ fn build_route(
     let arg_idents: Vec<Ident> = (0..arg_types.len())
         .map(|i| format_ident!("__a{i}"))
         .collect();
+
+    // The closure's parameter types and the values forwarded to the handler. A `#[stream]`
+    // parameter is extracted as the framework's `StreamBody<T>` (axum reads the streamed request
+    // body) and handed to the handler as the deframed `impl Stream<Item = T>`.
+    let stream_body = paths.plugin("StreamBody");
+    let closure_params: Vec<TokenStream> = arg_types
+        .iter()
+        .zip(&arg_idents)
+        .enumerate()
+        .map(|(i, (ty, ident))| match stream_param {
+            Some((index, item)) if *index == i => quote!(#ident: #stream_body<#item>),
+
+            _ => quote!(#ident: #ty),
+        })
+        .collect();
+    let call_args: Vec<TokenStream> = arg_idents
+        .iter()
+        .enumerate()
+        .map(|(i, ident)| match stream_param {
+            Some((index, _)) if *index == i => quote!(#ident.into_stream()),
+
+            _ => quote!(#ident),
+        })
+        .collect();
+
     let method_ident = &method.sig.ident;
     let dotawait = if method.sig.asyncness.is_some() {
         quote!(.await)
@@ -275,26 +348,52 @@ fn build_route(
         quote!()
     };
 
-    // The handler's return is an `IntoResponse` as-written — a unary body, or an explicit
-    // streamed wrapper (`Ndjson`/`RawStream`/`Sse`/…). The framing is whatever the handler
-    // returns; the macro never wraps or picks a format.
+    // A bare `impl Stream<..>` return is not `IntoResponse`, so the macro wraps it in the framing
+    // the shorthand registry inferred. When the stream sits inside a `Result` (pre-stream
+    // failure), the wrap maps over the `Result` instead. An explicit wrapper / unary body passes
+    // through untouched.
+    let wrap = |call: TokenStream| {
+        let wrapper = match server_wrap {
+            Some(client::ServerWrap::Ndjson) => {
+                let ndjson = paths.plugin("Ndjson");
+
+                quote!(#ndjson)
+            }
+
+            Some(client::ServerWrap::RawU8) => {
+                let raw = paths.plugin("RawStream");
+                let chunk_u8 = paths.plugin("chunk_u8");
+
+                quote!(|__stream| #raw(#chunk_u8(__stream)))
+            }
+
+            None => return call,
+        };
+
+        if in_result {
+            quote!(#call.map(#wrapper))
+        } else {
+            quote!((#wrapper)(#call))
+        }
+    };
+
     let handler = if takes_self {
-        let call = quote!(<#self_ty>::#method_ident(&__svc, #(#arg_idents),*)#dotawait);
+        let call = wrap(quote!(<#self_ty>::#method_ident(&__svc, #(#call_args),*)#dotawait));
 
         quote! {{
             let __svc = ::std::sync::Arc::clone(&svc);
 
-            move |#(#arg_idents: #arg_types),*| {
+            move |#(#closure_params),*| {
                 let __svc = ::std::sync::Arc::clone(&__svc);
 
                 async move { #call }
             }
         }}
     } else {
-        let call = quote!(<#self_ty>::#method_ident(#(#arg_idents),*)#dotawait);
+        let call = wrap(quote!(<#self_ty>::#method_ident(#(#call_args),*)#dotawait));
 
         quote! {
-            move |#(#arg_idents: #arg_types),*| async move { #call }
+            move |#(#closure_params),*| async move { #call }
         }
     };
 
@@ -303,6 +402,48 @@ fn build_route(
         path: route_attr.path.clone(),
         handler,
     })
+}
+
+/// Finds and strips a `#[stream]` parameter (a streamed request body), returning its position
+/// among the typed parameters (the index the closure uses) and its stream item type `T`. At most
+/// one is allowed; it marks a client-streaming route.
+fn take_stream_param(method: &mut ImplItemFn, paths: &Paths) -> syn::Result<Option<(usize, Type)>> {
+    let mut found = None;
+
+    for (typed_index, arg) in method
+        .sig
+        .inputs
+        .iter_mut()
+        .filter_map(|arg| match arg {
+            FnArg::Typed(typed) => Some(typed),
+            FnArg::Receiver(_) => None,
+        })
+        .enumerate()
+    {
+        let Some(pos) = arg.attrs.iter().position(|a| a.path().is_ident("stream")) else {
+            continue;
+        };
+
+        if found.is_some() {
+            return Err(syn::Error::new_spanned(
+                &arg.pat,
+                "a route may take at most one `#[stream]` request-body parameter",
+            ));
+        }
+
+        arg.attrs.remove(pos);
+
+        let item = client::stream_item(&arg.ty, paths).ok_or_else(|| {
+            syn::Error::new_spanned(
+                &arg.ty,
+                "a `#[stream]` parameter must be `impl Stream<Item = T>` (or a concrete `Stream` type)",
+            )
+        })?;
+
+        found = Some((typed_index, item));
+    }
+
+    Ok(found)
 }
 
 /// Injects `use<#capture>` precise capturing onto the `impl Trait` in a streamed route's return,
@@ -314,11 +455,32 @@ fn add_use_capture(output: &mut ReturnType, capture: &[Ident]) {
     }
 }
 
-/// Recurses into the first type argument of `Wrapper<..>` — descending through an outer
-/// `Result<Ok, _>` to the `Ok` arm — and, on reaching an `impl Trait`, appends `use<#capture>`
-/// (unless a precise capture is already present). Recursion (rather than returning a `&mut`)
-/// sidesteps the conditional-reborrow the borrow checker rejects.
+/// Adds `use<#capture>` to an `impl Trait` (unless already present). Lifetimes are intentionally
+/// omitted — an axum response must be `'static`, so the streamed `impl Stream` must not capture
+/// `self`'s lifetime; type/const params are captured (their bounds intact).
+fn capture_impl_trait(impl_trait: &mut syn::TypeImplTrait, capture: &[Ident]) {
+    let has_capture = impl_trait
+        .bounds
+        .iter()
+        .any(|bound| matches!(bound, TypeParamBound::PreciseCapture(_)));
+
+    if !has_capture {
+        impl_trait.bounds.push(parse_quote!(use<#(#capture),*>));
+    }
+}
+
+/// Reaches the `impl Trait` of a streamed return and captures it: a bare `impl Stream<..>`
+/// directly, or the one nested in a `Wrapper<impl Stream<..>>` — descending through an outer
+/// `Result<Ok, _>` first. Recursion (rather than returning a `&mut`) sidesteps the
+/// conditional-reborrow the borrow checker rejects.
 fn inject_capture(ty: &mut Type, capture: &[Ident]) {
+    // A bare `impl Stream<Item = T>` return (no framing wrapper).
+    if let Type::ImplTrait(impl_trait) = ty {
+        capture_impl_trait(impl_trait, capture);
+
+        return;
+    }
+
     let Type::Path(type_path) = ty else {
         return;
     };
@@ -337,13 +499,6 @@ fn inject_capture(ty: &mut Type, capture: &[Ident]) {
         // The wrapper is inside the `Ok` of a `Result<Ndjson<..>, E>` pre-stream-failure return.
         inject_capture(inner, capture);
     } else if let Type::ImplTrait(impl_trait) = inner {
-        let has_capture = impl_trait
-            .bounds
-            .iter()
-            .any(|bound| matches!(bound, TypeParamBound::PreciseCapture(_)));
-
-        if !has_capture {
-            impl_trait.bounds.push(parse_quote!(use<#(#capture),*>));
-        }
+        capture_impl_trait(impl_trait, capture);
     }
 }

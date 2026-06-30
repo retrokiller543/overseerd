@@ -243,44 +243,13 @@ pub mod daemon {
 /// depend only on `overseerd` — never on `overseerd-axum` directly.
 #[cfg(feature = "axum")]
 pub mod axum {
-    pub use overseerd_axum::{
-        App, AppBuilder, Axum, AxumAppBuilder, AxumPlugin, CONTROLLERS, Controller,
-        ControllerDescriptor, Error, Inject, InjectRejection, Ndjson, RawStream, Result,
-        ScopeHandle,
-    };
-
-    /// The re-exported `axum` crate, so generated code and handlers reach axum's own types
-    /// (`Router`, `Json`, `extract::*`, `routing::*`, …) without a separate dependency.
-    pub use overseerd_axum::axum;
-
-    /// The `http` crate (verb, headers, request/response), the foundation `reqwest` and `hyper`
-    /// share. The generated client builds `http::Request` against it.
-    pub use overseerd_axum::axum::http;
-
-    /// Re-exported so streaming-client codegen names the `Stream` it returns. Generated code only.
-    #[doc(hidden)]
-    pub use overseerd_axum::__Stream;
-
-    /// The generated HTTP **client** runtime: the body family, the response envelope, and the
-    /// `reqwest` backend. Gated on the `client` feature (so it is "axum + client"); the
-    /// controller macros emit their client methods against `::overseerd::axum::client::*`.
-    #[cfg(feature = "client")]
-    pub use overseerd_axum::client;
-
-    /// The axum protocol's component scope. A request-scoped component selects it with
-    /// `#[component(scope = overseerd::axum::scope::Request)]` (or `scope = Request` with the
-    /// prelude in scope).
-    pub mod scope {
-        pub use overseerd_axum::scope::Request;
-    }
-
-    /// The axum controller macros, re-exported through `overseerd-axum` (which owns them). With
-    /// the facade's `axum` feature, `overseerd-axum/facade` is on, so their generated code roots
-    /// plugin types at `::overseerd::axum::*` and core types at `::overseerd::*`.
-    /// (`app!`/`daemon!` are protocol-agnostic core macros at the crate root, not here.)
-    pub use overseerd_axum::{
-        controller, delete, get, handlers, head, options, patch, post, put, route,
-    };
+    /// The whole `overseerd-axum` surface, glob-re-exported so the facade never drifts behind the
+    /// protocol crate: the controller types/macros, the framing wrappers, the `axum` crate and
+    /// `http` re-exports, the `scope` module, and (with the `client` feature) the `client` module
+    /// and `__Stream` the generated client names. The protocol crate's root *is* the curated API.
+    /// With the facade's `axum` feature, `overseerd-axum/facade` is on, so the macros' generated
+    /// code roots plugin types at `::overseerd::axum::*` and core types at `::overseerd::*`.
+    pub use overseerd_axum::*;
 
     /// Common imports for building an HTTP controller app: `use overseerd::axum::prelude::*;`
     /// (pair with the crate-root `use overseerd::prelude::*;` for the core framework + `app!`).

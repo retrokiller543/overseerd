@@ -12,12 +12,18 @@
 //! directly — Rust's orphan rule blocks an `IntoResponse` impl for it — so the newtype is the
 //! thinnest possible wrapper, and `Ndjson(stream)` reads no heavier than the stream itself.)
 
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
 use axum::body::{Body, Bytes};
+use axum::extract::{FromRequest, Request};
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
+use bytes::BytesMut;
 use futures::{Stream, StreamExt};
 use overseerd_transport::CodecError;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 /// A newline-delimited-JSON streamed response (`application/x-ndjson`): each item of the wrapped
 /// stream is serialized to one JSON line.
@@ -64,4 +70,174 @@ where
         )
             .into_response()
     }
+}
+
+/// Decodes a byte-chunk stream into NDJSON items, buffering across chunk boundaries. A transport
+/// or JSON error ends the stream with a logged warning (never surfaced as an item) — the shared
+/// engine behind both the server [`StreamBody`] extractor and the client decoder. Generic over
+/// the chunk error so it serves the server's `axum::Error` body and the client's `ClientError`.
+pub(crate) fn ndjson_decode<S, E, T>(body: S) -> impl Stream<Item = T> + Send
+where
+    S: Stream<Item = Result<Bytes, E>> + Send + Unpin + 'static,
+    E: std::fmt::Display,
+    T: DeserializeOwned + Send + 'static,
+{
+    struct State<S> {
+        body: S,
+        buffer: BytesMut,
+        done: bool,
+    }
+
+    futures::stream::unfold(
+        State {
+            body,
+            buffer: BytesMut::new(),
+            done: false,
+        },
+        |mut state| async move {
+            loop {
+                let line = if let Some(newline) = state.buffer.iter().position(|&b| b == b'\n') {
+                    let line = state.buffer.split_to(newline);
+                    let _ = state.buffer.split_to(1);
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    line
+                } else if state.done {
+                    if state.buffer.is_empty() {
+                        return None;
+                    }
+
+                    state.buffer.split()
+                } else {
+                    match state.body.next().await {
+                        Some(Ok(chunk)) => {
+                            state.buffer.extend_from_slice(&chunk);
+
+                            continue;
+                        }
+
+                        Some(Err(error)) => {
+                            tracing::warn!(
+                                target: "overseerd::axum",
+                                %error,
+                                "stream transport error; ending stream"
+                            );
+
+                            return None;
+                        }
+
+                        None => {
+                            state.done = true;
+
+                            continue;
+                        }
+                    }
+                };
+
+                match serde_json::from_slice::<T>(&line) {
+                    Ok(item) => return Some((item, state)),
+
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "overseerd::axum",
+                            %error,
+                            "stream item failed to decode; ending stream"
+                        );
+
+                        return None;
+                    }
+                }
+            }
+        },
+    )
+}
+
+/// A streamed **request body**, deframed into items for a `#[stream]` handler parameter. The
+/// server reads the request body through axum's streaming and yields `T` per NDJSON line (a
+/// transport/decode error ends the stream, logged). A handler writes `#[stream] items: impl
+/// Stream<Item = T>`; the macro extracts via this and hands the handler the inner stream.
+pub struct StreamBody<T> {
+    inner: Pin<Box<dyn Stream<Item = T> + Send>>,
+}
+
+impl<T> StreamBody<T> {
+    /// The deframed item stream.
+    pub fn into_stream(self) -> impl Stream<Item = T> + Send {
+        self.inner
+    }
+}
+
+impl<T> Stream for StreamBody<T> {
+    type Item = T;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
+        self.get_mut().inner.as_mut().poll_next(cx)
+    }
+}
+
+impl<S, T> FromRequest<S> for StreamBody<T>
+where
+    S: Send + Sync,
+    T: DeserializeOwned + Send + 'static,
+{
+    // Deframing degrades to an empty/short stream (logged) rather than rejecting, so a body that
+    // is malformed mid-way still delivers the items decoded so far.
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request(request: Request, _state: &S) -> Result<Self, Self::Rejection> {
+        let body = request.into_body().into_data_stream();
+
+        Ok(StreamBody {
+            inner: Box::pin(ndjson_decode(body)),
+        })
+    }
+}
+
+/// Frames a stream of items into the bytes of a streamed body — the encode dual of
+/// [`ndjson_decode`], used by the client to send a `#[stream]` request body. The framing wrapper
+/// (`Ndjson`/`RawStream`/a custom one) picks the wire format; pluggable, never hard-wired.
+pub trait StreamEncode<T> {
+    /// The `Content-Type` a body framed this way carries.
+    const CONTENT_TYPE: &'static str;
+
+    /// Frames one item to its on-the-wire bytes (including any delimiter).
+    fn encode(item: T) -> Result<Bytes, CodecError>;
+}
+
+/// NDJSON: one JSON value per line.
+impl<W, T> StreamEncode<T> for Ndjson<W>
+where
+    T: Serialize,
+{
+    const CONTENT_TYPE: &'static str = "application/x-ndjson";
+
+    fn encode(item: T) -> Result<Bytes, CodecError> {
+        let mut bytes =
+            serde_json::to_vec(&item).map_err(|e| CodecError::internal(e.to_string()))?;
+        bytes.push(b'\n');
+
+        Ok(Bytes::from(bytes))
+    }
+}
+
+/// Raw passthrough: each `Bytes` item is sent unframed.
+impl<W> StreamEncode<Bytes> for RawStream<W> {
+    const CONTENT_TYPE: &'static str = "application/octet-stream";
+
+    fn encode(item: Bytes) -> Result<Bytes, CodecError> {
+        Ok(item)
+    }
+}
+
+/// Coalesces a `Stream<Item = u8>` into ready-batched `Bytes` chunks, so a byte stream maps onto
+/// [`RawStream`] without a one-byte HTTP chunk per item. The controller macro inserts this when it
+/// infers raw framing from a bare `impl Stream<Item = u8>` return.
+pub fn chunk_u8<S>(stream: S) -> impl Stream<Item = Bytes>
+where
+    S: Stream<Item = u8> + Send + 'static,
+{
+    stream.ready_chunks(8192).map(Bytes::from)
 }
