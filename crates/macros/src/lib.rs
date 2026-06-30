@@ -23,7 +23,7 @@
 //!    stateful `#[service]`). The macro registers a factory; the container builds
 //!    the instance from its dependencies during startup.
 //! 2. **Manually provided** — construct the instance yourself and hand it to
-//!    `DaemonBuilder::with_component`. Annotate the type
+//!    `AppBuilder::with_component`. Annotate the type
 //!    `#[component(default_factory = false)]`, which emits the `Component` metadata
 //!    with no factory.
 //!
@@ -45,34 +45,15 @@
 //!
 //! # Implementation
 //!
-//! Structure follows the dtolnay convention (see `thiserror-impl`): each
-//! `#[proc_macro_*]` entry point is thin, delegating to an `expand` function that
-//! returns `syn::Result`, with errors surfaced through
-//! `syn::Error::into_compile_error` rather than panics. Registration is done by
-//! emitting `#[linkme::distributed_slice]` elements into the per-kind descriptor
-//! slices that `DaemonBuilder::auto_discover` collects.
+//! Each `#[proc_macro_*]` entry point here is a thin shim: it forwards its token streams to
+//! the matching `expand` function in [`overseerd_macros_core`], the ordinary library that
+//! holds all the parsing and codegen (a proc-macro crate can only export proc-macros, so the
+//! reusable machinery lives there). Errors are surfaced as `compile_error!` by the core, not
+//! by panicking.
 
 extern crate proc_macro;
 
-mod attr;
-mod case;
-mod component;
-mod config;
-mod daemon;
-mod di;
-mod handle;
-mod handlers;
-mod hook;
-mod inject;
-mod injectable;
-mod methods;
-mod paths;
-mod provide;
-mod rpc;
-mod service;
-
 use proc_macro::TokenStream;
-use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 
 /// Declares a **system-constructed singleton component** on a struct.
 ///
@@ -83,7 +64,7 @@ use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// Use this for dependencies the system can assemble itself (pools, clients composed
 /// from other components, …). For an instance you must build yourself, use
 /// `#[component(default_factory = false)]` and provide it via
-/// `DaemonBuilder::with_component`.
+/// `AppBuilder::with_component`.
 ///
 /// # Arguments
 ///
@@ -93,7 +74,7 @@ use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// - `factory = path` — register `path` (an async `Factory`) as the constructor
 ///   instead of field injection; its parameters are its dependencies.
 /// - `default_factory = false` — emit no factory (a **manual** instance, provided
-///   via `DaemonBuilder::with_component`).
+///   via `AppBuilder::with_component`).
 /// - `factory_slice = Ident` — override the generated `{Type}Factories` slice name.
 ///
 /// ```ignore
@@ -136,7 +117,7 @@ use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 ///
 /// A component the system should *build* uses field injection by default; for one
 /// you construct yourself, `#[component(default_factory = false)]` emits the
-/// metadata with no factory (provide it via `DaemonBuilder::with_component`), and
+/// metadata with no factory (provide it via `AppBuilder::with_component`), and
 /// `#[component(factory = path)]` registers an explicit async factory.
 ///
 /// # See also
@@ -145,12 +126,7 @@ use syn::{ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 /// (an `#[init]` constructor for any component).
 #[proc_macro_attribute]
 pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as attr::ServiceArgs);
-    let item = parse_macro_input!(item as ItemStruct);
-
-    component::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    overseerd_macros_core::component(attr.into(), item.into()).into()
 }
 
 /// Implements the `ConfigProperties` trait for a config `struct` or `enum`, making it
@@ -159,7 +135,7 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// The type must also derive `Deserialize`, and `#[config]` must sit *above* the derive so
 /// it strips any field `#[default]` before the derive runs. With `#[config(path = "..")]`
 /// the binding is auto-registered (picked up by `auto_discover`); without a path, bind it
-/// explicitly with `DaemonBuilder::config::<T>(path)` — needed when the same type is
+/// explicitly with `AppBuilder::config::<T>(path)` — needed when the same type is
 /// bound at several paths. `#[config(name = "..")]` overrides the display name.
 ///
 /// A named field may carry `#[default = ".."]`: the literal is a template string merged
@@ -184,176 +160,7 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as config::ConfigArgs);
-    let item = parse_macro_input!(item as syn::DeriveInput);
-
-    config::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
-}
-
-/// Declares a **service** on a struct: its identity, version, and a default
-/// singleton factory.
-///
-/// A service is a component that exposes RPC methods (added by `#[handlers]`
-/// impls) and carries a version. The struct is the service's singleton: stateful
-/// `&self` RPC methods read it; stateless methods ignore it. Like `#[component]`,
-/// the default factory is built by field injection (`Arc<T>` fields resolved,
-/// others `Default`-built); an `#[init]` constructor in a `#[handlers]` impl
-/// overrides it.
-///
-/// # Arguments
-///
-/// All optional:
-/// - `id` — unique service id. Defaults to the lowercased type name.
-/// - `name` — display name; also the RPC path prefix (`Name.method`). Defaults to
-///   the type name.
-/// - `version` — e.g. `"0.1"`. Defaults to none.
-/// - `rpc_slice` — overrides the generated per-service RPC slice name (default
-///   `{Service}Rpcs`); an escape hatch for a name collision. Each `#[handlers]`
-///   block for the service must then pass the same `rpc_slice = ..`.
-///
-/// ```ignore
-/// #[service(id = "greeter", version = "0.1")]
-/// struct Greeter { /* ... */ }
-/// ```
-///
-/// # What it generates
-///
-/// - `impl Component for T` and `impl ServiceComponent for T` (the latter carries
-///   `VERSION`, enabling `DaemonBuilder::with_service`);
-/// - a public `{Service}Rpcs` distributed slice (e.g. `GreeterRpcs`) that the
-///   service's `#[handlers]` blocks append their RPC groups to, plus an
-///   `impl ServiceRpcs for T` returning it;
-/// - a `ServiceDescriptor` header registered into the `SERVICES` slice, whose
-///   `rpcs` field points at `ServiceRpcs::rpc_groups` — so the service *owns* its
-///   RPC surface and registering the service registers its methods;
-/// - a default field-injection factory (`default_factory: true`), overridable by
-///   an `#[init]` constructor.
-///
-/// RPC methods are **not** declared here — add one or more `#[handlers] impl`
-/// blocks for that.
-///
-/// # Example
-///
-/// ```ignore
-/// use overseerd::prelude::*;
-/// use std::sync::Arc;
-///
-/// #[component(default_factory = false)]
-/// struct Config { greeting: String }
-///
-/// #[service(id = "greeter", version = "0.1")]
-/// struct Greeter { config: Arc<Config> }
-///
-/// #[handlers]
-/// impl Greeter {
-///     #[rpc]
-///     async fn ping() -> Result<String> { Ok("pong".into()) }
-/// }
-/// ```
-///
-/// # Errors
-///
-/// Emits a `compile_error!` if applied to anything but a struct.
-#[proc_macro_attribute]
-pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as attr::ServiceArgs);
-    let item = parse_macro_input!(item as ItemStruct);
-
-    service::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
-}
-
-/// Contributes the `#[rpc]` methods (and an optional `#[init]` constructor) of an
-/// inherent `impl` block to the service of `Self`.
-///
-/// Several `#[handlers] impl T` blocks may target the same service — each appends
-/// its RPC group to the service's `{Service}Rpcs` slice (declared by `#[service]`),
-/// so the blocks merge with no coordination. A block in the **same module** as the
-/// `#[service]` just works; a block in a **different module** must bring the slice
-/// into scope first: `use path::{Service}Rpcs;`. A `#[handlers]` impl for a type
-/// with no `#[service]` fails to compile — the slice it would append to does not
-/// exist.
-///
-/// # `#[rpc]` methods
-///
-/// Each `#[rpc]` method must be `async` and return `Result<R, E>` where `R:
-/// Serialize` and `E: Into<overseerd::Error>`. Parameters are *extractors* drawn
-/// from the call context:
-/// - `Payload<T>` — the deserialized request body;
-/// - `Inject<H>` — a component resolved from the call scope (a connection- or
-///   request-scoped component, or any singleton), by its handle `H`.
-///
-/// A method may take `&self` to read the service singleton's common
-/// dependencies; one that needs none omits `self` and is dispatched directly
-/// (no per-call singleton lookup). `&mut self` and `self`-by-value are rejected.
-///
-/// `#[rpc]` accepts an operation kind argument (only `#[rpc]` / unary is
-/// implemented today; streaming kinds are reserved).
-///
-/// # `#[init]` constructor
-///
-/// An optional method marked `#[init]` becomes an explicit singleton factory
-/// that overrides the `#[service]` field-injection default. Its parameters are
-/// `Arc<T>` dependencies, resolved from the container; it may be `async` and/or
-/// return `Result<Self>`. The constructor may have any name — the macro emits a
-/// fixed-name `init` associated fn that forwards to it, which also makes a
-/// **second `#[init]` on the same type a compile error** (duplicate `init`).
-///
-/// # What it generates
-///
-/// - one erased handler wrapper per `#[rpc]` method, plus an `RpcGroup` appended to
-///   the service's `{Service}Rpcs` slice;
-/// - if an `#[init]` is present, a component factory (and the `init` marker).
-///
-/// # Arguments
-///
-/// All optional: `client_trait = Name` (emit the generated client as a trait), and
-/// `rpc_slice = Ident` — the per-service slice to append to, matching the owning
-/// `#[service]`'s `rpc_slice` (only needed if the default `{Service}Rpcs` name was
-/// overridden there, or this block lives in another module and you renamed it).
-///
-/// # Example
-///
-/// ```ignore
-/// use overseerd::prelude::*;
-/// use std::sync::Arc;
-///
-/// #[handlers]
-/// impl Greeter {
-///     #[init]
-///     fn new(config: Arc<Config>) -> Self { Self { config } }
-///
-///     #[rpc]
-///     async fn greet(&self, Payload(req): Payload<GreetReq>) -> Result<GreetResp> {
-///         Ok(GreetResp { message: format!("{}, {}!", self.config.greeting, req.name) })
-///     }
-/// }
-///
-/// // A second impl contributing more RPCs to the same service:
-/// #[handlers]
-/// impl Greeter {
-///     #[rpc]
-///     async fn ping() -> Result<String> { Ok("pong".into()) }
-/// }
-/// ```
-///
-/// # Errors
-///
-/// Emits a `compile_error!` if applied to a non-inherent-impl, if a `#[rpc]`
-/// method isn't `async`, if a receiver is `&mut self`/`self`, if a `#[rpc]`
-/// carries arguments, or if a streaming signature is malformed (more than one
-/// `Streaming<T>`, or `Payload<T>` alongside `Streaming<T>`).
-#[proc_macro_attribute]
-pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as attr::HandlersArgs);
-    let item = parse_macro_input!(item as ItemImpl);
-
-    handlers::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    overseerd_macros_core::config(attr.into(), item.into()).into()
 }
 
 /// Registers a component's lifecycle methods from an inherent `impl` block.
@@ -383,40 +190,16 @@ pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as attr::MethodsArgs);
-    let item = parse_macro_input!(item as ItemImpl);
-
-    methods::expand(args, item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+    overseerd_macros_core::methods(attr.into(), item.into()).into()
 }
 
-/// Marks a method inside a `#[handlers]` impl as an RPC.
-///
-/// This is a **marker** consumed (and stripped) by `#[handlers]`; it performs no
-/// expansion of its own when nested. Used on its own — outside a `#[handlers]`
-/// block — it emits a `compile_error!`, since there is no `Self` context to tie
-/// the RPC to a service.
-///
-/// See `#[handlers]` for the rules a `#[rpc]` method must satisfy (async,
-/// `Result` return, extractor parameters, optional `&self`) and the accepted
-/// arguments.
-#[proc_macro_attribute]
-pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as ItemFn);
-
-    rpc::expand_standalone(item)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
-}
-
-/// Assembles a daemon and validates it from one declaration.
+/// Assembles an app and validates it from one declaration.
 ///
 /// ```ignore
 /// // Built earlier in `main`, so their values can also configure the transport.
 /// let config = ConfigManager::<Toml>::load_in(&dirs.dir(), &[])?;
 ///
-/// let daemon = daemon! {
+/// let app = app! {
 ///     name: "example-daemon",
 ///     services: [Notifications, Echo],
 ///     configs: [ DbConfig => "app.db.reader", DbConfig => "app.db.writer" ],
@@ -429,7 +212,7 @@ pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// .await?;
 /// ```
 ///
-/// Expands to a `DaemonBuilder` — `Daemon::builder(name).auto_discover()`, a
+/// Expands to an `AppBuilder` — `App::builder(name).auto_discover()`, a
 /// `with_component(..)` for each listed instance, a `config::<T>(path)` for each
 /// `configs` entry (`Type => "property.path"`), and `config_source`/`directories`
 /// for any `managers` entries — so it is what you use in `main`.
@@ -440,18 +223,26 @@ pub fn rpc(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///   [`ConfigManager`](overseerd_core::ConfigManager), `directories: <binding>` a
 ///   [`DirectoriesManager`](overseerd_core::DirectoriesManager). Both are optional —
 ///   omitted, the builder constructs defaults (config loaded from the `Dir<Config>`
-///   directory, directories derived from the daemon name).
+///   directory, directories derived from the app name).
 ///
 /// The listed `services` are additionally required to be
 /// [`Wired`](overseerd_core::Wired) under the `di-check` feature, asserting their
 /// whole dependency graph (including trait-object and `#[service]` field
 /// dependencies, across crates) at compile time. The same declaration that wires the
-/// daemon validates it — there is no separate list to maintain.
+/// app validates it — there is no separate list to maintain.
+#[proc_macro]
+pub fn app(input: TokenStream) -> TokenStream {
+    overseerd_macros_core::app(input.into()).into()
+}
+
+/// Deprecated alias for [`app!`](macro@app). Renamed in 0.7.0; removed in 1.0.0.
+#[deprecated(
+    since = "0.7.0",
+    note = "renamed to `app!`; the `daemon!` alias is removed in 1.0.0"
+)]
 #[proc_macro]
 pub fn daemon(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as daemon::DaemonInput);
-
-    daemon::expand(input).into()
+    overseerd_macros_core::app(input.into()).into()
 }
 
 /// Marks a trait as injectable as `Arc<dyn Trait>` (providers register with
@@ -463,7 +254,5 @@ pub fn daemon(input: TokenStream) -> TokenStream {
 /// passes through unchanged.
 #[proc_macro_attribute]
 pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item = parse_macro_input!(item as syn::ItemTrait);
-
-    injectable::expand(item).into()
+    overseerd_macros_core::injectable(item.into()).into()
 }

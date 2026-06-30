@@ -15,4 +15,3 @@ tracing.workspace = true
 # Build-time dependency-graph validation: the build script fails `cargo build`
 # if the DI graph is unsatisfiable, so CI catches it before deployment.
 [build-dependencies]
-overseerd-analyze = { path = "../../crates/analyze" }

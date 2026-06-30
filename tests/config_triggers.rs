@@ -1,5 +1,5 @@
 //! Phase 4 triggers: `ConfigManager` carries the opt-in reload triggers (config lives on the
-//! manager, never the daemon), the `daemon!` macro can construct + configure a manager from a
+//! manager, never the daemon), the `app!` macro can construct + configure a manager from a
 //! per-manager config block, and — under the `watch` feature — a file change drives a reload.
 #![allow(dead_code)]
 
@@ -7,12 +7,13 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use overseerd::ConfigManager;
+use overseerd::app;
 use overseerd::config::Toml;
 use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{ConfigManager, daemon};
 
 #[cfg(feature = "watch")]
-use overseerd::Daemon;
+use overseerd::daemon::App;
 
 fn temp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("overseerd-triggers-{tag}-{}", std::process::id()));
@@ -38,7 +39,7 @@ fn config_manager_carries_its_triggers() {
 }
 
 #[tokio::test]
-async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::Result<()> {
+async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::daemon::Result<()> {
     let root = temp_dir("macro");
     let dirs = DirectoriesManager::from_path(root);
 
@@ -47,8 +48,9 @@ async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::R
 
     // `config` is a block (no instance): the macro loads it from the `directories` instance
     // and applies the triggers to the manager.
-    let built = daemon! {
+    let built = app! {
         name: "trigger-macro-test",
+        protocol: overseerd::daemon::RpcPlugin,
         managers: {
             directories: dirs,
             config: { sighup: true, debounce: Duration::from_millis(50) },
@@ -85,7 +87,7 @@ async fn watching_a_source_file_triggers_a_reload() {
         .watch_config()
         .config_reload_debounce(Duration::from_millis(50));
 
-    let daemon = Daemon::builder("watch-test")
+    let daemon = App::builder("watch-test")
         .config_source(manager)
         .build()
         .await

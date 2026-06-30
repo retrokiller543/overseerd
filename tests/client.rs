@@ -3,21 +3,24 @@
 //! termination are all exercised — the parts the in-memory transport bypasses.
 //!
 //! A single service is served on one duplex connection; the generated
-//! `CalcClient` (a trait-form client) drives it. The assertions double as the
-//! codegen smoke test: they pin the return-type extraction rules (`Result<T, E>`
-//! decoding to `T` with the error typed as `E::Body`, `Option<T>` left intact,
-//! and each streaming kind).
+//! `CalcClient<C>` — generic over the protocol transport `C`, with one method per
+//! `#[rpc]` in a capability-bounded impl block — drives it. The assertions double
+//! as the codegen smoke test: they pin the return-type extraction rules
+//! (`Result<T, E>` decoding to `T` with the error typed as `E::Body`, `Option<T>`
+//! left intact, and each streaming kind).
 
 #![cfg(feature = "client")]
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf};
 
-use overseerd::{
-    ClientConnection, ClientError, Daemon, ErrorResponse, Payload, ResponseError, ResponseStream,
-    StreamClientTransport, Streaming, handlers, service,
-    transport::{PeerInfo, StreamConnection, Transport},
+use futures::StreamExt;
+use overseerd::client::ClientError;
+use overseerd::daemon::{
+    App, ErrorResponse, Payload, ResponseError, ResponseStream, StreamClientTransport, Streaming,
+    handlers, service,
 };
+use overseerd::transport::{PeerInfo, StreamConnection, Transport};
 
 // ---------------------------------------------------------------------------
 // A service covering every return shape the client codegen must handle.
@@ -54,12 +57,11 @@ impl ResponseError for CalcError {
     }
 }
 
-/// Stateless calculator service. `client_trait = CalcApi` selects the
-/// `dyn`-compatible trait form of the generated client.
+/// Stateless calculator service, exercising every return shape the client codegen handles.
 #[service(id = "calc", version = "0.1")]
 struct Calc;
 
-#[handlers(client_trait = CalcApi)]
+#[handlers]
 impl Calc {
     #[rpc]
     async fn ping() -> u32 {
@@ -86,7 +88,12 @@ impl Calc {
     }
 
     #[rpc]
-    async fn sum(mut input: Streaming<u32>) -> overseerd::Result<u32> {
+    async fn fail_before_stream() -> Result<ResponseStream<u32>, CalcError> {
+        Err(CalcError::Negative)
+    }
+
+    #[rpc]
+    async fn sum(mut input: Streaming<u32>) -> overseerd::daemon::Result<u32> {
         let mut total = 0;
 
         while let Some(item) = input.next().await {
@@ -101,8 +108,6 @@ impl Calc {
         ResponseStream::new(input.map(|item| item.map(|v| v * 2)))
     }
 }
-
-use futures::StreamExt;
 
 // ---------------------------------------------------------------------------
 // Harness: serve one duplex connection, return a client over the other half.
@@ -135,7 +140,7 @@ async fn start() -> Client {
     let (server_read, server_write) = tokio::io::split(server_io);
     let (client_read, client_write) = tokio::io::split(client_io);
 
-    let daemon = Daemon::builder("test")
+    let daemon = App::builder("test")
         .auto_discover()
         .build()
         .await
@@ -150,10 +155,7 @@ async fn start() -> Client {
             .await;
     });
 
-    CalcClient::new(ClientConnection::new(StreamClientTransport::new(
-        client_read,
-        client_write,
-    )))
+    CalcClient::new(StreamClientTransport::new(client_read, client_write))
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +173,7 @@ async fn unary_bare_value() {
 async fn unary_result_ok() {
     let client = start().await;
 
-    let sum = client.add(&AddRequest { a: 2, b: 3 }).await.expect("add");
+    let sum = client.add(AddRequest { a: 2, b: 3 }).await.expect("add");
 
     assert_eq!(sum, 5);
 }
@@ -181,11 +183,12 @@ async fn unary_result_err_decodes_body_type() {
     let client = start().await;
 
     // `add` returns `Result<i32, CalcError>`, but the wire body is a
-    // `CalcErrorBody`; the generated client types the error as `E::Body`, so
-    // `deserialize` yields the structured body directly.
-    match client.add(&AddRequest { a: -1, b: 3 }).await {
+    // `CalcErrorBody`; the generated client types the error as `E::Body`, so the
+    // raw bytes decode to the structured body. (Decoding the error body is the
+    // caller's job — the framework's client makes no serialization assumption.)
+    match client.add(AddRequest { a: -1, b: 3 }).await {
         Err(ClientError::Remote(err)) => {
-            let body = err.deserialize().expect("decode body");
+            let body: CalcErrorBody = postcard::from_bytes(err.raw()).expect("decode body");
 
             assert_eq!(
                 body,
@@ -203,8 +206,8 @@ async fn unary_result_err_decodes_body_type() {
 async fn unary_option_is_not_peeled() {
     let client = start().await;
 
-    assert_eq!(client.maybe(&true).await.expect("maybe"), Some(7));
-    assert_eq!(client.maybe(&false).await.expect("maybe"), None);
+    assert_eq!(client.maybe(true).await.expect("maybe"), Some(7));
+    assert_eq!(client.maybe(false).await.expect("maybe"), None);
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +218,7 @@ async fn unary_option_is_not_peeled() {
 async fn server_stream_collects_items() {
     let client = start().await;
 
-    let mut stream = client.count(&4u32).await.expect("count");
+    let mut stream = client.count(4u32).await.expect("count");
     let mut items = Vec::new();
 
     while let Some(item) = stream.next().await {
@@ -226,13 +229,37 @@ async fn server_stream_collects_items() {
 }
 
 #[tokio::test]
+async fn server_stream_pre_stream_error_preserves_remote_body() {
+    let client = start().await;
+
+    let mut stream = client.fail_before_stream().await.expect("stream handle");
+
+    match stream.next().await {
+        Some(Err(ClientError::Remote(err))) => {
+            let body: CalcErrorBody = postcard::from_bytes(err.raw()).expect("decode body");
+
+            assert_eq!(
+                body,
+                CalcErrorBody {
+                    reason: "operands must be non-negative".to_string(),
+                }
+            );
+        }
+
+        other => panic!("expected remote stream error, got {other:?}"),
+    }
+
+    assert!(stream.next().await.is_none());
+}
+
+#[tokio::test]
 async fn client_stream_sums_inputs() {
     let client = start().await;
 
-    // The trait-form client takes a boxed `StreamArg` (object-safe); the response
-    // comes straight back, mirroring the daemon's `(stream) -> value` shape.
+    // Client-streaming: hand the input stream, the single response comes straight
+    // back, mirroring the daemon's `(stream) -> value` shape.
     let total = client
-        .sum(futures::stream::iter([1u32, 2, 3, 4]).into())
+        .sum(futures::stream::iter([1u32, 2, 3, 4]))
         .await
         .expect("sum");
 
@@ -245,7 +272,7 @@ async fn bidi_echoes_doubled() {
 
     // Symmetric bidi: hand it the input stream, read the response stream back.
     let mut replies = client
-        .echo(futures::stream::iter([5u32, 7]).into())
+        .echo(futures::stream::iter([5u32, 7]))
         .await
         .expect("echo");
 
@@ -265,7 +292,7 @@ async fn bidi_channel_input_is_concurrent() {
     let input = futures::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|item| (item, rx))
     });
-    let mut replies = client.echo(input.into()).await.expect("echo");
+    let mut replies = client.echo(input).await.expect("echo");
 
     tx.send(3).await.unwrap();
     assert_eq!(replies.next().await.expect("item").expect("ok"), 6);
@@ -286,8 +313,8 @@ async fn concurrent_calls_multiplex() {
     let client = start().await;
 
     let (a, b) = tokio::join!(
-        client.add(&AddRequest { a: 1, b: 1 }),
-        client.add(&AddRequest { a: 10, b: 10 }),
+        client.add(AddRequest { a: 1, b: 1 }),
+        client.add(AddRequest { a: 10, b: 10 }),
     );
 
     assert_eq!(a.expect("a"), 2);

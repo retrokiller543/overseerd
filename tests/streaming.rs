@@ -9,10 +9,10 @@ use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 
+use overseerd::daemon::{App, Cancel, Payload, ResponseStream, Streaming, handlers, service};
 use overseerd::{
-    CallResult, Cancel, Daemon, MemoryClient, MemoryConnectionHandle, Payload, ResponseStream,
-    ServerEvent, StreamDecode, StreamDecodeError, StreamEncode, StreamEncodeError, Streaming,
-    handlers, service,
+    CallResult, MemoryClient, MemoryConnectionHandle, ServerEvent, StreamDecode, StreamDecodeError,
+    StreamEncode, StreamEncodeError,
 };
 
 // ---------------------------------------------------------------------------
@@ -42,13 +42,13 @@ impl StreamSvc {
     }
 
     #[rpc]
-    async fn fallible_ok() -> overseerd::Result<u32> {
+    async fn fallible_ok() -> overseerd::daemon::Result<u32> {
         Ok(1)
     }
 
     #[rpc]
-    async fn fallible_err() -> overseerd::Result<u32> {
-        Err(overseerd::Error::InvalidPayload("nope".to_string()))
+    async fn fallible_err() -> overseerd::daemon::Result<u32> {
+        Err(overseerd::daemon::Error::InvalidPayload("nope".to_string()))
     }
 
     // --- Server streaming: one request, many responses ---
@@ -63,7 +63,7 @@ impl StreamSvc {
         ResponseStream::new(futures::stream::iter(vec![
             Ok(0),
             Ok(1),
-            Err(overseerd::Error::InvalidPayload("boom".to_string())),
+            Err(overseerd::daemon::Error::InvalidPayload("boom".to_string())),
         ]))
     }
 
@@ -88,7 +88,7 @@ impl StreamSvc {
     // --- Client streaming: many requests, one response ---
 
     #[rpc]
-    async fn sum(mut input: Streaming<u32>) -> overseerd::Result<u32> {
+    async fn sum(mut input: Streaming<u32>) -> overseerd::daemon::Result<u32> {
         let mut total = 0;
 
         while let Some(item) = input.next().await {
@@ -202,7 +202,7 @@ impl ErgoSvc {
 async fn start() -> MemoryConnectionHandle {
     let (client, transport) = MemoryClient::pair();
 
-    let daemon = Daemon::builder("test")
+    let daemon = App::builder("test")
         .auto_discover()
         .build()
         .await
@@ -245,13 +245,14 @@ async fn drain(call: &mut overseerd::MemoryCall) -> (Vec<u32>, bool) {
 
 #[tokio::test]
 async fn infers_operation_kinds() {
-    let daemon = Daemon::builder("test")
+    let _daemon = App::builder("test")
         .auto_discover()
         .build()
         .await
         .expect("build daemon");
 
-    let services = daemon.registry.resolved_services();
+    let __all: Vec<_> = overseerd::daemon::SERVICES.iter().copied().collect();
+    let services = overseerd::daemon::resolved_services(&__all);
     let svc = services
         .iter()
         .find(|s| s.descriptor.name == "StreamSvc")
@@ -464,13 +465,14 @@ async fn concurrent_streams_on_one_connection() {
 
 #[tokio::test]
 async fn ergo_operation_kinds() {
-    let daemon = Daemon::builder("test")
+    let _daemon = App::builder("test")
         .auto_discover()
         .build()
         .await
         .expect("build daemon");
 
-    let services = daemon.registry.resolved_services();
+    let __all: Vec<_> = overseerd::daemon::SERVICES.iter().copied().collect();
+    let services = overseerd::daemon::resolved_services(&__all);
     let svc = services
         .iter()
         .find(|s| s.descriptor.name == "ErgoSvc")

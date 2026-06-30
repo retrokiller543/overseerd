@@ -1,0 +1,15 @@
+[package]
+name = "overseerd-client"
+description = "The Overseerd protocol-agnostic client core: the ProtocolTransport abstraction and the typed Client surface generated clients build on. A protocol (overseerd-rpc, …) supplies a ProtocolTransport impl."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+overseerd-transport = { workspace = true }
+futures = { workspace = true }

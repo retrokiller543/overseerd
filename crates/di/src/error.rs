@@ -1,4 +1,3 @@
-use overseerd_core::ComponentScope;
 use thiserror::Error;
 
 /// Errors from the DI engine: graph validation and component construction.
@@ -34,14 +33,14 @@ pub enum Error {
     MissingComponent(&'static str),
 
     #[error(
-        "scope violation: component '{component}' ({component_scope:?}) depends on \
-         '{dependency}' ({dependency_scope:?}), which is shorter-lived"
+        "scope violation: component '{component}' ({component_scope}) depends on \
+         '{dependency}' ({dependency_scope}), which is shorter-lived"
     )]
     ScopeViolation {
         component: String,
         dependency: String,
-        component_scope: ComponentScope,
-        dependency_scope: ComponentScope,
+        component_scope: &'static str,
+        dependency_scope: &'static str,
     },
 
     /// An application-defined error surfaced through the DI engine — typically from a

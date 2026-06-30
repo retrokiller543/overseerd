@@ -5,7 +5,8 @@
 
 use std::sync::Arc;
 
-use overseerd::{Daemon, Dynamic, component};
+use overseerd::daemon::App;
+use overseerd::{Dynamic, component};
 
 /// A plain dependency, provided as an instance at build time (manual — no factory).
 #[component(default_factory = false)]
@@ -33,7 +34,7 @@ struct Widget {
 
 #[tokio::test]
 async fn resolves_default_optional_and_dynamic_edges() {
-    let daemon = Daemon::builder("di-test")
+    let daemon = App::builder("di-test")
         .auto_discover()
         .with_component(Settings {
             name: "configured".to_string(),
