@@ -7,7 +7,7 @@ use futures::{Stream, StreamExt};
 use overseerd::axum::Ndjson;
 use overseerd::axum::axum::extract::Path;
 use overseerd::axum::axum::{Json, http};
-use overseerd::axum::client::ReqwestClient;
+use overseerd::axum::client::{HyperClient, ReqwestClient};
 use overseerd::axum::prelude::*;
 use overseerd::client::{ClientError, Unary};
 use overseerd::prelude::*;
@@ -255,6 +255,13 @@ async fn generated_client_round_trips_over_reqwest() {
         .await
         .expect("collect call");
     assert_eq!(*total, 10);
+
+    let hyper = ApiClient::new(HyperClient::new(format!("http://{addr}")));
+    let total = hyper
+        .collect(futures::stream::iter(vec![10u64, 20, 30]))
+        .await
+        .expect("hyper collect call");
+    assert_eq!(*total, 60);
 
     shutdown.shutdown();
     let _ = server.await;

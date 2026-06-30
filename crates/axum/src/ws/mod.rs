@@ -234,7 +234,11 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
         async move {
             ws.on_upgrade(move |socket| async move {
                 let connection = match runtime
-                    .open_scope(&crate::scope::Connection, Arc::clone(runtime.root()), Vec::new())
+                    .open_scope(
+                        &crate::scope::Connection,
+                        Arc::clone(runtime.root()),
+                        Vec::new(),
+                    )
                     .await
                 {
                     Ok(scope) => scope,

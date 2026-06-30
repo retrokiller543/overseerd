@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::{SinkExt, StreamExt};
+use overseerd::axum::client::{TokioTungsteniteWs, WebsocketClient};
 use overseerd::axum::prelude::*;
+use overseerd::client::ClientError;
 use overseerd::prelude::*;
 use overseerd::{component, methods};
 use serde::{Deserialize, Serialize};
@@ -46,7 +48,7 @@ impl RequestTicket {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct Who {
     who: String,
 }
@@ -139,7 +141,9 @@ async fn ws_controller_dispatches_and_injects() {
 
     // Unknown destination → an error frame correlating the id.
     socket
-        .send(Message::Text(r#"{"dest":"nope","id":3,"payload":{}}"#.into()))
+        .send(Message::Text(
+            r#"{"dest":"nope","id":3,"payload":{}}"#.into(),
+        ))
         .await
         .expect("send nope");
 
@@ -147,6 +151,39 @@ async fn ws_controller_dispatches_and_injects() {
     assert_eq!(reply["dest"], "nope");
     assert_eq!(reply["id"], 3);
     assert!(reply["error"].as_str().unwrap().contains("nope"));
+
+    let ws = TokioTungsteniteWs::<JsonWs>::connect(format!("ws://{addr}/ws"))
+        .await
+        .expect("typed ws connect");
+    let typed = SockClient::new(ws.clone());
+
+    let reply = typed
+        .greet(Who {
+            who: "typed".into(),
+        })
+        .await
+        .expect("typed greet");
+    assert_eq!(reply.message, "Hello, typed!");
+    assert_eq!(reply.count, 3);
+
+    let reply = typed
+        .ticket(Who { who: "ws".into() })
+        .await
+        .expect("typed ticket");
+    assert_eq!(reply.message, "Hello, ws!");
+    assert_eq!(reply.ticket, 4242);
+
+    let error = WebsocketClient::<JsonWs, (), serde_json::Value>::websocket_call(&ws, "nope", ())
+        .await
+        .expect_err("unknown destination is remote error");
+    match error {
+        ClientError::Remote(body) => {
+            assert_eq!(body.code(), overseerd::axum::client::WsStatus::Error);
+            assert!(String::from_utf8(body.into_raw()).unwrap().contains("nope"));
+        }
+
+        other => panic!("expected remote ws error, got {other:?}"),
+    }
 
     shutdown.shutdown();
     let _ = server.await;

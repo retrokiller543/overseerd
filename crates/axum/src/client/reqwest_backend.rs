@@ -10,6 +10,8 @@ use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
 use super::{HttpBody, HttpClientStreaming, HttpResponse, HttpStreaming};
+#[cfg(all(feature = "ws", feature = "client"))]
+use super::{WebsocketClient, WsStatus};
 
 /// An HTTP client transport backed by [`reqwest`].
 ///
@@ -17,17 +19,19 @@ use super::{HttpBody, HttpClientStreaming, HttpResponse, HttpStreaming};
 /// is appended to. Implements the [`Unary`] capability with a `http::Request` envelope and an
 /// [`HttpResponse`] reply, so a generated controller client runs over it.
 #[derive(Clone)]
-pub struct ReqwestClient {
+pub struct ReqwestClient<W = ()> {
     client: reqwest::Client,
     base_url: String,
+    websocket: W,
 }
 
-impl ReqwestClient {
+impl ReqwestClient<()> {
     /// A client against `base_url` (e.g. `"http://localhost:3000"`) with a default reqwest client.
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             client: reqwest::Client::new(),
             base_url: base_url.into(),
+            websocket: (),
         }
     }
 
@@ -37,31 +41,57 @@ impl ReqwestClient {
         Self {
             client,
             base_url: base_url.into(),
+            websocket: (),
+        }
+    }
+}
+
+impl<W> ReqwestClient<W> {
+    /// Attaches a websocket request/reply transport while keeping this HTTP backend.
+    pub fn with_websocket<Ws>(self, websocket: Ws) -> ReqwestClient<Ws> {
+        ReqwestClient {
+            client: self.client,
+            base_url: self.base_url,
+            websocket,
         }
     }
 }
 
 /// JSON is the body codec for the bytes; the body *wrapper* ([`HttpBody`]) already chose the
 /// format and set the content type, so here we only forward its bytes.
-impl<B: HttpBody + Send> Encodes<B> for ReqwestClient {
+impl<W, B> Encodes<B> for ReqwestClient<W>
+where
+    W: Send + Sync,
+    B: HttpBody + Send,
+{
     fn encode(&self, value: B) -> Result<Vec<u8>, CodecError> {
         value.encode()
     }
 }
 
 /// Responses are decoded as JSON by default.
-impl<R: DeserializeOwned> Decodes<R> for ReqwestClient {
+impl<W, R> Decodes<R> for ReqwestClient<W>
+where
+    W: Send + Sync,
+    R: DeserializeOwned,
+{
     fn decode(&self, body: Vec<u8>) -> Result<R, CodecError> {
         serde_json::from_slice(&body).map_err(|e| CodecError::bad_input(e.to_string()))
     }
 }
 
 /// The HTTP client's protocol status is the genuine [`http::StatusCode`].
-impl Transport for ReqwestClient {
+impl<W> Transport for ReqwestClient<W>
+where
+    W: Send + Sync,
+{
     type Status = http::StatusCode;
 }
 
-impl Unary for ReqwestClient {
+impl<W> Unary for ReqwestClient<W>
+where
+    W: Send + Sync,
+{
     type Request<B> = Request<B>;
     type Response<R> = HttpResponse<R>;
 
@@ -107,7 +137,10 @@ impl Unary for ReqwestClient {
     }
 }
 
-impl HttpStreaming for ReqwestClient {
+impl<W> HttpStreaming for ReqwestClient<W>
+where
+    W: Send + Sync,
+{
     type ByteStream = BoxStream<'static, Result<Bytes, ClientError<http::StatusCode>>>;
 
     async fn open_stream<B>(
@@ -150,7 +183,10 @@ impl HttpStreaming for ReqwestClient {
     }
 }
 
-impl HttpClientStreaming for ReqwestClient {
+impl<W> HttpClientStreaming for ReqwestClient<W>
+where
+    W: Send + Sync,
+{
     async fn send_stream<S, Resp, E>(
         &self,
         request: Request<S>,
@@ -187,6 +223,27 @@ impl HttpClientStreaming for ReqwestClient {
             .map_err(|e| ClientError::Decode(e.to_string()))?;
 
         Ok(HttpResponse::new(status, headers, decoded))
+    }
+}
+
+#[cfg(all(feature = "ws", feature = "client"))]
+impl<W, P, Req, Resp> WebsocketClient<P, Req, Resp> for ReqwestClient<W>
+where
+    W: WebsocketClient<P, Req, Resp>,
+    P: super::WebsocketClientProtocol,
+    Req: Send,
+    Resp: Send,
+{
+    async fn websocket_call(
+        &self,
+        destination: &'static str,
+        payload: Req,
+    ) -> Result<Resp, ClientError<WsStatus>>
+    where
+        Req: Send,
+        Resp: Send,
+    {
+        self.websocket.websocket_call(destination, payload).await
     }
 }
 

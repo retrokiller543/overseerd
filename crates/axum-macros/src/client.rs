@@ -674,7 +674,7 @@ fn assemble(
 
 /// The decoded response body type: the `T` of a `Json<T>` return (the common case), or the bare
 /// return type, or `()` for no return.
-fn response_type(output: &ReturnType) -> Type {
+pub(crate) fn response_type(output: &ReturnType) -> Type {
     match output {
         ReturnType::Type(_, ty) => {
             let inner = first_type_arg(ty, "Result").unwrap_or_else(|| (**ty).clone());

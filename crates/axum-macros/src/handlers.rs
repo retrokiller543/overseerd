@@ -123,9 +123,16 @@ impl ParseMethod for AxumHandlers {
                 .as_ref()
                 .expect("AxumHandlers::parse_item runs before parse_method");
             let spec = build_ws_route(&cx.self_ty, method, &destination, &cx.paths)?;
+            let hint = build_ws_client_method(
+                &cx.self_ident,
+                &method.sig.ident,
+                method,
+                &destination,
+                &cx.paths,
+            )?;
             self.ws_routes.push(spec);
 
-            return Ok(None);
+            return Ok(hint);
         }
 
         let Some(pos) = method.attrs.iter().position(route::is_route_attr) else {
@@ -611,6 +618,83 @@ fn build_ws_route(
     }};
 
     Ok(WsRouteSpec { builder })
+}
+
+/// Builds the generated typed websocket client method for one `#[message("dest")]` handler.
+/// The server route and client method share the same parameter classification: `Inject<T>` is
+/// server-only, and the single non-inject parameter is the JSON payload.
+fn build_ws_client_method(
+    _controller: &Ident,
+    method_ident: &Ident,
+    method: &ImplItemFn,
+    destination: &LitStr,
+    paths: &Paths,
+) -> syn::Result<Option<ClientMethod>> {
+    let mut payload: Option<Type> = None;
+
+    for arg in &method.sig.inputs {
+        let FnArg::Typed(typed) = arg else {
+            continue;
+        };
+
+        let ty = typed.ty.as_ref();
+
+        if inject_inner(ty).is_some() {
+            continue;
+        }
+
+        if payload.replace(ty.clone()).is_some() {
+            return Err(syn::Error::new_spanned(
+                ty,
+                "a ws message method takes at most one payload parameter (the frame carries one \
+                 JSON payload); other parameters must be `Inject<T>`",
+            ));
+        }
+    }
+
+    let response = client::response_type(&method.sig.output);
+    let client_error = paths.client("ClientError");
+    let ws_client = paths.plugin("client::WebsocketClient");
+    let ws_status = paths.plugin("client::WsStatus");
+    let json_ws = paths.plugin("JsonWs");
+
+    let (request, payload_value) = match payload {
+        Some(ty) => (Some(ty), quote!(request)),
+        None => (None, quote!(())),
+    };
+    let request_ty = request.clone().unwrap_or_else(|| syn::parse_quote!(()));
+
+    let bounds = quote! {
+        C: #ws_client<#json_ws, #request_ty, #response>
+    };
+
+    Ok(Some(ClientMethod {
+        ident: method_ident.clone(),
+        path: String::new(),
+        capability: overseerd_macros_core::client::Capability::Unary,
+        request,
+        encode_as: None,
+        req_item: None,
+        resp_item: None,
+        response: response.clone(),
+        error_ty: None,
+        extra_args: Vec::new(),
+        request_envelope: None,
+        request_builder: None,
+        response_envelope: None,
+        response_mapper: None,
+        override_bounds: Some(bounds),
+        override_ret: Some(quote!(
+            ::core::result::Result<#response, #client_error<#ws_status>>
+        )),
+        override_body: Some(quote!(
+            #ws_client::<#json_ws, #request_ty, #response>::websocket_call(
+                &self.0,
+                #destination,
+                #payload_value,
+            ).await
+        )),
+    }))
 }
 
 /// If `ty` is `Inject<H>` (the axum DI extractor), returns its inner handle type `H`; otherwise

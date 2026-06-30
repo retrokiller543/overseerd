@@ -12,13 +12,21 @@ use std::sync::Arc;
 
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
 use overseerd_app::AppRuntime;
+#[cfg(feature = "client")]
+use overseerd_client::{ClientError, ErrorBody};
 use overseerd_di::ScopeContainer;
+#[cfg(feature = "client")]
+use overseerd_transport::CodecError;
+#[cfg(feature = "client")]
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use super::{
     WebsocketProtocol, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsShutdown, WsValue,
 };
+#[cfg(feature = "client")]
+use crate::client::{WebsocketClientProtocol, WebsocketDecodes, WebsocketEncodes, WsStatus};
 
 /// The baseline JSON-envelope protocol: a flat destination → handler table, point-to-point
 /// request/response over one socket. Holds a clone of the [`AppRuntime`] so it can open a fresh
@@ -29,7 +37,7 @@ pub struct JsonWs {
 }
 
 /// An inbound call frame.
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct Inbound {
     dest: String,
 
@@ -52,6 +60,18 @@ struct Outbound<'a> {
     ok: Option<WsValue>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[cfg(feature = "client")]
+#[derive(Deserialize)]
+struct ClientOutbound {
+    id: Option<u64>,
+
+    #[serde(default)]
+    ok: Option<WsValue>,
+
+    #[serde(default)]
     error: Option<String>,
 }
 
@@ -153,6 +173,79 @@ impl JsonWs {
         };
 
         render_reply(&inbound.dest, inbound.id, result)
+    }
+}
+
+#[cfg(feature = "client")]
+impl WebsocketClientProtocol for JsonWs {
+    type Key = u64;
+    type Frame = String;
+    type Payload = WsValue;
+
+    fn next_key(counter: u64) -> Self::Key {
+        counter
+    }
+
+    fn encode_call<T>(destination: &str, key: &Self::Key, payload: T) -> Result<String, CodecError>
+    where
+        Self: WebsocketEncodes<T>,
+    {
+        let inbound = Inbound {
+            dest: destination.to_string(),
+            id: Some(*key),
+            payload: <Self as WebsocketEncodes<T>>::encode_payload(payload)?,
+        };
+
+        serde_json::to_string(&inbound).map_err(|e| CodecError::internal(e.to_string()))
+    }
+
+    fn reply_key(frame: &Self::Frame) -> Result<Option<Self::Key>, CodecError> {
+        let outbound: ClientOutbound =
+            serde_json::from_str(frame).map_err(|e| CodecError::bad_input(e.to_string()))?;
+
+        Ok(outbound.id)
+    }
+
+    fn decode_reply<T>(frame: Self::Frame) -> Result<T, ClientError<WsStatus>>
+    where
+        Self: WebsocketDecodes<T>,
+    {
+        let outbound: ClientOutbound =
+            serde_json::from_str(&frame).map_err(|e| ClientError::Decode(e.to_string()))?;
+
+        if let Some(error) = outbound.error {
+            return Err(ClientError::Remote(ErrorBody::new(
+                WsStatus::Error,
+                error.into_bytes(),
+            )));
+        }
+
+        let ok = outbound
+            .ok
+            .ok_or_else(|| ClientError::Decode("ws reply contained neither ok nor error".into()))?;
+
+        <Self as WebsocketDecodes<T>>::decode_payload(ok)
+            .map_err(|e| ClientError::Decode(e.to_string()))
+    }
+}
+
+#[cfg(feature = "client")]
+impl<T> WebsocketEncodes<T> for JsonWs
+where
+    T: Serialize,
+{
+    fn encode_payload(value: T) -> Result<<Self as WebsocketClientProtocol>::Payload, CodecError> {
+        serde_json::to_value(value).map_err(|e| CodecError::bad_input(e.to_string()))
+    }
+}
+
+#[cfg(feature = "client")]
+impl<T> WebsocketDecodes<T> for JsonWs
+where
+    T: DeserializeOwned,
+{
+    fn decode_payload(value: <Self as WebsocketClientProtocol>::Payload) -> Result<T, CodecError> {
+        serde_json::from_value(value).map_err(|e| CodecError::bad_input(e.to_string()))
     }
 }
 

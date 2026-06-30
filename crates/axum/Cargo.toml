@@ -23,6 +23,7 @@ client = [
 # Client backends — independent so a user picks one (or both). Each pulls in only its stack.
 reqwest = ["client", "dep:reqwest"]
 hyper = ["client", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
+tungstenite = ["client", "ws", "dep:tokio-tungstenite"]
 di-check = [
     "overseerd-app/di-check",
     "overseerd-di/di-check",
@@ -65,3 +66,4 @@ reqwest = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
