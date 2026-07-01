@@ -17,7 +17,7 @@ use std::any::TypeId;
 use std::future::Future;
 use std::sync::Arc;
 
-use axum::extract::ws::WebSocket;
+use axum::extract::ws::{Message, WebSocket};
 use futures::future::BoxFuture;
 use overseerd_app::AppRuntime;
 use overseerd_core::TypeDescriptor;
@@ -232,7 +232,7 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
         let runtime = runtime.clone();
 
         async move {
-            ws.on_upgrade(move |socket| async move {
+            ws.on_upgrade(move |mut socket| async move {
                 let connection = match runtime
                     .open_scope(
                         &crate::scope::Connection,
@@ -249,6 +249,8 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
                             %error,
                             "ws connection scope build failed; closing socket"
                         );
+
+                        let _ = socket.send(Message::Text("Connection scope build failed, closing socket".into())).await;
 
                         return;
                     }
