@@ -35,9 +35,6 @@ jobs:
         name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Run release-plz
-        # Only publish after the release PR itself is merged. Ordinary feature merges still run
-        # the `release-plz-pr` job below to create/update the release PR.
-        if: ${{ steps.release-commit.outputs.publish == 'true' }}
         uses: release-plz/action@v0.5
         with:
           command: release
