@@ -34,15 +34,6 @@ jobs:
       - &install-rust
         name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: Detect release commit
-        id: release-commit
-        shell: bash
-        run: |
-          if git log -1 --pretty=%B | grep -q 'chore: release'; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          fi
       - name: Run release-plz
         # Only publish after the release PR itself is merged. Ordinary feature merges still run
         # the `release-plz-pr` job below to create/update the release PR.
