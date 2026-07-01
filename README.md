@@ -1,5 +1,5 @@
 # Overseerd
-Overseerd is a Rust framework for building long-running daemon services using strongly typed components, services, and generated infrastructure.
+Overseerd is a Rust framework for building long-running daemon services and applications using strongly typed components, services, and generated infrastructure.
 
 The goal is to make daemon development feel like writing ordinary Rust business logic while Overseerd handles service discovery, dependency wiring, RPC registration, lifecycle management, and operational concerns.
 
