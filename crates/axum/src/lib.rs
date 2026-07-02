@@ -15,8 +15,10 @@ pub mod client;
 pub mod controller;
 pub mod error;
 pub mod extract;
+pub mod middleware;
 pub mod plugin;
 pub mod protocol;
+pub mod request_meta;
 pub mod scope;
 pub mod stream;
 #[cfg(feature = "ws")]
@@ -45,6 +47,7 @@ pub use ws::stomp::{
 pub use overseerd_transport::CodecError;
 
 pub use extract::{Inject, InjectRejection, ScopeHandle};
+pub use middleware::AxumMiddleware;
 /// The STOMP topic-set macro (`#[topics]`).
 #[cfg(feature = "stomp")]
 pub use overseerd_axum_macros::topics;
@@ -58,6 +61,7 @@ pub use overseerd_axum_macros::{
 };
 pub use plugin::{AxumAppBuilder, AxumPlugin};
 pub use protocol::Axum;
+pub use request_meta::RequestMeta;
 pub use stream::{Ndjson, RawStream, StreamBody, StreamEncode, chunk_u8};
 
 /// Re-exported so streaming-client codegen can project a concrete stream's item type
@@ -92,6 +96,11 @@ pub use linkme;
 /// Re-exported so `#[controller]`/`#[handlers]` generated code and users reach axum through a
 /// stable path without a separate dependency.
 pub use axum;
+
+/// Re-exported (mirroring the RPC protocol's own `pub use tower;`) so a raw `tower::Layer`
+/// registered via [`AxumAppBuilder::layer`] — or a test driving the router with
+/// `tower::ServiceExt::oneshot` — needs no separate `tower` dependency.
+pub use tower;
 
 /// The `http` crate (verb, headers, request/response), re-exported at the crate root so a
 /// standalone `overseerd-axum` dependant resolves `::overseerd_axum::http` — the path the

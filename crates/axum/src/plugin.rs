@@ -1,17 +1,22 @@
 //! The axum protocol plugin and its builder extension.
 
+use std::convert::Infallible;
 use std::sync::Arc;
 
 use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
+use axum::routing::Route;
 use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin};
-use overseerd_core::{Descriptor, Scope};
-use overseerd_di::ComponentDescriptor;
+use overseerd_core::{Descriptor, Scope, TypeDescriptor};
+use overseerd_di::{BoxedComponent, Component, ComponentDescriptor};
+use tower::{Layer, Service};
 
 use crate::controller::{CONTROLLERS, ControllerDescriptor};
 use crate::extract::ScopeHandle;
+use crate::middleware::{AxumMiddleware, MiddlewareApplier, as_layer};
 use crate::protocol::Axum;
+use crate::request_meta::{REQUEST_META_DESCRIPTOR, RequestMeta};
 use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
 
 /// The axum HTTP protocol plugin.
@@ -23,6 +28,12 @@ use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
 #[derive(Default)]
 pub struct AxumPlugin {
     controllers: Vec<ControllerDescriptor>,
+
+    /// Global middleware, in registration order — both raw `tower::Layer`s (via
+    /// [`AxumAppBuilder::layer`]) and DI-resolved [`AxumMiddleware`]s (via
+    /// [`AxumAppBuilder::middleware`]) accumulate here, so ordering between the two is just
+    /// registration order.
+    middleware: Vec<MiddlewareApplier>,
 
     /// Discovered `#[controller(ws = ..)]` descriptors. Only mounted for protocols a user opts into
     /// via [`register_ws`](AxumAppBuilder::register_ws).
@@ -63,7 +74,9 @@ impl Plugin for AxumPlugin {
             .extend(crate::ws::WS_CONTROLLERS.iter().copied());
     }
 
-    fn register(&self, _registry: &mut AppRegistry) {}
+    fn register(&self, registry: &mut AppRegistry) {
+        registry.components.push(REQUEST_META_DESCRIPTOR);
+    }
 }
 
 impl ProtocolPlugin for AxumPlugin {
@@ -109,9 +122,21 @@ impl ProtocolPlugin for AxumPlugin {
             endpoints
         };
 
+        // Global middleware, first-registered outermost (mirroring the RPC protocol's own
+        // convention): `axum::Router::layer` stacks last-applied-outermost, so folding in
+        // reverse registration order makes the first-registered applier the outermost one.
+        // These must stay *inside* (applied before) the scope-open layer below so every piece
+        // of user middleware — raw or DI-backed — can `Inject` request-scoped state.
+        for applier in self.middleware.into_iter().rev() {
+            router = applier(runtime, router);
+        }
+
         // The bridge: a per-request layer that opens the Request scope (parented at the
         // singleton root) and inserts its handle into the request extensions. `Inject`
         // reads it back out; a scope-build failure degrades to 500 rather than panicking.
+        // Also seeds `RequestMeta` (method/URI/headers/cookies) so request-scoped components
+        // and handlers can depend on the native request without axum's own extractors
+        // entering the DI graph.
         let scope_runtime = runtime.clone();
         let router = router.layer(middleware::from_fn(
             move |mut request: Request, next: Next| {
@@ -120,8 +145,18 @@ impl ProtocolPlugin for AxumPlugin {
                 async move {
                     let parent = Arc::clone(scope_runtime.root());
 
+                    let meta = RequestMeta::from_parts(
+                        request.method().clone(),
+                        request.uri().clone(),
+                        request.headers().clone(),
+                    );
+                    let seed = BoxedComponent {
+                        ty: TypeDescriptor::of::<RequestMeta>("RequestMeta"),
+                        value: Box::new(meta),
+                    };
+
                     match scope_runtime
-                        .open_scope(&RequestScope, parent, Vec::new())
+                        .open_scope(&RequestScope, parent, vec![seed])
                         .await
                     {
                         Ok(scope) => {
@@ -168,6 +203,25 @@ pub trait AxumAppBuilder {
     /// Manually registers a raw controller header (prefer [`controller`](Self::controller)).
     fn controller_descriptor(self, descriptor: &'static ControllerDescriptor) -> Self;
 
+    /// Wraps the whole app in a raw `tower::Layer` — any standard axum/tower middleware
+    /// (`tower-http`, a hand-written `axum::middleware::from_fn`, …) works here unmodified,
+    /// with the same bound as [`axum::Router::layer`] itself. The first layer registered is
+    /// the outermost; interleaves in registration order with [`middleware`](Self::middleware).
+    fn layer<L>(self, layer: L) -> Self
+    where
+        L: Layer<Route> + Clone + Send + Sync + 'static,
+        L::Service: Service<Request> + Clone + Send + Sync + 'static,
+        <L::Service as Service<Request>>::Response: IntoResponse + 'static,
+        <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
+        <L::Service as Service<Request>>::Future: Send + 'static;
+
+    /// Sugar over [`layer`](Self::layer): resolves `M` as a DI singleton (shared across every
+    /// attach point it's registered at, instead of constructed per attach point) and wraps it
+    /// via [`as_layer`].
+    fn middleware<M>(self) -> Self
+    where
+        M: AxumMiddleware + Component<Handle = Arc<M>> + Descriptor<ComponentDescriptor>;
+
     /// Opts the app into a WebSocket protocol `P`, mounting its upgrade handler at `path` with the
     /// protocol's default [`Options`](crate::ws::WebsocketProtocol::Options). Only
     /// `#[controller(ws = P)]` controllers speaking `P` are then served, under `path` (the path
@@ -205,6 +259,39 @@ impl AxumAppBuilder for AppBuilder<AxumPlugin> {
         self.protocol_mut().controllers.push(*descriptor);
 
         self
+    }
+
+    fn layer<L>(mut self, layer: L) -> Self
+    where
+        L: Layer<Route> + Clone + Send + Sync + 'static,
+        L::Service: Service<Request> + Clone + Send + Sync + 'static,
+        <L::Service as Service<Request>>::Response: IntoResponse + 'static,
+        <L::Service as Service<Request>>::Error: Into<Infallible> + 'static,
+        <L::Service as Service<Request>>::Future: Send + 'static,
+    {
+        self.protocol_mut()
+            .middleware
+            .push(Box::new(move |_runtime, router| router.layer(layer)));
+
+        self
+    }
+
+    fn middleware<M>(mut self) -> Self
+    where
+        M: AxumMiddleware + Component<Handle = Arc<M>> + Descriptor<ComponentDescriptor>,
+    {
+        self.protocol_mut()
+            .middleware
+            .push(Box::new(|runtime, router| {
+                let mw = runtime
+                    .root()
+                    .get::<M>()
+                    .expect("middleware component missing from DI root — did you register it?");
+
+                router.layer(as_layer(mw))
+            }));
+
+        self.component::<M>()
     }
 
     #[cfg(feature = "ws")]

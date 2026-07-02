@@ -69,6 +69,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true, optional = true }
+cookie = { workspace = true }
 serde_urlencoded = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }

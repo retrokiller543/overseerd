@@ -12,7 +12,7 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::parse::ParseStream;
 use syn::{
-    FnArg, GenericArgument, GenericParam, Ident, ImplItemFn, ItemImpl, LitStr, PathArguments,
+    FnArg, GenericArgument, GenericParam, Ident, ImplItemFn, ItemImpl, LitStr, Path, PathArguments,
     ReturnType, Type, TypeParamBound, parse_quote,
 };
 
@@ -62,10 +62,13 @@ struct HandlerContext {
     capture: Vec<Ident>,
 }
 
-/// One route claimed from a method: its verb, its relative path, and the handler closure.
+/// One route claimed from a method: its verb, its relative path, its own
+/// [`AxumMiddleware`](../overseerd_axum/trait.AxumMiddleware.html) list (first-listed
+/// outermost), and the handler closure.
 struct RouteSpec {
     verb: Ident,
     path: LitStr,
+    middleware: Vec<Path>,
     handler: TokenStream,
 }
 
@@ -74,6 +77,9 @@ struct RouteSpec {
 struct WsRouteSpec {
     builder: TokenStream,
 }
+
+/// One route within a same-path group: its verb, its own middleware list, and its handler.
+type RouteEntry<'a> = (&'a Ident, &'a [Path], &'a TokenStream);
 
 impl ParseKeyed for AxumHandlers {
     fn parse_keyed(&mut self, key: &Ident, input: ParseStream) -> syn::Result<bool> {
@@ -317,6 +323,8 @@ impl ToTokens for AxumHandlers {
         let paths = &cx.paths;
         let self_ty = &cx.self_ty;
         let axum = paths.plugin("axum");
+        let app_runtime = paths.core("AppRuntime");
+        let as_layer = paths.plugin("middleware::as_layer");
         let distributed_slice = paths.core("linkme::distributed_slice");
         let linkme_crate = paths.core("linkme");
         let controller_trait = paths.plugin("Controller");
@@ -327,25 +335,50 @@ impl ToTokens for AxumHandlers {
 
         // Fold routes that share a relative path into one `MethodRouter`, preserving order so
         // the generated `.route(..)` calls never collide on a duplicate path within this block.
-        let mut groups: Vec<(LitStr, Vec<(&Ident, &TokenStream)>)> = Vec::new();
+        let mut groups: Vec<(LitStr, Vec<RouteEntry>)> = Vec::new();
 
         for spec in &self.routes {
             let value = spec.path.value();
+            let entry = (&spec.verb, spec.middleware.as_slice(), &spec.handler);
 
             match groups.iter_mut().find(|(path, _)| path.value() == value) {
-                Some((_, entries)) => entries.push((&spec.verb, &spec.handler)),
+                Some((_, entries)) => entries.push(entry),
 
-                None => groups.push((spec.path.clone(), vec![(&spec.verb, &spec.handler)])),
+                None => groups.push((spec.path.clone(), vec![entry])),
             }
         }
 
+        // Each verb becomes its own `MethodRouter` so a route's own `middleware = [..]` scopes to
+        // just that verb, then verbs sharing a path merge into one `MethodRouter::merge` result —
+        // equivalent at runtime to chaining (`.get(..).post(..)`) when no route carries middleware.
+        let layer_route = |base: TokenStream, middleware: &[Path]| -> TokenStream {
+            let mut chain = base;
+
+            for mw in middleware.iter().rev() {
+                chain = quote! {
+                    #chain.layer(#as_layer(
+                        runtime.root().get::<#mw>().expect(
+                            "middleware component missing from DI root — did you register it?",
+                        ),
+                    ))
+                };
+            }
+
+            chain
+        };
+
         let route_tokens = groups.iter().map(|(path, entries)| {
             let mut entries = entries.iter();
-            let (first_verb, first_handler) = entries.next().expect("group has at least one route");
-            let mut chain = quote!(#axum::routing::#first_verb(#first_handler));
+            let (first_verb, first_middleware, first_handler) =
+                entries.next().expect("group has at least one route");
+            let mut chain = layer_route(
+                quote!(#axum::routing::#first_verb(#first_handler)),
+                first_middleware,
+            );
 
-            for (verb, handler) in entries {
-                chain = quote!(#chain.#verb(#handler));
+            for (verb, middleware, handler) in entries {
+                let verb_router = layer_route(quote!(#axum::routing::#verb(#handler)), middleware);
+                chain = quote!(#chain.merge(#verb_router));
             }
 
             quote!(.route(#path, #chain))
@@ -361,8 +394,10 @@ impl ToTokens for AxumHandlers {
 
                 fn __overseerd_axum_route_group(
                     svc: ::std::sync::Arc<#self_ty>,
+                    runtime: & #app_runtime,
                 ) -> #axum::Router {
                     let _ = &svc;
+                    let _ = runtime;
 
                     #axum::Router::new()
                         #(#route_tokens)*
@@ -370,7 +405,8 @@ impl ToTokens for AxumHandlers {
 
                 #[#distributed_slice(#routes_slice)]
                 #[linkme(crate = #linkme_crate)]
-                static __OVERSEERD_AXUM_ROUTE_GROUP: fn(::std::sync::Arc<#self_ty>) -> #axum::Router =
+                static __OVERSEERD_AXUM_ROUTE_GROUP:
+                    fn(::std::sync::Arc<#self_ty>, & #app_runtime) -> #axum::Router =
                     __overseerd_axum_route_group;
             };
         });
@@ -549,6 +585,7 @@ fn build_route(
     Ok(RouteSpec {
         verb: route_attr.verb.clone(),
         path: route_attr.path.clone(),
+        middleware: route_attr.middleware.clone(),
         handler,
     })
 }
