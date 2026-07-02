@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use axum::http::{HeaderMap, Method, Uri};
 use overseerd_core::TypeDescriptor;
-use overseerd_di::{ComponentDescriptor, Injectable};
+use overseerd_di::{ComponentDescriptor, Injectable, Provide};
 
 use crate::scope::Request as RequestScope;
 
@@ -68,6 +68,9 @@ impl Injectable for RequestMeta {
         stored.clone()
     }
 }
+
+#[cfg(feature = "di-check")]
+impl Provide<RequestMeta> for RequestMeta {}
 
 /// The framework-provided request-scoped injectable for the incoming request's native data.
 ///
