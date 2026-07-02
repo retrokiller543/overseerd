@@ -208,6 +208,12 @@ impl Stomp {
             _ => return Err(StompError::Frame("expected a CONNECT frame".to_owned())),
         };
 
+        // STOMP marks `host` mandatory on CONNECT, but many clients (notably stomp.js) omit it and
+        // most brokers tolerate that. `stomp-parser` is strict, so inject a synthetic host when one
+        // is absent — `host` is informational and this server ignores it (it reads only the
+        // negotiated version).
+        let bytes = ensure_connect_host(bytes);
+
         let frame = ClientFrame::try_from(bytes).map_err(|e| StompError::Frame(e.message().to_owned()))?;
 
         let ClientFrame::Connect(connect) = frame else {
@@ -497,6 +503,69 @@ async fn tick(ticker: Option<&mut tokio::time::Interval>) {
 /// (`\n` / `\r\n`) — rather than a STOMP frame to parse.
 fn is_heartbeat(bytes: &[u8]) -> bool {
     bytes.is_empty() || bytes == b"\n" || bytes == b"\r\n"
+}
+
+/// Injects a `host:overseerd` header into a `CONNECT`/`STOMP` frame that lacks one, so a client
+/// that omits the (spec-mandatory but widely-skipped) `host` header still connects. Leaves any
+/// other frame — and a CONNECT that already has a host — untouched.
+fn ensure_connect_host(bytes: Vec<u8>) -> Vec<u8> {
+    let is_connect = bytes.starts_with(b"CONNECT") || bytes.starts_with(b"STOMP");
+
+    if !is_connect || contains_subsequence(&bytes, b"\nhost:") {
+        return bytes;
+    }
+
+    let Some(newline) = bytes.iter().position(|&b| b == b'\n') else {
+        return bytes;
+    };
+
+    let mut out = Vec::with_capacity(bytes.len() + 16);
+
+    out.extend_from_slice(&bytes[..=newline]);
+    out.extend_from_slice(b"host:overseerd\n");
+    out.extend_from_slice(&bytes[newline + 1..]);
+
+    out
+}
+
+/// Whether `haystack` contains `needle` as a contiguous subsequence.
+fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|window| window == needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use stomp_parser::client::ClientFrame;
+
+    use super::*;
+
+    #[test]
+    fn host_is_injected_so_a_hostless_connect_parses() {
+        // A stomp.js-style CONNECT with no `host` header — rejected by stomp-parser as-is.
+        let frame = b"CONNECT\naccept-version:1.0,1.1,1.2\nheart-beat:0,0\n\n\x00".to_vec();
+        assert!(ClientFrame::try_from(frame.clone()).is_err(), "hostless CONNECT is rejected raw");
+
+        let patched = ensure_connect_host(frame);
+        let parsed = ClientFrame::try_from(patched).expect("patched CONNECT parses");
+
+        assert!(matches!(parsed, ClientFrame::Connect(_)));
+    }
+
+    #[test]
+    fn a_connect_with_a_host_is_left_untouched() {
+        let frame = b"CONNECT\naccept-version:1.2\nhost:example\n\n\x00".to_vec();
+        let out = ensure_connect_host(frame.clone());
+
+        assert_eq!(out, frame, "an existing host is not duplicated");
+    }
+
+    #[test]
+    fn non_connect_frames_are_left_untouched() {
+        let frame = b"SEND\ndestination:/app/chat\n\nhi\x00".to_vec();
+        let out = ensure_connect_host(frame.clone());
+
+        assert_eq!(out, frame);
+    }
 }
 
 /// Wraps serialized frame bytes in a WebSocket message: text when valid UTF-8 (the common case for
