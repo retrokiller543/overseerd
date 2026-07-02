@@ -1092,6 +1092,7 @@ dependencies = [
 name = "overseerd-example-http"
 version = "0.7.0"
 dependencies = [
+ "arc-swap",
  "futures",
  "http-body-util",
  "overseerd",
