@@ -35,9 +35,14 @@ pub use ws::{
 /// broker/session/publish types, and the [`Topic`](ws::stomp::Topic) contract.
 #[cfg(feature = "stomp")]
 pub use ws::stomp::{
-    Broker, Publish, Publisher, Stomp, StompBody, StompConfig, StompError, StompHeaders,
-    StompOutcome, StompSession, Topic,
+    Broker, JsonCodec, Publish, Publisher, Stomp, StompBody, StompCodec, StompConfig, StompError,
+    StompHeaders, StompOutcome, StompSession, Topic,
 };
+
+/// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a
+/// separate `overseerd-transport` dependency.
+#[cfg(feature = "stomp")]
+pub use overseerd_transport::CodecError;
 
 pub use extract::{Inject, InjectRejection, ScopeHandle};
 /// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
