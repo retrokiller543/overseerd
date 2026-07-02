@@ -8,8 +8,9 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
+use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
-use syn::{Attribute, Ident, ItemFn, LitStr, Meta, Token};
+use syn::{Attribute, Ident, ItemFn, LitStr, Meta, Path, Token, bracketed};
 
 /// The verb shorthands plus the raw `route` attribute, all of which `#[handlers]` claims on a
 /// method. Used to find a method's route attribute among its attrs.
@@ -48,13 +49,18 @@ pub struct RouteAttr {
     /// or a wrapper like `Sse<impl Stream>` / `Ndjson<impl Stream>`). It marks the route as
     /// server-streaming for the client; the framing comes from the return type, never hard-wired.
     pub streamed: bool,
+
+    /// `middleware = [Type, ..]` — DI-backed [`AxumMiddleware`](../overseerd_axum/trait.AxumMiddleware.html)
+    /// singletons scoped to just this route, first-listed outermost. Empty if unset.
+    pub middleware: Vec<Path>,
 }
 
-/// The arguments of the raw `#[route(METHOD, "/path"[, streamed])]` attribute.
+/// The arguments of the raw `#[route(METHOD, "/path"[, modifiers])]` attribute.
 struct RouteArgs {
     method: Ident,
     path: LitStr,
     streamed: bool,
+    middleware: Vec<Path>,
 }
 
 impl Parse for RouteArgs {
@@ -62,65 +68,96 @@ impl Parse for RouteArgs {
         let method: Ident = input.parse()?;
         input.parse::<Token![,]>()?;
         let path: LitStr = input.parse()?;
-        let streamed = parse_trailing_streamed(input)?;
+        let (streamed, middleware) = parse_trailing_modifiers(input)?;
 
         Ok(RouteArgs {
             method,
             path,
             streamed,
+            middleware,
         })
     }
 }
 
-/// The arguments of a verb shorthand (`#[get("/path"[, streamed])]`, `#[get(streamed)]`, `#[get]`).
+/// The arguments of a verb shorthand (`#[get("/path"[, modifiers])]`, `#[get(streamed)]`, `#[get]`).
 struct ShorthandArgs {
     path: LitStr,
     streamed: bool,
+    middleware: Vec<Path>,
 }
 
 impl Parse for ShorthandArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        // A bare `streamed` (no path) mounts at the controller base and streams.
+        // Bare modifiers (no path) mount at the controller base.
         if input.peek(Ident) {
-            expect_streamed(input)?;
+            let (streamed, middleware) = parse_modifiers(input)?;
 
             return Ok(ShorthandArgs {
                 path: LitStr::new("", input.span()),
-                streamed: true,
+                streamed,
+                middleware,
             });
         }
 
         let path: LitStr = input.parse()?;
-        let streamed = parse_trailing_streamed(input)?;
+        let (streamed, middleware) = parse_trailing_modifiers(input)?;
 
-        Ok(ShorthandArgs { path, streamed })
+        Ok(ShorthandArgs {
+            path,
+            streamed,
+            middleware,
+        })
     }
 }
 
-/// Consumes an optional trailing `, streamed`.
-fn parse_trailing_streamed(input: ParseStream) -> syn::Result<bool> {
+/// Consumes an optional trailing `, <modifiers>` after a required leading argument.
+fn parse_trailing_modifiers(input: ParseStream) -> syn::Result<(bool, Vec<Path>)> {
     if input.is_empty() {
-        return Ok(false);
+        return Ok((false, Vec::new()));
     }
 
     input.parse::<Token![,]>()?;
-    expect_streamed(input)?;
-
-    Ok(true)
+    parse_modifiers(input)
 }
 
-/// Parses the `streamed` keyword, erroring on any other identifier.
-fn expect_streamed(input: ParseStream) -> syn::Result<()> {
-    let ident: Ident = input.parse()?;
+/// Parses a comma-separated list of route modifiers: the `streamed` flag and/or
+/// `middleware = [Type, ..]`, in either order, each at most once.
+fn parse_modifiers(input: ParseStream) -> syn::Result<(bool, Vec<Path>)> {
+    let mut streamed = false;
+    let mut middleware = Vec::new();
 
-    if ident != "streamed" {
-        return Err(syn::Error::new_spanned(
-            &ident,
-            "unknown route flag; the only flag is `streamed`",
-        ));
+    loop {
+        let ident: Ident = input.parse()?;
+
+        match ident.to_string().as_str() {
+            "streamed" => streamed = true,
+
+            "middleware" => {
+                input.parse::<Token![=]>()?;
+
+                let content;
+                bracketed!(content in input);
+                middleware = Punctuated::<Path, Token![,]>::parse_terminated(&content)?
+                    .into_iter()
+                    .collect();
+            }
+
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &ident,
+                    "unknown route flag; expected `streamed` or `middleware = [..]`",
+                ));
+            }
+        }
+
+        if input.is_empty() {
+            break;
+        }
+
+        input.parse::<Token![,]>()?;
     }
 
-    Ok(())
+    Ok((streamed, middleware))
 }
 
 /// Whether `ident` names a route attribute this crate claims.
@@ -148,18 +185,19 @@ pub fn parse_route_attr(attr: &Attribute) -> syn::Result<RouteAttr> {
             verb,
             path: args.path,
             streamed: args.streamed,
+            middleware: args.middleware,
         });
     }
 
     // A verb shorthand: the verb is the attribute name. `#[get]` with no arguments mounts at the
     // controller base.
-    let (path, streamed) = match &attr.meta {
-        Meta::Path(_) => (LitStr::new("", attr.path().span()), false),
+    let (path, streamed, middleware) = match &attr.meta {
+        Meta::Path(_) => (LitStr::new("", attr.path().span()), false, Vec::new()),
 
         _ => {
             let args: ShorthandArgs = attr.parse_args()?;
 
-            (args.path, args.streamed)
+            (args.path, args.streamed, args.middleware)
         }
     };
 
@@ -167,6 +205,7 @@ pub fn parse_route_attr(attr: &Attribute) -> syn::Result<RouteAttr> {
         verb: format_ident!("{}", name),
         path,
         streamed,
+        middleware,
     })
 }
 

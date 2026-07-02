@@ -55,6 +55,9 @@ tokio-tungstenite = { version = "0.29", default-features = false, features = ["c
 # openssl/rsa/tokio, keeping the project's banned-crate rule intact. Framing only; the broker,
 # serve loop, and client transport are ours.
 stomp-parser = "0.8"
+# `Cookie` header parsing for `RequestMeta`. Default features off: only the base parser is
+# needed, not the signed/private cookie-jar crypto (aes-gcm/hmac/sha2/rand).
+cookie = { version = "0.18", default-features = false }
 # Optional: a `TopicParam` impl for templated STOMP topics (behind the axum `uuid` feature).
 uuid = "1"
 bytes = "1"
@@ -169,3 +172,6 @@ tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

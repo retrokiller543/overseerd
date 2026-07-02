@@ -18,8 +18,16 @@
 //! # WebSocket (using websocat: https://github.com/vi/websocat)
 //! echo '{"dest":"greet","id":1,"payload":{"who":"world"}}' | websocat ws://localhost:3001/ws
 //! # → {"dest":"greet","id":1,"ok":{"message":"Hello, world!","count":1}}
+//!
+//! # Middleware (see the `auth` module): a global request logger, a path-scoped auth guard,
+//! # and a request-scoped component fetching a "user" once from the `Authorization` header.
+//! curl localhost:3001/me/public
+//! curl localhost:3001/me/whoami                          # 401, no Authorization header
+//! curl localhost:3001/me/whoami -H 'authorization: Bearer alice'
+//! # → {"name":"user:alice","same_instance":true}
 //! ```
 
+mod auth;
 mod stomp;
 
 use std::net::SocketAddr;
@@ -204,10 +212,16 @@ async fn main() -> overseerd::axum::Result<()> {
     //
     // WebSockets are opt-in: `register_ws::<JsonWs>("/ws")` activates the JSON ws protocol and
     // mounts its upgrade handler at `/ws`, serving every `#[controller(ws = JsonWs)]` controller.
+    //
+    // `.layer(..)` takes a raw `tower`/axum layer directly — standard middleware needs no
+    // wrapping to keep working alongside the DI-backed `AxumMiddleware` kind (see `auth.rs`).
     let app = app! {
         name: "example-http",
         protocol: AxumPlugin,
     }
+    .layer(overseerd::axum::axum::middleware::from_fn(
+        auth::log_requests,
+    ))
     .register_ws::<JsonWs>("/ws")
     .register_ws::<Stomp>("/ws/stomp")
     .build()

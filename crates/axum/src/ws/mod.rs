@@ -23,8 +23,10 @@ use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, close_code};
 use futures::future::BoxFuture;
 use overseerd_app::AppRuntime;
 use overseerd_core::TypeDescriptor;
-use overseerd_di::ScopeContainer;
+use overseerd_di::{BoxedComponent, ScopeContainer};
 use tokio::time::Duration;
+
+use crate::request_meta::RequestMeta;
 
 /// How long the framework waits for a WS close handshake to flush before abandoning the socket.
 /// Bounds [`mount_ws`]'s error-path close send so a peer that never drains its receive buffer
@@ -285,20 +287,33 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
     let shutdown = WsShutdown(rx);
     let runtime = runtime.clone();
 
-    // The pre-built generic upgrade handler: it upgrades, opens this socket's `Connection` scope,
-    // and hands the socket to the protocol, which owns the read→decode→dispatch→encode→send loop.
-    let route_handler = move |ws: WebSocketUpgrade| {
+    // The pre-built generic upgrade handler: it upgrades, opens this socket's `Connection` scope
+    // (seeded with the upgrade request's `RequestMeta` — a per-message `Request` scope, parented
+    // here, resolves it by walking the parent chain, so a message handler's request-scoped
+    // components can depend on the original upgrade request's headers/cookies without a
+    // per-message re-seed), and hands the socket to the protocol, which owns the
+    // read→decode→dispatch→encode→send loop.
+    let route_handler = move |method: axum::http::Method,
+                              uri: axum::http::Uri,
+                              headers: axum::http::HeaderMap,
+                              ws: WebSocketUpgrade| {
         let proto = Arc::clone(&proto);
         let shutdown = shutdown.clone();
         let runtime = runtime.clone();
 
         async move {
             ws.on_upgrade(move |mut socket| async move {
+                let meta = RequestMeta::from_parts(method, uri, headers);
+                let seed = BoxedComponent {
+                    ty: TypeDescriptor::of::<RequestMeta>("RequestMeta"),
+                    value: Box::new(meta),
+                };
+
                 let connection = match runtime
                     .open_scope(
                         &crate::scope::Connection,
                         Arc::clone(runtime.root()),
-                        Vec::new(),
+                        vec![seed],
                     )
                     .await
                 {
