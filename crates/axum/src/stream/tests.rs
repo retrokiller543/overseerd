@@ -9,7 +9,8 @@ use super::{MAX_NDJSON_LINE_BYTES, ndjson_decode};
 async fn ndjson_decode_stops_on_oversized_line_without_newline() {
     let body = futures::stream::iter([Ok::<_, std::convert::Infallible>(Bytes::from(vec![
         b'x';
-        MAX_NDJSON_LINE_BYTES + 1
+        MAX_NDJSON_LINE_BYTES
+            + 1
     ]))]);
     let mut decoded = Box::pin(ndjson_decode::<_, _, String>(body));
 
