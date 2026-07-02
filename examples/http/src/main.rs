@@ -20,6 +20,8 @@
 //! # → {"dest":"greet","id":1,"ok":{"message":"Hello, world!","count":1}}
 //! ```
 
+mod stomp;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -207,6 +209,7 @@ async fn main() -> overseerd::axum::Result<()> {
         protocol: AxumPlugin,
     }
     .register_ws::<JsonWs>("/ws")
+    .register_ws::<Stomp>("/ws/stomp")
     .build()
     .await?;
 

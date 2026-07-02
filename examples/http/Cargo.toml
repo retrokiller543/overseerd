@@ -11,6 +11,8 @@ overseerd = { path = "../..", default-features = false, features = ["axum", "ws"
 tokio = { workspace = true }
 serde = { workspace = true }
 tracing.workspace = true
+# Lock-free room registry in the STOMP chat controller (the framework's own read-mostly idiom).
+arc-swap = { workspace = true }
 
 [dev-dependencies]
 tower = { workspace = true }
