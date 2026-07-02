@@ -52,3 +52,8 @@ where
         })
     }
 }
+
+/// Under `di-check`, a `Publisher<T>` resolves from the framework-seeded session, so the
+/// compile-time checker treats it as always provided (for any topic set `T`).
+#[cfg(feature = "di-check")]
+impl<T> overseerd_di::Provide<Publisher<T>> for overseerd_di::Wiring where T: Topic {}
