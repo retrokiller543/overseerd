@@ -34,3 +34,23 @@ fn non_connect_frames_are_left_untouched() {
 
     assert_eq!(out, frame);
 }
+
+/// Regression test: a `SEND`'s custom headers (e.g. correlation or auth metadata) must reach
+/// the handler's `Inject<StompHeaders>`, not just `destination`/`content-type`.
+#[test]
+fn send_header_seed_carries_custom_headers_through() {
+    let headers = send_header_seed(
+        "/app/chat",
+        Some("application/json".to_owned()),
+        vec![("correlation-id".to_owned(), "abc-123".to_owned())],
+    );
+
+    assert_eq!(
+        headers,
+        vec![
+            ("destination".to_owned(), "/app/chat".to_owned()),
+            ("content-type".to_owned(), "application/json".to_owned()),
+            ("correlation-id".to_owned(), "abc-123".to_owned()),
+        ]
+    );
+}
