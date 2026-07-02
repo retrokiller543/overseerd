@@ -31,6 +31,14 @@ pub use ws::{
     WsControllerDescriptor, WsDispatchError, WsReply, WsRespond, WsRoute, WsShutdown,
 };
 
+/// The STOMP pub/sub protocol surface (server side): the [`Stomp`](ws::stomp::Stomp) protocol, its
+/// broker/session/publish types, and the [`Topic`](ws::stomp::Topic) contract.
+#[cfg(feature = "stomp")]
+pub use ws::stomp::{
+    Broker, Publish, Publisher, Stomp, StompBody, StompConfig, StompError, StompHeaders,
+    StompOutcome, StompSession, Topic,
+};
+
 pub use extract::{Inject, InjectRejection, ScopeHandle};
 /// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
 /// this protocol crate. Their generated code roots plugin types at this crate
