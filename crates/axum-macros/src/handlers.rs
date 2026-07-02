@@ -45,6 +45,11 @@ pub struct AxumHandlers {
     /// `#[controller(ws = P)]`. It selects how `#[message]` *client* methods are generated: the
     /// default (`None`) / `JsonWs` emits request/reply methods; `Stomp` emits typed `SEND` methods.
     ws_protocol: Option<syn::Path>,
+
+    /// `codec = C` — the STOMP body codec for this block's `#[message]` SENDs (default `JsonCodec`).
+    /// Encodes the payload on the generated client method and decodes it in the server handler, so
+    /// the SEND path is codec-agnostic and symmetric. Ignored for a `JsonWs` block.
+    ws_codec: Option<syn::Path>,
 }
 
 /// The impl context `AxumHandlers` needs to emit (captured in the item pass).
@@ -87,12 +92,19 @@ impl ParseKeyed for AxumHandlers {
                 Ok(true)
             }
 
+            "codec" => {
+                eat_eq(input)?;
+                self.ws_codec = Some(input.parse()?);
+
+                Ok(true)
+            }
+
             _ => Ok(false),
         }
     }
 
     fn expected_keys() -> &'static [&'static str] {
-        &["routes_slice", "ws"]
+        &["routes_slice", "ws", "codec"]
     }
 }
 
@@ -134,12 +146,20 @@ impl ParseMethod for AxumHandlers {
                 .context
                 .as_ref()
                 .expect("AxumHandlers::parse_item runs before parse_method");
-            let spec = build_ws_route(&cx.self_ty, method, &destination, &cx.paths)?;
+            let is_stomp = is_stomp_protocol(self.ws_protocol.as_ref());
+
+            // The STOMP payload codec (block `codec = ..`, default `JsonCodec`) drives both the
+            // server decode and the client SEND encode, so they stay symmetric. A JsonWs block has
+            // no codec seam (its `WsCodec` is JSON), so pass `None` there.
+            let stomp_codec = is_stomp.then(|| self.resolve_stomp_codec(&cx.paths));
+            let spec = build_ws_route(&cx.self_ty, method, &destination, stomp_codec.as_ref(), &cx.paths)?;
 
             // The client method's shape depends on the protocol: STOMP emits a fire-and-forget
-            // typed SEND; JsonWs (the default) emits a request/reply call.
-            let hint = if is_stomp_protocol(self.ws_protocol.as_ref()) {
-                build_stomp_send_method(&method.sig.ident, method, &destination, &cx.paths)?
+            // typed SEND (payload encoded via the codec); JsonWs emits a request/reply call.
+            let hint = if is_stomp {
+                let codec = stomp_codec.expect("STOMP block resolves a codec");
+
+                build_stomp_send_method(&method.sig.ident, method, &destination, &codec, &cx.paths)?
             } else {
                 build_ws_client_method(
                     &cx.self_ident,
@@ -539,6 +559,7 @@ fn build_ws_route(
     self_ty: &Type,
     method: &ImplItemFn,
     destination: &LitStr,
+    stomp_codec: Option<&TokenStream>,
     paths: &Paths,
 ) -> syn::Result<WsRouteSpec> {
     let takes_self = matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)));
@@ -603,9 +624,23 @@ fn build_ws_route(
                 }
 
                 payload_seen = true;
-                bindings.push(
-                    quote!(let #ident: #ty = <#proto as #ws_codec<#ty>>::decode(__payload)?;),
-                );
+
+                // STOMP decodes the body via the block's codec (symmetric with the client SEND
+                // encode); every other protocol uses its `WsCodec` (JsonWs = JSON).
+                let decode = match stomp_codec {
+                    Some(codec) => {
+                        let stomp_codec_trait = paths.plugin("StompCodec");
+
+                        quote!(
+                            <#codec as #stomp_codec_trait>::decode::<#ty>(__payload)
+                                .map_err(|__e| #dispatch_error::Decode(::std::string::ToString::to_string(&__e)))?
+                        )
+                    }
+
+                    None => quote!(<#proto as #ws_codec<#ty>>::decode(__payload)?),
+                };
+
+                bindings.push(quote!(let #ident: #ty = #decode;));
             }
         }
 
@@ -698,26 +733,51 @@ fn is_stomp_protocol(protocol: Option<&syn::Path>) -> bool {
         .is_some_and(|segment| segment.ident == "Stomp")
 }
 
+impl AxumHandlers {
+    /// The STOMP body codec for this block as a token stream: the `codec = ..` path, or `JsonCodec`.
+    fn resolve_stomp_codec(&self, paths: &Paths) -> TokenStream {
+        match &self.ws_codec {
+            Some(path) => quote!(#path),
+
+            None => {
+                let json_codec = paths.plugin("JsonCodec");
+
+                quote!(#json_codec)
+            }
+        }
+    }
+}
+
 /// Builds the generated typed STOMP `SEND` client method for a `#[message("dest")]` handler: a
 /// fire-and-forget `fn(&self, payload) -> Result<(), ClientError<StompStatus>>` bound on
-/// `C: StompSend<Payload>`, with the destination baked into the body. Mirrors the JsonWs precedent
-/// ([`build_ws_client_method`]) but targets the STOMP transport capability.
+/// `C: StompSend`, with the destination baked in. The payload is encoded to a `StompBody` by the
+/// block's `codec` (so the SEND path is codec-agnostic, matching the server decode); a no-payload
+/// method sends an empty body. Mirrors the JsonWs precedent ([`build_ws_client_method`]).
 fn build_stomp_send_method(
     method_ident: &Ident,
     method: &ImplItemFn,
     destination: &LitStr,
+    codec: &TokenStream,
     paths: &Paths,
 ) -> syn::Result<Option<ClientMethod>> {
     let payload = ws_payload_type(method)?;
     let client_error = paths.client("ClientError");
     let stomp_send = paths.plugin("client::StompSend");
     let stomp_status = paths.plugin("client::StompStatus");
+    let stomp_codec = paths.plugin("StompCodec");
+    let stomp_body = paths.plugin("StompBody");
 
-    let (request, payload_value) = match payload {
-        Some(ty) => (Some(ty), quote!(request)),
-        None => (None, quote!(())),
+    // Encode the payload to a body via the codec, or send an empty body for a no-payload method.
+    let (request, encode_body) = match payload {
+        Some(ty) => (
+            Some(ty),
+            quote!(
+                <#codec as #stomp_codec>::encode(&request)
+                    .map_err(|__e| #client_error::Encode(::std::string::ToString::to_string(&__e)))?
+            ),
+        ),
+        None => (None, quote!(<#stomp_body as ::core::default::Default>::default())),
     };
-    let request_ty = request.clone().unwrap_or_else(|| parse_quote!(()));
 
     Ok(Some(ClientMethod {
         ident: method_ident.clone(),
@@ -734,13 +794,15 @@ fn build_stomp_send_method(
         request_builder: None,
         response_envelope: None,
         response_mapper: None,
-        override_bounds: Some(quote!( C: #stomp_send<#request_ty> )),
+        override_bounds: Some(quote!( C: #stomp_send )),
         override_ret: Some(quote!(
             ::core::result::Result<(), #client_error<#stomp_status>>
         )),
-        override_body: Some(quote!(
-            #stomp_send::<#request_ty>::stomp_send(&self.0, #destination, #payload_value).await
-        )),
+        override_body: Some(quote!({
+            let __body = #encode_body;
+
+            <C as #stomp_send>::stomp_send(&self.0, #destination, __body).await
+        })),
     }))
 }
 

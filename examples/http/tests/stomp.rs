@@ -6,10 +6,11 @@
 //! server is shut down at the end so the test never hangs.
 
 use futures::StreamExt;
-use overseerd::axum::CodecError;
 use overseerd::axum::client::StompClientTransport;
 use overseerd::axum::prelude::*;
+use overseerd::axum::{CodecError, StompBody, StompCodec};
 use overseerd::prelude::*;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
@@ -98,6 +99,106 @@ async fn stomp_send_is_broadcast_to_typed_subscribers() {
         .expect("a decoded RoomMsg");
 
     assert_eq!(received.text, "hello stomp");
+
+    shutdown.shutdown();
+    let _ = server.await;
+}
+
+/// A deliberately non-JSON codec: it prepends a marker byte to the JSON and strips it on decode. If
+/// either end of the SEND/broadcast path silently used plain JSON instead of this codec, the marker
+/// byte would be missing (or unexpected) and decoding would fail — so a passing round trip proves
+/// the codec is honored on **both** sides.
+struct MarkedCodec;
+
+const MARKER: u8 = 0xFE;
+
+impl StompCodec for MarkedCodec {
+    fn encode<T: Serialize>(value: &T) -> Result<StompBody, CodecError> {
+        let mut bytes = vec![MARKER];
+        bytes.extend(serde_json::to_vec(value).map_err(|e| CodecError::internal(e.to_string()))?);
+
+        Ok(StompBody {
+            content_type: Some("application/x-marked".to_owned()),
+            bytes: bytes.into(),
+        })
+    }
+
+    fn decode<T: DeserializeOwned>(body: StompBody) -> Result<T, CodecError> {
+        match body.bytes.split_first() {
+            Some((&MARKER, rest)) => {
+                serde_json::from_slice(rest).map_err(|e| CodecError::bad_input(e.to_string()))
+            }
+
+            _ => Err(CodecError::bad_input("body is missing the codec's marker byte")),
+        }
+    }
+}
+
+/// A topic set using the custom codec on both publish and subscribe.
+#[topics(codec = MarkedCodec)]
+enum MarkedTopics {
+    #[topic("/topic/marked")]
+    Marked(RoomMsg),
+}
+
+/// A controller whose SEND payloads use the custom codec (via `codec = MarkedCodec`).
+#[controller(ws = Stomp)]
+struct Marked {}
+
+#[handlers(ws = Stomp, codec = MarkedCodec)]
+impl Marked {
+    #[message("/app/marked")]
+    async fn marked(
+        &self,
+        msg: SendChat,
+        Inject(publisher): Inject<Publisher<MarkedTopics>>,
+    ) -> Result<(), CodecError> {
+        publisher
+            .publish(MarkedTopics::Marked(RoomMsg { text: msg.text }))
+            .await
+    }
+}
+
+#[tokio::test]
+async fn a_custom_codec_is_honored_on_both_ends_of_the_send_path() {
+    let app = app! {
+        name: "stomp-codec-test",
+        protocol: overseerd::axum::AxumPlugin,
+    }
+    .register_ws::<Stomp>("/stomp")
+    .build()
+    .await
+    .expect("app builds");
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let shutdown = app.shutdown_handle();
+    let server = tokio::spawn(async move { app.serve(listener).await });
+
+    let url = format!("ws://{addr}/stomp");
+    let connection = StompClientTransport::connect(&url).await.expect("connects");
+
+    let mut marked = MarkedTopicsClient::new(connection.clone())
+        .subscribe_marked()
+        .await
+        .expect("subscribe_marked");
+
+    // The generated `marked` SEND encodes with MarkedCodec; the server decodes with MarkedCodec,
+    // re-publishes with MarkedCodec, and the subscription decodes with MarkedCodec.
+    MarkedClient::new(connection.clone())
+        .marked(SendChat {
+            text: "via marker".into(),
+        })
+        .await
+        .expect("marked send");
+
+    let received = tokio::time::timeout(std::time::Duration::from_secs(5), marked.next())
+        .await
+        .expect("a broadcast arrives before timeout")
+        .expect("the subscription stream is live")
+        .expect("a decoded RoomMsg — proving MarkedCodec round-tripped on every hop");
+
+    assert_eq!(received.text, "via marker");
 
     shutdown.shutdown();
     let _ = server.await;
