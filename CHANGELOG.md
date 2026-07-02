@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.7.0...overseerd-v0.8.0) - 2026-07-02
+
+### Added
+
+- *(axum/ws/stomp)* templated topic destinations + cross-cutting uuid integration
+- *(axum)* typed STOMP client codegen + end-to-end example
+- *(axum/ws)* generalize WebsocketProtocol vocabulary for pluggable framing
+
+### Fixed
+
+- address PR #49 review findings
+
+### Other
+
+- cargo fmt + require fmt/clippy gates before PR
+- *(axum)* move test modules into their own files; document the rule
+- *(stomp)* add docs/stomp.md tracking v1 scope and deferred features
+- *(deps)* add arc-swap dependency to Cargo.lock
+- add bug/security/performance hunter workflow
+
 ## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.6.0...overseerd-v0.7.0) - 2026-06-30
 
 ### Other
