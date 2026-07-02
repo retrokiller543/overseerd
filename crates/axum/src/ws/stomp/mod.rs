@@ -32,7 +32,7 @@ use overseerd_app::AppRuntime;
 use overseerd_core::TypeDescriptor;
 use overseerd_di::{BoxedComponent, ScopeContainer};
 use stomp_parser::client::ClientFrame;
-use stomp_parser::headers::{StompVersion, StompVersions};
+use stomp_parser::headers::{HeaderValue, StompVersion, StompVersions};
 use stomp_parser::server::{ConnectedFrameBuilder, ErrorFrame, ReceiptFrameBuilder};
 use tokio::sync::mpsc;
 
@@ -298,6 +298,16 @@ impl Stomp {
                 let destination = send.destination().value().to_owned();
                 let receipt = send.receipt().map(|r| r.value().to_owned());
                 let content_type = send.content_type().map(|c| c.value().to_owned());
+                let custom_headers: Vec<(String, String)> = send
+                    .custom
+                    .iter()
+                    .map(|header| {
+                        (
+                            header.header_name().to_owned(),
+                            (*header.value()).to_owned(),
+                        )
+                    })
+                    .collect();
                 let body = StompBody {
                     content_type: content_type.clone(),
                     bytes: send
@@ -306,8 +316,15 @@ impl Stomp {
                         .unwrap_or_default(),
                 };
 
-                self.route_send(&destination, body, content_type, conn_id, connection)
-                    .await;
+                self.route_send(
+                    &destination,
+                    body,
+                    content_type,
+                    custom_headers,
+                    conn_id,
+                    connection,
+                )
+                .await;
                 self.send_receipt(tx, receipt).await;
 
                 Continue(())
@@ -340,6 +357,7 @@ impl Stomp {
         destination: &str,
         body: StompBody,
         content_type: Option<String>,
+        custom_headers: Vec<(String, String)>,
         conn_id: ConnectionId,
         connection: &Arc<ScopeContainer>,
     ) {
@@ -349,11 +367,7 @@ impl Stomp {
             return;
         };
 
-        let mut header_list = vec![("destination".to_owned(), destination.to_owned())];
-
-        if let Some(ct) = content_type {
-            header_list.push(("content-type".to_owned(), ct));
-        }
+        let header_list = send_header_seed(destination, content_type, custom_headers);
 
         let seeds = vec![
             BoxedComponent {
@@ -564,4 +578,23 @@ fn connected_frame(version: StompVersion, _config: &StompConfig) -> Vec<u8> {
 /// Serializes an `ERROR` frame carrying the error's message.
 fn error_frame(error: &StompError) -> Vec<u8> {
     ErrorFrame::from_message(&error.to_string()).into()
+}
+
+/// Builds the `StompHeaders` seed for an app `SEND`: `destination`, then `content-type` if
+/// present, then every other header the client sent (in wire order) so a handler injecting
+/// `StompHeaders` sees the triggering frame's full header set, not just the two typed ones.
+fn send_header_seed(
+    destination: &str,
+    content_type: Option<String>,
+    custom_headers: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    let mut header_list = vec![("destination".to_owned(), destination.to_owned())];
+
+    if let Some(ct) = content_type {
+        header_list.push(("content-type".to_owned(), ct));
+    }
+
+    header_list.extend(custom_headers);
+
+    header_list
 }

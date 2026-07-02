@@ -22,6 +22,7 @@ use syn::{Fields, Ident, ItemEnum, LitStr, Path, Token, Type};
 use overseerd_macros_core::paths::Paths;
 
 /// One segment of a parsed destination template.
+#[derive(Debug, PartialEq, Eq)]
 enum Segment {
     /// A literal run of the destination string.
     Literal(String),
@@ -447,13 +448,22 @@ fn parse_template(destination: &LitStr) -> syn::Result<Vec<Segment>> {
                 }
 
                 let mut name = String::new();
+                let mut closed = false;
 
                 for inner in chars.by_ref() {
                     if inner == '}' {
+                        closed = true;
                         break;
                     }
 
                     name.push(inner);
+                }
+
+                if !closed {
+                    return Err(syn::Error::new_spanned(
+                        destination,
+                        "unmatched `{` in topic template (missing closing `}`)",
+                    ));
                 }
 
                 if name.is_empty() {
@@ -524,3 +534,6 @@ fn to_snake_case(name: &str) -> String {
 
     out
 }
+
+#[cfg(test)]
+mod tests;
