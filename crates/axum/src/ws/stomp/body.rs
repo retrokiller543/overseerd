@@ -28,6 +28,13 @@ impl StompBody {
             bytes: bytes.into(),
         }
     }
+
+    /// Serializes `value` to a JSON body. Used by `#[topics]`-generated [`Topic::encode`] impls.
+    pub fn from_serialize<T: serde::Serialize>(value: &T) -> Result<Self, CodecError> {
+        let bytes = serde_json::to_vec(value).map_err(|e| CodecError::internal(e.to_string()))?;
+
+        Ok(Self::json(bytes))
+    }
 }
 
 /// One outbound fan-out: a destination, its body, and any extra headers to attach to the `MESSAGE`.
@@ -73,6 +80,32 @@ pub trait Topic {
     /// This value's destination (the variant's `#[topic("..")]`).
     fn destination(&self) -> &'static str;
 
-    /// Serializes this value's payload into a [`StompBody`].
+    /// Serializes this value's payload into a [`StompBody`] (using the topic set's [`StompCodec`]).
     fn encode(&self) -> Result<StompBody, CodecError>;
+}
+
+/// The wire codec for a topic set's message bodies — how a payload is serialized on the server's
+/// publish and deserialized on the client's subscribe. Selected per topic set with
+/// `#[topics(codec = ..)]`; defaults to [`JsonCodec`]. Provide your own for a more compact wire
+/// format (e.g. a postcard-backed codec) and both directions follow it, since the same codec type
+/// is named on both sides.
+pub trait StompCodec: Send + Sync + 'static {
+    /// Serializes a payload into a body.
+    fn encode<T: serde::Serialize>(value: &T) -> Result<StompBody, CodecError>;
+
+    /// Deserializes a payload from a body.
+    fn decode<T: serde::de::DeserializeOwned>(body: StompBody) -> Result<T, CodecError>;
+}
+
+/// The default [`StompCodec`]: JSON bodies (`application/json`).
+pub struct JsonCodec;
+
+impl StompCodec for JsonCodec {
+    fn encode<T: serde::Serialize>(value: &T) -> Result<StompBody, CodecError> {
+        StompBody::from_serialize(value)
+    }
+
+    fn decode<T: serde::de::DeserializeOwned>(body: StompBody) -> Result<T, CodecError> {
+        serde_json::from_slice(&body.bytes).map_err(|e| CodecError::bad_input(e.to_string()))
+    }
 }

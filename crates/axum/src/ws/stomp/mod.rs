@@ -8,7 +8,8 @@
 //!
 //! Framing is delegated to the [`stomp-parser`](https://crates.io/crates/stomp-parser) crate;
 //! this module owns the broker, the connection serve loop, DI scope seeding, and the typed
-//! [`Topic`]/[`Publisher`] publish surface.
+//! [`Topic`]/[`Publisher`] publish surface. Message-body serialization is pluggable per topic set
+//! via [`StompCodec`] (`#[topics(codec = ..)]`), defaulting to [`JsonCodec`].
 
 mod body;
 mod broker;
@@ -33,7 +34,7 @@ use tokio::sync::mpsc;
 use super::{WebsocketProtocol, WsCodec, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsRespond, WsShutdown};
 use crate::scope::Request as RequestScope;
 
-pub use body::{Publish, StompBody, StompOutcome, Topic};
+pub use body::{JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic};
 pub use broker::{Broker, ConnectionId};
 pub use error::StompError;
 pub use headers::{StompHeaders, StompSession};

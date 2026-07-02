@@ -19,6 +19,7 @@ mod client;
 mod handlers;
 mod route;
 mod router;
+mod topics;
 
 use overseerd_macros_core::methods::MethodArgs;
 use overseerd_macros_core::paths::Paths;
@@ -26,7 +27,7 @@ use overseerd_macros_core::run;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use router::ControllerComponent;
-use syn::{ItemFn, ItemImpl, ItemStruct};
+use syn::{ItemEnum, ItemFn, ItemImpl, ItemStruct};
 
 /// The default crate roots for the axum macros. Core is always the `overseerd` facade; the
 /// plugin (own-types) root is `::overseerd::axum` when consumed through the facade (the
@@ -153,4 +154,23 @@ pub fn route(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn message(_attr: TokenStream, item: TokenStream) -> TokenStream {
     run::<ItemFn, _>(item.into(), route::expand_standalone).into()
+}
+
+/// Declares a **STOMP topic set**: an enum whose variants each carry a `#[topic("/topic/..")]`
+/// destination and a single payload type. Emits an `impl Topic` (typed server publish) and a
+/// `{Enum}Client<C>` with one `subscribe_<variant>()` per topic (typed client subscribe), so the
+/// same enum is the single source of truth for both sides. See the crate docs for an example.
+///
+/// The per-variant `#[topic("/topic/..")]` is an inert helper attribute: `#[topics]` reads and
+/// strips it, so it is never resolved on its own.
+#[proc_macro_attribute]
+pub fn topics(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let paths = axum_paths();
+    let out = match syn::parse2::<topics::TopicsArgs>(attr.into()) {
+        Ok(args) => run::<ItemEnum, _>(item.into(), |item| topics::expand(args, item, &paths)),
+
+        Err(e) => e.into_compile_error(),
+    };
+
+    out.into()
 }
