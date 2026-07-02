@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-v0.8.0...overseerd-axum-v0.9.0) - 2026-07-02
+
+### Added
+
+- implement Provide trait for RequestMeta in DI context
+- *(axum)* DI-backed middleware registration + RequestMeta request-scope seed
+
 ## [0.8.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-v0.7.0...overseerd-axum-v0.8.0) - 2026-07-02
 
 ### Added
