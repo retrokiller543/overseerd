@@ -31,7 +31,7 @@ use stomp_parser::headers::{StompVersion, StompVersions};
 use stomp_parser::server::{ConnectedFrameBuilder, ErrorFrame, ReceiptFrameBuilder};
 use tokio::sync::mpsc;
 
-use super::{WebsocketProtocol, WsCodec, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsRespond, WsShutdown};
+use super::{WebsocketProtocol, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsRespond, WsShutdown};
 use crate::scope::Request as RequestScope;
 
 pub use body::{JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic, TopicParam};
@@ -380,15 +380,6 @@ impl Stomp {
             let frame: Vec<u8> = ReceiptFrameBuilder::new(id).build().into();
             let _ = tx.send(OutFrame::Frame(frame)).await;
         }
-    }
-}
-
-impl<T> WsCodec<T> for Stomp
-where
-    T: serde::de::DeserializeOwned,
-{
-    fn decode(payload: StompBody) -> Result<T, WsDispatchError> {
-        serde_json::from_slice(&payload.bytes).map_err(|e| WsDispatchError::Decode(e.to_string()))
     }
 }
 

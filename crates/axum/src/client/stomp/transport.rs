@@ -13,7 +13,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use futures::{SinkExt, StreamExt};
 use overseerd_client::{ClientError, ErrorBody};
 use overseerd_transport::{CodecError, Error as TransportError};
-use stomp_parser::client::{ConnectFrameBuilder, SendFrameBuilder, SubscribeFrameBuilder, UnsubscribeFrameBuilder};
+use stomp_parser::client::{
+    ConnectFrameBuilder, DisconnectFrameBuilder, SendFrameBuilder, SubscribeFrameBuilder,
+    UnsubscribeFrameBuilder,
+};
 use stomp_parser::headers::{StompVersion, StompVersions};
 use stomp_parser::server::ServerFrame;
 use tokio::sync::{mpsc, oneshot};
@@ -43,14 +46,35 @@ enum Command {
         id: SubscriptionId,
         frame: Vec<u8>,
     },
+    /// Sent when the last client handle drops: write a `DISCONNECT` and close gracefully.
+    Disconnect {
+        frame: Vec<u8>,
+    },
+}
+
+/// The shared inner state of a [`StompClientTransport`], behind an `Arc`. Its [`Drop`] fires only
+/// when the last client handle is gone — that is when we gracefully `DISCONNECT`.
+struct TransportInner {
+    tx: mpsc::Sender<Command>,
+    next_id: AtomicU64,
+}
+
+impl Drop for TransportInner {
+    fn drop(&mut self) {
+        // Last handle gone: queue a DISCONNECT for the actor to write before the channel closes.
+        // Best-effort — a already-closed connection needs no goodbye. The frame is queued on `tx`
+        // just before it drops, so the actor drains it, writes DISCONNECT, then sees the channel end.
+        let frame: Vec<u8> = DisconnectFrameBuilder::new("bye".to_owned()).build().into();
+        let _ = self.tx.try_send(Command::Disconnect { frame });
+    }
 }
 
 /// A persistent STOMP client over one WebSocket connection. Cheap to clone (an `Arc`-backed handle
-/// onto the actor); every clone shares the same connection.
+/// onto the actor); every clone shares the same connection, and the connection is `DISCONNECT`ed
+/// only when the last clone drops.
 #[derive(Clone)]
 pub struct StompClientTransport {
-    tx: mpsc::Sender<Command>,
-    next_id: Arc<AtomicU64>,
+    inner: Arc<TransportInner>,
 }
 
 impl StompClientTransport {
@@ -78,36 +102,42 @@ impl StompClientTransport {
         tokio::spawn(actor(write, read, rx));
 
         Ok(Self {
-            tx,
-            next_id: Arc::new(AtomicU64::new(1)),
+            inner: Arc::new(TransportInner {
+                tx,
+                next_id: AtomicU64::new(1),
+            }),
         })
+    }
+
+    /// The command channel to the actor.
+    fn tx(&self) -> &mpsc::Sender<Command> {
+        &self.inner.tx
     }
 
     /// A fresh, monotonically-increasing id (for subscriptions).
     fn next(&self, prefix: &str) -> String {
-        format!("{prefix}-{}", self.next_id.fetch_add(1, Ordering::Relaxed))
+        format!("{prefix}-{}", self.inner.next_id.fetch_add(1, Ordering::Relaxed))
     }
 }
 
-impl<Req> StompSend<Req> for StompClientTransport
-where
-    Req: serde::Serialize + Send,
-{
+impl StompSend for StompClientTransport {
     async fn stomp_send(
         &self,
         destination: &str,
-        payload: Req,
+        body: StompBody,
     ) -> Result<(), ClientError<StompStatus>> {
-        let body = serde_json::to_vec(&payload).map_err(|e| ClientError::Encode(e.to_string()))?;
-        let frame: Vec<u8> = SendFrameBuilder::new(destination.to_owned())
-            .content_type("application/json".to_owned())
-            .body(body)
-            .build()
-            .into();
+        // The body is already codec-encoded; ship its bytes and content type verbatim.
+        let mut builder = SendFrameBuilder::new(destination.to_owned());
+
+        if let Some(content_type) = &body.content_type {
+            builder = builder.content_type(content_type.clone());
+        }
+
+        let frame: Vec<u8> = builder.body(body.bytes.to_vec()).build().into();
 
         let (ack, ack_rx) = oneshot::channel();
 
-        self.tx
+        self.tx()
             .send(Command::Send { frame, ack })
             .await
             .map_err(|_| ClientError::ConnectionClosed)?;
@@ -133,7 +163,7 @@ impl StompSubscribe for StompClientTransport {
 
         let (ack, ack_rx) = oneshot::channel();
 
-        self.tx
+        self.tx()
             .send(Command::Subscribe {
                 id: id.clone(),
                 frame,
@@ -152,7 +182,7 @@ impl StompSubscribe for StompClientTransport {
         let frame: Vec<u8> = UnsubscribeFrameBuilder::new(id.0.clone()).build().into();
 
         // Best-effort: dropping a subscription must not block, and a closed connection is fine.
-        let _ = self.tx.try_send(Command::Unsubscribe { id, frame });
+        let _ = self.tx().try_send(Command::Unsubscribe { id, frame });
     }
 }
 
@@ -196,6 +226,14 @@ async fn actor(
                         subs.remove(&id);
 
                         let _ = write.send(to_message(frame)).await;
+                    }
+
+                    Command::Disconnect { frame } => {
+                        // Last handle dropped: say goodbye, then close.
+                        let _ = write.send(to_message(frame)).await;
+                        let _ = write.close().await;
+
+                        break;
                     }
                 }
             }

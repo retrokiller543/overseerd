@@ -38,16 +38,15 @@ pub struct ReceiptId(pub String);
 
 /// A transport that can `SEND` one typed payload to a destination (fire-and-forget). The generated
 /// `send_<name>()` client methods bind on this.
-pub trait StompSend<Req>: Send + Sync {
-    /// Encodes `payload` and writes a `SEND` frame to `destination`. Takes `&str` (not
-    /// `&'static str`) so a templated topic's runtime-rendered destination works too.
+pub trait StompSend: Send + Sync {
+    /// Writes a `SEND` frame carrying `body` to `destination`. The body is already encoded (by the
+    /// generated method's codec), so the transport is codec-agnostic — it ships bytes plus the
+    /// body's content type. Takes `&str` (not `&'static str`) so a templated destination works too.
     fn stomp_send(
         &self,
         destination: &str,
-        payload: Req,
-    ) -> impl std::future::Future<Output = Result<(), ClientError<StompStatus>>> + Send
-    where
-        Req: Send;
+        body: StompBody,
+    ) -> impl std::future::Future<Output = Result<(), ClientError<StompStatus>>> + Send;
 }
 
 /// A transport that can `SUBSCRIBE` to a destination and yield a decoded stream of `MESSAGE`s. The
@@ -133,11 +132,8 @@ impl<C: StompSubscribe, M> Drop for Subscription<C, M> {
 
 /// The always-closed `()` transport: lets a generated client type-check without a wired transport
 /// (mirrors the `()` impls for the request/reply websocket client).
-impl<Req> StompSend<Req> for () {
-    async fn stomp_send(&self, _: &str, _: Req) -> Result<(), ClientError<StompStatus>>
-    where
-        Req: Send,
-    {
+impl StompSend for () {
+    async fn stomp_send(&self, _: &str, _: StompBody) -> Result<(), ClientError<StompStatus>> {
         Err(ClientError::Transport(overseerd_transport::Error::Closed))
     }
 }
