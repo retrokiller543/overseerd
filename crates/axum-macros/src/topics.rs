@@ -131,10 +131,10 @@ fn generate_client(
     }
 
     let client_ident = format_ident!("{}Client", enum_ident);
-    let subscription = paths.plugin("Subscription");
-    let stomp_subscribe = paths.plugin("StompSubscribe");
+    let subscription = paths.plugin("client::Subscription");
+    let stomp_subscribe = paths.plugin("client::StompSubscribe");
     let stomp_codec = paths.plugin("StompCodec");
-    let stomp_status = paths.plugin("StompStatus");
+    let stomp_status = paths.plugin("client::StompStatus");
     let client_error = paths.client("ClientError");
 
     let methods = variants.iter().map(|variant| {

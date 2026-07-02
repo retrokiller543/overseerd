@@ -12,6 +12,8 @@ mod response;
 mod streaming;
 #[cfg(all(feature = "ws", feature = "client"))]
 mod websocket;
+#[cfg(all(feature = "stomp", feature = "client"))]
+mod stomp;
 
 #[cfg(feature = "hyper")]
 mod hyper_backend;
@@ -23,6 +25,8 @@ pub use response::HttpResponse;
 pub use streaming::{HttpClientStreaming, HttpStreaming, StreamDecode, encode_stream};
 #[cfg(all(feature = "ws", feature = "client"))]
 pub use websocket::*;
+#[cfg(all(feature = "stomp", feature = "client"))]
+pub use stomp::*;
 
 /// Re-exported so generated streaming-client code names the codec without a separate dep.
 pub use overseerd_transport::{Decodes, Encodes};
