@@ -6,6 +6,13 @@ at specs/003-response-status-codes/plan.md
 
 When you need to commit anything use `mise exec -- git <command>` in order to load the correct git profiles via mise.
 
+## Before every commit / PR
+
+- **Format.** Run `cargo fmt --all` before committing. A PR with unformatted code is blocked
+  (`cargo fmt --all -- --check` must pass) — CI enforces it, so never push without it.
+- **Lint.** `cargo clippy --workspace --all-targets --all-features` must be warning-free (this is
+  the CI invocation — reproduce failures with it, not a per-crate clippy).
+
 ## Test layout
 
 Test modules always live in their own file, never inline in an impl file. For a module `foo`
