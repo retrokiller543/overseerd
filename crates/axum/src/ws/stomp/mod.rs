@@ -144,11 +144,18 @@ impl WebsocketProtocol for Stomp {
 
                 inbound = receiver.next() => {
                     match inbound {
+                        // A bare newline (or empty frame) is a client heart-beat, not a STOMP frame;
+                        // consume it silently rather than failing to parse it (real clients such as
+                        // stomp.js send these).
+                        Some(Ok(Message::Text(text))) if is_heartbeat(text.as_bytes()) => {}
+
                         Some(Ok(Message::Text(text))) => {
                             if self.dispatch(text.as_bytes().to_vec(), &tx, conn_id, &connection).await.is_break() {
                                 break;
                             }
                         }
+
+                        Some(Ok(Message::Binary(bytes))) if is_heartbeat(&bytes) => {}
 
                         Some(Ok(Message::Binary(bytes))) => {
                             if self.dispatch(bytes.to_vec(), &tx, conn_id, &connection).await.is_break() {
@@ -484,6 +491,12 @@ async fn tick(ticker: Option<&mut tokio::time::Interval>) {
 
         None => std::future::pending::<()>().await,
     }
+}
+
+/// Whether an inbound frame is a client heart-beat — an empty payload or a bare newline
+/// (`\n` / `\r\n`) — rather than a STOMP frame to parse.
+fn is_heartbeat(bytes: &[u8]) -> bool {
+    bytes.is_empty() || bytes == b"\n" || bytes == b"\r\n"
 }
 
 /// Wraps serialized frame bytes in a WebSocket message: text when valid UTF-8 (the common case for
