@@ -966,7 +966,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "overseerd"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "futures",
  "overseerd-app",
@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-app"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "futures",
  "overseerd-config",
@@ -1006,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-axum"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "axum",
  "bytes",
@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-axum-macros"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "overseerd-macros-core",
  "proc-macro2",
@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-client"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "futures",
  "overseerd-transport",
@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-config"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "arc-swap",
  "futures",
@@ -1077,11 +1077,11 @@ dependencies = [
 
 [[package]]
 name = "overseerd-core"
-version = "0.8.0"
+version = "0.9.0"
 
 [[package]]
 name = "overseerd-di"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "arc-swap",
  "futures",
@@ -1095,7 +1095,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-dirs"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "directories",
  "overseerd-core",
@@ -1105,7 +1105,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-example-daemon"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "overseerd",
  "serde",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-example-http"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "arc-swap",
  "futures",
@@ -1131,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-hooks"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "futures",
  "overseerd-core",
@@ -1140,7 +1140,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-macros"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "overseerd-macros-core",
  "proc-macro2",
@@ -1148,7 +1148,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-macros-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1157,7 +1157,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-rpc"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -1185,7 +1185,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-rpc-macros"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "overseerd-macros-core",
  "proc-macro2",
@@ -1195,7 +1195,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-transport"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "bitflags 2.13.0",
  "futures",
