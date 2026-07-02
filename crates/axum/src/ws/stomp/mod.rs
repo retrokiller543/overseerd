@@ -31,7 +31,9 @@ use stomp_parser::headers::{StompVersion, StompVersions};
 use stomp_parser::server::{ConnectedFrameBuilder, ErrorFrame, ReceiptFrameBuilder};
 use tokio::sync::mpsc;
 
-use super::{WebsocketProtocol, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsRespond, WsShutdown};
+use super::{
+    WebsocketProtocol, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsRespond, WsShutdown,
+};
 use crate::scope::Request as RequestScope;
 
 pub use body::{JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic, TopicParam};
@@ -88,7 +90,10 @@ impl WebsocketProtocol for Stomp {
 
         for descriptor in controllers {
             for route in descriptor.routes_for::<Stomp>(runtime) {
-                if app_routes.insert(route.destination, route.handler).is_some() {
+                if app_routes
+                    .insert(route.destination, route.handler)
+                    .is_some()
+                {
                     tracing::warn!(
                         target: "overseerd::axum",
                         dest = route.destination,
@@ -135,7 +140,9 @@ impl WebsocketProtocol for Stomp {
         let writer = tokio::spawn(writer_task(sender, rx, self.config.server_heartbeat));
 
         // CONNECTED confirms the negotiated version (and advertises the server heart-beat).
-        let _ = tx.send(OutFrame::Frame(connected_frame(negotiated, &self.config))).await;
+        let _ = tx
+            .send(OutFrame::Frame(connected_frame(negotiated, &self.config)))
+            .await;
 
         loop {
             tokio::select! {
@@ -211,7 +218,8 @@ impl Stomp {
         // negotiated version).
         let bytes = ensure_connect_host(bytes);
 
-        let frame = ClientFrame::try_from(bytes).map_err(|e| StompError::Frame(e.message().to_owned()))?;
+        let frame =
+            ClientFrame::try_from(bytes).map_err(|e| StompError::Frame(e.message().to_owned()))?;
 
         let ClientFrame::Connect(connect) = frame else {
             return Err(StompError::UnexpectedCommand(
@@ -260,8 +268,12 @@ impl Stomp {
             ClientFrame::Subscribe(sub) => {
                 let receipt = sub.receipt().map(|r| r.value().to_owned());
 
-                self.broker
-                    .subscribe(conn_id, sub.id().value(), sub.destination().value(), tx.clone());
+                self.broker.subscribe(
+                    conn_id,
+                    sub.id().value(),
+                    sub.destination().value(),
+                    tx.clone(),
+                );
 
                 self.send_receipt(tx, receipt).await;
 
@@ -283,10 +295,14 @@ impl Stomp {
                 let content_type = send.content_type().map(|c| c.value().to_owned());
                 let body = StompBody {
                     content_type: content_type.clone(),
-                    bytes: send.body().map(bytes::Bytes::copy_from_slice).unwrap_or_default(),
+                    bytes: send
+                        .body()
+                        .map(bytes::Bytes::copy_from_slice)
+                        .unwrap_or_default(),
                 };
 
-                self.route_send(&destination, body, content_type, conn_id, connection).await;
+                self.route_send(&destination, body, content_type, conn_id, connection)
+                    .await;
                 self.send_receipt(tx, receipt).await;
 
                 Continue(())
@@ -302,9 +318,9 @@ impl Stomp {
 
             other => {
                 let _ = tx
-                    .send(OutFrame::Frame(error_frame(&StompError::UnexpectedCommand(format!(
-                        "{other:?}"
-                    )))))
+                    .send(OutFrame::Frame(error_frame(
+                        &StompError::UnexpectedCommand(format!("{other:?}")),
+                    )))
                     .await;
 
                 Break(())
@@ -362,7 +378,8 @@ impl Stomp {
         match handler(body, scope).await {
             Ok(StompOutcome::Publish(publishes)) => {
                 for publish in publishes {
-                    self.broker.publish(&publish.destination, &publish.body, &publish.headers);
+                    self.broker
+                        .publish(&publish.destination, &publish.body, &publish.headers);
                 }
             }
 
@@ -421,7 +438,8 @@ where
     E: std::fmt::Display,
 {
     fn into_outcome(self) -> Result<StompOutcome, WsDispatchError> {
-        self.map_err(|e| WsDispatchError::Encode(e.to_string()))?.into_outcome()
+        self.map_err(|e| WsDispatchError::Encode(e.to_string()))?
+            .into_outcome()
     }
 }
 
@@ -518,7 +536,9 @@ fn ensure_connect_host(bytes: Vec<u8>) -> Vec<u8> {
 
 /// Whether `haystack` contains `needle` as a contiguous subsequence.
 fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 #[cfg(test)]
@@ -531,7 +551,10 @@ mod tests {
     fn host_is_injected_so_a_hostless_connect_parses() {
         // A stomp.js-style CONNECT with no `host` header — rejected by stomp-parser as-is.
         let frame = b"CONNECT\naccept-version:1.0,1.1,1.2\nheart-beat:0,0\n\n\x00".to_vec();
-        assert!(ClientFrame::try_from(frame.clone()).is_err(), "hostless CONNECT is rejected raw");
+        assert!(
+            ClientFrame::try_from(frame.clone()).is_err(),
+            "hostless CONNECT is rejected raw"
+        );
 
         let patched = ensure_connect_host(frame);
         let parsed = ClientFrame::try_from(patched).expect("patched CONNECT parses");

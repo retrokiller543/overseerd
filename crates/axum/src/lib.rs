@@ -45,6 +45,9 @@ pub use ws::stomp::{
 pub use overseerd_transport::CodecError;
 
 pub use extract::{Inject, InjectRejection, ScopeHandle};
+/// The STOMP topic-set macro (`#[topics]`).
+#[cfg(feature = "stomp")]
+pub use overseerd_axum_macros::topics;
 /// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
 /// this protocol crate. Their generated code roots plugin types at this crate
 /// (`::overseerd_axum::*`) by default, or at `::overseerd::axum::*` under the `facade` feature —
@@ -53,9 +56,6 @@ pub use extract::{Inject, InjectRejection, ScopeHandle};
 pub use overseerd_axum_macros::{
     controller, delete, get, handlers, head, message, options, patch, post, put, route,
 };
-/// The STOMP topic-set macro (`#[topics]`).
-#[cfg(feature = "stomp")]
-pub use overseerd_axum_macros::topics;
 pub use plugin::{AxumAppBuilder, AxumPlugin};
 pub use protocol::Axum;
 pub use stream::{Ndjson, RawStream, StreamBody, StreamEncode, chunk_u8};

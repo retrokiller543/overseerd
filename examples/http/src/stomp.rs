@@ -56,7 +56,10 @@ impl Room {
     fn append(&self, message: ChatMessage) {
         // A poisoned lock means a writer panicked mid-push, leaving the history unusable; there is
         // nothing to recover, so propagating the panic is the honest outcome.
-        self.messages.write().expect("room lock poisoned").push(message);
+        self.messages
+            .write()
+            .expect("room lock poisoned")
+            .push(message);
     }
 
     /// Reads this room's history under a shared read lock **without copying it out**: the closure
@@ -133,7 +136,7 @@ impl ChatState {
 /// `/app/chat`, records them, and re-broadcasts them to the `/topic/chat` topic.
 #[controller(ws = Stomp)]
 pub struct ChatHandler {
-    state: Arc<ChatState>
+    state: Arc<ChatState>,
 }
 
 #[handlers(ws = Stomp)]
@@ -164,7 +167,7 @@ impl ChatHandler {
 /// room's history or size never blocks a concurrent `SEND`.
 #[controller(path = "/chat")]
 pub struct ChatHistory {
-    state: Arc<ChatState>
+    state: Arc<ChatState>,
 }
 
 #[handlers]
@@ -179,7 +182,8 @@ impl ChatHistory {
     /// runs under the room's read lock and returns only the length).
     #[get("/{room}/count")]
     async fn count(&self, Path(room): Path<String>) -> Json<usize> {
-        let count = self.state
+        let count = self
+            .state
             .room(&room)
             .map_or(0, |room| room.with_messages(<[ChatMessage]>::len));
 
@@ -188,11 +192,12 @@ impl ChatHistory {
 
     /// `GET /chat/{room}/history` — the room's full history (an owned copy for the response body).
     #[get("/{room}/history")]
-    async fn history(
-        &self,
-        Path(room): Path<String>
-    ) -> Json<Vec<ChatMessage>> {
-        let messages = self.state.room(&room).map(|room| room.history()).unwrap_or_default();
+    async fn history(&self, Path(room): Path<String>) -> Json<Vec<ChatMessage>> {
+        let messages = self
+            .state
+            .room(&room)
+            .map(|room| room.history())
+            .unwrap_or_default();
 
         Json(messages)
     }

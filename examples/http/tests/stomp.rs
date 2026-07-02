@@ -129,7 +129,9 @@ impl StompCodec for MarkedCodec {
                 serde_json::from_slice(rest).map_err(|e| CodecError::bad_input(e.to_string()))
             }
 
-            _ => Err(CodecError::bad_input("body is missing the codec's marker byte")),
+            _ => Err(CodecError::bad_input(
+                "body is missing the codec's marker byte",
+            )),
         }
     }
 }
