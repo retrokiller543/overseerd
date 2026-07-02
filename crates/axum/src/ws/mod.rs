@@ -12,6 +12,8 @@
 //! sets up its own routing and the app never sees a route. The first bundled protocol is [`JsonWs`].
 
 mod json;
+#[cfg(feature = "stomp")]
+pub mod stomp;
 
 use std::any::{Any, TypeId};
 use std::future::Future;
