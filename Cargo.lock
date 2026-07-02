@@ -1023,6 +1023,7 @@ dependencies = [
  "overseerd-config",
  "overseerd-core",
  "overseerd-di",
+ "overseerd-hooks",
  "overseerd-transport",
  "reqwest",
  "serde",

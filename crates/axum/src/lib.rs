@@ -38,7 +38,7 @@ pub use ws::{
 #[cfg(feature = "stomp")]
 pub use ws::stomp::{
     Broker, JsonCodec, Publish, Publisher, Stomp, StompBody, StompCodec, StompConfig, StompError,
-    StompHeaders, StompOutcome, StompSession, Topic, TopicParam,
+    StompHeaders, StompOutcome, StompSession, StompTopicBus, Topic, TopicParam,
 };
 
 /// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a

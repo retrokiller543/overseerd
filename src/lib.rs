@@ -274,7 +274,7 @@ pub mod axum {
         /// [`Publisher`](super::Publisher) and [`Topic`](super::Topic)), available with the
         /// `stomp` feature.
         #[cfg(feature = "stomp")]
-        pub use super::{Publisher, Stomp, StompSession, Topic, topics};
+        pub use super::{Publisher, Stomp, StompSession, StompTopicBus, Topic, topics};
     }
 }
 

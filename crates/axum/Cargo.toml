@@ -54,6 +54,7 @@ overseerd-axum-macros = { workspace = true }
 overseerd-core = { workspace = true }
 overseerd-di = { workspace = true }
 overseerd-config = { workspace = true }
+overseerd-hooks = { workspace = true }
 overseerd-client = { workspace = true, optional = true }
 # Non-optional: `StreamFormat` (server-side streamed bodies) uses its `CodecError`, and the
 # client codecs build on its `Encodes`/`Decodes`. Lightweight and already in the tree.

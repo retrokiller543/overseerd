@@ -76,6 +76,11 @@ impl Plugin for AxumPlugin {
 
     fn register(&self, registry: &mut AppRegistry) {
         registry.components.push(REQUEST_META_DESCRIPTOR);
+
+        #[cfg(feature = "stomp")]
+        registry
+            .components
+            .push(crate::ws::stomp::STOMP_TOPIC_BUS_DESCRIPTOR);
     }
 }
 
