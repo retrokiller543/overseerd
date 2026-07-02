@@ -10,6 +10,9 @@
 //! this module owns the broker, the connection serve loop, DI scope seeding, and the typed
 //! [`Topic`]/[`Publisher`] publish surface. Message-body serialization is pluggable per topic set
 //! via [`StompCodec`] (`#[topics(codec = ..)]`), defaulting to [`JsonCodec`].
+//!
+//! v1 covers the core pub/sub path; see `docs/stomp.md` for what is deferred (RECEIPT,
+//! heart-beating, ACK modes, transactions, destination wildcards).
 
 mod body;
 mod broker;

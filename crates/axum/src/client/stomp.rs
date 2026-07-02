@@ -6,6 +6,9 @@
 //! an `ERROR` frame is *fatal* and connection-terminating. [`StompClientTransport`] runs a
 //! background actor demuxing those (modelled on the RPC client's `CallId` demux), and exposes typed
 //! [`StompSend`]/[`StompSubscribe`] capabilities the generated clients bind on.
+//!
+//! [`StompSend`] is fire-and-forget and the client sends no heart-beats in v1; see `docs/stomp.md`
+//! for the deferred-feature list.
 
 use std::marker::PhantomData;
 use std::pin::Pin;
