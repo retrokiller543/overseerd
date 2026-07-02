@@ -21,6 +21,7 @@ mod headers;
 mod publisher;
 #[cfg(test)]
 mod tests;
+mod topic_bus;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,6 +47,8 @@ pub use broker::{Broker, ConnectionId};
 pub use error::StompError;
 pub use headers::{StompHeaders, StompSession};
 pub use publisher::Publisher;
+pub(crate) use topic_bus::STOMP_TOPIC_BUS_DESCRIPTOR;
+pub use topic_bus::StompTopicBus;
 
 use broker::OutFrame;
 
@@ -110,7 +113,13 @@ impl WebsocketProtocol for Stomp {
 
         Self {
             app_routes,
-            broker: Arc::new(Broker::new()),
+            broker: Arc::clone(
+                runtime
+                    .root()
+                    .get::<StompTopicBus>()
+                    .expect("StompTopicBus missing from DI root; AxumPlugin should register it")
+                    .broker(),
+            ),
             runtime: runtime.clone(),
             config,
         }

@@ -6,7 +6,7 @@
 //! server is shut down at the end so the test never hangs.
 
 use futures::StreamExt;
-use overseerd::axum::client::StompClientTransport;
+use overseerd::axum::client::{ReqwestClient, StompClientTransport};
 use overseerd::axum::prelude::*;
 use overseerd::axum::{CodecError, StompBody, StompCodec};
 use overseerd::prelude::*;
@@ -51,6 +51,27 @@ impl Chat {
         publisher
             .publish(ChatTopics::Room(RoomMsg { text: msg.text }))
             .await
+    }
+}
+
+/// A normal HTTP controller can publish to the same STOMP topics as a STOMP controller.
+#[controller(path = "/events")]
+struct RestEvents {}
+
+#[handlers]
+impl RestEvents {
+    #[post("/room")]
+    async fn room(
+        &self,
+        Inject(publisher): Inject<Publisher<ChatTopics>>,
+        Json(msg): Json<RoomMsg>,
+    ) -> Json<RoomMsg> {
+        publisher
+            .publish(ChatTopics::Room(msg.clone()))
+            .await
+            .expect("test topic encodes");
+
+        Json(msg)
     }
 }
 
@@ -99,6 +120,54 @@ async fn stomp_send_is_broadcast_to_typed_subscribers() {
         .expect("a decoded RoomMsg");
 
     assert_eq!(received.text, "hello stomp");
+
+    shutdown.shutdown();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn http_handler_can_publish_to_typed_stomp_subscribers() {
+    let app = app! {
+        name: "stomp-http-publish-test",
+        protocol: overseerd::axum::AxumPlugin,
+    }
+    .register_ws::<Stomp>("/stomp")
+    .build()
+    .await
+    .expect("app builds");
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let shutdown = app.shutdown_handle();
+    let server = tokio::spawn(async move { app.serve(listener).await });
+
+    let ws_url = format!("ws://{addr}/stomp");
+    let connection = StompClientTransport::connect(&ws_url)
+        .await
+        .expect("connects");
+
+    let mut room = ChatTopicsClient::new(connection)
+        .subscribe_room()
+        .await
+        .expect("subscribe_room");
+
+    let http = RestEventsClient::new(ReqwestClient::new(format!("http://{addr}")));
+    let response = http
+        .room(RoomMsg {
+            text: "via rest".into(),
+        })
+        .await
+        .expect("http publish");
+
+    assert_eq!(response.text, "via rest");
+
+    let received = tokio::time::timeout(std::time::Duration::from_secs(5), room.next())
+        .await
+        .expect("a REST-triggered broadcast arrives before timeout")
+        .expect("the subscription stream is live")
+        .expect("a decoded RoomMsg");
+
+    assert_eq!(received.text, "via rest");
 
     shutdown.shutdown();
     let _ = server.await;
