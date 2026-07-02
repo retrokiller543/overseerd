@@ -347,6 +347,9 @@ impl AxumHandlers {
             .clone()
             .unwrap_or_else(|| format_ident!("{}WsRoutes", cx.self_ident));
 
+        // Routes are typed to the controller's protocol, named through the `WebsocketController`
+        // assoc type (the assertion below proves the bound holds).
+        let ws_route_p = quote!(#ws_route<<#self_ty as #ws_controller_trait>::Protocol>);
         let builders = self.ws_routes.iter().map(|spec| &spec.builder);
 
         out.extend(quote! {
@@ -356,7 +359,7 @@ impl AxumHandlers {
 
                 fn __overseerd_ws_route_group(
                     svc: ::std::sync::Arc<#self_ty>,
-                ) -> ::std::vec::Vec<#ws_route> {
+                ) -> ::std::vec::Vec<#ws_route_p> {
                     let _ = &svc;
 
                     ::std::vec![ #(#builders),* ]
@@ -365,7 +368,7 @@ impl AxumHandlers {
                 #[#distributed_slice(#ws_routes_slice)]
                 #[linkme(crate = #linkme_crate)]
                 static __OVERSEERD_WS_ROUTE_GROUP:
-                    fn(::std::sync::Arc<#self_ty>) -> ::std::vec::Vec<#ws_route> =
+                    fn(::std::sync::Arc<#self_ty>) -> ::std::vec::Vec<#ws_route_p> =
                     __overseerd_ws_route_group;
             };
         });
@@ -531,13 +534,21 @@ fn build_ws_route(
     }
 
     let ws_route = paths.plugin("WsRoute");
-    let ws_value = paths.plugin("ws::WsValue");
-    let ws_future = paths.plugin("ws::WsFuture");
+    let ws_protocol = paths.plugin("WebsocketProtocol");
+    let ws_codec = paths.plugin("WsCodec");
+    let ws_respond = paths.plugin("WsRespond");
+    let ws_controller_trait = paths.plugin("WebsocketController");
     let inject = paths.plugin("Inject");
     let scope_container = paths.plugin("__ScopeContainer");
-    let decode_payload = paths.plugin("ws::decode_payload");
-    let encode_response = paths.plugin("ws::encode_response");
     let dispatch_error = paths.plugin("WsDispatchError");
+
+    // The controller's protocol owns the payload/outcome vocabulary and the codec. Named through
+    // the `WebsocketController` assoc type so this route group works for any protocol `P` — `JsonWs`
+    // decodes/encodes JSON, a STOMP protocol carries bytes + headers — with no JSON hardcoded here.
+    let proto = quote!(<#self_ty as #ws_controller_trait>::Protocol);
+    let payload_ty = quote!(<#proto as #ws_protocol>::Payload);
+    let ws_future = paths.plugin("ws::WsFuture");
+    let ws_future_p = quote!(#ws_future<#proto>);
 
     // Classify each typed parameter: an `Inject<T>` resolves from the per-message scope; anything
     // else is the (single) JSON payload. Build the per-arg bindings and the call list in order.
@@ -572,7 +583,9 @@ fn build_ws_route(
                 }
 
                 payload_seen = true;
-                bindings.push(quote!(let #ident: #ty = #decode_payload(__payload)?;));
+                bindings.push(
+                    quote!(let #ident: #ty = <#proto as #ws_codec<#ty>>::decode(__payload)?;),
+                );
             }
         }
 
@@ -597,20 +610,30 @@ fn build_ws_route(
         quote!(<#self_ty>::#method_ident(#(#call_args),*)#dotawait)
     };
 
+    // The handler's raw return type — the whole value the method yields, turned into the protocol's
+    // outcome by `WsRespond`. Not `client::response_type` (which peels `Result`/`Json`): a ws
+    // handler returns a plain serializable value, and `respond` receives it whole.
+    let response_ty = match &method.sig.output {
+        ReturnType::Type(_, ty) => (**ty).clone(),
+
+        ReturnType::Default => parse_quote!(()),
+    };
+
     let builder = quote! {{
         let __svc = ::std::sync::Arc::clone(&svc);
 
         #ws_route::new(
             #destination,
             ::std::sync::Arc::new(
-                move |__payload: #ws_value, __scope: ::std::sync::Arc<#scope_container>| -> #ws_future {
+                move |__payload: #payload_ty, __scope: ::std::sync::Arc<#scope_container>|
+                    -> #ws_future_p {
                     let __svc = ::std::sync::Arc::clone(&__svc);
 
                     ::std::boxed::Box::pin(async move {
                         #(#bindings)*
                         let __resp = #invoke;
 
-                        #encode_response(&__resp)
+                        <#proto as #ws_respond<#response_ty>>::respond(__resp)
                     })
                 },
             ),
