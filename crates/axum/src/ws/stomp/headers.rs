@@ -77,10 +77,7 @@ pub struct StompSession {
 impl StompSession {
     /// Builds a session handle over `broker` for connection `connection`.
     pub fn new(broker: Arc<Broker>, connection: ConnectionId) -> Self {
-        Self {
-            broker,
-            connection,
-        }
+        Self { broker, connection }
     }
 
     /// This message's connection id.

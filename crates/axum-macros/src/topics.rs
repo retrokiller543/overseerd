@@ -124,7 +124,8 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
                 let bindings = params.iter().map(|(name, _)| name);
                 // The hole fields are bound by reference in the match; `render` takes `&self`, so a
                 // by-ref binding calls it directly.
-                let build = render_destination(&variant.segments, &topic_param, |hole| quote!(#hole));
+                let build =
+                    render_destination(&variant.segments, &topic_param, |hole| quote!(#hole));
 
                 quote!(#enum_ident::#ident { #(#bindings,)* .. } => #build)
             }
@@ -278,12 +279,16 @@ fn parse_variants(item: &mut ItemEnum) -> syn::Result<Vec<TopicVariant>> {
     let mut variants = Vec::new();
 
     for variant in &mut item.variants {
-        let position = variant.attrs.iter().position(is_topic_attr).ok_or_else(|| {
-            syn::Error::new_spanned(
-                &variant.ident,
-                "every #[topics] variant needs a #[topic(\"/topic/..\")] attribute",
-            )
-        })?;
+        let position = variant
+            .attrs
+            .iter()
+            .position(is_topic_attr)
+            .ok_or_else(|| {
+                syn::Error::new_spanned(
+                    &variant.ident,
+                    "every #[topics] variant needs a #[topic(\"/topic/..\")] attribute",
+                )
+            })?;
 
         let attr = variant.attrs.remove(position);
         let destination: LitStr = attr.parse_args()?;
@@ -308,7 +313,9 @@ fn parse_variants(item: &mut ItemEnum) -> syn::Result<Vec<TopicVariant>> {
                 }
             }
 
-            Fields::Named(fields) => parse_templated_variant(&variant.ident, &destination, &holes, fields)?,
+            Fields::Named(fields) => {
+                parse_templated_variant(&variant.ident, &destination, &holes, fields)?
+            }
 
             _ => {
                 return Err(syn::Error::new_spanned(
@@ -392,7 +399,9 @@ fn parse_templated_variant(
     let mut params = Vec::with_capacity(holes.len());
 
     for hole in holes {
-        let field = field_types.iter().find(|(name, _)| &name.to_string() == hole);
+        let field = field_types
+            .iter()
+            .find(|(name, _)| &name.to_string() == hole);
 
         match field {
             Some((name, ty)) => params.push((name.clone(), ty.clone())),
@@ -448,7 +457,10 @@ fn parse_template(destination: &LitStr) -> syn::Result<Vec<Segment>> {
                 }
 
                 if name.is_empty() {
-                    return Err(syn::Error::new_spanned(destination, "empty `{}` hole in topic template"));
+                    return Err(syn::Error::new_spanned(
+                        destination,
+                        "empty `{}` hole in topic template",
+                    ));
                 }
 
                 segments.push(Segment::Hole(name));

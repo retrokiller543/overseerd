@@ -42,7 +42,8 @@ pub type WsValue = serde_json::Value;
 /// over the protocol `P` that owns the payload/outcome vocabulary.
 ///
 /// [`Outcome`]: WebsocketProtocol::Outcome
-pub type WsFuture<P> = BoxFuture<'static, Result<<P as WebsocketProtocol>::Outcome, WsDispatchError>>;
+pub type WsFuture<P> =
+    BoxFuture<'static, Result<<P as WebsocketProtocol>::Outcome, WsDispatchError>>;
 
 /// A type-erased message handler for protocol `P`. It is handed the decoded
 /// [`Payload`](WebsocketProtocol::Payload) and the message's
@@ -51,8 +52,9 @@ pub type WsFuture<P> = BoxFuture<'static, Result<<P as WebsocketProtocol>::Outco
 /// (request → connection → singleton) — the same DI a REST route gets — before running the
 /// controller method (the singleton captured by `Arc`) and turning the response into `P`'s
 /// [`Outcome`](WebsocketProtocol::Outcome).
-pub type WsHandlerFn<P> =
-    Arc<dyn Fn(<P as WebsocketProtocol>::Payload, Arc<ScopeContainer>) -> WsFuture<P> + Send + Sync>;
+pub type WsHandlerFn<P> = Arc<
+    dyn Fn(<P as WebsocketProtocol>::Payload, Arc<ScopeContainer>) -> WsFuture<P> + Send + Sync,
+>;
 
 /// What can go wrong dispatching one message, independent of the wire protocol framing it.
 #[derive(Debug, thiserror::Error)]

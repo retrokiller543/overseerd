@@ -310,8 +310,12 @@ mod tests {
 
     #[test]
     fn ok_result_renders_an_ok_frame_echoing_the_id() {
-        let reply = render_reply("echo", Some(7), Ok(WsReply(serde_json::json!({ "echo": "hi" }))))
-            .expect("a reply frame");
+        let reply = render_reply(
+            "echo",
+            Some(7),
+            Ok(WsReply(serde_json::json!({ "echo": "hi" }))),
+        )
+        .expect("a reply frame");
         let value: WsValue = serde_json::from_str(&reply).expect("valid json reply");
 
         assert_eq!(value["dest"], "echo");

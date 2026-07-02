@@ -152,7 +152,13 @@ impl ParseMethod for AxumHandlers {
             // server decode and the client SEND encode, so they stay symmetric. A JsonWs block has
             // no codec seam (its `WsCodec` is JSON), so pass `None` there.
             let stomp_codec = is_stomp.then(|| self.resolve_stomp_codec(&cx.paths));
-            let spec = build_ws_route(&cx.self_ty, method, &destination, stomp_codec.as_ref(), &cx.paths)?;
+            let spec = build_ws_route(
+                &cx.self_ty,
+                method,
+                &destination,
+                stomp_codec.as_ref(),
+                &cx.paths,
+            )?;
 
             // The client method's shape depends on the protocol: STOMP emits a fire-and-forget
             // typed SEND (payload encoded via the codec); JsonWs emits a request/reply call.
@@ -776,7 +782,10 @@ fn build_stomp_send_method(
                     .map_err(|__e| #client_error::Encode(::std::string::ToString::to_string(&__e)))?
             ),
         ),
-        None => (None, quote!(<#stomp_body as ::core::default::Default>::default())),
+        None => (
+            None,
+            quote!(<#stomp_body as ::core::default::Default>::default()),
+        ),
     };
 
     Ok(Some(ClientMethod {

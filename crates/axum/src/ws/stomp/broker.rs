@@ -70,11 +70,13 @@ impl Broker {
     ) {
         let mut subs = self.subs.write().expect("broker subs lock poisoned");
 
-        subs.entry(destination.to_owned()).or_default().push(SubEntry {
-            conn,
-            sub_id: sub_id.to_owned(),
-            tx,
-        });
+        subs.entry(destination.to_owned())
+            .or_default()
+            .push(SubEntry {
+                conn,
+                sub_id: sub_id.to_owned(),
+                tx,
+            });
     }
 
     /// Removes one subscription by `(conn, sub_id)`. The destination is not needed — a client
@@ -180,8 +182,14 @@ mod tests {
         broker.publish("/topic/room", &body("hi"), &[]);
 
         let got = rx_a.try_recv();
-        assert!(matches!(got, Ok(OutFrame::Frame(_))), "subscriber A gets the message");
-        assert!(rx_b.try_recv().is_err(), "subscriber B on another topic gets nothing");
+        assert!(
+            matches!(got, Ok(OutFrame::Frame(_))),
+            "subscriber A gets the message"
+        );
+        assert!(
+            rx_b.try_recv().is_err(),
+            "subscriber B on another topic gets nothing"
+        );
     }
 
     #[tokio::test]
@@ -194,13 +202,19 @@ mod tests {
         broker.unsubscribe(conn, "sub-1");
         broker.publish("/topic/room", &body("hi"), &[]);
 
-        assert!(rx.try_recv().is_err(), "an unsubscribed connection receives nothing");
+        assert!(
+            rx.try_recv().is_err(),
+            "an unsubscribed connection receives nothing"
+        );
 
         let (tx2, mut rx2) = mpsc::channel(4);
         broker.subscribe(conn, "sub-2", "/topic/room", tx2);
         broker.unregister(conn);
         broker.publish("/topic/room", &body("hi"), &[]);
 
-        assert!(rx2.try_recv().is_err(), "an unregistered connection receives nothing");
+        assert!(
+            rx2.try_recv().is_err(),
+            "an unregistered connection receives nothing"
+        );
     }
 }

@@ -116,7 +116,10 @@ impl StompClientTransport {
 
     /// A fresh, monotonically-increasing id (for subscriptions).
     fn next(&self, prefix: &str) -> String {
-        format!("{prefix}-{}", self.inner.next_id.fetch_add(1, Ordering::Relaxed))
+        format!(
+            "{prefix}-{}",
+            self.inner.next_id.fetch_add(1, Ordering::Relaxed)
+        )
     }
 }
 
@@ -289,7 +292,10 @@ fn route(
             let id = SubscriptionId(message.subscription().value().to_owned());
             let body = StompBody {
                 content_type: message.content_type().map(|c| c.value().to_owned()),
-                bytes: message.body().map(bytes::Bytes::copy_from_slice).unwrap_or_default(),
+                bytes: message
+                    .body()
+                    .map(bytes::Bytes::copy_from_slice)
+                    .unwrap_or_default(),
             };
 
             if let Some(sender) = subs.get(&id) {
