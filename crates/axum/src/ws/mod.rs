@@ -195,12 +195,22 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
     /// STOMP. Produced from the handler's response value via [`WsRespond`].
     type Outcome: Send + 'static;
 
-    /// Builds the protocol's routing from the controllers registered to it. Called once per
-    /// `register_ws` entrypoint at app build. The protocol keeps whatever it needs from `runtime`
-    /// (e.g. a clone, to open per-message [`Request`](crate::scope::Request) scopes while serving).
-    /// Recover each controller's typed routes with
-    /// [`WsControllerDescriptor::routes_for::<Self>`](WsControllerDescriptor::routes_for).
-    fn build(controllers: &[WsControllerDescriptor], runtime: &AppRuntime) -> Self;
+    /// Per-endpoint settings passed at registration — heart-beat/version policy for STOMP, `()` for
+    /// a protocol with nothing to configure. A user supplies these through
+    /// [`register_ws_with`](crate::AxumAppBuilder::register_ws_with); the plain
+    /// [`register_ws`](crate::AxumAppBuilder::register_ws) uses [`Default`].
+    type Options: Send + 'static;
+
+    /// Builds the protocol's routing from the controllers registered to it and the endpoint
+    /// `options`. Called once per `register_ws` entrypoint at app build. The protocol keeps whatever
+    /// it needs from `runtime` (e.g. a clone, to open per-message
+    /// [`Request`](crate::scope::Request) scopes while serving). Recover each controller's typed
+    /// routes with [`WsControllerDescriptor::routes_for::<Self>`](WsControllerDescriptor::routes_for).
+    fn build(
+        controllers: &[WsControllerDescriptor],
+        runtime: &AppRuntime,
+        options: Self::Options,
+    ) -> Self;
 
     /// Drives one upgraded connection until the peer closes it or graceful shutdown fires.
     /// `connection` is this socket's [`Connection`](crate::scope::Connection) scope (opened once by
@@ -257,18 +267,19 @@ impl WebsocketHandler {
     }
 }
 
-/// Mounts one ws endpoint: builds the protocol `P` from its controllers, wires the framework's
-/// generic upgrade handler at `path`, and returns a path-scoped router plus its management handle.
-/// Monomorphized per `P`; a `fn` pointer to this is what `register_ws::<P>` stores.
+/// Mounts one ws endpoint: builds the protocol `P` from its controllers and `options`, wires the
+/// framework's generic upgrade handler at `path`, and returns a path-scoped router plus its
+/// management handle. Monomorphized per `P`; `register_ws` stores a closure that calls it.
 pub(crate) fn mount_ws<P: WebsocketProtocol>(
     path: &str,
     controllers: Vec<WsControllerDescriptor>,
     runtime: &AppRuntime,
+    options: P::Options,
 ) -> (axum::Router, WebsocketHandler) {
     use axum::extract::ws::WebSocketUpgrade;
 
     let (tx, rx) = tokio::sync::watch::channel(false);
-    let proto = Arc::new(P::build(&controllers, runtime));
+    let proto = Arc::new(P::build(&controllers, runtime, options));
     let shutdown = WsShutdown(rx);
     let runtime = runtime.clone();
 

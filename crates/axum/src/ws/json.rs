@@ -83,8 +83,9 @@ struct ClientOutbound {
 impl WebsocketProtocol for JsonWs {
     type Payload = WsValue;
     type Outcome = WsReply;
+    type Options = ();
 
-    fn build(controllers: &[WsControllerDescriptor], runtime: &AppRuntime) -> Self {
+    fn build(controllers: &[WsControllerDescriptor], runtime: &AppRuntime, _options: ()) -> Self {
         let mut routes: HashMap<&'static str, WsHandlerFn<Self>> = HashMap::new();
 
         for descriptor in controllers {

@@ -34,7 +34,7 @@ use tokio::sync::mpsc;
 use super::{WebsocketProtocol, WsCodec, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsRespond, WsShutdown};
 use crate::scope::Request as RequestScope;
 
-pub use body::{JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic};
+pub use body::{JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic, TopicParam};
 pub use broker::{Broker, ConnectionId};
 pub use error::StompError;
 pub use headers::{StompHeaders, StompSession};
@@ -77,8 +77,13 @@ pub struct Stomp {
 impl WebsocketProtocol for Stomp {
     type Payload = StompBody;
     type Outcome = StompOutcome;
+    type Options = StompConfig;
 
-    fn build(controllers: &[WsControllerDescriptor], runtime: &AppRuntime) -> Self {
+    fn build(
+        controllers: &[WsControllerDescriptor],
+        runtime: &AppRuntime,
+        config: StompConfig,
+    ) -> Self {
         let mut app_routes: HashMap<&'static str, WsHandlerFn<Stomp>> = HashMap::new();
 
         for descriptor in controllers {
@@ -97,7 +102,7 @@ impl WebsocketProtocol for Stomp {
             app_routes,
             broker: Arc::new(Broker::new()),
             runtime: runtime.clone(),
-            config: StompConfig::default(),
+            config,
         }
     }
 
@@ -185,14 +190,6 @@ impl WebsocketProtocol for Stomp {
 }
 
 impl Stomp {
-    /// Overrides the endpoint's [`StompConfig`] (heart-beat / versions). Used by the plugin's
-    /// `register_stomp` builder before the protocol is mounted.
-    pub fn with_config(mut self, config: StompConfig) -> Self {
-        self.config = config;
-
-        self
-    }
-
     /// The shared broker, so app code outside a handler can publish too.
     pub fn broker(&self) -> &Arc<Broker> {
         &self.broker

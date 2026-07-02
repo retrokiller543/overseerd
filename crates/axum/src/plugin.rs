@@ -34,17 +34,24 @@ pub struct AxumPlugin {
     ws_registrations: Vec<WsRegistration>,
 }
 
+/// A mount closure: builds one ws endpoint's router + handle from its controllers and runtime. A
+/// boxed `FnOnce` (not a `fn` pointer) so it can capture the path and the protocol's `Options`,
+/// whose type varies by protocol.
+#[cfg(feature = "ws")]
+type WsMount = Box<
+    dyn FnOnce(
+        Vec<crate::ws::WsControllerDescriptor>,
+        &AppRuntime,
+    ) -> (axum::Router, crate::ws::WebsocketHandler),
+>;
+
 /// One opt-in ws endpoint: a protocol type (by [`TypeId`](std::any::TypeId)) bound to a path, with a
-/// monomorphized mount fn that builds the protocol and its path-scoped router.
+/// [`WsMount`] closure that already captures the path and the protocol's `Options`.
 #[cfg(feature = "ws")]
 struct WsRegistration {
     path: String,
     protocol: std::any::TypeId,
-    mount: fn(
-        &str,
-        Vec<crate::ws::WsControllerDescriptor>,
-        &AppRuntime,
-    ) -> (axum::Router, crate::ws::WebsocketHandler),
+    mount: WsMount,
 }
 
 impl Plugin for AxumPlugin {
@@ -84,7 +91,7 @@ impl ProtocolPlugin for AxumPlugin {
         let ws_endpoints = {
             let mut endpoints = Vec::with_capacity(self.ws_registrations.len());
 
-            for registration in &self.ws_registrations {
+            for registration in self.ws_registrations {
                 let controllers: Vec<crate::ws::WsControllerDescriptor> = self
                     .ws_controllers
                     .iter()
@@ -92,8 +99,8 @@ impl ProtocolPlugin for AxumPlugin {
                     .filter(|descriptor| (descriptor.protocol)() == registration.protocol)
                     .collect();
 
-                let (ws_router, handler) =
-                    (registration.mount)(&registration.path, controllers, runtime);
+                // The mount closure already holds the path and the protocol's options.
+                let (ws_router, handler) = (registration.mount)(controllers, runtime);
 
                 router = router.merge(ws_router);
                 endpoints.push(handler);
@@ -161,13 +168,23 @@ pub trait AxumAppBuilder {
     /// Manually registers a raw controller header (prefer [`controller`](Self::controller)).
     fn controller_descriptor(self, descriptor: &'static ControllerDescriptor) -> Self;
 
-    /// Opts the app into a WebSocket protocol `P`, mounting its upgrade handler at `path`. Only
+    /// Opts the app into a WebSocket protocol `P`, mounting its upgrade handler at `path` with the
+    /// protocol's default [`Options`](crate::ws::WebsocketProtocol::Options). Only
     /// `#[controller(ws = P)]` controllers speaking `P` are then served, under `path` (the path
     /// can't be inferred, so it is given here). Call it once per protocol to run, e.g., a STOMP
     /// endpoint and a `JsonWs` endpoint on different paths in one server. Rejects two protocols on
     /// the same path at build.
     #[cfg(feature = "ws")]
     fn register_ws<P>(self, path: impl Into<String>) -> Self
+    where
+        P: crate::ws::WebsocketProtocol,
+        P::Options: Default;
+
+    /// Like [`register_ws`](Self::register_ws), but with explicit per-endpoint
+    /// [`Options`](crate::ws::WebsocketProtocol::Options) — e.g. a `StompConfig` selecting the STOMP
+    /// heart-beat interval and accepted versions.
+    #[cfg(feature = "ws")]
+    fn register_ws_with<P>(self, path: impl Into<String>, options: P::Options) -> Self
     where
         P: crate::ws::WebsocketProtocol;
 }
@@ -191,7 +208,16 @@ impl AxumAppBuilder for AppBuilder<AxumPlugin> {
     }
 
     #[cfg(feature = "ws")]
-    fn register_ws<P>(mut self, path: impl Into<String>) -> Self
+    fn register_ws<P>(self, path: impl Into<String>) -> Self
+    where
+        P: crate::ws::WebsocketProtocol,
+        P::Options: Default,
+    {
+        self.register_ws_with::<P>(path, P::Options::default())
+    }
+
+    #[cfg(feature = "ws")]
+    fn register_ws_with<P>(mut self, path: impl Into<String>, options: P::Options) -> Self
     where
         P: crate::ws::WebsocketProtocol,
     {
@@ -208,10 +234,17 @@ impl AxumAppBuilder for AppBuilder<AxumPlugin> {
             "register_ws: a websocket protocol is already mounted at `{path}`"
         );
 
+        // Capture the path and options in the mount closure so the non-generic registration can
+        // carry protocol-specific `Options` without erasing their type.
+        let mount_path = path.clone();
+        let mount = Box::new(move |controllers, runtime: &AppRuntime| {
+            crate::ws::mount_ws::<P>(&mount_path, controllers, runtime, options)
+        });
+
         self.protocol_mut().ws_registrations.push(WsRegistration {
             path,
             protocol: std::any::TypeId::of::<P>(),
-            mount: crate::ws::mount_ws::<P>,
+            mount,
         });
 
         self
