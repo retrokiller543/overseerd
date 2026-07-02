@@ -269,6 +269,12 @@ pub mod axum {
         pub use super::scope::Connection;
         #[cfg(feature = "ws")]
         pub use super::{JsonWs, WebsocketController, WebsocketProtocol, message};
+
+        /// STOMP pub/sub imports (`#[controller(ws = Stomp)]` + `#[topics]`, the typed
+        /// [`Publisher`](super::Publisher) and [`Topic`](super::Topic)), available with the
+        /// `stomp` feature.
+        #[cfg(feature = "stomp")]
+        pub use super::{Publisher, Stomp, StompSession, Topic, topics};
     }
 }
 

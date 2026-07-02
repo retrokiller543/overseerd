@@ -40,6 +40,11 @@ pub struct AxumHandlers {
     /// Accumulated per `#[message]` ws handler method (during [`ParseMethod`]). A block is either
     /// HTTP (`routes`) or WebSocket (`ws_routes`); mixing the two is a compile error.
     ws_routes: Vec<WsRouteSpec>,
+
+    /// `ws = P` — the WebSocket protocol this handlers block speaks, mirroring
+    /// `#[controller(ws = P)]`. It selects how `#[message]` *client* methods are generated: the
+    /// default (`None`) / `JsonWs` emits request/reply methods; `Stomp` emits typed `SEND` methods.
+    ws_protocol: Option<syn::Path>,
 }
 
 /// The impl context `AxumHandlers` needs to emit (captured in the item pass).
@@ -75,12 +80,19 @@ impl ParseKeyed for AxumHandlers {
                 Ok(true)
             }
 
+            "ws" => {
+                eat_eq(input)?;
+                self.ws_protocol = Some(input.parse()?);
+
+                Ok(true)
+            }
+
             _ => Ok(false),
         }
     }
 
     fn expected_keys() -> &'static [&'static str] {
-        &["routes_slice"]
+        &["routes_slice", "ws"]
     }
 }
 
@@ -123,13 +135,21 @@ impl ParseMethod for AxumHandlers {
                 .as_ref()
                 .expect("AxumHandlers::parse_item runs before parse_method");
             let spec = build_ws_route(&cx.self_ty, method, &destination, &cx.paths)?;
-            let hint = build_ws_client_method(
-                &cx.self_ident,
-                &method.sig.ident,
-                method,
-                &destination,
-                &cx.paths,
-            )?;
+
+            // The client method's shape depends on the protocol: STOMP emits a fire-and-forget
+            // typed SEND; JsonWs (the default) emits a request/reply call.
+            let hint = if is_stomp_protocol(self.ws_protocol.as_ref()) {
+                build_stomp_send_method(&method.sig.ident, method, &destination, &cx.paths)?
+            } else {
+                build_ws_client_method(
+                    &cx.self_ident,
+                    &method.sig.ident,
+                    method,
+                    &destination,
+                    &cx.paths,
+                )?
+            };
+
             self.ws_routes.push(spec);
 
             return Ok(hint);
@@ -643,16 +663,9 @@ fn build_ws_route(
     Ok(WsRouteSpec { builder })
 }
 
-/// Builds the generated typed websocket client method for one `#[message("dest")]` handler.
-/// The server route and client method share the same parameter classification: `Inject<T>` is
-/// server-only, and the single non-inject parameter is the JSON payload.
-fn build_ws_client_method(
-    _controller: &Ident,
-    method_ident: &Ident,
-    method: &ImplItemFn,
-    destination: &LitStr,
-    paths: &Paths,
-) -> syn::Result<Option<ClientMethod>> {
+/// The single non-`Inject<T>` parameter of a `#[message]` method — the payload the client method
+/// takes and the frame carries. `None` for a no-payload handler; an error if more than one.
+fn ws_payload_type(method: &ImplItemFn) -> syn::Result<Option<Type>> {
     let mut payload: Option<Type> = None;
 
     for arg in &method.sig.inputs {
@@ -670,10 +683,78 @@ fn build_ws_client_method(
             return Err(syn::Error::new_spanned(
                 ty,
                 "a ws message method takes at most one payload parameter (the frame carries one \
-                 JSON payload); other parameters must be `Inject<T>`",
+                 payload); other parameters must be `Inject<T>`",
             ));
         }
     }
+
+    Ok(payload)
+}
+
+/// Whether a handlers block's `ws = P` names the STOMP protocol, by the path's last segment.
+fn is_stomp_protocol(protocol: Option<&syn::Path>) -> bool {
+    protocol
+        .and_then(|path| path.segments.last())
+        .is_some_and(|segment| segment.ident == "Stomp")
+}
+
+/// Builds the generated typed STOMP `SEND` client method for a `#[message("dest")]` handler: a
+/// fire-and-forget `fn(&self, payload) -> Result<(), ClientError<StompStatus>>` bound on
+/// `C: StompSend<Payload>`, with the destination baked into the body. Mirrors the JsonWs precedent
+/// ([`build_ws_client_method`]) but targets the STOMP transport capability.
+fn build_stomp_send_method(
+    method_ident: &Ident,
+    method: &ImplItemFn,
+    destination: &LitStr,
+    paths: &Paths,
+) -> syn::Result<Option<ClientMethod>> {
+    let payload = ws_payload_type(method)?;
+    let client_error = paths.client("ClientError");
+    let stomp_send = paths.plugin("client::StompSend");
+    let stomp_status = paths.plugin("client::StompStatus");
+
+    let (request, payload_value) = match payload {
+        Some(ty) => (Some(ty), quote!(request)),
+        None => (None, quote!(())),
+    };
+    let request_ty = request.clone().unwrap_or_else(|| parse_quote!(()));
+
+    Ok(Some(ClientMethod {
+        ident: method_ident.clone(),
+        path: String::new(),
+        capability: overseerd_macros_core::client::Capability::Unary,
+        request,
+        encode_as: None,
+        req_item: None,
+        resp_item: None,
+        response: parse_quote!(()),
+        error_ty: None,
+        extra_args: Vec::new(),
+        request_envelope: None,
+        request_builder: None,
+        response_envelope: None,
+        response_mapper: None,
+        override_bounds: Some(quote!( C: #stomp_send<#request_ty> )),
+        override_ret: Some(quote!(
+            ::core::result::Result<(), #client_error<#stomp_status>>
+        )),
+        override_body: Some(quote!(
+            #stomp_send::<#request_ty>::stomp_send(&self.0, #destination, #payload_value).await
+        )),
+    }))
+}
+
+/// Builds the generated typed websocket client method for one `#[message("dest")]` handler.
+/// The server route and client method share the same parameter classification: `Inject<T>` is
+/// server-only, and the single non-inject parameter is the JSON payload.
+fn build_ws_client_method(
+    _controller: &Ident,
+    method_ident: &Ident,
+    method: &ImplItemFn,
+    destination: &LitStr,
+    paths: &Paths,
+) -> syn::Result<Option<ClientMethod>> {
+    let payload = ws_payload_type(method)?;
 
     let response = client::response_type(&method.sig.output);
     let client_error = paths.client("ClientError");

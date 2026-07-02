@@ -53,6 +53,9 @@ pub use extract::{Inject, InjectRejection, ScopeHandle};
 pub use overseerd_axum_macros::{
     controller, delete, get, handlers, head, message, options, patch, post, put, route,
 };
+/// The STOMP topic-set macro (`#[topics]`).
+#[cfg(feature = "stomp")]
+pub use overseerd_axum_macros::topics;
 pub use plugin::{AxumAppBuilder, AxumPlugin};
 pub use protocol::Axum;
 pub use stream::{Ndjson, RawStream, StreamBody, StreamEncode, chunk_u8};
