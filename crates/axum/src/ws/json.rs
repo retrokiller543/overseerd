@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use super::{
-    WebsocketProtocol, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsShutdown, WsValue,
+    WebsocketProtocol, WsCodec, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsRespond,
+    WsShutdown, WsValue,
 };
 #[cfg(feature = "client")]
 use crate::client::{WebsocketClientProtocol, WebsocketDecodes, WebsocketEncodes, WsStatus};
@@ -32,9 +33,13 @@ use crate::client::{WebsocketClientProtocol, WebsocketDecodes, WebsocketEncodes,
 /// request/response over one socket. Holds a clone of the [`AppRuntime`] so it can open a fresh
 /// per-message [`Request`](crate::scope::Request) scope for handler DI.
 pub struct JsonWs {
-    routes: HashMap<&'static str, WsHandlerFn>,
+    routes: HashMap<&'static str, WsHandlerFn<Self>>,
     runtime: AppRuntime,
 }
+
+/// [`JsonWs`]'s handler outcome: the `ok` JSON value of a single correlated reply. A thin newtype
+/// so the generalized [`WsRespond`] can target it while `serve()` keeps rendering one reply frame.
+pub struct WsReply(pub WsValue);
 
 /// An inbound call frame.
 #[derive(Deserialize, Serialize)]
@@ -76,11 +81,14 @@ struct ClientOutbound {
 }
 
 impl WebsocketProtocol for JsonWs {
+    type Payload = WsValue;
+    type Outcome = WsReply;
+
     fn build(controllers: &[WsControllerDescriptor], runtime: &AppRuntime) -> Self {
-        let mut routes: HashMap<&'static str, WsHandlerFn> = HashMap::new();
+        let mut routes: HashMap<&'static str, WsHandlerFn<Self>> = HashMap::new();
 
         for descriptor in controllers {
-            for route in (descriptor.routes)(runtime) {
+            for route in descriptor.routes_for::<Self>(runtime) {
                 if routes.insert(route.destination, route.handler).is_some() {
                     warn!(
                         target: "overseerd::axum",
@@ -176,6 +184,26 @@ impl JsonWs {
     }
 }
 
+impl<T> WsCodec<T> for JsonWs
+where
+    T: serde::de::DeserializeOwned,
+{
+    fn decode(payload: WsValue) -> Result<T, WsDispatchError> {
+        serde_json::from_value(payload).map_err(|e| WsDispatchError::Decode(e.to_string()))
+    }
+}
+
+impl<R> WsRespond<R> for JsonWs
+where
+    R: serde::Serialize,
+{
+    fn respond(response: R) -> Result<WsReply, WsDispatchError> {
+        serde_json::to_value(&response)
+            .map(WsReply)
+            .map_err(|e| WsDispatchError::Encode(e.to_string()))
+    }
+}
+
 #[cfg(feature = "client")]
 impl WebsocketClientProtocol for JsonWs {
     type Key = u64;
@@ -254,10 +282,10 @@ where
 fn render_reply(
     dest: &str,
     id: Option<u64>,
-    result: Result<WsValue, WsDispatchError>,
+    result: Result<WsReply, WsDispatchError>,
 ) -> Option<String> {
     let outbound = match result {
-        Ok(value) => Outbound {
+        Ok(WsReply(value)) => Outbound {
             dest,
             id,
             ok: Some(value),
@@ -281,7 +309,7 @@ mod tests {
 
     #[test]
     fn ok_result_renders_an_ok_frame_echoing_the_id() {
-        let reply = render_reply("echo", Some(7), Ok(serde_json::json!({ "echo": "hi" })))
+        let reply = render_reply("echo", Some(7), Ok(WsReply(serde_json::json!({ "echo": "hi" }))))
             .expect("a reply frame");
         let value: WsValue = serde_json::from_str(&reply).expect("valid json reply");
 

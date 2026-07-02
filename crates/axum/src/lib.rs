@@ -27,8 +27,8 @@ pub use error::{Error, Result};
 
 #[cfg(feature = "ws")]
 pub use ws::{
-    JsonWs, WS_CONTROLLERS, WebsocketController, WebsocketHandler, WebsocketProtocol,
-    WsControllerDescriptor, WsDispatchError, WsRoute, WsShutdown,
+    JsonWs, WS_CONTROLLERS, WebsocketController, WebsocketHandler, WebsocketProtocol, WsCodec,
+    WsControllerDescriptor, WsDispatchError, WsReply, WsRespond, WsRoute, WsShutdown,
 };
 
 pub use extract::{Inject, InjectRejection, ScopeHandle};

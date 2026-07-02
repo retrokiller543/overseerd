@@ -51,6 +51,10 @@ hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
 http-body-util = "0.1"
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+# STOMP 1.2 frame grammar (parse + serialize). Deps: either + nom + paste only — no
+# openssl/rsa/tokio, keeping the project's banned-crate rule intact. Framing only; the broker,
+# serve loop, and client transport are ours.
+stomp-parser = "0.8"
 bytes = "1"
 notify = "6"
 thiserror = "2"
@@ -100,6 +104,10 @@ axum = ["dep:overseerd-axum", "overseerd-axum/facade"]
 # WebSocket controllers for the axum protocol (`#[controller(ws = ..)]`, `register_ws`). Opt-in,
 # since WebSockets pull in extra machinery a plain HTTP app does not need. Implies `axum`.
 ws = ["axum", "overseerd-axum/ws"]
+
+# STOMP 1.2 pub/sub over WebSocket: the broker, `#[controller(ws = Stomp)]` handlers, `#[topics]`,
+# and the typed generated client. Implies `ws`.
+stomp = ["ws", "overseerd-axum/stomp"]
 
 # Compile the generated client SDK. Protocol-neutral: it turns on the client *surface* of
 # whichever protocol(s) are enabled — `client` + `daemon` gives the (self-contained) RPC

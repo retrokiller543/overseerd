@@ -13,7 +13,7 @@
 
 mod json;
 
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::future::Future;
 use std::sync::Arc;
 
@@ -29,21 +29,28 @@ use tokio::time::Duration;
 /// can't block the upgrade task forever.
 const CLOSE_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub use json::JsonWs;
+pub use json::{JsonWs, WsReply};
 
-/// The JSON value a message payload decodes from / a response encodes to. Re-exported so generated
-/// `#[message]` handlers name it without a separate `serde_json` dependency.
+/// The JSON value [`JsonWs`] messages decode from / encode to. Kept as a public alias so generated
+/// `JsonWs` `#[message]` code names it without a separate `serde_json` dependency; it is exactly
+/// [`JsonWs`]'s [`WebsocketProtocol::Payload`].
 pub type WsValue = serde_json::Value;
 
-/// The boxed future a [`WsHandlerFn`] returns — a decoded, dispatched, re-encoded message response.
-pub type WsFuture = BoxFuture<'static, Result<WsValue, WsDispatchError>>;
+/// The boxed future a [`WsHandlerFn`] returns — a decoded, dispatched message [`Outcome`], generic
+/// over the protocol `P` that owns the payload/outcome vocabulary.
+///
+/// [`Outcome`]: WebsocketProtocol::Outcome
+pub type WsFuture<P> = BoxFuture<'static, Result<<P as WebsocketProtocol>::Outcome, WsDispatchError>>;
 
-/// A type-erased message handler. It is handed the decoded JSON payload and the message's
+/// A type-erased message handler for protocol `P`. It is handed the decoded
+/// [`Payload`](WebsocketProtocol::Payload) and the message's
 /// [`Request`-scope](crate::scope::Request) container, so it can decode the payload into the
 /// handler's parameter *and* resolve the handler's `Inject<T>` parameters from the scope chain
 /// (request → connection → singleton) — the same DI a REST route gets — before running the
-/// controller method (the singleton captured by `Arc`) and encoding the response back to JSON.
-pub type WsHandlerFn = Arc<dyn Fn(WsValue, Arc<ScopeContainer>) -> WsFuture + Send + Sync>;
+/// controller method (the singleton captured by `Arc`) and turning the response into `P`'s
+/// [`Outcome`](WebsocketProtocol::Outcome).
+pub type WsHandlerFn<P> =
+    Arc<dyn Fn(<P as WebsocketProtocol>::Payload, Arc<ScopeContainer>) -> WsFuture<P> + Send + Sync>;
 
 /// What can go wrong dispatching one message, independent of the wire protocol framing it.
 #[derive(Debug, thiserror::Error)]
@@ -65,19 +72,20 @@ pub enum WsDispatchError {
     Encode(String),
 }
 
-/// One message route: a destination string mapped to its handler. A `#[message("dest")]` method
-/// produces one of these (with the controller singleton already captured).
-pub struct WsRoute {
+/// One message route for protocol `P`: a destination string mapped to its handler. A
+/// `#[message("dest")]` method produces one of these (with the controller singleton already
+/// captured).
+pub struct WsRoute<P: WebsocketProtocol> {
     /// The destination this handler answers (e.g. `"chat.send"`).
     pub destination: &'static str,
 
-    /// The handler, ready to call with a decoded JSON payload.
-    pub handler: WsHandlerFn,
+    /// The handler, ready to call with a decoded [`Payload`](WebsocketProtocol::Payload).
+    pub handler: WsHandlerFn<P>,
 }
 
-impl WsRoute {
+impl<P: WebsocketProtocol> WsRoute<P> {
     /// Builds a route from a destination and its handler. Called by generated `#[message]` code.
-    pub fn new(destination: &'static str, handler: WsHandlerFn) -> Self {
+    pub fn new(destination: &'static str, handler: WsHandlerFn<P>) -> Self {
         Self {
             destination,
             handler,
@@ -85,21 +93,20 @@ impl WsRoute {
     }
 }
 
-/// Decodes a message payload into a handler parameter. Called by generated `#[message]` code so the
-/// codec (and its error mapping) lives here, not in emitted tokens.
-pub fn decode_payload<T>(payload: WsValue) -> Result<T, WsDispatchError>
-where
-    T: serde::de::DeserializeOwned,
-{
-    serde_json::from_value(payload).map_err(|e| WsDispatchError::Decode(e.to_string()))
+/// Decodes a protocol payload into a handler parameter type `T`. Implemented per protocol so the
+/// codec (and its error mapping) lives here, not in emitted `#[message]` tokens; the macro calls
+/// `<P as WsCodec<T>>::decode(payload)` uniformly across protocols.
+pub trait WsCodec<T>: WebsocketProtocol {
+    /// Decodes this protocol's [`Payload`](WebsocketProtocol::Payload) into `T`.
+    fn decode(payload: Self::Payload) -> Result<T, WsDispatchError>;
 }
 
-/// Encodes a handler response back to a JSON value. The dual of [`decode_payload`].
-pub fn encode_response<R>(response: &R) -> Result<WsValue, WsDispatchError>
-where
-    R: serde::Serialize,
-{
-    serde_json::to_value(response).map_err(|e| WsDispatchError::Encode(e.to_string()))
+/// Turns a handler's response value `R` into this protocol's [`Outcome`](WebsocketProtocol::Outcome).
+/// The dual of [`WsCodec`]; the macro calls `<P as WsRespond<R>>::respond(response)`.
+pub trait WsRespond<R>: WebsocketProtocol {
+    /// Renders `response` into this protocol's outcome (a reply frame for `JsonWs`, a publish set
+    /// for STOMP, …).
+    fn respond(response: R) -> Result<Self::Outcome, WsDispatchError>;
 }
 
 /// A ws controller's link-time registration: its identity, the protocol it speaks, and a builder
@@ -124,9 +131,31 @@ pub struct WsControllerDescriptor {
     /// The protocol's type name, for diagnostics. A `fn` because `type_name` is not yet const.
     pub protocol_name: fn() -> &'static str,
 
-    /// Resolves the controller singleton from the runtime and builds its message routes (the
-    /// singleton captured in each handler).
-    pub routes: fn(&AppRuntime) -> Vec<WsRoute>,
+    /// Resolves the controller singleton from the runtime and builds its message routes — **type
+    /// erased** to `Box<dyn Any + Send>` (really a `Vec<WsRoute<P>>` for this controller's protocol
+    /// `P`), because the [`WS_CONTROLLERS`] link-time slice cannot store a generic descriptor.
+    /// Recover the typed vector with [`routes_for`](Self::routes_for) — sound because
+    /// `register_ws::<P>` only ever calls it for controllers whose [`protocol`](Self::protocol)
+    /// `TypeId` matches `P`.
+    pub routes: fn(&AppRuntime) -> Box<dyn Any + Send>,
+}
+
+impl WsControllerDescriptor {
+    /// Builds this controller's routes as a concrete `Vec<WsRoute<P>>`, downcasting the erased
+    /// [`routes`](Self::routes) product. Panics only on a framework bug — a caller passing a `P`
+    /// that disagrees with this controller's [`protocol`](Self::protocol) `TypeId`; `register_ws`
+    /// filters by that `TypeId` first, so the downcast always succeeds in practice.
+    pub fn routes_for<P: WebsocketProtocol>(&self, runtime: &AppRuntime) -> Vec<WsRoute<P>> {
+        let erased = (self.routes)(runtime);
+
+        *erased.downcast::<Vec<WsRoute<P>>>().unwrap_or_else(|_| {
+            panic!(
+                "ws controller `{}` routes downcast to the wrong protocol `{}`",
+                self.name,
+                std::any::type_name::<P>()
+            )
+        })
+    }
 }
 
 /// The link-time slice every `#[controller(ws = ..)]` registers into, mirroring [`CONTROLLERS`].
@@ -142,8 +171,9 @@ pub trait WebsocketController {
     /// The protocol that frames and routes this controller's messages.
     type Protocol: WebsocketProtocol;
 
-    /// Builds this controller's message routes, resolving its singleton from the runtime.
-    fn ws_routes(runtime: &AppRuntime) -> Vec<WsRoute>;
+    /// Builds this controller's message routes (typed to its [`Protocol`](Self::Protocol)),
+    /// resolving its singleton from the runtime.
+    fn ws_routes(runtime: &AppRuntime) -> Vec<WsRoute<Self::Protocol>>;
 }
 
 /// A pluggable WebSocket sub-protocol: it owns framing (how a raw [`Message`](axum::extract::ws::Message)
@@ -155,9 +185,19 @@ pub trait WebsocketController {
 /// generic `JsonWs` is the first implementation; a STOMP impl would add subscription/broadcast on
 /// top without changing this seam.
 pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
+    /// The decoded body a handler receives / an outbound frame carries. `JsonWs` uses
+    /// [`WsValue`](serde_json::Value); a STOMP protocol uses a bytes + content-type body.
+    type Payload: Send + 'static;
+
+    /// What a handler returns, before framing: a correlated reply for `JsonWs`, a publish set for
+    /// STOMP. Produced from the handler's response value via [`WsRespond`].
+    type Outcome: Send + 'static;
+
     /// Builds the protocol's routing from the controllers registered to it. Called once per
     /// `register_ws` entrypoint at app build. The protocol keeps whatever it needs from `runtime`
     /// (e.g. a clone, to open per-message [`Request`](crate::scope::Request) scopes while serving).
+    /// Recover each controller's typed routes with
+    /// [`WsControllerDescriptor::routes_for::<Self>`](WsControllerDescriptor::routes_for).
     fn build(controllers: &[WsControllerDescriptor], runtime: &AppRuntime) -> Self;
 
     /// Drives one upgraded connection until the peer closes it or graceful shutdown fires.

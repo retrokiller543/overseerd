@@ -266,6 +266,11 @@ impl<T: ComponentExt> AxumRouter<T> {
         let ws_controllers_slice = paths.plugin("WS_CONTROLLERS");
         let ws_route = paths.plugin("WsRoute");
 
+        // Every message route is typed to this controller's protocol `P`. The per-controller slice
+        // and the `ws_routes` builder are monomorphic in `P`; only the link-time `WS_CONTROLLERS`
+        // slice (which can't hold a generic descriptor) erases the routes vector to `Box<dyn Any>`.
+        let ws_route_p = quote!(#ws_route<#protocol>);
+
         let controller_static = format_ident!(
             "__OVERSEERD_WS_CONTROLLER_{}",
             ident.to_string().to_uppercase()
@@ -280,12 +285,12 @@ impl<T: ComponentExt> AxumRouter<T> {
             #[linkme(crate = #linkme_crate)]
             #[allow(non_upper_case_globals)]
             pub static #ws_routes_slice:
-                [fn(::std::sync::Arc<#ident>) -> ::std::vec::Vec<#ws_route>];
+                [fn(::std::sync::Arc<#ident>) -> ::std::vec::Vec<#ws_route_p>];
 
             impl #ws_controller_trait for #ident {
                 type Protocol = #protocol;
 
-                fn ws_routes(runtime: & #app_runtime) -> ::std::vec::Vec<#ws_route> {
+                fn ws_routes(runtime: & #app_runtime) -> ::std::vec::Vec<#ws_route_p> {
                     // The controller is a singleton built into the root scope at app build, so it
                     // resolves once here and is captured (cheaply, by `Arc`) in each message
                     // handler — no per-message controller lookup.
@@ -305,6 +310,16 @@ impl<T: ComponentExt> AxumRouter<T> {
             }
 
             const _: () = {
+                // Erases the typed `ws_routes` product to `Box<dyn Any>` for the non-generic
+                // `WS_CONTROLLERS` slice; `WsControllerDescriptor::routes_for::<P>` recovers it.
+                fn __overseerd_ws_routes_erased(
+                    runtime: & #app_runtime,
+                ) -> ::std::boxed::Box<dyn ::std::any::Any + ::std::marker::Send> {
+                    ::std::boxed::Box::new(
+                        <#ident as #ws_controller_trait>::ws_routes(runtime),
+                    )
+                }
+
                 const __OVERSEERD_WS_CONTROLLER_DESCRIPTOR: #ws_descriptor =
                     #ws_descriptor {
                         id: #id,
@@ -312,7 +327,7 @@ impl<T: ComponentExt> AxumRouter<T> {
                         ty: #type_descriptor::of::<#ident>(#type_name),
                         protocol: || ::std::any::TypeId::of::<#protocol>(),
                         protocol_name: || ::std::any::type_name::<#protocol>(),
-                        routes: <#ident as #ws_controller_trait>::ws_routes,
+                        routes: __overseerd_ws_routes_erased,
                     };
 
                 impl #descriptor_trait<#ws_descriptor> for #ident {
