@@ -17,11 +17,17 @@ use std::any::TypeId;
 use std::future::Future;
 use std::sync::Arc;
 
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, close_code};
 use futures::future::BoxFuture;
 use overseerd_app::AppRuntime;
 use overseerd_core::TypeDescriptor;
 use overseerd_di::ScopeContainer;
+use tokio::time::Duration;
+
+/// How long the framework waits for a WS close handshake to flush before abandoning the socket.
+/// Bounds [`mount_ws`]'s error-path close send so a peer that never drains its receive buffer
+/// can't block the upgrade task forever.
+const CLOSE_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub use json::JsonWs;
 
@@ -250,7 +256,12 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
                             "ws connection scope build failed; closing socket"
                         );
 
-                        let _ = socket.send(Message::Text("Connection scope build failed, closing socket".into())).await;
+                        let close = Message::Close(Some(CloseFrame {
+                            code: close_code::ERROR,
+                            reason: Utf8Bytes::from_static("connection scope build failed"),
+                        }));
+
+                        let _ = tokio::time::timeout(CLOSE_SEND_TIMEOUT, socket.send(close)).await;
 
                         return;
                     }
