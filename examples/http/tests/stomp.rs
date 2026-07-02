@@ -71,20 +71,19 @@ async fn stomp_send_is_broadcast_to_typed_subscribers() {
 
     let url = format!("ws://{addr}/stomp");
 
-    // Subscriber: connect, then subscribe to the room topic via the generated typed method.
-    let subscriber = StompClientTransport::connect(&url)
-        .await
-        .expect("subscriber connects");
-    let mut room = ChatTopicsClient::new(subscriber)
+    // ONE connection, shared across both typed client facades. `StompClientTransport` *is* the
+    // connection and is cheaply `Clone` (a handle onto one actor + socket); cloning it does not
+    // dial again. Send and subscribe here therefore ride the same socket.
+    let connection = StompClientTransport::connect(&url).await.expect("connects");
+
+    let mut room = ChatTopicsClient::new(connection.clone())
         .subscribe_room()
         .await
         .expect("subscribe_room");
 
-    // Sender: connect and send to /app/chat via the generated typed method (no destination string).
-    let sender = StompClientTransport::connect(&url)
-        .await
-        .expect("sender connects");
-    ChatClient::new(sender)
+    // Send to /app/chat via the generated typed method (no destination string), over the same
+    // connection; the handler re-broadcasts to /topic/room, which this same socket is subscribed to.
+    ChatClient::new(connection.clone())
         .chat(SendChat {
             text: "hello stomp".into(),
         })
