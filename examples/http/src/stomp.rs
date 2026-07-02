@@ -25,13 +25,23 @@ pub struct ChatMessage {
     pub text: String,
 }
 
-/// The chat broadcast topics. One `/topic/chat` stream carries every room's messages (each message
-/// names its room); a subscriber filters client-side. Generates `impl Topic` for the server publish
-/// and `ChatTopicClient::subscribe_chat()` for the typed client subscribe.
+/// The chat broadcast topics — one static, one templated, in the same set.
+///
+/// `Chat` is a global firehose: `/topic/chat` carries every room's messages (a subscriber filters
+/// client-side). `Room` is **templated**: its `room` field fills the `{room}` hole, so each room is
+/// its own destination (`/topic/room/general`) and a subscriber gets only that room. Generates
+/// `ChatTopicClient::subscribe_chat()` (no args) and `subscribe_room(room: String)` (typed arg).
 #[topics]
 pub enum ChatTopic {
     #[topic("/topic/chat")]
     Chat(ChatMessage),
+
+    #[topic("/topic/room/{room}")]
+    Room {
+        room: String,
+        #[content]
+        message: ChatMessage,
+    },
 }
 
 /// One chat room's stored history. The messages live behind this room's own lock, so appending to
@@ -129,7 +139,8 @@ pub struct ChatHandler {
 #[handlers(ws = Stomp)]
 impl ChatHandler {
     /// Handles an inbound chat message: store it in its room's history (a brief per-room lock), then
-    /// broadcast it to every `/topic/chat` subscriber. No lock is held across the `await`.
+    /// broadcast it to both the global `/topic/chat` feed and the room's own `/topic/room/{room}`
+    /// topic. No lock is held across an `await`.
     #[message("/app/chat")]
     async fn on_chat(
         &self,
@@ -138,7 +149,13 @@ impl ChatHandler {
     ) -> Result<(), CodecError> {
         self.state.record(&message);
 
-        publisher.publish(ChatTopic::Chat(message)).await
+        publisher.publish(ChatTopic::Chat(message.clone())).await?;
+        publisher
+            .publish(ChatTopic::Room {
+                room: message.room.clone(),
+                message,
+            })
+            .await
     }
 }
 
@@ -236,6 +253,68 @@ mod tests {
         assert_eq!(received.room, "general");
         assert_eq!(received.sender, "alice");
         assert_eq!(received.text, "hello, room");
+
+        shutdown.shutdown();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn a_templated_room_subscription_gets_only_its_room() {
+        let app = app! {
+            name: "chat-room-test",
+            protocol: overseerd::axum::AxumPlugin,
+        }
+        .register_ws::<Stomp>("/ws/stomp")
+        .build()
+        .await
+        .expect("app builds");
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let shutdown = app.shutdown_handle();
+        let server = tokio::spawn(async move { app.serve(listener).await });
+
+        let url = format!("ws://{addr}/ws/stomp");
+        let connection = StompClientTransport::connect(&url).await.expect("connects");
+
+        // The templated subscribe takes the room as a typed argument; it resolves to
+        // `/topic/room/general`, so only messages for that room arrive.
+        let mut general = ChatTopicClient::new(connection.clone())
+            .subscribe_room("general".into())
+            .await
+            .expect("subscribe_room");
+
+        let sender = ChatHandlerClient::new(connection.clone());
+
+        // A message to another room must NOT reach the `general` subscription.
+        sender
+            .on_chat(ChatMessage {
+                room: "random".into(),
+                sender: "bob".into(),
+                text: "elsewhere".into(),
+            })
+            .await
+            .expect("send to random");
+
+        sender
+            .on_chat(ChatMessage {
+                room: "general".into(),
+                sender: "alice".into(),
+                text: "for general".into(),
+            })
+            .await
+            .expect("send to general");
+
+        let received = tokio::time::timeout(Duration::from_secs(5), general.next())
+            .await
+            .expect("a broadcast before timeout")
+            .expect("the stream is live")
+            .expect("a decoded ChatMessage");
+
+        // The first message the `general` stream yields is the general one — the random-room message
+        // went to `/topic/room/random`, a different destination this subscription never saw.
+        assert_eq!(received.room, "general");
+        assert_eq!(received.text, "for general");
 
         shutdown.shutdown();
         let _ = server.await;
