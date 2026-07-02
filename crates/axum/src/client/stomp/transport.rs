@@ -95,7 +95,7 @@ where
 {
     async fn stomp_send(
         &self,
-        destination: &'static str,
+        destination: &str,
         payload: Req,
     ) -> Result<(), ClientError<StompStatus>> {
         let body = serde_json::to_vec(&payload).map_err(|e| ClientError::Encode(e.to_string()))?;
@@ -119,7 +119,7 @@ where
 impl StompSubscribe for StompClientTransport {
     async fn stomp_subscribe<M>(
         &self,
-        destination: &'static str,
+        destination: &str,
         decode: fn(StompBody) -> Result<M, CodecError>,
     ) -> Result<Subscription<Self, M>, ClientError<StompStatus>>
     where

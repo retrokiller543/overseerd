@@ -38,6 +38,11 @@ ws = ["axum/ws"]
 # STOMP 1.2 pub/sub over WebSocket: the broker, `#[controller(ws = Stomp)]` message handlers, and
 # the typed generated client. Implies `ws`; pulls in the `stomp-parser` frame grammar.
 stomp = ["ws", "dep:stomp-parser"]
+# Integration flag: pull in `uuid`. A cross-cutting flag (not tied to a protocol) so the facade can
+# fan it out to every crate that has a `uuid` integration. On its own it only adds the dependency;
+# the actual `TopicParam for Uuid` impl is gated on `all(stomp, uuid)`, so `uuid` without `stomp` is
+# a harmless no-op rather than an error.
+uuid = ["dep:uuid"]
 # Set by the `overseerd` facade: root the macros' generated plugin types at
 # `::overseerd::axum::*`. Off (the default) keeps them at this standalone crate
 # (`::overseerd_axum::*`), so depending on `overseerd-axum` directly works.
@@ -71,3 +76,4 @@ hyper-util = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 stomp-parser = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }

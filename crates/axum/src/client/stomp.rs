@@ -39,10 +39,11 @@ pub struct ReceiptId(pub String);
 /// A transport that can `SEND` one typed payload to a destination (fire-and-forget). The generated
 /// `send_<name>()` client methods bind on this.
 pub trait StompSend<Req>: Send + Sync {
-    /// Encodes `payload` and writes a `SEND` frame to `destination`.
+    /// Encodes `payload` and writes a `SEND` frame to `destination`. Takes `&str` (not
+    /// `&'static str`) so a templated topic's runtime-rendered destination works too.
     fn stomp_send(
         &self,
-        destination: &'static str,
+        destination: &str,
         payload: Req,
     ) -> impl std::future::Future<Output = Result<(), ClientError<StompStatus>>> + Send
     where
@@ -52,10 +53,11 @@ pub trait StompSend<Req>: Send + Sync {
 /// A transport that can `SUBSCRIBE` to a destination and yield a decoded stream of `MESSAGE`s. The
 /// generated `subscribe_<topic>()` client methods bind on this; `decode` is the topic set's codec.
 pub trait StompSubscribe: Send + Sync {
-    /// Registers a subscription and returns a [`Subscription`] streaming decoded messages.
+    /// Registers a subscription and returns a [`Subscription`] streaming decoded messages. Takes
+    /// `&str` so a templated topic's runtime-rendered destination works too.
     fn stomp_subscribe<M>(
         &self,
-        destination: &'static str,
+        destination: &str,
         decode: fn(StompBody) -> Result<M, CodecError>,
     ) -> impl std::future::Future<Output = Result<Subscription<Self, M>, ClientError<StompStatus>>> + Send
     where
@@ -132,7 +134,7 @@ impl<C: StompSubscribe, M> Drop for Subscription<C, M> {
 /// The always-closed `()` transport: lets a generated client type-check without a wired transport
 /// (mirrors the `()` impls for the request/reply websocket client).
 impl<Req> StompSend<Req> for () {
-    async fn stomp_send(&self, _: &'static str, _: Req) -> Result<(), ClientError<StompStatus>>
+    async fn stomp_send(&self, _: &str, _: Req) -> Result<(), ClientError<StompStatus>>
     where
         Req: Send,
     {
@@ -143,7 +145,7 @@ impl<Req> StompSend<Req> for () {
 impl StompSubscribe for () {
     async fn stomp_subscribe<M>(
         &self,
-        _: &'static str,
+        _: &str,
         _: fn(StompBody) -> Result<M, CodecError>,
     ) -> Result<Subscription<Self, M>, ClientError<StompStatus>>
     where

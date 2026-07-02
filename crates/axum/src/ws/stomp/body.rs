@@ -77,11 +77,56 @@ pub enum StompOutcome {
 /// and serializes its payload; because a value can only be built with the right payload type, the
 /// wrong type can never reach a topic.
 pub trait Topic {
-    /// This value's destination (the variant's `#[topic("..")]`).
-    fn destination(&self) -> &'static str;
+    /// This value's destination. A static `#[topic("/topic/x")]` borrows the literal; a templated
+    /// `#[topic("/topic/{room}")]` substitutes the variant's typed fields into an owned string —
+    /// hence [`Cow`](std::borrow::Cow), so a static topic still allocates nothing.
+    fn destination(&self) -> std::borrow::Cow<'static, str>;
 
     /// Serializes this value's payload into a [`StompBody`] (using the topic set's [`StompCodec`]).
     fn encode(&self) -> Result<StompBody, CodecError>;
+}
+
+/// A typed value that fills one `{name}` hole in a templated [`Topic`] destination — on the server
+/// when building the destination to publish to, and on the client as a `subscribe_*` argument. The
+/// same rendering runs on both sides, so a param round-trips: whatever `render` produces is what a
+/// subscriber must pass.
+///
+/// Implemented for the common std/core path-segment types (strings, integers, `bool`). It is
+/// **not** a blanket `Display` impl — that would seal the trait and forbid a user newtype (e.g. a
+/// `RoomId`) from implementing it. For a custom id type, add a one-line impl (usually delegating to
+/// `Display`): `impl TopicParam for RoomId { fn render(&self) -> String { self.to_string() } }`.
+pub trait TopicParam {
+    /// Renders this value into its path segment.
+    fn render(&self) -> String;
+}
+
+/// Implements [`TopicParam`] for a list of types by delegating to their [`Display`](std::fmt::Display).
+macro_rules! topic_param_via_display {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl TopicParam for $ty {
+                fn render(&self) -> String {
+                    ::std::string::ToString::to_string(self)
+                }
+            }
+        )*
+    };
+}
+
+topic_param_via_display! {
+    String, &str, bool, char,
+    u8, u16, u32, u64, u128, usize,
+    i8, i16, i32, i64, i128, isize,
+}
+
+/// A [`Uuid`](uuid::Uuid) renders as its hyphenated string. A common id type for templated topics
+/// (`/topic/room/{id}`). Gated on both `stomp` (this trait) and the cross-cutting `uuid` integration
+/// flag, so enabling `uuid` without `stomp` is a harmless no-op.
+#[cfg(all(feature = "stomp", feature = "uuid"))]
+impl TopicParam for uuid::Uuid {
+    fn render(&self) -> String {
+        self.to_string()
+    }
 }
 
 /// The wire codec for a topic set's message bodies — how a payload is serialized on the server's

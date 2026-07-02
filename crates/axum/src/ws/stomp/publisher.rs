@@ -27,7 +27,7 @@ impl<T: Topic> Publisher<T> {
     pub async fn publish(&self, topic: T) -> Result<(), CodecError> {
         let body = topic.encode()?;
 
-        self.session.publish(topic.destination(), &body);
+        self.session.publish(&topic.destination(), &body);
 
         Ok(())
     }
