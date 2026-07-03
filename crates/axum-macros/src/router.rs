@@ -205,7 +205,12 @@ impl<T: ComponentExt> AxumRouter<T> {
         // generic client struct); each `#[handlers]` block contributes its methods onto it. Both
         // carry the controller's own `#[doc]`s, so the client is documented like its controller.
         let wasm_client_struct = if cfg!(feature = "client") {
-            crate::client::wasm_client_struct(&format_ident!("{}Client", ident), docs, paths)
+            crate::client::wasm_client_struct(
+                &format_ident!("{}Client", ident),
+                docs,
+                crate::client::WasmBackend::Http,
+                paths,
+            )
         } else {
             quote!()
         };
@@ -339,11 +344,25 @@ impl<T: ComponentExt> AxumRouter<T> {
             ident.to_string().to_uppercase()
         );
         let client_struct = client_struct(ident, docs);
+        // A `#[controller(ws = Stomp)]` gets a wasm SEND client over the shared STOMP socket. A
+        // JsonWs controller has no wasm ws transport yet, so it emits no wasm binding struct.
+        let wasm_client_struct =
+            if cfg!(feature = "client") && crate::handlers::is_stomp_protocol(Some(protocol)) {
+                crate::client::wasm_client_struct(
+                    &format_ident!("{}Client", ident),
+                    docs,
+                    crate::client::WasmBackend::Stomp,
+                    paths,
+                )
+            } else {
+                quote!()
+            };
         let inner = &self.inner;
 
-        out.extend(quote! {
-            #client_struct
-
+        // The ws controller's server surface (the route slice, the `WebsocketController` impl, and
+        // the `WS_CONTROLLERS` registration) is gated out on wasm; the client structs above carry
+        // across, so a wasm client gets the generated SEND client with no server code.
+        let server = overseerd_macros_core::gate::native_only(quote! {
             #[#distributed_slice]
             #[linkme(crate = #linkme_crate)]
             #[allow(non_upper_case_globals)]
@@ -403,6 +422,14 @@ impl<T: ComponentExt> AxumRouter<T> {
             };
 
             #inner
+        });
+
+        out.extend(quote! {
+            #client_struct
+
+            #wasm_client_struct
+
+            #server
         });
     }
 }

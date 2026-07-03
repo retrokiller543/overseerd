@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use overseerd_client::{ClientError, ErrorBody};
 use overseerd_transport::{CodecError, Error as TransportError};
@@ -20,9 +21,15 @@ use stomp_parser::client::{
 use stomp_parser::headers::{StompVersion, StompVersions};
 use stomp_parser::server::ServerFrame;
 use tokio::sync::{mpsc, oneshot};
-use tokio_tungstenite::tungstenite::Message;
+// One unified WebSocket type across native and wasm — the socket naming (`MaybeTlsStream<TcpStream>`
+// on native, the JS `WebSocket` on wasm) is hidden, so this transport is target-agnostic.
+use tokio_tungstenite_wasm::{Error as WsError, Message, WebSocketStream};
 
 use super::{StompBody, StompSend, StompStatus, StompSubscribe, Subscription, SubscriptionId};
+
+/// The write and read halves of a connected WebSocket, split for the actor loop.
+type WsWrite = SplitSink<WebSocketStream, Message>;
+type WsRead = SplitStream<WebSocketStream>;
 
 /// The outbound-frame and inbound-message channel depths.
 const CHANNEL_DEPTH: usize = 64;
@@ -80,7 +87,7 @@ pub struct StompClientTransport {
 impl StompClientTransport {
     /// Connects to a STOMP-over-WebSocket endpoint, performs the handshake, and starts the actor.
     pub async fn connect(url: impl AsRef<str>) -> Result<Self, ClientError<StompStatus>> {
-        let (socket, _) = tokio_tungstenite::connect_async(url.as_ref())
+        let socket = tokio_tungstenite_wasm::connect(url.as_ref())
             .await
             .map_err(net_err)?;
         let (mut write, mut read) = socket.split();
@@ -99,7 +106,7 @@ impl StompClientTransport {
 
         let (tx, rx) = mpsc::channel::<Command>(CHANNEL_DEPTH);
 
-        tokio::spawn(actor(write, read, rx));
+        crate::client::ws_rt::spawn(actor(write, read, rx));
 
         Ok(Self {
             inner: Arc::new(TransportInner {
@@ -191,16 +198,7 @@ impl StompSubscribe for StompClientTransport {
 
 /// The connection actor: writes queued commands and demuxes inbound frames until the socket closes
 /// or an `ERROR` frame arrives.
-async fn actor(
-    mut write: futures::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-        >,
-        Message,
-    >,
-    mut read: impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
-    mut rx: mpsc::Receiver<Command>,
-) {
+async fn actor(mut write: WsWrite, mut read: WsRead, mut rx: mpsc::Receiver<Command>) {
     let mut subs: HashMap<SubscriptionId, mpsc::Sender<StompBody>> = HashMap::new();
     let mut receipts: HashMap<String, Ack> = HashMap::new();
 
@@ -330,9 +328,7 @@ fn route(
 }
 
 /// Reads frames until `CONNECTED` (ok), an `ERROR` (protocol error), or the socket closes.
-async fn await_connected(
-    read: &mut (impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin),
-) -> Result<(), ClientError<StompStatus>> {
+async fn await_connected(read: &mut WsRead) -> Result<(), ClientError<StompStatus>> {
     loop {
         match read.next().await {
             Some(Ok(Message::Text(text))) => {
@@ -403,6 +399,6 @@ fn to_message(bytes: Vec<u8>) -> Message {
 }
 
 /// Maps a tungstenite error into a transport error.
-fn net_err(error: tokio_tungstenite::tungstenite::Error) -> ClientError<StompStatus> {
+fn net_err(error: WsError) -> ClientError<StompStatus> {
     ClientError::Transport(TransportError::Io(std::io::Error::other(error.to_string())))
 }

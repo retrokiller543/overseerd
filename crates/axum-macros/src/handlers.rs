@@ -306,16 +306,31 @@ impl ParseMethod for AxumHandlers {
         Ok(hint)
     }
 
-    /// The axum extension's client-side extras: the `Dto` wire-type assertions and (with the fetch
-    /// backend) the wasm `#[wasm_bindgen]` binding. The extension owns their target gating, so the
-    /// framework core never learns about wasm.
+    /// The axum extension's client-side extras: the `Dto` wire-type assertions and the wasm
+    /// `#[wasm_bindgen]` binding methods. The wasm backend is chosen by the block's protocol — a
+    /// STOMP block's `SEND` methods bind over the STOMP socket, an HTTP block over the fetch client,
+    /// and a JsonWs request/reply block has no wasm transport yet (`None`). The extension owns this
+    /// target gating, so the framework core never learns about wasm.
     fn extra_client_tokens(
         &self,
         client_ident: &Ident,
         methods: &[ClientMethod],
         paths: &Paths,
     ) -> TokenStream {
-        client::extra_client_tokens(client_ident, methods, self.wire_types.clone(), paths)
+        let backend = match &self.ws_protocol {
+            Some(protocol) if is_stomp_protocol(Some(protocol)) => Some(client::WasmBackend::Stomp),
+            // A JsonWs request/reply block: no wasm ws transport yet.
+            Some(_) => None,
+            None => Some(client::WasmBackend::Http),
+        };
+
+        client::extra_client_tokens(
+            client_ident,
+            methods,
+            self.wire_types.clone(),
+            backend,
+            paths,
+        )
     }
 }
 
@@ -797,8 +812,9 @@ fn ws_payload_type(method: &ImplItemFn) -> syn::Result<Option<Type>> {
     Ok(payload)
 }
 
-/// Whether a handlers block's `ws = P` names the STOMP protocol, by the path's last segment.
-fn is_stomp_protocol(protocol: Option<&syn::Path>) -> bool {
+/// Whether a `ws = P` names the STOMP protocol, by the path's last segment. Shared with the
+/// controller macro (`router.rs`) to pick the wasm SEND-client backend.
+pub(crate) fn is_stomp_protocol(protocol: Option<&syn::Path>) -> bool {
     protocol
         .and_then(|path| path.segments.last())
         .is_some_and(|segment| segment.ident == "Stomp")

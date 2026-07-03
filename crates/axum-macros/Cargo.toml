@@ -20,6 +20,10 @@ client = ["overseerd-macros-core/client"]
 # wasm `#[wasm_bindgen]` binding over `ReqwestClient`. Forwarded by `overseerd-axum`'s `reqwest`
 # feature; pure codegen signal (adds no dependency here).
 reqwest = ["client"]
+# Signals the WebSocket transport is available, so the STOMP `#[topics]`/`#[message]` client codegen
+# may emit the wasm binding over `StompClientTransport`. Forwarded by `overseerd-axum`'s
+# `tungstenite` feature; pure codegen signal.
+tungstenite = ["client"]
 # Opt into the *new* `tsify` wasm ABI: `#[dto]` derives plain `Tsify` and the generated browser
 # client marshals via `Ts<T>` (typed, and free of the memory leak the published `into_wasm_abi`
 # path has). Needs the unreleased `tsify` (git master) as a wasm dep. Off by default, which uses the

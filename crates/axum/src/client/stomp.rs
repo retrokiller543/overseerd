@@ -18,7 +18,7 @@ use futures::Stream;
 use overseerd_client::ClientError;
 use overseerd_transport::CodecError;
 
-use crate::ws::stomp::StompBody;
+use crate::stomp::StompBody;
 
 /// The status carried by a STOMP [`ClientError::Remote`], mirroring
 /// [`WsStatus`](super::WsStatus).
@@ -161,3 +161,11 @@ mod transport;
 
 #[cfg(feature = "tungstenite")]
 pub use transport::StompClientTransport;
+
+// The wasm/JS subscription bridge (callback + handle). wasm-only; generated `subscribe_*` bindings
+// and the `#[topics]` macro's codegen use `pump` + `StompSubscription`.
+#[cfg(all(target_family = "wasm", feature = "tungstenite"))]
+mod wasm;
+
+#[cfg(all(target_family = "wasm", feature = "tungstenite"))]
+pub use wasm::{StompSubscription, pump};

@@ -8,10 +8,18 @@
 //! `hyper` — qualify, so the same client runs over either; pick one with the matching feature.
 
 mod body;
+// The shared browser-client `Connection` (wasm-only; needs the reqwest fetch backend).
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
+mod connection;
 mod response;
-#[cfg(all(feature = "stomp", feature = "client", not(target_family = "wasm")))]
+// The STOMP client transport is cross-target (native + wasm) via `tokio-tungstenite-wasm`.
+#[cfg(all(feature = "stomp", feature = "client"))]
 mod stomp;
 mod streaming;
+// Shared ws runtime (task spawn) for the client transports; only needed with a ws transport.
+#[cfg(all(feature = "tungstenite", feature = "client"))]
+mod ws_rt;
+// The JsonWs request/reply backend is native-only for now (its heart-beat uses a tokio timer).
 #[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
 mod websocket;
 
@@ -21,8 +29,10 @@ mod hyper_backend;
 mod reqwest_backend;
 
 pub use body::{Form, HttpBody, Json, OctetStream};
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
+pub use connection::Connection;
 pub use response::HttpResponse;
-#[cfg(all(feature = "stomp", feature = "client", not(target_family = "wasm")))]
+#[cfg(all(feature = "stomp", feature = "client"))]
 pub use stomp::*;
 pub use streaming::{HttpClientStreaming, HttpStreaming, StreamDecode, encode_stream};
 #[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
