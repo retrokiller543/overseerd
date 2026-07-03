@@ -1,185 +1,277 @@
 # Overseerd
-Overseerd is a Rust framework for building long-running daemon services and applications using strongly typed components, services, and generated infrastructure.
 
-The goal is to make daemon development feel like writing ordinary Rust business logic while Overseerd handles service discovery, dependency wiring, RPC registration, lifecycle management, and operational concerns.
+Overseerd is a Rust framework for building long-running daemons and network services from strongly
+typed components, services, and generated infrastructure — with compile-time dependency injection,
+typed config, and typed clients generated from the same source of truth.
 
-Unlike fully convention-driven frameworks, Overseerd does not take ownership of your application entrypoint or runtime configuration. Developers remain in control of process startup, runtime construction, and deployment decisions while benefiting from generated infrastructure and convention-assisted wiring.
+The goal is to make service development feel like writing ordinary Rust business logic while
+Overseerd handles dependency wiring, endpoint registration, lifecycle, config, and the client SDK.
+
+Unlike fully convention-driven frameworks, Overseerd never takes ownership of your entrypoint or
+runtime. You keep control of process startup, runtime construction, and deployment while benefiting
+from generated infrastructure and convention-assisted wiring.
+
+> Overseerd is pre-1.0: the APIs below are implemented and exercised by the examples, but macro
+> syntax and semantics may still evolve.
 
 ## Philosophy
 
-Overseerd is built around a simple idea:
-
 > Boilerplate should be generated. Ownership should remain explicit.
 
-The framework embraces code generation and metadata discovery to reduce repetitive daemon infrastructure while preserving the ability to inspect, customize, and override behavior when necessary.
-
-Overseerd aims to sit between minimal frameworks and fully managed application containers:
+Overseerd embraces code generation and metadata discovery to remove repetitive infrastructure while
+keeping behavior inspectable, customizable, and overridable. It aims to sit between minimal runtime
+libraries and fully managed application containers:
 
 * More automation than low-level runtime libraries
 * More explicitness than large convention-driven frameworks
 * Strongly typed Rust APIs instead of stringly-typed configuration
 * Convention-assisted, not convention-required
 
-## Vision
+## Highlights
 
-A daemon should be defined as a collection of components and services.
+* **Compile-time dependency injection** — components and services are field-injected; a missing
+  provider is a `cargo check` error (via the default `di-check` feature), not a runtime panic.
+* **Two protocols, one core** — a native **RPC daemon** (`overseerd::daemon`) and an **axum/HTTP**
+  plugin (`overseerd::axum`), both built on the same protocol-agnostic app/DI core. Run either, or
+  both side by side.
+* **Typed config** — `#[config]` types bound from a merged TOML/YAML tree, with `#[default]`s,
+  `${VAR}`/`${@dir}` templating, and live reload hooks.
+* **Generated typed clients** — every service/controller yields a transport-generic Rust client from
+  its own definition; the HTTP client additionally generates a **wasm/TypeScript browser client**
+  (REST + STOMP) with no hand-written bindings.
+* **WebSockets & STOMP** — `#[controller(ws = ..)]` message handlers and a STOMP pub/sub broker with
+  a typed `#[topics]` contract shared by server and client.
+* **User-owned runtime** — Overseerd never requires ownership of `main`; you build the runtime, set
+  up logging, and decide how to serve.
 
-Components provide reusable dependencies:
+## Installation
+
+```sh
+cargo add overseerd
+```
+
+Pick what you need with features (all off by default except `di-check`):
+
+| Feature | Enables |
+|---|---|
+| `daemon` | the native RPC protocol (`overseerd::daemon`) |
+| `axum` | the HTTP protocol (`overseerd::axum`): `#[controller]`, routes, DI extractors |
+| `ws` / `stomp` | WebSocket controllers / the STOMP pub/sub broker (imply `axum`) |
+| `client` | generate the typed client SDK for the enabled protocol(s) |
+| `reqwest` / `hyper` | HTTP client backends (pick one or both; `reqwest` also powers the wasm client) |
+| `tungstenite` | the WebSocket/STOMP client transport (native + wasm) |
+| `uuid` | `Uuid` support for templated STOMP topics |
+| `yaml` | YAML config sources alongside TOML |
+| `watch` | reload config on file change |
+| `tracing-subscriber` | the `init_tracing` helper |
+| `wasm-ts` | opt into the newer `tsify` `Ts<T>` wasm ABI for the browser client |
+| `di-check` *(default)* | compile-time DI graph validation |
+
+## An HTTP service
+
+Put your controllers and components in the library (`lib.rs`) so the crate can also compile to a
+browser client; keep `main.rs` as a thin bootstrap.
 
 ```rust
-#[component]
-struct BackupRepository {
-    // ...
+// lib.rs — the app surface
+use overseerd::axum::prelude::*;
+use overseerd::prelude::*;
+
+/// A response body. `#[dto]` derives serde (+ TypeScript types on wasm) and marks it wire data.
+#[dto]
+pub struct Greeting {
+    pub message: String,
+}
+
+/// A singleton dependency, field-injected into the controller.
+#[component(by_value)]
+#[derive(Clone)]
+pub struct Greeter;
+
+/// A controller mounted at `/greet`.
+#[controller(path = "/greet")]
+pub struct GreetController {
+    greeter: Greeter,
+}
+
+#[handlers]
+impl GreetController {
+    /// `GET /greet/{who}` — mixes the axum `Path` extractor with the controller's own state.
+    #[get("/{who}")]
+    async fn greet(&self, Path(who): Path<String>) -> Json<Greeting> {
+        Json(Greeting { message: format!("Hello, {who}!") })
+    }
 }
 ```
 
-Services expose daemon functionality:
+```rust
+// main.rs — build and serve (you own the runtime)
+use std::net::SocketAddr;
+use overseerd::axum::prelude::*;
+use overseerd::prelude::*;
+
+// Anchor the library so its self-registering `#[controller]`s are linked in.
+extern crate my_service;
+
+#[tokio::main]
+async fn main() -> overseerd::axum::Result<()> {
+    // Each `#[controller]` self-registers; `app!` only needs the protocol.
+    let app = app! {
+        name: "my-service",
+        protocol: AxumPlugin,
+    }
+    .build()
+    .await?;
+
+    app.serve(SocketAddr::from(([127, 0, 0, 1], 3000))).await
+}
+```
+
+## An RPC daemon
 
 ```rust
-#[service]
-struct BackupService;
+use overseerd::daemon::{Inject, Payload, handlers, service};
+use overseerd::{Cfg, Dep};
+use serde::{Deserialize, Serialize};
 
-#[rpc]
-impl BackupService {
-    async fn start_backup(
-        repo: Component<BackupRepository>,
-        Payload(input): Payload<BackupInput>,
-    ) -> Result<JobId> {
+#[derive(Serialize, Deserialize)]
+pub struct NotifyRequest { pub message: String }
+
+#[service(id = "notifications", version = "0.1")]
+pub struct Notifications {
+    #[config("app.greet")]
+    config: Cfg<GreetConfig>,
+}
+
+#[handlers]
+impl Notifications {
+    #[rpc]
+    async fn notify(
+        &self,
+        Payload(req): Payload<NotifyRequest>,
+        Inject(db): Inject<Dep<DbConnection>>,
+    ) -> NotifyResponse {
+        // field-injected config + route-level DI, both resolved at compile time
         // ...
     }
 }
 ```
 
-Overseerd automatically discovers and registers metadata describing those services, dependencies, and RPC endpoints.
-
-The runtime then consumes that metadata to construct a runnable daemon.
-
 ```rust
-fn main() -> anyhow::Result<()> {
-    setup_logging();
+use overseerd::daemon::prelude::*;
 
-    let runtime = tokio::runtime::Runtime::new()?;
+#[tokio::main]
+async fn main() -> overseerd::daemon::Result<()> {
+    let app = app! {
+        name: "notifyd",
+        protocol: RpcPlugin,
+    }
+    .build()
+    .await?;
 
-    runtime.block_on(async {
-        Daemon::builder("backupd")
-            .auto_discover()
-            .run()
-            .await
-    })
+    // Serve over any transport — TCP, or a Unix socket on unix targets.
+    app.serve(TcpTransport::bind("127.0.0.1:7000").await?).await
 }
 ```
 
-## Core Principles
+Both `#[service]`/`#[handlers]`/`#[rpc]` (RPC) and `#[controller]`/`#[handlers]`/`#[get]` (HTTP)
+share the same base machinery: `#[component]` dependencies, `#[config]` values, `Inject<T>`
+route-level DI, and `#[hook(..)]` lifecycle/config-reload hooks.
 
-### User-Owned Runtime
+## Typed clients
 
-Overseerd should never require ownership of `main`.
-
-Users must remain free to:
-
-* Configure logging before runtime startup
-* Build custom Tokio runtimes
-* Load environment variables
-* Perform startup validation
-* Integrate with external tooling
-
-Overseerd provides runtime helpers and convenience macros, but they should remain optional.
-
-### Convention-Assisted Discovery
-
-Components and services can be discovered automatically through generated metadata.
-
-However, everything that can be discovered automatically should also be configurable explicitly.
+Every service and controller generates a transport-generic Rust client from its own definition, so
+the client can never drift from the server:
 
 ```rust
-Daemon::builder()
-    .component(custom_database)
-    .service::<BackupService>()
+use overseerd::axum::client::ReqwestClient;
+
+let client = GreetControllerClient::new(ReqwestClient::new("http://localhost:3000"));
+let greeting = client.greet("world".into()).await?; // -> Greeting, fully typed
 ```
 
-Automatic registration is a convenience feature, not a requirement.
+A route the client can't express (e.g. a streamed body over HTTP/1.1) is simply absent from the
+generated client — a protocol limit expressed as a compile error at the call site, never a wrong
+call.
 
-### Magic Must Be Inspectable
+### Browser (wasm / TypeScript) clients
 
-Generated infrastructure should never become invisible infrastructure.
+The same controller crate compiles to `wasm32-unknown-unknown` as a **browser client** — one
+`wasm-pack build` at the wasm target, no separate crate, no hand-written `#[wasm_bindgen]`. The
+server code is `cfg`-stripped; only the generated client survives, exported to JS under the
+controller's own name with TypeScript types from your `#[dto]`s.
 
-Developers should be able to inspect:
+```js
+import init, { Connection, GreetControllerClient } from "./pkg";
+await init();
 
-* Registered services
-* Registered RPC endpoints
-* Component dependency graphs
-* Generated API contracts
-* Active transports
+// One shared Connection backs every client — one HTTP pool (+ cookies) and, for STOMP, one socket.
+const conn = new Connection("http://localhost:3000");
+const greet = new GreetControllerClient(conn);
 
-Overseerd should make generated behavior easy to understand and debug.
+const greeting = await greet.greet("world"); // typed as Greeting in TS
+```
 
-### Metadata First
+STOMP works in the browser too — publish and subscribe over the shared connection, with typed
+message callbacks generated from your `#[topics]` enum:
 
-Overseerd's procedural macros primarily generate metadata and descriptors rather than runtime behavior.
+```js
+await conn.connectStomp("/ws/stomp");         // ws:// derived from the base URL
 
-Examples include:
+const topics = new ChatTopicClient(conn);
+const sub = await topics.subscribe_room("general", (msg /* : ChatMessage */) => {
+  console.log(msg.text);
+});
 
-* Component descriptors
-* Service descriptors
-* RPC descriptors
-* Dependency graphs
-* API contracts
+const chat = new ChatHandlerClient(conn);      // same socket
+await chat.on_chat({ room: "general", sender: "me", text: "hi" });
 
-Runtime systems consume these descriptors to provide execution, routing, validation, and tooling.
+sub.unsubscribe();
+```
 
-This architecture enables future capabilities such as:
+The `overseerd` DI/config core is wasm-safe; only the server-hosting pieces (socket transports, file
+watching, the serve loops) are native-only, so a wasm build with any feature set just compiles.
 
-* SDK generation
-* API inspection
-* Validation tooling
-* Documentation generation
-* Plugin systems
+## Design principles
 
-## Initial Goals
+### User-owned runtime
 
-The first versions of Overseerd should focus on a coherent daemon foundation:
+Overseerd never requires ownership of `main`. You remain free to configure logging before startup,
+build custom Tokio runtimes, load environment variables, run startup validation, and integrate with
+external tooling. The runtime helpers and convenience macros are optional.
 
-* Component registration and dependency injection
-* Service registration
-* Typed RPC handlers
-* Graceful startup and shutdown
-* Task supervision
-* Unix socket transport
-* Request context extraction
-* Runtime introspection
-* Generated Rust client SDKs
+### Convention-assisted discovery
 
-## Future Directions
+Components, services, and `#[config]` types register themselves through generated metadata, but
+everything discovered automatically can also be provided explicitly (e.g. binding a config type to a
+path, or registering a component by value). Automatic registration is a convenience, not a rule.
 
-Potential future capabilities include:
+### Magic must be inspectable
 
-* Additional transports
-* Configuration management
-* Health checks
-* Metrics integration
-* Authentication and authorization
-* Background job systems
-* Multi-language SDK generation
-* Service plugins
-* Deployment tooling
+Generated infrastructure should never become invisible. The registry of components, their
+dependency graph, services, RPC/route endpoints, and active transports is introspectable — printing
+a built `app` shows the discovered surface.
 
-These features should build upon the same metadata model rather than introducing separate abstractions.
+### Metadata first
 
-## Non-Goals
+The macros primarily generate descriptors — component, service, RPC, config-binding, controller —
+that runtime systems consume for execution, routing, validation, and client generation. This single
+metadata model is what powers both the server and the generated (Rust and TypeScript) clients from
+one source of truth.
 
-Overseerd is not intended to:
+## Non-goals
 
-* Replace Tokio
-* Replace existing observability ecosystems
-* Hide all runtime decisions
-* Become a distributed systems platform
-* Require framework ownership of application startup
-* Force a specific deployment model
+Overseerd is not intended to replace Tokio or existing observability ecosystems, hide all runtime
+decisions, become a distributed-systems platform, or require framework ownership of application
+startup or a specific deployment model.
 
-## Project Status
+## Examples
 
-Overseerd is currently in the design and foundation phase.
+* `examples/daemon` — a complete RPC daemon: cross-module DI, merged config, and build-time
+  DI-graph validation.
+* `examples/http` — a complete HTTP + WebSocket + STOMP app whose library also compiles to a wasm
+  browser client (`wasm-pack build examples/http --target web`).
 
-Public APIs, macro syntax, dependency injection semantics, and runtime architecture are expected to evolve as real-world daemon implementations are built on top of the framework.
+## License
 
-The current focus is establishing a strong metadata model capable of powering dependency injection, RPC registration, runtime introspection, and future SDK generation from a single source of truth.
+MIT.
