@@ -115,8 +115,9 @@ default = ["di-check"]
 
 # Re-export the native RPC daemon through the facade for convenience. The protocol crate owns
 # its own macros; the facade just enables its `facade` feature (so its codegen roots at
-# `::overseerd::daemon::*`) and re-exports it. Disable for a core-framework-only build
-# (`default-features = false`); the daemon then lives in its own `overseerd-rpc` crate.
+# `::overseerd::daemon::*`) and re-exports it. Off by default (the facade forces no protocol):
+# enable `daemon` for the RPC protocol, or `axum` for HTTP, or both. The daemon also lives in its
+# own `overseerd-rpc` crate for a direct dependency.
 daemon = ["dep:overseerd-rpc", "overseerd-rpc/facade"]
 
 # Re-export the axum/HTTP protocol through the facade's `axum` module. Independent of `daemon`;

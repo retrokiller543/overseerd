@@ -14,6 +14,13 @@
 /// Marks a type as valid HTTP wire data (request/response body, or a path/query parameter). Apply
 /// it to your own types with [`#[dto]`](macro@crate::dto); the scalars and containers below are
 /// covered already.
+///
+/// `Dto` is a *handler-side* contract: it gates what a handler may put on the wire, not what the
+/// generated client can decode. A few impls below (`&T`, [`http::StatusCode`]) exist so a handler
+/// returning a borrowed or status-only response still compiles — but such a response cannot be
+/// decoded into by a typed client, so that one route's generated client method is simply uncallable
+/// (its `Decodes` bound is unmet), while the rest of the controller's client works. This is
+/// deliberate: it keeps "some APIs return plaintext" from forcing every response through JSON.
 pub trait Dto {}
 
 /// The unit type — a no-body request or an empty response.
