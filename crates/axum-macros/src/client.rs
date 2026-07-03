@@ -140,6 +140,48 @@ fn wasm_wrapper_ident(client_ident: &Ident) -> Ident {
     format_ident!("__{}Wasm", client_ident)
 }
 
+/// Which shared transport a generated wasm client binds to — chosen by the controller's protocol.
+/// It selects the concrete backend, how the client is built from the [`Connection`], and each
+/// method's reply shape (an HTTP unary returns an `HttpResponse` body; a STOMP `SEND` returns unit).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WasmBackend {
+    /// HTTP controllers over the `reqwest` fetch client; methods return the decoded response body.
+    Http,
+    /// `#[controller(ws = Stomp)]` `SEND` clients over the STOMP socket; methods return `void`.
+    Stomp,
+}
+
+impl WasmBackend {
+    /// The feature gating this backend's wasm binding (its transport must be compiled in).
+    fn available(self) -> bool {
+        match self {
+            WasmBackend::Http => cfg!(feature = "reqwest"),
+            WasmBackend::Stomp => cfg!(feature = "tungstenite"),
+        }
+    }
+
+    /// The concrete transport type the wasm newtype wraps.
+    fn transport(self, paths: &Paths) -> syn::Path {
+        match self {
+            WasmBackend::Http => paths.plugin("client::ReqwestClient"),
+            WasmBackend::Stomp => paths.plugin("client::StompClientTransport"),
+        }
+    }
+
+    /// The constructor body building the wrapped client from the shared `Connection`.
+    fn build_from_connection(self, client_ident: &Ident) -> TokenStream {
+        match self {
+            // HTTP is always ready; the STOMP socket may not be connected yet (fallible).
+            WasmBackend::Http => {
+                quote!(::core::result::Result::Ok(Self(#client_ident::new(connection.http()))))
+            }
+            WasmBackend::Stomp => {
+                quote!(::core::result::Result::Ok(Self(#client_ident::new(connection.stomp()?))))
+            }
+        }
+    }
+}
+
 /// Emits the **wasm** JavaScript binding's *struct* — a `#[wasm_bindgen]` newtype over the concrete
 /// `{Client}<ReqwestClient>` (wasm-bindgen cannot export the generic form) plus its constructor.
 /// Emitted **once** by `#[controller]` (like the generic client struct), so multiple `#[handlers]`
@@ -152,13 +194,16 @@ fn wasm_wrapper_ident(client_ident: &Ident) -> Ident {
 pub fn wasm_client_struct(
     client_ident: &Ident,
     docs: &[syn::Attribute],
+    backend: WasmBackend,
     paths: &Paths,
 ) -> TokenStream {
-    if !cfg!(feature = "reqwest") {
+    if !backend.available() {
         return quote!();
     }
 
-    let backend = paths.plugin("client::ReqwestClient");
+    let transport = backend.transport(paths);
+    let connection = paths.plugin("client::Connection");
+    let build = backend.build_from_connection(client_ident);
     let js_name = client_ident.to_string();
     let wrapper = wasm_wrapper_ident(client_ident);
 
@@ -172,16 +217,20 @@ pub fn wasm_client_struct(
         #[cfg(target_family = "wasm")]
         #[doc(hidden)]
         #[::wasm_bindgen::prelude::wasm_bindgen(js_name = #js_name)]
-        pub struct #wrapper(#client_ident<#backend>);
+        pub struct #wrapper(#client_ident<#transport>);
 
         // A separate `impl` from the method blocks (below, per `#[handlers]`); `js_class` ties every
         // block to the renamed exported class. wasm-bindgen composes multiple impls for one class.
         #[cfg(target_family = "wasm")]
         #[::wasm_bindgen::prelude::wasm_bindgen(js_class = #js_name)]
         impl #wrapper {
+            /// Builds the client from a shared [`Connection`], so every client reuses its one
+            /// underlying transport (the HTTP pool + cookies, or the STOMP socket).
             #[::wasm_bindgen::prelude::wasm_bindgen(constructor)]
-            pub fn new(base_url: ::std::string::String) -> Self {
-                Self(#client_ident::new(#backend::new(base_url)))
+            pub fn new(
+                connection: &#connection,
+            ) -> ::core::result::Result<#wrapper, ::wasm_bindgen::JsError> {
+                #build
             }
         }
     }
@@ -191,7 +240,11 @@ pub fn wasm_client_struct(
 /// unary method with typed `Ts<T>` (or, by default, `into_wasm_abi`) arguments/returns, so wasm-pack
 /// generates real TypeScript types rather than `any`. Emitted **per `#[handlers]` block** (like the
 /// generic client methods), so several blocks compose onto the one struct without duplication.
-fn wasm_client_methods(client_ident: &Ident, methods: &[ClientMethod]) -> TokenStream {
+fn wasm_client_methods(
+    client_ident: &Ident,
+    methods: &[ClientMethod],
+    backend: WasmBackend,
+) -> TokenStream {
     let js_name = client_ident.to_string();
     let wrapper = wasm_wrapper_ident(client_ident);
 
@@ -244,16 +297,16 @@ fn wasm_client_methods(client_ident: &Ident, methods: &[ClientMethod]) -> TokenS
             };
 
             let response = &m.response;
-            let ret = if ts {
-                quote!(::tsify::Ts<#response>)
-            } else {
-                quote!(#response)
-            };
-            // Both ABIs deref the response envelope to its body; the new ABI additionally wraps it.
-            let ret_expr = if ts {
-                quote!(__response.into_body().into_ts().map_err(::wasm_bindgen::JsError::from)?)
-            } else {
-                quote!(__response.into_body())
+
+            // The reply shape depends on the transport: an HTTP unary yields an `HttpResponse`
+            // envelope whose body is the typed payload; a STOMP `SEND` yields unit (`void` in JS).
+            let (ret, ret_expr) = match backend {
+                WasmBackend::Http if ts => (
+                    quote!(::tsify::Ts<#response>),
+                    quote!(__response.into_body().into_ts().map_err(::wasm_bindgen::JsError::from)?),
+                ),
+                WasmBackend::Http => (quote!(#response), quote!(__response.into_body())),
+                WasmBackend::Stomp => (quote!(()), quote!(__response)),
             };
 
             quote! {
@@ -294,15 +347,19 @@ pub fn extra_client_tokens(
     client_ident: &Ident,
     methods: &[ClientMethod],
     wire_types: Vec<Type>,
+    backend: Option<WasmBackend>,
     paths: &Paths,
 ) -> TokenStream {
     let assertions = dto_assertions(wire_types, paths);
 
-    // The wasm method impl (the struct comes from `#[controller]`). Only with the fetch backend.
-    let wasm_methods = if cfg!(feature = "reqwest") && !methods.is_empty() {
-        wasm_client_methods(client_ident, methods)
-    } else {
-        quote!()
+    // The wasm method impl (the struct comes from `#[controller]`). Only when the block has a wasm
+    // backend (HTTP, or STOMP `SEND`) and that backend's transport is compiled in.
+    let wasm_methods = match backend {
+        Some(backend) if backend.available() && !methods.is_empty() => {
+            wasm_client_methods(client_ident, methods, backend)
+        }
+
+        _ => quote!(),
     };
 
     quote! {

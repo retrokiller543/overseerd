@@ -17,6 +17,11 @@ pub mod client;
 /// server both assert it), so it lives outside the server gate.
 pub mod dto;
 
+/// The wasm-safe STOMP wire types (`StompBody`, `StompCodec`, `Topic`, `TopicParam`) shared by the
+/// server broker and the browser client. Available on every target so the wasm client names them.
+#[cfg(feature = "stomp")]
+pub mod stomp;
+
 /// Stream framing. The markers (`Ndjson`/`RawStream`), the `StreamEncode` contract, and the
 /// NDJSON encode/decode helpers are pure and compile everywhere (the generated streaming client
 /// names them); the axum extractor/response impls inside are gated to non-wasm.
@@ -54,12 +59,17 @@ pub use ws::{
     WsControllerDescriptor, WsDispatchError, WsReply, WsRespond, WsRoute, WsShutdown,
 };
 
-/// The STOMP pub/sub protocol surface (server side): the [`Stomp`](ws::stomp::Stomp) protocol, its
-/// broker/session/publish types, and the [`Topic`](ws::stomp::Topic) contract.
+/// The wasm-safe STOMP wire types, re-exported at the crate root on every target — the browser
+/// client's generated `#[topics]`/`#[message]` code names them through the plugin path.
+#[cfg(feature = "stomp")]
+pub use stomp::{JsonCodec, StompBody, StompCodec, Topic, TopicParam};
+
+/// The STOMP pub/sub protocol surface (server side): the [`Stomp`](ws::stomp::Stomp) protocol and
+/// its broker/session/publish types. Server-only.
 #[cfg(all(feature = "stomp", not(target_family = "wasm")))]
 pub use ws::stomp::{
-    Broker, JsonCodec, Publish, Publisher, Stomp, StompBody, StompCodec, StompConfig, StompError,
-    StompHeaders, StompOutcome, StompSession, StompTopicBus, Topic, TopicParam,
+    Broker, Publish, Publisher, Stomp, StompConfig, StompError, StompHeaders, StompOutcome,
+    StompSession, StompTopicBus,
 };
 
 /// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a

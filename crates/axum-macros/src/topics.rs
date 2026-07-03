@@ -164,6 +164,7 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
     };
 
     let client = generate_client(enum_ident, &variants, &codec, paths);
+    let wasm_client = generate_wasm_client(enum_ident, &variants, paths);
 
     Ok(quote! {
         #item
@@ -171,6 +172,8 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
         #topic_impl
 
         #client
+
+        #wasm_client
     })
 }
 
@@ -244,6 +247,140 @@ fn generate_client(
 
             #(#methods)*
         }
+    }
+}
+
+/// Emits the **wasm** JS binding for the topics subscribe client: a `#[wasm_bindgen]` newtype over
+/// `{Enum}Client<StompClientTransport>`, built from the shared [`Connection`], with one
+/// `subscribe_<variant>()` per topic. Each takes a **typed** callback (`(message: T) => void`, via a
+/// per-method `typescript_type` extern so TS sees the real message type) and returns a
+/// `StompSubscription` handle. wasm-only; requires the fetch backend (`Connection`) and the ws
+/// transport (`StompClientTransport`), so it is gated on both `reqwest` and `tungstenite`.
+fn generate_wasm_client(
+    enum_ident: &Ident,
+    variants: &[TopicVariant],
+    paths: &Paths,
+) -> TokenStream {
+    if !(cfg!(feature = "reqwest") && cfg!(feature = "tungstenite")) {
+        return quote!();
+    }
+
+    let client_ident = format_ident!("{}Client", enum_ident);
+    let js_name = client_ident.to_string();
+    let wrapper = format_ident!("__{}Wasm", client_ident);
+    let connection = paths.plugin("client::Connection");
+    let transport = paths.plugin("client::StompClientTransport");
+    let pump = paths.plugin("client::pump");
+    let subscription = paths.plugin("client::StompSubscription");
+    let ts = cfg!(feature = "wasm-ts");
+
+    // Per-method typed callback extern + the subscribe method itself.
+    let mut handlers = Vec::new();
+    let mut methods = Vec::new();
+
+    for variant in variants {
+        let method = format_ident!("subscribe_{}", to_snake_case(&variant.ident.to_string()));
+        let handler = format_ident!("__{}{}Handler", enum_ident, variant.ident);
+
+        let msg = match &variant.kind {
+            VariantKind::Static { payload } => payload,
+            VariantKind::Templated { content_type, .. } => content_type,
+        };
+        let ts_msg = ts_type_name(msg);
+        let handler_ts = format!("(message: {ts_msg}) => void");
+
+        // Templated topics take their hole params (typed for TS); a static topic takes none.
+        let params = match &variant.kind {
+            VariantKind::Templated { params, .. } => params.clone(),
+            VariantKind::Static { .. } => Vec::new(),
+        };
+        let param_decls = params.iter().map(|(name, ty)| {
+            if ts {
+                quote!(, #name: ::tsify::Ts<#ty>)
+            } else {
+                quote!(, #name: #ty)
+            }
+        });
+        let param_convs = params.iter().map(|(name, _)| {
+            if ts {
+                quote!(let #name = #name.to_rust().map_err(::wasm_bindgen::JsError::from)?;)
+            } else {
+                quote!()
+            }
+        });
+        let call_args = params.iter().map(|(name, _)| quote!(#name));
+
+        handlers.push(quote! {
+            #[cfg(target_family = "wasm")]
+            #[::wasm_bindgen::prelude::wasm_bindgen]
+            extern "C" {
+                #[::wasm_bindgen::prelude::wasm_bindgen(typescript_type = #handler_ts)]
+                type #handler;
+            }
+        });
+
+        methods.push(quote! {
+            pub async fn #method(
+                &self #(#param_decls)*,
+                on_message: #handler,
+            ) -> ::core::result::Result<#subscription, ::wasm_bindgen::JsError> {
+                #(#param_convs)*
+
+                let __sub = self
+                    .0
+                    .#method(#(#call_args),*)
+                    .await
+                    .map_err(|e| ::wasm_bindgen::JsError::new(&::std::string::ToString::to_string(&e)))?;
+
+                ::core::result::Result::Ok(#pump(
+                    __sub,
+                    ::wasm_bindgen::JsCast::unchecked_into(on_message),
+                ))
+            }
+        });
+    }
+
+    quote! {
+        #(#handlers)*
+
+        #[cfg(target_family = "wasm")]
+        #[doc(hidden)]
+        #[::wasm_bindgen::prelude::wasm_bindgen(js_name = #js_name)]
+        pub struct #wrapper(#client_ident<#transport>);
+
+        #[cfg(target_family = "wasm")]
+        #[::wasm_bindgen::prelude::wasm_bindgen(js_class = #js_name)]
+        impl #wrapper {
+            /// Builds the subscribe client from a shared [`Connection`] (its STOMP socket must be
+            /// connected via `connectStomp` first).
+            #[::wasm_bindgen::prelude::wasm_bindgen(constructor)]
+            pub fn new(connection: &#connection) -> ::core::result::Result<#wrapper, ::wasm_bindgen::JsError> {
+                ::core::result::Result::Ok(Self(#client_ident::new(connection.stomp()?)))
+            }
+
+            #(#methods)*
+        }
+    }
+}
+
+/// The TypeScript type name for a payload type, so a typed callback reads `(message: T) => void`.
+/// Maps the common primitives to their TS names; a user `#[dto]` type keeps its ident (which is the
+/// name `tsify` generates). A path type falls back to its last segment.
+fn ts_type_name(ty: &Type) -> String {
+    let ident = match ty {
+        Type::Path(path) => path.path.segments.last().map(|s| s.ident.to_string()),
+        _ => None,
+    };
+
+    match ident.as_deref() {
+        Some("String" | "str" | "char") => "string".to_owned(),
+        Some("bool") => "boolean".to_owned(),
+        Some(
+            "u8" | "u16" | "u32" | "u64" | "u128" | "usize" | "i8" | "i16" | "i32" | "i64" | "i128"
+            | "isize" | "f32" | "f64",
+        ) => "number".to_owned(),
+        Some(name) => name.to_owned(),
+        None => "any".to_owned(),
     }
 }
 

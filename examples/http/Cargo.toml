@@ -16,6 +16,10 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 serde = { workspace = true }
+# Lock-free room registry in the STOMP chat controller (the framework's own read-mostly idiom).
+# Shared: the `ChatState` struct is kept on wasm (its server wiring is gated out), so the type must
+# still compile there — `arc-swap` is wasm-safe.
+arc-swap = { workspace = true }
 
 # Native (server): the full protocol stack — ws/stomp controllers, DI middleware, both HTTP client
 # backends. The binary and the server-only modules use these.
@@ -23,8 +27,6 @@ serde = { workspace = true }
 overseerd = { path = "../..", default-features = false, features = ["axum", "ws", "stomp", "uuid", "reqwest", "hyper", "tungstenite", "tracing-subscriber"] }
 tokio = { workspace = true }
 tracing.workspace = true
-# Lock-free room registry in the STOMP chat controller (the framework's own read-mostly idiom).
-arc-swap = { workspace = true }
 
 # wasm (browser client): only the HTTP client surface + the fetch backend. `wasm-bindgen` and
 # `tsify` must be *direct* dependencies — the generated `#[wasm_bindgen]` client and `#[dto]` derives
@@ -32,7 +34,7 @@ arc-swap = { workspace = true }
 # published `tsify` (the default `into_wasm_abi` ABI); enable overseerd's `wasm-ts` feature for the
 # newer `Ts<T>` ABI, which needs the unreleased `tsify` git master instead.
 [target.'cfg(target_family = "wasm")'.dependencies]
-overseerd = { path = "../..", default-features = false, features = ["axum", "client", "reqwest"] }
+overseerd = { path = "../..", default-features = false, features = ["axum", "client", "reqwest", "ws", "stomp", "tungstenite"] }
 tsify = "0.5.6"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

@@ -53,6 +53,15 @@ hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
 http-body-util = "0.1"
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
+# Unified native+wasm WebSocket client for the STOMP transport (one API on both targets). No TLS
+# feature enabled — all TLS backends are opt-in, so plain `ws://` needs nothing (no openssl, nothing
+# for CI to install); terminate TLS at a proxy, or a user enables a `rustls-*` feature themselves.
+tokio-tungstenite-wasm = { version = "0.8", default-features = false }
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+# Converts a decoded STOMP message to a `JsValue` for the subscription callback (any `Serialize`,
+# in both tsify ABIs). wasm-target only.
+serde-wasm-bindgen = "0.6"
 # STOMP 1.2 frame grammar (parse + serialize). Deps: either + nom + paste only — no
 # openssl/rsa/tokio, keeping the project's banned-crate rule intact. Framing only; the broker,
 # serve loop, and client transport are ours.

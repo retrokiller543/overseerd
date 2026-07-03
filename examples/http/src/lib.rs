@@ -23,11 +23,14 @@
 
 pub mod greet;
 
-// Server-only for now: WebSocket/STOMP controllers and the DI-backed auth middleware need the
-// server runtime; their generated clients are not wasm-ready yet (tracked as follow-up work).
+// The STOMP chat: its controllers' server halves are gated out on wasm by the macros, so the module
+// compiles on both targets — a wasm client gets the generated `ChatTopicClient` (subscribe) and
+// `ChatHandlerClient` (SEND) bound to the shared `Connection`, alongside the `ChatHistory` REST client.
+pub mod stomp;
+
+// Server-only for now: the JsonWs request/reply controller (no wasm ws transport yet) and the
+// DI-backed auth middleware.
 #[cfg(not(target_family = "wasm"))]
 pub mod auth;
-#[cfg(not(target_family = "wasm"))]
-pub mod stomp;
 #[cfg(not(target_family = "wasm"))]
 pub mod ws;
