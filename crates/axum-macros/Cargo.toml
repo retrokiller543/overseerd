@@ -16,6 +16,15 @@ proc-macro = true
 [features]
 # Emit the generated HTTP client (forwarded to macros-core).
 client = ["overseerd-macros-core/client"]
+# Signals that the `reqwest` (fetch) backend is available, so the client codegen may emit the
+# wasm `#[wasm_bindgen]` binding over `ReqwestClient`. Forwarded by `overseerd-axum`'s `reqwest`
+# feature; pure codegen signal (adds no dependency here).
+reqwest = ["client"]
+# Opt into the *new* `tsify` wasm ABI: `#[dto]` derives plain `Tsify` and the generated browser
+# client marshals via `Ts<T>` (typed, and free of the memory leak the published `into_wasm_abi`
+# path has). Needs the unreleased `tsify` (git master) as a wasm dep. Off by default, which uses the
+# published `tsify` (`into_wasm_abi`/`from_wasm_abi`) so a client builds with no git dependency.
+wasm-ts = []
 # Emit the compile-time dependency-injection assertions (forwarded to macros-core).
 di-check = ["overseerd-macros-core/di-check"]
 # Root generated plugin types at the `overseerd` facade (`::overseerd::axum::*`) instead of

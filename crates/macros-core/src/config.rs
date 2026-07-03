@@ -130,9 +130,10 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput, paths: &Paths) -> syn::Re
         None => quote!(),
     };
 
-    Ok(quote! {
-        #item
-
+    // The `ConfigProperties` impl and the `CONFIG_BINDINGS` (`linkme`) registration are the
+    // server-side config machinery — gated out on wasm. The struct itself stays as a plain serde
+    // DTO (harmless, and usable as shared data if a client references it).
+    let server = crate::gate::native_only(quote! {
         impl #config_properties for #ident {
             const NAME: &'static str = #name;
 
@@ -140,6 +141,15 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput, paths: &Paths) -> syn::Re
         }
 
         #registration
+    });
+
+    Ok(quote! {
+        // The user's config type is kept on every target (usable as a plain serde DTO on a wasm
+        // client); only the `ConfigProperties`/`CONFIG_BINDINGS` wiring above is server-gated.
+        #[cfg_attr(target_family = "wasm", allow(dead_code))]
+        #item
+
+        #server
     })
 }
 

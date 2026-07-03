@@ -56,6 +56,8 @@ struct ControllerContext {
     id: LitStr,
     name: LitStr,
     paths: Paths,
+    /// The controller type's `#[doc]` attributes, forwarded onto the generated client(s).
+    docs: Vec<syn::Attribute>,
 }
 
 impl<T: ComponentExt> ParseKeyed for AxumRouter<T> {
@@ -125,6 +127,7 @@ impl<T: ComponentExt> ParseItem<ComponentContext> for AxumRouter<T> {
             id: cx.id.clone(),
             name: cx.name.clone(),
             paths: paths.clone(),
+            docs: cx.docs.clone(),
         });
 
         self.inner.parse_item(cx, paths)
@@ -171,6 +174,7 @@ impl<T: ComponentExt> AxumRouter<T> {
             id,
             name,
             paths,
+            docs,
         } = cx;
 
         let base = match &self.base {
@@ -196,7 +200,15 @@ impl<T: ComponentExt> AxumRouter<T> {
             "__OVERSEERD_CONTROLLER_{}",
             ident.to_string().to_uppercase()
         );
-        let client_struct = client_struct(ident);
+        let client_struct = client_struct(ident, docs);
+        // The wasm `#[wasm_bindgen]` wrapper *struct* + constructor is emitted once here (like the
+        // generic client struct); each `#[handlers]` block contributes its methods onto it. Both
+        // carry the controller's own `#[doc]`s, so the client is documented like its controller.
+        let wasm_client_struct = if cfg!(feature = "client") {
+            crate::client::wasm_client_struct(&format_ident!("{}Client", ident), docs, paths)
+        } else {
+            quote!()
+        };
         let inner = &self.inner;
 
         let as_layer = paths.plugin("middleware::as_layer");
@@ -214,9 +226,14 @@ impl<T: ComponentExt> AxumRouter<T> {
             }
         });
 
-        out.extend(quote! {
-            #client_struct
+        // The controller's route base lives on the *client* too (ungated), so a generated client
+        // method builds its URI from `Self::BASE` without depending on the server `Controller` trait
+        // (whose `router()` returns an `axum::Router` — server-only). Emitted with the struct.
+        let client_base = client_base(ident, &base);
 
+        // The server surface — the route slice, the `Controller` impl, and the `CONTROLLERS`
+        // registration — is gated out on wasm; the client struct + `BASE` above carry across.
+        let server = overseerd_macros_core::gate::native_only(quote! {
             #[#distributed_slice]
             #[linkme(crate = #linkme_crate)]
             #[allow(non_upper_case_globals)]
@@ -271,6 +288,16 @@ impl<T: ComponentExt> AxumRouter<T> {
 
             #inner
         });
+
+        out.extend(quote! {
+            #client_struct
+
+            #client_base
+
+            #wasm_client_struct
+
+            #server
+        });
     }
 
     /// Emits the WebSocket controller surface: the `{Controller}WsRoutes` slice (message-route
@@ -284,6 +311,7 @@ impl<T: ComponentExt> AxumRouter<T> {
             id,
             name,
             paths,
+            docs,
         } = cx;
 
         let ws_routes_slice = self
@@ -310,7 +338,7 @@ impl<T: ComponentExt> AxumRouter<T> {
             "__OVERSEERD_WS_CONTROLLER_{}",
             ident.to_string().to_uppercase()
         );
-        let client_struct = client_struct(ident);
+        let client_struct = client_struct(ident, docs);
         let inner = &self.inner;
 
         out.extend(quote! {
@@ -381,8 +409,9 @@ impl<T: ComponentExt> AxumRouter<T> {
 
 /// The per-controller client struct (its methods are contributed by `#[handlers]` blocks). One
 /// per controller, gated on the `client` feature; the generated methods land in capability
-/// `impl` blocks the framework emits.
-fn client_struct(ident: &Ident) -> TokenStream {
+/// `impl` blocks the framework emits. `docs` are the controller type's own `#[doc]` attributes,
+/// emitted on the struct so the client documents identically to the controller it came from.
+fn client_struct(ident: &Ident, docs: &[syn::Attribute]) -> TokenStream {
     if !cfg!(feature = "client") {
         return quote!();
     }
@@ -390,7 +419,7 @@ fn client_struct(ident: &Ident) -> TokenStream {
     let client_ident = format_ident!("{}Client", ident);
 
     quote! {
-        /// Generated HTTP client: wraps a transport `C` and exposes one method per route.
+        #(#docs)*
         pub struct #client_ident<C>(pub C);
 
         impl<C> #client_ident<C> {
@@ -398,6 +427,24 @@ fn client_struct(ident: &Ident) -> TokenStream {
             pub fn new(transport: C) -> Self {
                 Self(transport)
             }
+        }
+    }
+}
+
+/// The client-side route base: `impl<C> {Controller}Client<C> { const BASE }`. Emitted (ungated)
+/// alongside [`client_struct`] so a generated client method builds its URI from `Self::BASE`,
+/// decoupled from the server-only `Controller` trait. Gated on the `client` feature like the struct.
+fn client_base(ident: &Ident, base: &TokenStream) -> TokenStream {
+    if !cfg!(feature = "client") {
+        return quote!();
+    }
+
+    let client_ident = format_ident!("{}Client", ident);
+
+    quote! {
+        impl<C> #client_ident<C> {
+            /// The controller's route base, prepended to each generated method's path.
+            pub const BASE: &'static str = #base;
         }
     }
 }

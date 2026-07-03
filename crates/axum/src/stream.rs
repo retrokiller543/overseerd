@@ -12,14 +12,23 @@
 //! directly — Rust's orphan rule blocks an `IntoResponse` impl for it — so the newtype is the
 //! thinnest possible wrapper, and `Ndjson(stream)` reads no heavier than the stream itself.)
 
+// `StreamBody` (the axum request extractor) and the `IntoResponse` framings are server-only; their
+// imports are gated with them. The framing markers, encoders, and the NDJSON decode engine below
+// are pure and compile on every target (the generated streaming client names them).
+#[cfg(not(target_family = "wasm"))]
 use std::pin::Pin;
+#[cfg(not(target_family = "wasm"))]
 use std::task::{Context, Poll};
 
-use axum::body::{Body, Bytes};
+#[cfg(not(target_family = "wasm"))]
+use axum::body::Body;
+#[cfg(not(target_family = "wasm"))]
 use axum::extract::{FromRequest, Request};
+#[cfg(not(target_family = "wasm"))]
 use axum::http::header::CONTENT_TYPE;
+#[cfg(not(target_family = "wasm"))]
 use axum::response::{IntoResponse, Response};
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
 use overseerd_transport::CodecError;
 use serde::Serialize;
@@ -31,6 +40,7 @@ const MAX_NDJSON_LINE_BYTES: usize = 1024 * 1024;
 /// stream is serialized to one JSON line.
 pub struct Ndjson<S>(pub S);
 
+#[cfg(not(target_family = "wasm"))]
 impl<S, T> IntoResponse for Ndjson<S>
 where
     S: Stream<Item = T> + Send + 'static,
@@ -59,6 +69,7 @@ where
 /// through unframed — for a binary stream a typed framing does not fit.
 pub struct RawStream<S>(pub S);
 
+#[cfg(not(target_family = "wasm"))]
 impl<S> IntoResponse for RawStream<S>
 where
     S: Stream<Item = Bytes> + Send + 'static,
@@ -199,10 +210,12 @@ where
 /// server reads the request body through axum's streaming and yields `T` per NDJSON line (a
 /// transport/decode error ends the stream, logged). A handler writes `#[stream] items: impl
 /// Stream<Item = T>`; the macro extracts via this and hands the handler the inner stream.
+#[cfg(not(target_family = "wasm"))]
 pub struct StreamBody<T> {
     inner: Pin<Box<dyn Stream<Item = T> + Send>>,
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl<T> StreamBody<T> {
     /// The deframed item stream.
     pub fn into_stream(self) -> impl Stream<Item = T> + Send {
@@ -210,6 +223,7 @@ impl<T> StreamBody<T> {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl<T> Stream for StreamBody<T> {
     type Item = T;
 
@@ -218,6 +232,7 @@ impl<T> Stream for StreamBody<T> {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl<S, T> FromRequest<S> for StreamBody<T>
 where
     S: Send + Sync,

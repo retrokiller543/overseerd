@@ -27,7 +27,38 @@ impl HttpBody for () {
     }
 }
 
-/// A JSON body, the common default — pairs with the server's `Json<T>` extractor.
+/// A JSON request body — the common default, pairing with the server's `Json<T>` extractor.
+///
+/// Client-owned (not `axum::Json`) so the client body path carries no dependency on the axum
+/// server framework and compiles for wasm. The generated client wraps the raw `T` in this
+/// internally, so callers never name it — swapping the wrapper is invisible to them.
+pub struct Json<T>(pub T);
+
+impl<T: Serialize> HttpBody for Json<T> {
+    const CONTENT_TYPE: Option<&'static str> = Some("application/json");
+
+    fn encode(self) -> Result<Vec<u8>, CodecError> {
+        serde_json::to_vec(&self.0).map_err(|e| CodecError::internal(e.to_string()))
+    }
+}
+
+/// A URL-encoded form request body — pairs with the server's `Form<T>` extractor. Client-owned
+/// (see [`Json`]) so it stays wasm-safe.
+pub struct Form<T>(pub T);
+
+impl<T: Serialize> HttpBody for Form<T> {
+    const CONTENT_TYPE: Option<&'static str> = Some("application/x-www-form-urlencoded");
+
+    fn encode(self) -> Result<Vec<u8>, CodecError> {
+        serde_urlencoded::to_string(&self.0)
+            .map(String::into_bytes)
+            .map_err(|e| CodecError::internal(e.to_string()))
+    }
+}
+
+/// A JSON body over the server's `axum::Json<T>` extractor type. Kept for native back-compat with
+/// code that hands the axum wrapper directly to the client; the generated client uses [`Json`].
+#[cfg(not(target_family = "wasm"))]
 impl<T: Serialize> HttpBody for axum::Json<T> {
     const CONTENT_TYPE: Option<&'static str> = Some("application/json");
 
@@ -36,7 +67,9 @@ impl<T: Serialize> HttpBody for axum::Json<T> {
     }
 }
 
-/// A URL-encoded form body — pairs with the server's `Form<T>` extractor.
+/// A URL-encoded form body over the server's `axum::extract::Form<T>` extractor type (native-only,
+/// see the [`axum::Json`] impl above). The generated client uses [`Form`].
+#[cfg(not(target_family = "wasm"))]
 impl<T: Serialize> HttpBody for axum::extract::Form<T> {
     const CONTENT_TYPE: Option<&'static str> = Some("application/x-www-form-urlencoded");
 

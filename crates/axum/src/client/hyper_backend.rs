@@ -11,7 +11,7 @@ use hyper::body::Frame;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
-use overseerd_client::{ClientError, Transport, Unary};
+use overseerd_client::{ClientError, MaybeSend, Transport, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes, Error as TransportError};
 use serde::de::DeserializeOwned;
 
@@ -152,8 +152,8 @@ where
     ) -> Result<HttpResponse<Resp>, ClientError<http::StatusCode, E>>
     where
         Self: Encodes<B> + Decodes<Resp>,
-        B: Send,
-        Resp: Send,
+        B: MaybeSend,
+        Resp: MaybeSend,
     {
         let request = self.build_request(request)?;
         let response = self.client.request(request).await.map_err(net_err)?;

@@ -148,18 +148,25 @@ where
         hook::generate_hook(&self_ty, &self_name, &hooks_slice, info, index, paths)
     });
 
-    // The framework owns the generated client: emit the capability-partitioned methods from
-    // the hints the extension contributed.
-    let client = crate::client::generate_client(
-        &crate::client::client_ident(&self_ident),
-        &client_methods,
-        paths,
-    );
+    // The framework owns the generated (transport-generic) client: emit the capability-partitioned
+    // methods from the hints the extension contributed.
+    let client_ident = crate::client::client_ident(&self_ident);
+    let client = crate::client::generate_client(&client_ident, &client_methods, paths);
+
+    // The extension may emit extra client-side tokens (a target-specific binding, wire-type
+    // assertions, …) — emitted ungated after `#client`; the extension owns their content and any
+    // gating, so the framework core stays target-agnostic.
+    let extra_client = args
+        .ext
+        .extra_client_tokens(&client_ident, &client_methods, paths);
 
     // Phase 4: the extension emits its own accumulated contribution, appended after the base.
     let ext = &args.ext;
 
-    Ok(quote! {
+    // The server surface — the user's `impl` (its handler bodies), the `#[init]` factory, the
+    // hooks, and the extension's route table/registration — is gated out on wasm; only the generated
+    // client (`#client`) is transport-generic and survives there.
+    let server = crate::gate::native_only(quote! {
         #item
 
         #marker
@@ -170,9 +177,15 @@ where
             #(#hook_tokens)*
         };
 
+        #ext
+    });
+
+    Ok(quote! {
+        #server
+
         #client
 
-        #ext
+        #extra_client
     })
 }
 

@@ -37,6 +37,12 @@ pub struct AxumHandlers {
     /// Accumulated per HTTP route-attributed method (during [`ParseMethod`]).
     routes: Vec<RouteSpec>,
 
+    /// Wire types across this block's routes (body/path/response) that must be `Dto`, collected for
+    /// a single deduped assertion block (see [`client::collect_wire_types`]). Populated only with the
+    /// `client` feature; emitted ungated via [`ParseMethod::client_assertions`] so it fires on native
+    /// *and* wasm.
+    wire_types: Vec<Type>,
+
     /// Accumulated per `#[message]` ws handler method (during [`ParseMethod`]). A block is either
     /// HTTP (`routes`) or WebSocket (`ws_routes`); mixing the two is a compile error.
     ws_routes: Vec<WsRouteSpec>,
@@ -182,6 +188,13 @@ impl ParseMethod for AxumHandlers {
                 )?
             };
 
+            // A ws message payload crosses the wire just like an HTTP body, so it is `Dto` by the
+            // same contract. (The reply is a protocol-specific `WsRespond` outcome, not a plain
+            // payload, so only the incoming payload is asserted.)
+            if let Some(payload) = ws_payload_type(method)? {
+                self.wire_types.push(payload);
+            }
+
             self.ws_routes.push(spec);
 
             return Ok(hint);
@@ -240,7 +253,6 @@ impl ParseMethod for AxumHandlers {
                 .collect();
 
             client::build_client_stream_method(
-                &cx.self_ident,
                 &method.sig.ident,
                 &route_attr,
                 &path_args,
@@ -252,7 +264,6 @@ impl ParseMethod for AxumHandlers {
             // A known framing yields a client method; a flagged-opaque return (no decode) does not.
             match &stream.client {
                 Some((wrapper_unit, item)) => client::build_stream_client_method(
-                    &cx.self_ident,
                     &method.sig.ident,
                     &route_attr,
                     &arg_types,
@@ -265,7 +276,6 @@ impl ParseMethod for AxumHandlers {
             }
         } else {
             client::build_client_method(
-                &cx.self_ident,
                 &method.sig.ident,
                 &route_attr,
                 &arg_types,
@@ -273,6 +283,12 @@ impl ParseMethod for AxumHandlers {
                 &cx.paths,
             )
         };
+
+        // Collect the wire types to assert `Dto` — for a plain unary route only (streaming
+        // bodies/returns are framed, not single `Dto` payloads). No-op without the `client` feature.
+        if stream_param.is_none() && stream_return.is_none() {
+            client::collect_wire_types(&arg_types, &method.sig.output, &mut self.wire_types);
+        }
 
         let server_wrap = stream_return.as_ref().and_then(|s| s.server_wrap.as_ref());
         let in_result = stream_return.as_ref().is_some_and(|s| s.in_result);
@@ -288,6 +304,18 @@ impl ParseMethod for AxumHandlers {
         self.routes.push(spec);
 
         Ok(hint)
+    }
+
+    /// The axum extension's client-side extras: the `Dto` wire-type assertions and (with the fetch
+    /// backend) the wasm `#[wasm_bindgen]` binding. The extension owns their target gating, so the
+    /// framework core never learns about wasm.
+    fn extra_client_tokens(
+        &self,
+        client_ident: &Ident,
+        methods: &[ClientMethod],
+        paths: &Paths,
+    ) -> TokenStream {
+        client::extra_client_tokens(client_ident, methods, self.wire_types.clone(), paths)
     }
 }
 

@@ -11,23 +11,23 @@ use overseerd::axum::client::{HyperClient, ReqwestClient};
 use overseerd::axum::prelude::*;
 use overseerd::client::{ClientError, Unary};
 use overseerd::prelude::*;
-use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
-#[derive(Serialize, Deserialize)]
+#[dto]
 struct EchoOut {
     msg: String,
     len: usize,
 }
 
-#[derive(Serialize, Deserialize)]
+#[dto]
 struct SumIn {
     a: i64,
     b: i64,
 }
 
 /// A domain error the handler streams as part of its items (not an HTTP/transport error).
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
+#[dto]
+#[derive(PartialEq, Debug)]
 struct ItemError {
     reason: String,
 }

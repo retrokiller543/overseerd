@@ -18,6 +18,7 @@ pub mod attr;
 pub mod client;
 pub mod di;
 pub mod extend;
+pub mod gate;
 pub mod handle;
 pub mod hook;
 pub mod inject;

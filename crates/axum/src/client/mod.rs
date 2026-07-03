@@ -9,23 +9,23 @@
 
 mod body;
 mod response;
-#[cfg(all(feature = "stomp", feature = "client"))]
+#[cfg(all(feature = "stomp", feature = "client", not(target_family = "wasm")))]
 mod stomp;
 mod streaming;
-#[cfg(all(feature = "ws", feature = "client"))]
+#[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
 mod websocket;
 
-#[cfg(feature = "hyper")]
+#[cfg(all(feature = "hyper", not(target_family = "wasm")))]
 mod hyper_backend;
 #[cfg(feature = "reqwest")]
 mod reqwest_backend;
 
-pub use body::{HttpBody, OctetStream};
+pub use body::{Form, HttpBody, Json, OctetStream};
 pub use response::HttpResponse;
-#[cfg(all(feature = "stomp", feature = "client"))]
+#[cfg(all(feature = "stomp", feature = "client", not(target_family = "wasm")))]
 pub use stomp::*;
 pub use streaming::{HttpClientStreaming, HttpStreaming, StreamDecode, encode_stream};
-#[cfg(all(feature = "ws", feature = "client"))]
+#[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
 pub use websocket::*;
 
 /// Re-exported so generated streaming-client code names the codec without a separate dep.
@@ -60,13 +60,13 @@ pub fn encode_path_segment(value: impl std::fmt::Display) -> String {
 /// the outer `Result`'s `Err`).
 #[cfg(any(feature = "reqwest", feature = "hyper"))]
 pub(crate) fn remote_error(
-    status: axum::http::StatusCode,
+    status: http::StatusCode,
     body: Vec<u8>,
-) -> overseerd_client::ClientError<axum::http::StatusCode> {
+) -> overseerd_client::ClientError<http::StatusCode> {
     overseerd_client::ClientError::Remote(overseerd_client::ErrorBody::new(status, body))
 }
 
-#[cfg(feature = "hyper")]
+#[cfg(all(feature = "hyper", not(target_family = "wasm")))]
 pub use hyper_backend::HyperClient;
 #[cfg(feature = "reqwest")]
 pub use reqwest_backend::ReqwestClient;

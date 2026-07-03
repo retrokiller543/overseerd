@@ -56,6 +56,14 @@ pub fn expand<Ext: ComponentExt>(
     let hooks_slice = inject::hooks_slice_ident(&self_ident);
     let hooks_infra = inject::hooks_infrastructure(&self_ident, &hooks_slice, paths);
 
+    // The type's own doc comments, forwarded to a router extension's generated client(s).
+    let docs: Vec<syn::Attribute> = item
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("doc"))
+        .cloned()
+        .collect();
+
     // Hand the resolved identity to the extension before it emits, so its output (service
     // descriptor, route table, …) names the component consistently.
     let context = ComponentContext {
@@ -64,6 +72,7 @@ pub fn expand<Ext: ComponentExt>(
         id: id.clone(),
         name: name.clone(),
         scope: args.scope.clone(),
+        docs,
     };
     args.ext.parse_item(&context, paths)?;
 
@@ -101,9 +110,10 @@ pub fn expand<Ext: ComponentExt>(
     // slice, and client for `#[service]`).
     let ext = &args.ext;
 
-    Ok(quote! {
-        #item
-
+    // The framework-generated surface is server-only (the DI `Component` impl, field-injection
+    // factory, `linkme` registration, providers, hooks). It is gated out on wasm; the extension
+    // (`#ext`) — e.g. a controller's `AxumRouter` — gates itself, keeping its client struct.
+    let base = crate::gate::native_only(quote! {
         #assert_wired
 
         impl #component for #self_ident {
@@ -127,6 +137,16 @@ pub fn expand<Ext: ComponentExt>(
 
             #providers
         };
+    });
+
+    Ok(quote! {
+        // The user's own type is kept on every target — they may legitimately use it in a wasm
+        // build. Only the framework wiring above is server-gated; `dead_code` is allowed on wasm,
+        // where that wiring (the sole user of some fields) is absent.
+        #[cfg_attr(target_family = "wasm", allow(dead_code))]
+        #item
+
+        #base
 
         #ext
     })

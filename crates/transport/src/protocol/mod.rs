@@ -1,3 +1,6 @@
+// The length-prefixed IO codec drives `tokio::io` (`AsyncRead`/`AsyncWrite`) over a socket, which
+// has no wasm target; the wire *types* below are pure and stay available everywhere.
+#[cfg(not(target_family = "wasm"))]
 pub mod codec;
 
 use serde::{Deserialize, Serialize};

@@ -13,7 +13,6 @@ use overseerd::axum::prelude::*;
 use overseerd::client::ClientError;
 use overseerd::prelude::*;
 use overseerd::{component, methods};
-use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -48,18 +47,18 @@ impl RequestTicket {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[dto]
 struct Who {
     who: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[dto]
 struct Greeting {
     message: String,
     count: u64,
 }
 
-#[derive(Serialize, Deserialize)]
+#[dto]
 struct Ticketed {
     message: String,
     ticket: u64,
