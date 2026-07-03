@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.9.1...overseerd-v0.10.0) - 2026-07-03
+
+### Added
+
+- *(axum)* STOMP subscribe/send wasm clients over a shared Connection
+- Made the framework compile to wasm and be able to generate wasm rest clients for axum.
+
+### Other
+
+- bring the README up to date
+- address PR #55 review — daemon default-feature doc + Dto intent
+
 ## [0.9.1](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.9.0...overseerd-v0.9.1) - 2026-07-02
 
 ### Other
