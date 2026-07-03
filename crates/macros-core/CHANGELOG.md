@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-core-v0.9.1...overseerd-macros-core-v0.10.0) - 2026-07-03
+
+### Added
+
+- Made the framework compile to wasm and be able to generate wasm rest clients for axum.
+
 ## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-core-v0.6.0...overseerd-macros-core-v0.7.0) - 2026-06-30
 
 ### Other

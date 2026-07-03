@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.9.1...overseerd-axum-macros-v0.10.0) - 2026-07-03
+
+### Added
+
+- *(axum)* STOMP subscribe/send wasm clients over a shared Connection
+- Made the framework compile to wasm and be able to generate wasm rest clients for axum.
+
 ## [0.9.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.8.0...overseerd-axum-macros-v0.9.0) - 2026-07-02
 
 ### Added
