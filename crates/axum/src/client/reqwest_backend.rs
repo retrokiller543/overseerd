@@ -1,16 +1,22 @@
 //! The `reqwest` client backend.
 
+#[cfg(not(target_family = "wasm"))]
 use bytes::Bytes;
+#[cfg(not(target_family = "wasm"))]
 use futures::Stream;
+#[cfg(not(target_family = "wasm"))]
 use futures::StreamExt;
+#[cfg(not(target_family = "wasm"))]
 use futures::stream::BoxStream;
 use http::Request;
-use overseerd_client::{ClientError, Transport, Unary};
+use overseerd_client::{ClientError, MaybeSend, Transport, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
-use super::{HttpBody, HttpClientStreaming, HttpResponse, HttpStreaming};
-#[cfg(all(feature = "ws", feature = "client"))]
+use super::{HttpBody, HttpResponse};
+#[cfg(not(target_family = "wasm"))]
+use super::{HttpClientStreaming, HttpStreaming};
+#[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
 use super::{WebsocketClient, WsStatus};
 
 /// An HTTP client transport backed by [`reqwest`].
@@ -22,6 +28,9 @@ use super::{WebsocketClient, WsStatus};
 pub struct ReqwestClient<W = ()> {
     client: reqwest::Client,
     base_url: String,
+    // Read only by the `WebsocketClient` delegate, which is native-only; on wasm the field is
+    // carried (so `with_websocket`/`W` stay uniform across targets) but never read.
+    #[cfg_attr(target_family = "wasm", allow(dead_code))]
     websocket: W,
 }
 
@@ -102,8 +111,8 @@ where
     ) -> Result<HttpResponse<Resp>, ClientError<http::StatusCode, E>>
     where
         Self: Encodes<B> + Decodes<Resp>,
-        B: Send,
-        Resp: Send,
+        B: MaybeSend,
+        Resp: MaybeSend,
     {
         let (parts, body) = request.into_parts();
         let bytes = self
@@ -137,6 +146,7 @@ where
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl<W> HttpStreaming for ReqwestClient<W>
 where
     W: Send + Sync,
@@ -183,6 +193,7 @@ where
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 impl<W> HttpClientStreaming for ReqwestClient<W>
 where
     W: Send + Sync,
@@ -226,7 +237,7 @@ where
     }
 }
 
-#[cfg(all(feature = "ws", feature = "client"))]
+#[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
 impl<W, P, Req, Resp> WebsocketClient<P, Req, Resp> for ReqwestClient<W>
 where
     W: WebsocketClient<P, Req, Resp>,

@@ -6,13 +6,36 @@ license.workspace = true
 authors.workspace = true
 publish = false
 
+# The crate is both a library (the app surface: controllers, components, DTOs — see `lib.rs`) and a
+# binary (the server bootstrap — `main.rs`). The library half is what compiles to wasm as a browser
+# client: `wasm-pack build examples/http --target web` builds the generated `{Controller}Client`s,
+# with the server code `cfg`-gated out. `cdylib` is required by wasm-pack; `rlib` lets the binary
+# depend on the library.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
+serde = { workspace = true }
+
+# Native (server): the full protocol stack — ws/stomp controllers, DI middleware, both HTTP client
+# backends. The binary and the server-only modules use these.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 overseerd = { path = "../..", default-features = false, features = ["axum", "ws", "stomp", "uuid", "reqwest", "hyper", "tungstenite", "tracing-subscriber"] }
 tokio = { workspace = true }
-serde = { workspace = true }
 tracing.workspace = true
 # Lock-free room registry in the STOMP chat controller (the framework's own read-mostly idiom).
 arc-swap = { workspace = true }
+
+# wasm (browser client): only the HTTP client surface + the fetch backend. `wasm-bindgen` and
+# `tsify` must be *direct* dependencies — the generated `#[wasm_bindgen]` client and `#[dto]` derives
+# hardcode `::wasm_bindgen` / `::tsify` (they cannot be reached through a re-export). This uses the
+# published `tsify` (the default `into_wasm_abi` ABI); enable overseerd's `wasm-ts` feature for the
+# newer `Ts<T>` ABI, which needs the unreleased `tsify` git master instead.
+[target.'cfg(target_family = "wasm")'.dependencies]
+overseerd = { path = "../..", default-features = false, features = ["axum", "client", "reqwest"] }
+tsify = "0.5.6"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
 
 [dev-dependencies]
 tower = { workspace = true }

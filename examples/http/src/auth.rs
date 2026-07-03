@@ -19,7 +19,6 @@ use overseerd::axum::axum::response::{IntoResponse, Response};
 use overseerd::axum::prelude::*;
 use overseerd::axum::{AxumMiddleware, RequestMeta};
 use overseerd::{component, methods};
-use serde::Serialize;
 
 /// A plain `axum::middleware::from_fn` closure — standard, un-wrapped axum middleware,
 /// registered globally in `main.rs` via `.layer(...)` alongside the DI-backed kind below.
@@ -100,7 +99,7 @@ impl AuthenticatedUser {
 
 /// The `/me` response: the authenticated user's name, and whether both `Inject`ions below
 /// resolved the same cached instance.
-#[derive(Serialize)]
+#[dto]
 struct WhoAmI {
     name: Option<String>,
     same_instance: bool,
@@ -113,7 +112,8 @@ struct MeController;
 
 #[handlers]
 impl MeController {
-    /// `GET /me/public` — no `Authorization` header required.
+    /// `GET /me/public` — no `Authorization` header required. Returns a plain string (some APIs do);
+    /// a borrowed response is allowed as a wire type, though the typed client can't decode into it.
     #[get("/public")]
     async fn public(&self) -> &'static str {
         "hello, anonymous"

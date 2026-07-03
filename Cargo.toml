@@ -44,7 +44,9 @@ axum = "0.8"
 serde_json = "1"
 serde_urlencoded = "0.7"
 http = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# Base is the wasm-compatible common subset (json only, fetch backend). Native consumers add
+# `rustls-tls` + `stream` per-target (see crates/axum). No `openssl` — keeps the banned-crate rule.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
 # hyper as a client: the legacy/util client + body helpers. Plain HTTP connector only (no TLS
 # feature), keeping openssl/rsa out — terminate TLS at a proxy, or use the reqwest backend.
 hyper = { version = "1", features = ["client", "http1"] }
@@ -77,6 +79,12 @@ async-trait = "0.1"
 linkme = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi", "json"] }
+# Typed wasm<->JS conversion + TypeScript type generation for `#[dto]` types, so the generated
+# client's arguments/returns are typed in TS (via `Ts<T>`) rather than `any`. Its derive + `Ts<T>`
+# hardcode `::tsify`/`::wasm_bindgen`, so a wasm client crate depends on `tsify` + `wasm-bindgen`
+# directly (see the http example). Clean dep tree (serde + wasm-bindgen + gloo-utils) — no
+# openssl/rsa. Listed here only to pin the version the docs/examples reference.
+tsify = "0.5"
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
@@ -94,7 +102,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["di-check", "daemon"]
+default = ["di-check"]
 
 # Re-export the native RPC daemon through the facade for convenience. The protocol crate owns
 # its own macros; the facade just enables its `facade` feature (so its codegen roots at
@@ -134,6 +142,11 @@ reqwest = ["client", "overseerd-axum?/reqwest"]
 hyper = ["client", "overseerd-axum?/hyper"]
 tungstenite = ["client", "ws", "overseerd-axum?/tungstenite"]
 
+# Opt into the new `tsify` `Ts<T>` wasm ABI for the generated browser client (typed + leak-free).
+# Requires the unreleased `tsify` (git master) as a wasm dep in your crate; off by default uses the
+# published `tsify` `into_wasm_abi` path (no git dependency needed).
+wasm-ts = ["overseerd-axum?/wasm-ts"]
+
 # Emit compile-time dependency-injection checks (a `Wiring: Provide<Dep>` bound
 # per concrete dependency). A missing provider becomes a `cargo check` error.
 di-check = [
@@ -154,23 +167,30 @@ tracing-subscriber = ["overseerd-app/tracing-subscriber"]
 # Watch config files and reload on change (`ConfigManager::watch_config`), via `notify`.
 watch = ["overseerd-config/watch", "overseerd-app/watch", "overseerd-rpc?/watch", "overseerd-axum?/watch"]
 
+# Shared across all targets: the client core, the (wasm-safe) transport substrate, the axum
+# protocol's *client* surface, and the proc-macros (built for the host regardless of target).
 [dependencies]
+overseerd-client = { workspace = true }
+overseerd-transport = { workspace = true }
+overseerd-axum = { workspace = true, optional = true }
+# The facade depends only on the *core* macros crate; each protocol crate owns and re-exports
+# its own macros (the facade reaches them through the protocol crate).
+overseerd-macros = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+
+# Native (non-wasm): the daemon stack — DI engine, config/dirs (filesystem), the app runtime,
+# hooks, the RPC daemon, and tokio. A browser client needs none of these, and several do not build
+# for wasm (linkme, `directories`, `notify`, tokio net), so they are compiled out there.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 overseerd-core = { workspace = true }
 overseerd-di = { workspace = true }
 overseerd-hooks = { workspace = true }
 overseerd-dirs = { workspace = true }
 overseerd-config = { workspace = true }
 overseerd-app = { workspace = true }
-overseerd-client = { workspace = true }
 overseerd-rpc = { workspace = true, optional = true }
-overseerd-axum = { workspace = true, optional = true }
-overseerd-transport = { workspace = true }
-# The facade depends only on the *core* macros crate; each protocol crate owns and re-exports
-# its own macros (the facade reaches them through the protocol crate).
-overseerd-macros = { workspace = true }
 tokio = { workspace = true }
-futures = { workspace = true }
-serde = { workspace = true }
 postcard = { workspace = true }
 
 [dev-dependencies]

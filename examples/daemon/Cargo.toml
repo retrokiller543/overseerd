@@ -7,7 +7,7 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-overseerd = { path = "../..", features = ["tracing-subscriber"] }
+overseerd = { path = "../..", features = ["daemon", "tracing-subscriber"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 tracing.workspace = true

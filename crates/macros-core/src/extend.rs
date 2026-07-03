@@ -82,6 +82,23 @@ pub trait ParseMethod: Default {
 
         Ok(None)
     }
+
+    /// Extra tokens the extension emits **alongside the generated client**, given the collected
+    /// method hints. The framework emits them ungated, right after `#client`; the extension owns
+    /// their content *and* any target gating. This is the seam a protocol uses for target- or
+    /// binding-specific client codegen (the HTTP extension emits its `#[wasm_bindgen]` browser
+    /// binding and its `Dto` wire-type assertions here) — so the framework core never learns about
+    /// wasm or any other target. Empty by default.
+    fn extra_client_tokens(
+        &self,
+        client_ident: &Ident,
+        methods: &[ClientMethod],
+        paths: &Paths,
+    ) -> proc_macro2::TokenStream {
+        let _ = (client_ident, methods, paths);
+
+        proc_macro2::TokenStream::new()
+    }
 }
 
 /// The base-resolved component identity handed to a struct-macro extension (via
@@ -100,6 +117,10 @@ pub struct ComponentContext {
     pub name: syn::LitStr,
     /// The scope marker path from `scope = ..`, if specified (`None` = default singleton).
     pub scope: Option<syn::Path>,
+    /// The type's own `#[doc]` attributes, cloned from the item. A router extension forwards them
+    /// verbatim onto its generated client(s), so `{Controller}Client` (and the wasm binding, whose
+    /// docs become TypeScript JSDoc) always carries the controller's documentation.
+    pub docs: Vec<syn::Attribute>,
 }
 
 /// A **component** macro extension: the struct-side analogue of an impl extension. It is a

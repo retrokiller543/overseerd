@@ -48,7 +48,7 @@ impl Ticket {
     }
 }
 
-#[derive(Serialize)]
+#[dto]
 struct Reply {
     text: String,
     hits: u64,

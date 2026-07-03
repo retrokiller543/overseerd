@@ -16,6 +16,7 @@
 extern crate proc_macro;
 
 mod client;
+mod dto;
 mod handlers;
 mod route;
 mod router;
@@ -27,7 +28,7 @@ use overseerd_macros_core::run;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use router::ControllerComponent;
-use syn::{ItemEnum, ItemFn, ItemImpl, ItemStruct};
+use syn::{DeriveInput, ItemEnum, ItemFn, ItemImpl, ItemStruct};
 
 /// The default crate roots for the axum macros. Core is always the `overseerd` facade; the
 /// plugin (own-types) root is `::overseerd::axum` when consumed through the facade (the
@@ -91,6 +92,23 @@ pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
                 overseerd_macros_core::methods::expand(args, item, &paths)
             })
         }
+
+        Err(e) => e.into_compile_error(),
+    };
+
+    out.into()
+}
+
+/// Marks a type as HTTP **wire data** ([`Dto`](../overseerd_axum/trait.Dto.html)): a request/response
+/// body or a path/query parameter. Derives `serde::Serialize`/`Deserialize` (skip with
+/// `#[dto(no_serde)]`), derives `tsify::Tsify` on wasm (so the generated client is TypeScript-typed),
+/// and implements `Dto`. `#[handlers]` requires every wire position to be a `Dto`, so a forgotten
+/// `#[dto]` is a clear error rather than a cascade of serde/`IntoResponse` failures.
+#[proc_macro_attribute]
+pub fn dto(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let paths = axum_paths();
+    let out = match syn::parse2::<dto::DtoArgs>(attr.into()) {
+        Ok(args) => run::<DeriveInput, _>(item.into(), |item| dto::expand(args, item, &paths)),
 
         Err(e) => e.into_compile_error(),
     };

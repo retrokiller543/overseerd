@@ -75,6 +75,243 @@ fn classify(arg_types: &[&Type]) -> Option<Inputs> {
     Some(Inputs { path_ty, body })
 }
 
+/// Collects the **wire** types of a route — the JSON/Form request body, the path parameter(s), and
+/// the response — each of which must implement [`Dto`](../overseerd_axum/trait.Dto.html). Pushed
+/// into `sink` (across a whole `#[handlers]` block) so the caller can dedupe and emit a single
+/// assertion block. Only with the `client` feature (a `Dto` is what the client builds a typed method
+/// from); a server-only build leaves plain `Serialize` types be.
+///
+/// Dependency-injected parameters (`Inject`/`State`/…) are *not* collected — only what crosses the
+/// wire. A route whose arguments don't classify (an unusual extractor) contributes nothing; its own
+/// extractor bounds report the problem.
+pub fn collect_wire_types(arg_types: &[&Type], output: &ReturnType, sink: &mut Vec<Type>) {
+    if !cfg!(feature = "client") {
+        return;
+    }
+
+    let Some(inputs) = classify(arg_types) else {
+        return;
+    };
+
+    if let Some(path_ty) = inputs.path_ty {
+        sink.push(path_ty);
+    }
+
+    if let Some((_, body)) = inputs.body {
+        sink.push(body);
+    }
+
+    // The response payload (a `Result`/`Json` return is peeled). `()` is a `Dto`, so a bare return
+    // is fine; a plain unary response payload is asserted like any other wire type.
+    sink.push(response_type(output));
+}
+
+/// Emits a **single** `const` block asserting every collected wire type is [`Dto`], turning a
+/// forgotten `#[dto]` into a clear "`X: Dto` is not satisfied" error rather than a cascade of
+/// serde/`IntoResponse` failures. The types are deduped by their token text, so a type shared across
+/// routes is asserted once. Empty when nothing was collected (no client feature, or no routes).
+pub fn dto_assertions(mut wire_types: Vec<Type>, paths: &Paths) -> TokenStream {
+    if wire_types.is_empty() {
+        return quote!();
+    }
+
+    // Dedupe by textual form (`Type` is not `Hash`/`Eq`), so each distinct type is asserted once.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    wire_types.retain(|ty| seen.insert(quote!(#ty).to_string()));
+
+    let dto = paths.plugin("Dto");
+    let asserts = wire_types
+        .iter()
+        .map(|ty| quote!(__overseerd_assert_dto::<#ty>();));
+
+    quote! {
+        const _: () = {
+            fn __overseerd_assert_dto<T: #dto>() {}
+
+            fn __overseerd_assert_wire_types() {
+                #(#asserts)*
+            }
+        };
+    }
+}
+
+/// The hidden Rust name of the wasm wrapper newtype for a client, e.g. `__GreetControllerClientWasm`.
+fn wasm_wrapper_ident(client_ident: &Ident) -> Ident {
+    format_ident!("__{}Wasm", client_ident)
+}
+
+/// Emits the **wasm** JavaScript binding's *struct* — a `#[wasm_bindgen]` newtype over the concrete
+/// `{Client}<ReqwestClient>` (wasm-bindgen cannot export the generic form) plus its constructor.
+/// Emitted **once** by `#[controller]` (like the generic client struct), so multiple `#[handlers]`
+/// blocks — which contribute methods (see [`wasm_client_methods`]) — never re-declare it.
+///
+/// `#[doc(hidden)]` and exported under `js_name = "{Client}"`, so JS sees exactly `{Client}`; the
+/// generic `{Client}<C>` is untouched (no native/wasm drift). Wasm-only, and only with the `reqwest`
+/// fetch backend (the sole wasm HTTP transport). `wasm-bindgen`/`tsify` are the consuming crate's
+/// direct wasm deps (their codegen hardcodes those crate paths, as is standard for a wasm crate).
+pub fn wasm_client_struct(
+    client_ident: &Ident,
+    docs: &[syn::Attribute],
+    paths: &Paths,
+) -> TokenStream {
+    if !cfg!(feature = "reqwest") {
+        return quote!();
+    }
+
+    let backend = paths.plugin("client::ReqwestClient");
+    let js_name = client_ident.to_string();
+    let wrapper = wasm_wrapper_ident(client_ident);
+
+    // The only doc comments on the generated wasm items are the controller type's own `#[doc]`s
+    // (`docs`) — wasm-bindgen turns them into the exported class's TypeScript JSDoc, so the client is
+    // documented exactly like its controller. No framework prose is emitted (it would leak into the
+    // user's `.d.ts`). `#[doc(hidden)]` guards the internal Rust newtype from ever appearing in
+    // rust docs no matter what docs.rs does; wasm-bindgen ignores it, so the JSDoc still emits.
+    quote! {
+        #(#docs)*
+        #[cfg(target_family = "wasm")]
+        #[doc(hidden)]
+        #[::wasm_bindgen::prelude::wasm_bindgen(js_name = #js_name)]
+        pub struct #wrapper(#client_ident<#backend>);
+
+        // A separate `impl` from the method blocks (below, per `#[handlers]`); `js_class` ties every
+        // block to the renamed exported class. wasm-bindgen composes multiple impls for one class.
+        #[cfg(target_family = "wasm")]
+        #[::wasm_bindgen::prelude::wasm_bindgen(js_class = #js_name)]
+        impl #wrapper {
+            #[::wasm_bindgen::prelude::wasm_bindgen(constructor)]
+            pub fn new(base_url: ::std::string::String) -> Self {
+                Self(#client_ident::new(#backend::new(base_url)))
+            }
+        }
+    }
+}
+
+/// Emits the wasm binding's *methods* — one `js_class`-tagged `impl` on the wrapper forwarding each
+/// unary method with typed `Ts<T>` (or, by default, `into_wasm_abi`) arguments/returns, so wasm-pack
+/// generates real TypeScript types rather than `any`. Emitted **per `#[handlers]` block** (like the
+/// generic client methods), so several blocks compose onto the one struct without duplication.
+fn wasm_client_methods(client_ident: &Ident, methods: &[ClientMethod]) -> TokenStream {
+    let js_name = client_ident.to_string();
+    let wrapper = wasm_wrapper_ident(client_ident);
+
+    // The wasm ABI flavour (see `#[dto]`): with `wasm-ts` the payloads are wrapped in `Ts<T>` and
+    // converted with `.to_rust()`/`.into_ts()`; by default the `into_wasm_abi`/`from_wasm_abi` derives
+    // make the types usable directly as `#[wasm_bindgen]` arguments/returns (no wrapper, no convert).
+    let ts = cfg!(feature = "wasm-ts");
+
+    let fns = methods
+        .iter()
+        .filter(|m| m.capability == Capability::Unary)
+        .map(|m| {
+            let ident = &m.ident;
+
+            // Each path/query parameter, typed for TypeScript. `Ts<T>` (new ABI) needs a `.to_rust()`
+            // before the call; the default ABI passes the value straight through.
+            let extra_params = m.extra_args.iter().map(|(name, ty)| {
+                if ts {
+                    quote!(, #name: ::tsify::Ts<#ty>)
+                } else {
+                    quote!(, #name: #ty)
+                }
+            });
+            let extra_prep = m.extra_args.iter().map(|(name, _)| {
+                if ts {
+                    quote!(let #name = #name.to_rust().map_err(::wasm_bindgen::JsError::from)?;)
+                } else {
+                    quote!()
+                }
+            });
+
+            let mut call_args: Vec<TokenStream> =
+                m.extra_args.iter().map(|(name, _)| quote!(#name)).collect();
+
+            let (body_param, body_prep) = match &m.request {
+                Some(req) => {
+                    call_args.push(quote!(__request));
+
+                    if ts {
+                        (
+                            quote!(, body: ::tsify::Ts<#req>),
+                            quote!(let __request = body.to_rust().map_err(::wasm_bindgen::JsError::from)?;),
+                        )
+                    } else {
+                        (quote!(, __request: #req), quote!())
+                    }
+                }
+
+                None => (quote!(), quote!()),
+            };
+
+            let response = &m.response;
+            let ret = if ts {
+                quote!(::tsify::Ts<#response>)
+            } else {
+                quote!(#response)
+            };
+            // Both ABIs deref the response envelope to its body; the new ABI additionally wraps it.
+            let ret_expr = if ts {
+                quote!(__response.into_body().into_ts().map_err(::wasm_bindgen::JsError::from)?)
+            } else {
+                quote!(__response.into_body())
+            };
+
+            quote! {
+                pub async fn #ident(
+                    &self #(#extra_params)* #body_param
+                ) -> ::core::result::Result<#ret, ::wasm_bindgen::JsError> {
+                    #(#extra_prep)*
+                    #body_prep
+
+                    let __response = self
+                        .0
+                        .#ident(#(#call_args),*)
+                        .await
+                        .map_err(|e| ::wasm_bindgen::JsError::new(
+                            &::std::string::ToString::to_string(&e),
+                        ))?;
+
+                    ::core::result::Result::Ok(#ret_expr)
+                }
+            }
+        });
+
+    quote! {
+        #[cfg(target_family = "wasm")]
+        #[::wasm_bindgen::prelude::wasm_bindgen(js_class = #js_name)]
+        impl #wrapper {
+            #(#fns)*
+        }
+    }
+}
+
+/// The extra client-side tokens the HTTP extension emits alongside a `#[handlers]` block's generated
+/// client methods: the deduped `Dto` wire-type assertions (both targets) and, with the `reqwest`
+/// (fetch) backend, the wasm binding's *method* impl (wasm-only, self-gated). The wrapper struct is
+/// emitted separately by `#[controller]` ([`wasm_client_struct`]). This is the whole of the axum
+/// extension's [`extra_client_tokens`](overseerd_macros_core::ParseMethod::extra_client_tokens).
+pub fn extra_client_tokens(
+    client_ident: &Ident,
+    methods: &[ClientMethod],
+    wire_types: Vec<Type>,
+    paths: &Paths,
+) -> TokenStream {
+    let assertions = dto_assertions(wire_types, paths);
+
+    // The wasm method impl (the struct comes from `#[controller]`). Only with the fetch backend.
+    let wasm_methods = if cfg!(feature = "reqwest") && !methods.is_empty() {
+        wasm_client_methods(client_ident, methods)
+    } else {
+        quote!()
+    };
+
+    quote! {
+        #assertions
+
+        #wasm_methods
+    }
+}
+
 /// The body wrapper path (`Json`/`Form`) for the wire body type and the `body: T` value.
 fn body_parts(
     body: &Option<(BodyKind, Type)>,
@@ -82,9 +319,12 @@ fn body_parts(
 ) -> (TokenStream, TokenStream, TokenStream) {
     match body {
         Some((kind, inner)) => {
+            // Client-owned wrappers (not axum's), so the client body path carries no dependency on
+            // the axum server framework and compiles for wasm. The client method still takes the
+            // raw `T` (`request: #inner`), so this swap is invisible to callers.
             let wrapper = match kind {
-                BodyKind::Json => paths.plugin("axum::Json"),
-                BodyKind::Form => paths.plugin("axum::extract::Form"),
+                BodyKind::Json => paths.plugin("client::Json"),
+                BodyKind::Form => paths.plugin("client::Form"),
             };
 
             (
@@ -101,7 +341,6 @@ fn body_parts(
 /// Builds the `http::Request<B>` constructor expression for a route: verb + `BASE`-joined URI
 /// (path params substituted) + the body's content type + the typed body value.
 fn request_builder(
-    controller: &Ident,
     route: &RouteAttr,
     fmt: &str,
     subst: &[TokenStream],
@@ -112,9 +351,10 @@ fn request_builder(
     let http = paths.plugin("http");
     let http_body = paths.plugin("client::HttpBody");
     let encode_path_segment = paths.plugin("client::encode_path_segment");
-    let controller_trait = paths.plugin("Controller");
     let verb = format_ident!("{}", route.verb.to_string().to_uppercase());
-    let base = quote!(<#controller as #controller_trait>::BASE);
+    // The route base lives on the client struct (`impl {Controller}Client { const BASE }`), so the
+    // URI is built from `Self::BASE` without depending on the server-only `Controller` trait.
+    let base = quote!(Self::BASE);
     let subst = subst
         .iter()
         .map(|subst| quote!(#encode_path_segment(&#subst)));
@@ -146,7 +386,6 @@ fn request_builder(
 /// Encodes<B>`), the `impl Stream` return, and the byte-stream-then-decode body; the framework
 /// assembles the signature (args = path params + optional body, from the `ServerStreaming` arm).
 pub fn build_stream_client_method(
-    controller: &Ident,
     method_ident: &Ident,
     route: &RouteAttr,
     arg_types: &[&Type],
@@ -160,7 +399,6 @@ pub fn build_stream_client_method(
     let (fmt, holes) = parse_template(&route.path.value());
     let path_plan = plan_path(&holes, inputs.path_ty)?;
     let request = request_builder(
-        controller,
         route,
         &fmt,
         &path_plan.subst,
@@ -234,7 +472,6 @@ struct ClientMethodOverrideBody {
 /// only). `None` if a path/return is not classifiable, or a `Json`/`Form` body also appears (the
 /// stream *is* the body).
 pub fn build_client_stream_method(
-    controller: &Ident,
     method_ident: &Ident,
     route: &RouteAttr,
     arg_types: &[&Type],
@@ -259,13 +496,13 @@ pub fn build_client_stream_method(
     let http_client_streaming = paths.plugin("client::HttpClientStreaming");
     let http_response = paths.plugin("client::HttpResponse");
     let encode_path_segment = paths.plugin("client::encode_path_segment");
-    let controller_trait = paths.plugin("Controller");
     let client_error = paths.client("ClientError");
     let decodes = paths.client("Decodes");
     let stream_arg = paths.client("StreamArg");
 
     let verb = format_ident!("{}", route.verb.to_string().to_uppercase());
-    let base = quote!(<#controller as #controller_trait>::BASE);
+    // Built from the client struct's `Self::BASE` (see `request_builder`).
+    let base = quote!(Self::BASE);
     let subst = &path_plan.subst;
     let subst = subst
         .iter()
@@ -399,7 +636,7 @@ pub(crate) fn classify_stream_return(
         let raw = paths.plugin("RawStream");
 
         if type_name(&item).is_some_and(|name| name == "u8") {
-            let bytes = paths.plugin("axum::body::Bytes");
+            let bytes = paths.plugin("bytes::Bytes");
 
             return Some(StreamReturn {
                 server_wrap: Some(ServerWrap::RawU8),
@@ -485,7 +722,6 @@ enum BodyKind {
 /// Builds the [`ClientMethod`] hint for one route, or `None` if an argument is not a recognized
 /// client input or droppable server-only extractor (the route then gets no client method).
 pub fn build_client_method(
-    controller: &Ident,
     method_ident: &Ident,
     route: &RouteAttr,
     arg_types: &[&Type],
@@ -503,7 +739,6 @@ pub fn build_client_method(
     let path_plan = plan_path(&holes, inputs.path_ty)?;
 
     Some(assemble(
-        controller,
         method_ident,
         route,
         fmt,
@@ -577,9 +812,7 @@ fn plan_path(holes: &[String], path_ty: Option<Type>) -> Option<PathPlan> {
 }
 
 /// Assembles the hint once the args are classified.
-#[allow(clippy::too_many_arguments)]
 fn assemble(
-    controller: &Ident,
     method_ident: &Ident,
     route: &RouteAttr,
     fmt: String,
@@ -592,15 +825,15 @@ fn assemble(
     let http_body = paths.plugin("client::HttpBody");
     let http_response = paths.plugin("client::HttpResponse");
     let encode_path_segment = paths.plugin("client::encode_path_segment");
-    let controller_trait = paths.plugin("Controller");
 
     // The decoded response body: peel a `Json<T>` return to `T`, else the bare return type.
     let response = response_type(output);
 
-    // The URI: `<Controller>::BASE` then the route template with each `{name}` hole replaced by
-    // a positional `{}`, filled from the path params. One `http::Method::<VERB>` selects the verb.
+    // The URI: the client struct's `Self::BASE` then the route template with each `{name}` hole
+    // replaced by a positional `{}`, filled from the path params. `http::Method::<VERB>` selects
+    // the verb. `Self::BASE` keeps the client decoupled from the server `Controller` trait.
     let verb = format_ident!("{}", route.verb.to_string().to_uppercase());
-    let base = quote!(<#controller as #controller_trait>::BASE);
+    let base = quote!(Self::BASE);
     let subst = &path_plan.subst;
     let subst = subst
         .iter()
@@ -612,9 +845,12 @@ fn assemble(
     // content type. A no-body route uses `()`.
     let (request, encode_as, body_value, body_ty) = match body {
         Some((kind, inner)) => {
+            // Client-owned wrappers (not axum's), so the client body path carries no dependency on
+            // the axum server framework and compiles for wasm. The client method still takes the
+            // raw `T` (`request: #inner`), so this swap is invisible to callers.
             let wrapper = match kind {
-                BodyKind::Json => paths.plugin("axum::Json"),
-                BodyKind::Form => paths.plugin("axum::extract::Form"),
+                BodyKind::Json => paths.plugin("client::Json"),
+                BodyKind::Form => paths.plugin("client::Form"),
             };
             let wrapped = quote!(#wrapper<#inner>);
 

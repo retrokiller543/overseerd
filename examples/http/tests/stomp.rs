@@ -10,18 +10,19 @@ use overseerd::axum::client::{ReqwestClient, StompClientTransport};
 use overseerd::axum::prelude::*;
 use overseerd::axum::{CodecError, StompBody, StompCodec};
 use overseerd::prelude::*;
+use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 
 /// A message a client sends to the app (`/app/chat`).
-#[derive(Serialize, Deserialize)]
+#[dto]
 struct SendChat {
     text: String,
 }
 
 /// A message broadcast to subscribers of `/topic/room`.
-#[derive(Clone, Serialize, Deserialize)]
+#[dto]
+#[derive(Clone)]
 struct RoomMsg {
     text: String,
 }

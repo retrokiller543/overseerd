@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 // Leaf vocabulary + resolver model.
 // ---------------------------------------------------------------------------
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_core::{
     Cardinality, DependencyDescriptor, Descriptor, Resolver, ResolverCtx, ResolverCtxExt,
     ResolverSet, Scope, StaticScope, TypeDescriptor, type_id_of,
@@ -24,6 +25,7 @@ pub use overseerd_core::{
 /// The core defines only the universal anchors [`Singleton`](scope::Singleton) and
 /// [`Transient`](scope::Transient); `Connection` and `Request` are RPC-protocol scopes from
 /// `overseerd-rpc`, available with the `daemon` feature.
+#[cfg(not(target_family = "wasm"))]
 pub mod scope {
     pub use overseerd_core::scope::{Singleton, Transient};
 
@@ -34,6 +36,7 @@ pub mod scope {
 // ---------------------------------------------------------------------------
 // DI engine: descriptors, container, factories, registry.
 // ---------------------------------------------------------------------------
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_di::{
     BoxedComponent, COMPONENTS, Component, ComponentConstructionContext, ComponentContainer,
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor,
@@ -43,27 +46,32 @@ pub use overseerd_di::{
 };
 /// The DI layer's own error/result, exposed under distinct names so macro-generated
 /// **factory** code can name them without colliding with the root [`Error`]/[`Result`].
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_di::{Error as DiError, Result as DiResult};
 
 // ---------------------------------------------------------------------------
 // Hooks.
 // ---------------------------------------------------------------------------
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_hooks::{
     ComponentHooks, HookCall, HookDescriptor, HookKind, HookManager, HookParam, Shutdown, Startup,
     no_hooks,
 };
 /// The hook layer's own error/result, exposed under distinct names so macro-generated hook
 /// code can name them without colliding with the root [`Error`]/[`Result`].
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_hooks::{Error as HookError, Result as HookResult};
 
 // ---------------------------------------------------------------------------
 // Directories.
 // ---------------------------------------------------------------------------
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_dirs::{Dir, DirKind, DirectoriesManager};
 
 // ---------------------------------------------------------------------------
 // Config: Cfg, ConfigManager, reload, the config store, the directory resolver.
 // ---------------------------------------------------------------------------
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_config::{
     CONFIG_BINDINGS, Cfg, CfgNext, ChangedBinding, ComponentHookReport, ConfigBinding,
     ConfigBindingDescriptor, ConfigDefaults, ConfigError, ConfigManager, ConfigProperties,
@@ -76,6 +84,7 @@ pub use overseerd_config::{
 // Protocol-agnostic application core (always available): the App/Plugin seam, the runtime
 // handle, lifecycle/shutdown, and the opt-in config-property builtins.
 // ---------------------------------------------------------------------------
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_app::{
     App, AppBuilder, AppRegistry, AppRuntime, LoggingConfig, Plugin, Protocol, ProtocolPlugin,
     Serve, ServerConfig, ShutdownHandle, ShutdownSignal,
@@ -102,7 +111,9 @@ pub use overseerd_transport::{
 pub use overseerd_macros::{app, component, config, daemon, injectable, methods};
 
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]` attribute
-/// through the facade crate without user crates depending on `linkme` directly.
+/// through the facade crate without user crates depending on `linkme` directly. The generated
+/// registration that names it is server-only (gated out on wasm), so this is too.
+#[cfg(not(target_family = "wasm"))]
 #[doc(hidden)]
 pub use overseerd_di::linkme;
 
@@ -110,6 +121,7 @@ pub use overseerd_di::linkme;
 // Transport substrate: server endpoints, wire types, custom-transport traits. The RPC
 // *client* lives under `daemon` (it is protocol-specific), not here.
 // ---------------------------------------------------------------------------
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_transport::{
     CallId, CallResult, Connection, IncomingCall, MemoryCall, MemoryClient, MemoryConnection,
     MemoryConnectionHandle, MemoryResponder, MemoryTransport, PeerInfo, Respond, RespondStream,
@@ -137,6 +149,7 @@ pub mod client {
 
 /// Application directory kinds (`Config`, `Data`, `Cache`, `State`, `Runtime`, `Tmp`), the
 /// typed [`Dir`] wrapper, and the [`DirectoriesManager`]. Inject `Dir<dirs::Config>`.
+#[cfg(not(target_family = "wasm"))]
 pub mod dirs {
     pub use overseerd_dirs::*;
 }
@@ -144,6 +157,7 @@ pub mod dirs {
 /// Config source-format markers for `ConfigManager<F>`: [`Toml`](overseerd_config::Toml),
 /// the format-erased [`Dynamic`](overseerd_config::Dynamic), and (with the `yaml` feature)
 /// `Yaml`.
+#[cfg(not(target_family = "wasm"))]
 pub mod config {
     pub use overseerd_config::{Dynamic, Format, FormatId, Toml};
 
@@ -154,6 +168,7 @@ pub mod config {
 /// Framework builtins: the seeded [`ShutdownHandle`] injectable, the opt-in
 /// [`ServerConfig`] / [`LoggingConfig`] property structs, and the feature-gated
 /// `init_tracing` subscriber helper.
+#[cfg(not(target_family = "wasm"))]
 pub mod builtins {
     pub use overseerd_app::builtins::{LoggingConfig, ServerConfig};
 
@@ -168,7 +183,7 @@ pub mod builtins {
 /// `use overseerd::daemon::prelude::*;` (the common RPC items). The daemon macros
 /// (`#[service]`/`#[handlers]`/`#[rpc]`/`app!`) emit `::overseerd::daemon::*` paths, so end
 /// users depend only on `overseerd` — never on `overseerd-rpc` directly.
-#[cfg(feature = "daemon")]
+#[cfg(all(feature = "daemon", not(target_family = "wasm")))]
 pub mod daemon {
     pub use overseerd_rpc::{
         App, AppBuilder, Cancel, Error, ErrorHandler, ErrorResponse, FallibleHandler, FromContext,
@@ -253,27 +268,37 @@ pub mod axum {
 
     /// Common imports for building an HTTP controller app: `use overseerd::axum::prelude::*;`
     /// (pair with the crate-root `use overseerd::prelude::*;` for the core framework + `app!`).
+    ///
+    /// The controller/route macros are available on every target; the server extractors, `Router`,
+    /// `App`, and DI types are the server surface (compiled out on a wasm client build, where the
+    /// generated `{Controller}Client` is used directly rather than the prelude).
     pub mod prelude {
-        pub use super::axum::extract::{Json, Path, Query, State};
-        pub use super::axum::response::IntoResponse;
-        pub use super::axum::{Router, http};
-        pub use super::scope::Request;
         pub use super::{
-            App, AxumAppBuilder, AxumPlugin, Controller, Inject, controller, delete, get, handlers,
-            head, options, patch, post, put, route,
+            controller, delete, dto, get, handlers, head, options, patch, post, put, route,
         };
+
+        #[cfg(not(target_family = "wasm"))]
+        pub use super::axum::extract::{Json, Path, Query, State};
+        #[cfg(not(target_family = "wasm"))]
+        pub use super::axum::response::IntoResponse;
+        #[cfg(not(target_family = "wasm"))]
+        pub use super::axum::{Router, http};
+        #[cfg(not(target_family = "wasm"))]
+        pub use super::scope::Request;
+        #[cfg(not(target_family = "wasm"))]
+        pub use super::{App, AxumAppBuilder, AxumPlugin, Controller, Inject};
 
         /// WebSocket controller imports (`#[controller(ws = ..)]` + `#[message]`, the per-connection
         /// [`Connection`](super::scope::Connection) scope), available with the `ws` feature.
-        #[cfg(feature = "ws")]
+        #[cfg(all(feature = "ws", not(target_family = "wasm")))]
         pub use super::scope::Connection;
-        #[cfg(feature = "ws")]
+        #[cfg(all(feature = "ws", not(target_family = "wasm")))]
         pub use super::{JsonWs, WebsocketController, WebsocketProtocol, message};
 
         /// STOMP pub/sub imports (`#[controller(ws = Stomp)]` + `#[topics]`, the typed
         /// [`Publisher`](super::Publisher) and [`Topic`](super::Topic)), available with the
         /// `stomp` feature.
-        #[cfg(feature = "stomp")]
+        #[cfg(all(feature = "stomp", not(target_family = "wasm")))]
         pub use super::{Publisher, Stomp, StompSession, StompTopicBus, Topic, topics};
     }
 }
@@ -281,10 +306,15 @@ pub mod axum {
 /// The common imports for the **core framework**: `use overseerd::prelude::*;`. Pair with
 /// `use overseerd::daemon::prelude::*;` (or another plugin's prelude) for the protocol layer.
 pub mod prelude {
+    // The macros are built for the host and usable from any target (their generated server code is
+    // gated out on wasm); the framework *types* are the daemon-stack surface, compiled out on wasm.
+    pub use crate::{app, component, config, injectable, methods};
+
+    #[cfg(not(target_family = "wasm"))]
     pub use crate::{
         App, Cfg, Component, ConfigManager, ConfigProperties, Dep, Dir, DirKind,
         DirectoriesManager, Injectable, Plugin, Protocol, ProtocolPlugin, Scope, Serve,
-        ServiceComponent, app, component, config, injectable, methods,
+        ServiceComponent,
     };
 }
 

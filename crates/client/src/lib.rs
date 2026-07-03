@@ -39,6 +39,37 @@ use overseerd_transport::Error;
 pub use overseerd_transport::{CodecError, Decodes, Encodes};
 
 // ---------------------------------------------------------------------------
+// Target-conditional thread-safety markers. Natively the client contract keeps
+// its `Send`/`Sync` guarantees; on `wasm32-unknown-unknown` the futures a `fetch`
+// backend produces are `!Send`, so the bounds relax to a no-op there. Only the
+// unary path uses these (streaming stays `Send`, its impls are native-only).
+// ---------------------------------------------------------------------------
+
+/// `Send` on every target except `wasm`, where it is an unconstrained no-op.
+#[cfg(not(target_family = "wasm"))]
+pub trait MaybeSend: Send {}
+#[cfg(not(target_family = "wasm"))]
+impl<T: Send> MaybeSend for T {}
+
+/// On `wasm` a `fetch` future is `!Send`; the bound must not require `Send`.
+#[cfg(target_family = "wasm")]
+pub trait MaybeSend {}
+#[cfg(target_family = "wasm")]
+impl<T> MaybeSend for T {}
+
+/// `Sync` on every target except `wasm`, where it is an unconstrained no-op.
+#[cfg(not(target_family = "wasm"))]
+pub trait MaybeSync: Sync {}
+#[cfg(not(target_family = "wasm"))]
+impl<T: Sync> MaybeSync for T {}
+
+/// On `wasm` the transport holds `!Sync` JS handles; the bound must not require `Sync`.
+#[cfg(target_family = "wasm")]
+pub trait MaybeSync {}
+#[cfg(target_family = "wasm")]
+impl<T> MaybeSync for T {}
+
+// ---------------------------------------------------------------------------
 // Shared vocabulary: error currency and the streaming-input wrapper. These are
 // protocol-neutral, so they live in the contract crate.
 // ---------------------------------------------------------------------------
@@ -245,7 +276,7 @@ where
 /// the client caller — so it is a bare associated type with no bounds. RPC sets it to its packed
 /// `transport::StatusCode`; HTTP sets it to `http::StatusCode`. Every capability requires this, so a
 /// transport declares its status once and it threads through every call shape's errors.
-pub trait Transport: Send + Sync {
+pub trait Transport: MaybeSend + MaybeSync {
     /// The protocol-defined status carried on this transport's error responses. Opaque to the
     /// framework.
     type Status;
@@ -277,11 +308,11 @@ pub trait Unary: Transport {
         &self,
         path: &str,
         request: Self::Request<B>,
-    ) -> impl Future<Output = Result<Self::Response<Resp>, ClientError<Self::Status, E>>> + Send
+    ) -> impl Future<Output = Result<Self::Response<Resp>, ClientError<Self::Status, E>>> + MaybeSend
     where
         Self: Encodes<B> + Decodes<Resp>,
-        B: Send,
-        Resp: Send;
+        B: MaybeSend,
+        Resp: MaybeSend;
 }
 
 /// One request, a stream of responses (HTTP/1.1 chunked/SSE, HTTP/2, gRPC, custom RPC). The

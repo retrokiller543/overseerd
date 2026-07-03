@@ -21,7 +21,11 @@ client = [
     "overseerd-axum-macros/client",
 ]
 # Client backends — independent so a user picks one (or both). Each pulls in only its stack.
-reqwest = ["client", "dep:reqwest"]
+reqwest = ["client", "dep:reqwest", "overseerd-axum-macros/reqwest"]
+# Opt into the new `tsify` `Ts<T>` wasm ABI for the generated browser client (typed, leak-free).
+# Requires the unreleased `tsify` (git master) as a wasm dep in the consuming crate. Off by default
+# uses the published `tsify` `into_wasm_abi` path, which needs no git dependency.
+wasm-ts = ["overseerd-axum-macros/wasm-ts"]
 hyper = ["client", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 tungstenite = ["client", "ws", "dep:tokio-tungstenite"]
 di-check = [
@@ -48,34 +52,49 @@ uuid = ["dep:uuid"]
 # (`::overseerd_axum::*`), so depending on `overseerd-axum` directly works.
 facade = ["overseerd-axum-macros/facade"]
 
+# Shared across all targets: the generated HTTP client runtime and its lightweight support. The
+# client is transport-generic and pure, so these must compile for wasm too.
 [dependencies]
-overseerd-app = { workspace = true }
+# Proc-macro crate — built for the host regardless of target.
 overseerd-axum-macros = { workspace = true }
-overseerd-core = { workspace = true }
-overseerd-di = { workspace = true }
-overseerd-config = { workspace = true }
-overseerd-hooks = { workspace = true }
 overseerd-client = { workspace = true, optional = true }
-# Non-optional: `StreamFormat` (server-side streamed bodies) uses its `CodecError`, and the
-# client codecs build on its `Encodes`/`Decodes`. Lightweight and already in the tree.
+# Non-optional: the client codecs build on its `Encodes`/`Decodes`/`CodecError`, and it is
+# wasm-safe (server IO transports are gated out inside that crate).
 overseerd-transport = { workspace = true }
-axum = { workspace = true }
 bytes = { workspace = true }
-tower = { workspace = true }
-tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-linkme = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true, optional = true }
-cookie = { workspace = true }
 serde_urlencoded = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true }
+
+# Native (non-wasm): the full server stack — axum, the DI/app/config crates, tokio, and the
+# streaming/ws/hyper client backends that need a real runtime and sockets.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+overseerd-app = { workspace = true }
+overseerd-core = { workspace = true }
+overseerd-di = { workspace = true }
+overseerd-config = { workspace = true }
+overseerd-hooks = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tokio = { workspace = true }
+linkme = { workspace = true }
+cookie = { workspace = true }
+# `stream` (streamed response bodies) and TLS need these reqwest features; both keep openssl/rsa
+# out (rustls-tls). Not available on wasm's fetch backend.
+reqwest = { workspace = true, optional = true, features = ["rustls-tls", "stream"] }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 stomp-parser = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
+
+# wasm: reqwest's browser `fetch` backend — only the `json` feature from the workspace base (no
+# TLS/stream/connection-pool, none of which the fetch backend supports) — plus `serde-wasm-bindgen`,
+# re-exported for the generated `#[wasm_bindgen]` client's argument/result marshalling.
+[target.'cfg(target_family = "wasm")'.dependencies]
+reqwest = { workspace = true, optional = true }

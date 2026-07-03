@@ -15,10 +15,10 @@ use overseerd::axum::axum::Json;
 use overseerd::axum::axum::extract::Path;
 use overseerd::axum::*;
 use overseerd::component;
-use serde::{Deserialize, Serialize};
 
 /// One chat message: which room it belongs to, who sent it, and its text.
-#[derive(Clone, Serialize, Deserialize)]
+#[dto]
+#[derive(Clone)]
 pub struct ChatMessage {
     pub room: String,
     pub sender: String,

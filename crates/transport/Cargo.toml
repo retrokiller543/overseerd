@@ -20,10 +20,19 @@ di-check = ["di", "overseerd-di/di-check"]
 [dependencies]
 bitflags = { workspace = true }
 thiserror = "2"
-tokio = { workspace = true }
-tokio-util = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 tracing = { workspace = true }
 overseerd-di = { workspace = true, optional = true }
+
+# Native: the full runtime for the socket transports and length-prefixed IO codec.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+# wasm: no runtime/net — only `tokio::sync` (used by `frame`) and `tokio_util`'s
+# `CancellationToken`. The socket transports and IO codec are compiled out (see `lib.rs`).
+[target.'cfg(target_family = "wasm")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["sync"] }
+tokio-util = { version = "0.7", default-features = false }

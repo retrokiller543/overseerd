@@ -24,7 +24,6 @@ use overseerd::axum::tower::ServiceExt;
 use overseerd::axum::{AxumMiddleware, RequestMeta, ScopeHandle};
 use overseerd::prelude::*;
 use overseerd::{component, methods};
-use serde::{Deserialize, Serialize};
 
 /// Reads a JSON response body into the given type.
 async fn json_body<T: serde::de::DeserializeOwned>(response: Response) -> T {
@@ -249,7 +248,7 @@ impl AuthUser {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[dto]
 struct WhoAmI {
     token: Option<String>,
     cookie: Option<String>,
