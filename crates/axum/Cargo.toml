@@ -21,8 +21,18 @@ client = [
     "overseerd-axum-macros/client",
 ]
 # Client backends — independent so a user picks one (or both). Each pulls in only its stack.
-# `dep:wasm-bindgen` (wasm-only, dropped on native) backs the framework `Connection` class.
-reqwest = ["client", "dep:reqwest", "dep:wasm-bindgen", "overseerd-axum-macros/reqwest"]
+# `dep:wasm-bindgen` (wasm-only, dropped on native) backs the framework `Connection` class; the
+# wasm-only `js-sys`/`web-sys`/`wasm-bindgen-futures` trio backs the browser `Multipart` builder's
+# `File`/`Blob` upload path (all dropped on native, like the STOMP transport's use of them).
+reqwest = [
+    "client",
+    "dep:reqwest",
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
+    "dep:web-sys",
+    "overseerd-axum-macros/reqwest",
+]
 # Opt into the new `tsify` `Ts<T>` wasm ABI for the generated browser client (typed, leak-free).
 # Requires the unreleased `tsify` (git master) as a wasm dep in the consuming crate. Off by default
 # uses the published `tsify` `into_wasm_abi` path, which needs no git dependency.
@@ -130,3 +140,5 @@ tokio = { version = "1", default-features = false, features = ["sync", "macros"]
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { workspace = true, optional = true }
 js-sys = { version = "0.3", optional = true }
+# `File`/`Blob` bindings for the reqwest wasm client's `Multipart` upload builder.
+web-sys = { workspace = true, optional = true, features = ["Blob", "File"] }

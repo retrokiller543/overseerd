@@ -129,7 +129,11 @@ struct MultipartPart {
 /// boundary so it slots into the same [`HttpBody`] machinery as every other body (its `Content-Type`
 /// can be a `&'static` const). This is a plain byte payload the transport sends like any other, so it
 /// works identically on native and over the browser `fetch` backend — no `FormData` bridge needed.
-/// It is exported to JS (a wasm-bindgen class), so a browser client builds an upload the same way.
+///
+/// It is exported to JS (a wasm-bindgen class), so a browser client builds an upload the natural way:
+/// `text` takes strings and `file` takes a native [`File`]/[`Blob`] (from a file input, drag-drop,
+/// or a fetched response), reading its bytes, name, and MIME type for you — no manual `Uint8Array`.
+/// The byte-level `file` overload stays for native Rust callers, which have no `File`/`Blob` type.
 #[cfg_attr(
     all(target_family = "wasm", feature = "reqwest"),
     ::wasm_bindgen::prelude::wasm_bindgen
@@ -165,6 +169,10 @@ impl Multipart {
 
     /// Adds a binary field (a file upload): `name` is the form field, `filename` the reported file
     /// name, `content_type` the part's MIME type, and `data` the raw bytes.
+    ///
+    /// This byte-level form is for native Rust callers. The browser client instead uses the
+    /// [`File`/`Blob`](Self::file) overload of this method (same JS name, `File`/`Blob` argument).
+    #[cfg(not(all(target_family = "wasm", feature = "reqwest")))]
     pub fn file(&mut self, name: String, filename: String, content_type: String, data: Vec<u8>) {
         self.parts.push(MultipartPart {
             name,
@@ -172,6 +180,81 @@ impl Multipart {
             content_type: Some(content_type),
             data,
         });
+    }
+
+    /// Adds a file upload from a native JS [`File`] or [`Blob`] — the ergonomic browser form.
+    ///
+    /// A `File` (e.g. `input.files[0]`) carries its own name and MIME type, so
+    /// `await mp.file("avatar", file)` is enough. A bare `Blob` has no name — pass one as
+    /// `filename`. An explicit `filename` always overrides a `File`'s own. A typeless blob defaults
+    /// to `application/octet-stream`, matching `FormData`. Reading the blob's bytes is an async
+    /// browser operation, so this method is `async` (callers `await` the add) — unlike
+    /// [`text`](Self::text).
+    #[cfg(all(target_family = "wasm", feature = "reqwest"))]
+    pub async fn file(
+        &mut self,
+        name: String,
+        blob: web_sys::Blob,
+        filename: Option<String>,
+    ) -> Result<(), ::wasm_bindgen::JsError> {
+        self.push_blob(name, blob, filename).await
+    }
+
+    /// Adds several file uploads under one field name — the multi-file form (e.g. a list of avatars).
+    ///
+    /// Each `File`/`Blob` becomes its own part carrying the same `name`, in the order given, which is
+    /// exactly how an HTML `<input type="file" multiple>` submits. Names/types are derived per file
+    /// as in [`file`](Self::file); pass a real JS array (`Array.from(input.files)` or `[...files]`)
+    /// since a `FileList` is array-like, not an `Array`.
+    #[cfg(all(target_family = "wasm", feature = "reqwest"))]
+    pub async fn files(
+        &mut self,
+        name: String,
+        files: Vec<web_sys::Blob>,
+    ) -> Result<(), ::wasm_bindgen::JsError> {
+        for blob in files {
+            self.push_blob(name.clone(), blob, None).await?;
+        }
+
+        Ok(())
+    }
+}
+
+/// The browser upload path: read a JS [`Blob`]/[`File`]'s bytes and record it as a part. Private
+/// (not exported to JS) and shared by [`Multipart::file`] and [`Multipart::files`].
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
+impl Multipart {
+    async fn push_blob(
+        &mut self,
+        name: String,
+        blob: web_sys::Blob,
+        filename: Option<String>,
+    ) -> Result<(), ::wasm_bindgen::JsError> {
+        use ::wasm_bindgen::JsCast;
+
+        let ty = blob.type_();
+
+        let filename =
+            filename.or_else(|| blob.dyn_ref::<web_sys::File>().map(web_sys::File::name));
+        let content_type = if ty.is_empty() {
+            "application/octet-stream".to_string()
+        } else {
+            ty
+        };
+
+        let buffer = ::wasm_bindgen_futures::JsFuture::from(blob.array_buffer())
+            .await
+            .map_err(|e| ::wasm_bindgen::JsError::new(&format!("failed to read blob: {e:?}")))?;
+        let data = ::js_sys::Uint8Array::new(&buffer).to_vec();
+
+        self.parts.push(MultipartPart {
+            name,
+            filename,
+            content_type: Some(content_type),
+            data,
+        });
+
+        Ok(())
     }
 }
 

@@ -59,6 +59,9 @@ tokio-tungstenite = { version = "0.29", default-features = false, features = ["c
 tokio-tungstenite-wasm = { version = "0.8", default-features = false }
 wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
+# `File`/`Blob` DOM bindings for the wasm client's ergonomic multipart upload builder. wasm-target
+# only; features are enabled per-crate. Clean dep tree (wasm-bindgen + js-sys) — no openssl/rsa.
+web-sys = "0.3"
 # Converts a decoded STOMP message to a `JsValue` for the subscription callback (any `Serialize`,
 # in both tsify ABIs). wasm-target only.
 serde-wasm-bindgen = "0.6"
