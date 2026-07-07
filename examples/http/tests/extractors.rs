@@ -36,6 +36,40 @@ impl<S: Send + Sync> FromRequestParts<S> for ApiKey {
     }
 }
 
+/// A guard that consumes a **path segment** internally: it reads `Path::<String>` from the request
+/// parts (the `{id}` hole) rather than the handler listing a `Path` arg. This is the regression case
+/// from #61 — such a route must still get a client method, deriving the `id` param from the route
+/// template. It never rejects, so the client round-trips.
+struct Tenant(String);
+
+impl<S: Send + Sync> FromRequestParts<S> for Tenant {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path(id) = Path::<String>::from_request_parts(parts, state)
+            .await
+            .unwrap_or_else(|_| Path(String::new()));
+
+        Ok(Tenant(id))
+    }
+}
+
+/// A guard that consumes **two** path segments internally (`{id}` and `{child}`), exercising the
+/// multi-hole `String`-fallback path — the client method must expose both holes as params.
+struct TenantChild(String, String);
+
+impl<S: Send + Sync> FromRequestParts<S> for TenantChild {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let Path((id, child)) = Path::<(String, String)>::from_request_parts(parts, state)
+            .await
+            .unwrap_or_else(|_| Path((String::new(), String::new())));
+
+        Ok(TenantChild(id, child))
+    }
+}
+
 /// A typed query — a flat `Dto` the client URL-encodes and the server decodes with `Query<T>`.
 #[dto]
 #[derive(PartialEq, Debug)]
@@ -75,6 +109,21 @@ impl Extras {
     #[get("/whoami")]
     async fn whoami(&self, key: ApiKey) -> Json<String> {
         Json(key.0)
+    }
+
+    /// Guard-consumed path param: the `{id}` hole is resolved *inside* the `Tenant` guard, so the
+    /// handler lists no `Path` arg. The client method must still exist, deriving `id` from the route
+    /// template (#61). Round-trips the id the guard read back out.
+    #[get("/tenant/{id}/info")]
+    async fn tenant_info(&self, tenant: Tenant) -> Json<String> {
+        Json(tenant.0)
+    }
+
+    /// Two guard-consumed path params (`{id}`, `{child}`): both holes come from the template, and the
+    /// client method exposes both as `String` params.
+    #[get("/tenant/{id}/child/{child}")]
+    async fn tenant_child(&self, pair: TenantChild) -> Json<String> {
+        Json(format!("{}/{}", pair.0, pair.1))
     }
 
     /// Typed query: the client takes the raw `Search`, URL-encodes it, and the server decodes it.
@@ -162,6 +211,22 @@ async fn generated_client_covers_every_extractor() {
     // server resolves the (absent) key to its default.
     let who = client.whoami().await.expect("whoami call");
     assert_eq!(*who, "anonymous");
+
+    // Guard-consumed path param (#61): the client method exists and takes `id` (a `String`, derived
+    // from the route template) even though the handler has no `Path` arg — the guard reads `{id}`
+    // internally. Before the fix this method was silently absent from the client.
+    let info = client
+        .tenant_info("acme".to_string())
+        .await
+        .expect("tenant_info call");
+    assert_eq!(*info, "acme");
+
+    // Two guard-consumed holes: both `id` and `child` are `String` params on the client method.
+    let child = client
+        .tenant_child("acme".to_string(), "widget".to_string())
+        .await
+        .expect("tenant_child call");
+    assert_eq!(*child, "acme/widget");
 
     // Typed query: the client URL-encodes `Search`, the server decodes it, and it round-trips.
     let echoed = client
