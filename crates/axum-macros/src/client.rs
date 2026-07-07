@@ -8,8 +8,11 @@
 //! there are many) named after the route. The `request_builder` re-wraps those into an
 //! `http::Request` with the verb, the `BASE`+route URI, and the typed body.
 //!
-//! A route whose args are not all classifiable yields `None` — the server route still
-//! registers, it simply gets no generated client method (rather than a silently wrong one).
+//! Custom `FromRequestParts` guards (auth, tenant, …) count as server-only context and are
+//! dropped like `Inject`, so a guarded route still gets a client method. Only a route using an
+//! extractor that consumes wire data the client still can't encode ([`UNSUPPORTED_WIRE`], the
+//! whole-request extractors) opts out: it yields `None`, the server route still registers, and it
+//! simply gets no client method (rather than a silently wrong one).
 
 use overseerd_macros_core::attr::{first_type_arg, type_name};
 use overseerd_macros_core::client::{Capability, ClientMethod};
@@ -20,19 +23,59 @@ use syn::{GenericArgument, Ident, PathArguments, ReturnType, Type, TypeParamBoun
 
 use crate::route::RouteAttr;
 
-/// The classified client inputs of a route: an optional `Path` parameter type and an optional
-/// `(wrapper, inner)` body. Shared by the unary and streaming method builders.
+/// The classified client inputs of a route: an optional `Path` type, an optional query, and an
+/// optional request body. Shared by the unary and streaming method builders.
 struct Inputs {
     path_ty: Option<Type>,
-    body: Option<(BodyKind, Type)>,
+    query: Option<QueryInput>,
+    body: Option<Body>,
+}
+
+/// A route's query-string input: a typed `Query<T>` (URL-encoded from the `Dto` `T`) or the untyped
+/// `RawQuery` (the raw query string, passed through as an `Option<String>`).
+#[allow(clippy::large_enum_variant)]
+enum QueryInput {
+    Typed(Type),
+    Raw,
+}
+
+/// A route's request body: which [`HttpBody`](../overseerd_axum/client/trait.HttpBody.html) wrapper
+/// carries it, and — for the serde-typed bodies — the payload type. The wrapper-typed bodies
+/// (`Bytes`/`RawForm`/`Multipart`) have a fixed client parameter type, so they carry no `inner`.
+struct Body {
+    kind: BodyKind,
+    inner: Option<Type>,
 }
 
 /// Classifies a route's handler arguments into client inputs, dropping server-only extractors.
-/// `None` means an argument is neither a recognized client input nor a droppable server-only
-/// extractor — the route then gets no generated client method.
+///
+/// The client encodes the wire inputs it recognizes — `Path` params, a query (`Query<T>`/`RawQuery`),
+/// and a body (`Json`/`Form`/`Bytes`/`RawForm`/`Multipart`). Everything else is treated as
+/// **server-only request context** — the framework's `Inject`/`State`/`Extension`/`ConnectInfo`, *and*
+/// any custom [`FromRequestParts`] guard (an auth check, a tenant resolver, …). A guard authorizes or
+/// contextualizes the request server-side and carries nothing over the wire, so it is simply dropped
+/// from the client signature, exactly like `Inject`.
+///
+/// A route opts out entirely (`None`) only when it can't be represented faithfully: two of the same
+/// slot (e.g. two bodies), or an extractor in [`UNSUPPORTED_WIRE`] whose wire data the client still
+/// can't encode. Opting out beats emitting a method that would silently drop data.
+///
+/// [`FromRequestParts`]: https://docs.rs/axum/latest/axum/extract/trait.FromRequestParts.html
 fn classify(arg_types: &[&Type]) -> Option<Inputs> {
     let mut path_ty: Option<Type> = None;
-    let mut body: Option<(BodyKind, Type)> = None;
+    let mut query: Option<QueryInput> = None;
+    let mut body: Option<Body> = None;
+
+    // Records a body slot, refusing a second one (a route has at most one body).
+    let set_body = |slot: &mut Option<Body>, kind, inner| {
+        if slot.is_some() {
+            return None;
+        }
+
+        *slot = Some(Body { kind, inner });
+
+        Some(())
+    };
 
     for ty in arg_types {
         if let Some(inner) = first_type_arg(ty, "Path") {
@@ -45,45 +88,68 @@ fn classify(arg_types: &[&Type]) -> Option<Inputs> {
             continue;
         }
 
-        if let Some(inner) = first_type_arg(ty, "Json") {
-            if body.is_some() {
+        if let Some(inner) = first_type_arg(ty, "Query") {
+            if query.is_some() {
                 return None;
             }
 
-            body = Some((BodyKind::Json, inner));
+            query = Some(QueryInput::Typed(inner));
+
+            continue;
+        }
+
+        if let Some(inner) = first_type_arg(ty, "Json") {
+            set_body(&mut body, BodyKind::Json, Some(inner))?;
 
             continue;
         }
 
         if let Some(inner) = first_type_arg(ty, "Form") {
-            if body.is_some() {
-                return None;
-            }
-
-            body = Some((BodyKind::Form, inner));
+            set_body(&mut body, BodyKind::Form, Some(inner))?;
 
             continue;
         }
 
+        // The wrapper-typed bodies and the raw query are matched by name (no type argument).
         match type_name(ty).map(Ident::to_string).as_deref() {
-            Some(name) if SERVER_ONLY.contains(&name) => continue,
+            Some("RawQuery") => {
+                if query.is_some() {
+                    return None;
+                }
 
-            _ => return None,
+                query = Some(QueryInput::Raw);
+            }
+
+            Some("Bytes") => set_body(&mut body, BodyKind::Bytes, None)?,
+            Some("RawForm") => set_body(&mut body, BodyKind::RawForm, None)?,
+            Some("Multipart") => set_body(&mut body, BodyKind::Multipart, None)?,
+
+            // An extractor carrying wire data the client can't encode yet: opt the whole route out
+            // rather than emit a method that silently drops it.
+            Some(name) if UNSUPPORTED_WIRE.contains(&name) => return None,
+
+            // Anything else — DI/state or a custom `FromRequestParts` guard — is server-only request
+            // context. It never crosses the wire, so drop it from the client signature.
+            _ => {}
         }
     }
 
-    Some(Inputs { path_ty, body })
+    Some(Inputs {
+        path_ty,
+        query,
+        body,
+    })
 }
 
-/// Collects the **wire** types of a route — the JSON/Form request body, the path parameter(s), and
-/// the response — each of which must implement [`Dto`](../overseerd_axum/trait.Dto.html). Pushed
-/// into `sink` (across a whole `#[handlers]` block) so the caller can dedupe and emit a single
+/// Collects the **wire** types of a route that must implement [`Dto`](../overseerd_axum/trait.Dto.html)
+/// — the path parameter(s), a typed `Query<T>`, a `Json`/`Form` request body, and the response.
+/// Pushed into `sink` (across a whole `#[handlers]` block) so the caller can dedupe and emit a single
 /// assertion block. Only with the `client` feature (a `Dto` is what the client builds a typed method
 /// from); a server-only build leaves plain `Serialize` types be.
 ///
-/// Dependency-injected parameters (`Inject`/`State`/…) are *not* collected — only what crosses the
-/// wire. A route whose arguments don't classify (an unusual extractor) contributes nothing; its own
-/// extractor bounds report the problem.
+/// Server-only extractors and the non-serde bodies (`Bytes`/`RawForm`/`Multipart`, whose client
+/// parameter is a raw `Vec<u8>` or the `Multipart` builder) contribute nothing — only what the client
+/// serializes as a `Dto` is asserted.
 pub fn collect_wire_types(arg_types: &[&Type], output: &ReturnType, sink: &mut Vec<Type>) {
     if !cfg!(feature = "client") {
         return;
@@ -97,7 +163,15 @@ pub fn collect_wire_types(arg_types: &[&Type], output: &ReturnType, sink: &mut V
         sink.push(path_ty);
     }
 
-    if let Some((_, body)) = inputs.body {
+    if let Some(QueryInput::Typed(query)) = inputs.query {
+        sink.push(query);
+    }
+
+    // Only the serde-typed bodies are `Dto`; the wrapper-typed ones carry no `inner`.
+    if let Some(Body {
+        inner: Some(body), ..
+    }) = inputs.body
+    {
         sink.push(body);
     }
 
@@ -244,9 +318,11 @@ fn wasm_client_methods(
     client_ident: &Ident,
     methods: &[ClientMethod],
     backend: WasmBackend,
+    paths: &Paths,
 ) -> TokenStream {
     let js_name = client_ident.to_string();
     let wrapper = wasm_wrapper_ident(client_ident);
+    let headers_ty = paths.plugin("client::RequestHeaders");
 
     // The wasm ABI flavour (see `#[dto]`): with `wasm-ts` the payloads are wrapped in `Ts<T>` and
     // converted with `.to_rust()`/`.into_ts()`; by default the `into_wasm_abi`/`from_wasm_abi` derives
@@ -296,6 +372,23 @@ fn wasm_client_methods(
                 None => (quote!(), quote!()),
             };
 
+            // An HTTP method takes an optional per-call `Headers` (a browser builds it with
+            // `new Headers().set(..)`) and routes through the generic `{method}_with_headers`; the
+            // parameter is `Option`, so JS may omit it. A STOMP `SEND` has no HTTP headers.
+            let (header_param, header_prep, target) = match backend {
+                WasmBackend::Http => {
+                    call_args.push(quote!(__headers));
+
+                    (
+                        quote!(, headers: ::core::option::Option<#headers_ty>),
+                        quote!(let __headers = headers.map(#headers_ty::into_inner);),
+                        format_ident!("{}_with_headers", ident),
+                    )
+                }
+
+                WasmBackend::Stomp => (quote!(), quote!(), ident.clone()),
+            };
+
             let response = &m.response;
 
             // The reply shape depends on the transport: an HTTP unary yields an `HttpResponse`
@@ -311,14 +404,15 @@ fn wasm_client_methods(
 
             quote! {
                 pub async fn #ident(
-                    &self #(#extra_params)* #body_param
+                    &self #(#extra_params)* #body_param #header_param
                 ) -> ::core::result::Result<#ret, ::wasm_bindgen::JsError> {
                     #(#extra_prep)*
                     #body_prep
+                    #header_prep
 
                     let __response = self
                         .0
-                        .#ident(#(#call_args),*)
+                        .#target(#(#call_args),*)
                         .await
                         .map_err(|e| ::wasm_bindgen::JsError::new(
                             &::std::string::ToString::to_string(&e),
@@ -346,17 +440,37 @@ fn wasm_client_methods(
 pub fn extra_client_tokens(
     client_ident: &Ident,
     methods: &[ClientMethod],
+    header_methods: &[ClientMethod],
     wire_types: Vec<Type>,
     backend: Option<WasmBackend>,
     paths: &Paths,
 ) -> TokenStream {
     let assertions = dto_assertions(wire_types, paths);
 
+    // The `{method}_with_headers` siblings, rendered with the same capability machinery as the base
+    // methods (the framework core stays header-agnostic; header handling lives entirely here). They
+    // go in their own `impl<C>` block — native Rust callers use them directly, and the wasm wrapper
+    // calls them under the hood so a browser client's plain method can take optional headers. Emitted
+    // on both targets (the wasm wrapper needs them) but only with the `client` feature.
+    let with_headers = if cfg!(feature = "client") && !header_methods.is_empty() {
+        let fns = header_methods
+            .iter()
+            .map(|m| overseerd_macros_core::client::client_method_tokens(m, paths));
+
+        quote! {
+            impl<C> #client_ident<C> {
+                #(#fns)*
+            }
+        }
+    } else {
+        quote!()
+    };
+
     // The wasm method impl (the struct comes from `#[controller]`). Only when the block has a wasm
     // backend (HTTP, or STOMP `SEND`) and that backend's transport is compiled in.
     let wasm_methods = match backend {
         Some(backend) if backend.available() && !methods.is_empty() => {
-            wasm_client_methods(client_ident, methods, backend)
+            wasm_client_methods(client_ident, methods, backend, paths)
         }
 
         _ => quote!(),
@@ -365,44 +479,139 @@ pub fn extra_client_tokens(
     quote! {
         #assertions
 
+        #with_headers
+
         #wasm_methods
     }
 }
 
-/// The body wrapper path (`Json`/`Form`) for the wire body type and the `body: T` value.
-fn body_parts(
-    body: &Option<(BodyKind, Type)>,
+/// The client method's body **parameter type** (`request: <ty>`) for a classified body: the raw `T`
+/// for `Json`/`Form`, a `Vec<u8>` for the raw byte bodies, or the `Multipart` builder. `None` for a
+/// no-body route.
+fn body_param_type(body: &Option<Body>, paths: &Paths) -> Option<Type> {
+    let Body { kind, inner } = body.as_ref()?;
+
+    let ty = match kind {
+        BodyKind::Json | BodyKind::Form => inner
+            .clone()
+            .expect("a Json/Form body carries its payload type"),
+
+        BodyKind::Bytes | BodyKind::RawForm => syn::parse_quote!(::std::vec::Vec<u8>),
+
+        BodyKind::Multipart => {
+            let multipart = paths.plugin("client::Multipart");
+
+            syn::parse_quote!(#multipart)
+        }
+    };
+
+    Some(ty)
+}
+
+/// The body param declaration (`, request: T`), the `HttpBody` wrapper type (drives `Encodes<B>`, the
+/// envelope, and the content type), and the wrapped value expression (`wrapper(request)`) for a
+/// classified body. The wrappers are client-owned (not axum's), so the body path carries no
+/// dependency on the axum server framework and compiles for wasm; the method still takes the
+/// ergonomic param, so the swap is invisible to callers. A no-body route encodes `()`.
+fn body_parts(body: &Option<Body>, paths: &Paths) -> (TokenStream, TokenStream, TokenStream) {
+    let Some(Body { kind, inner }) = body else {
+        return (quote!(), quote!(()), quote!(()));
+    };
+
+    let (encode_ty, body_value) = match kind {
+        BodyKind::Json => {
+            let wrapper = paths.plugin("client::Json");
+
+            (quote!(#wrapper<#inner>), quote!(#wrapper(request)))
+        }
+
+        BodyKind::Form => {
+            let wrapper = paths.plugin("client::Form");
+
+            (quote!(#wrapper<#inner>), quote!(#wrapper(request)))
+        }
+
+        BodyKind::Bytes => {
+            let wrapper = paths.plugin("client::OctetStream");
+
+            (quote!(#wrapper), quote!(#wrapper(request)))
+        }
+
+        BodyKind::RawForm => {
+            let wrapper = paths.plugin("client::RawForm");
+
+            (quote!(#wrapper), quote!(#wrapper(request)))
+        }
+
+        // `Multipart` is already an `HttpBody`, so it is its own wrapper — no re-wrap.
+        BodyKind::Multipart => {
+            let multipart = paths.plugin("client::Multipart");
+
+            (quote!(#multipart), quote!(request))
+        }
+    };
+
+    let param_ty = body_param_type(body, paths);
+
+    (quote!(, request: #param_ty), encode_ty, body_value)
+}
+
+/// The query method **parameter** (name + type, appended to the leading path params) and the URI
+/// **suffix** expression (`"?…"` or `""`) for a classified query. A typed `Query<T>` is URL-encoded
+/// from the `Dto` `T`; a `RawQuery` takes an `Option<String>` and appends it verbatim. `None` when
+/// the route has no query.
+fn query_parts(
+    query: &Option<QueryInput>,
     paths: &Paths,
-) -> (TokenStream, TokenStream, TokenStream) {
-    match body {
-        Some((kind, inner)) => {
-            // Client-owned wrappers (not axum's), so the client body path carries no dependency on
-            // the axum server framework and compiles for wasm. The client method still takes the
-            // raw `T` (`request: #inner`), so this swap is invisible to callers.
-            let wrapper = match kind {
-                BodyKind::Json => paths.plugin("client::Json"),
-                BodyKind::Form => paths.plugin("client::Form"),
-            };
+) -> Option<((Ident, TokenStream), TokenStream)> {
+    let name = format_ident!("query");
+
+    let (param_ty, suffix) = match query.as_ref()? {
+        QueryInput::Typed(ty) => {
+            let encode_query = paths.plugin("client::encode_query");
 
             (
-                quote!(, request: #inner),
-                quote!(#wrapper<#inner>),
-                quote!(#wrapper(request)),
+                quote!(#ty),
+                quote! {{
+                    let __q = #encode_query(&#name);
+
+                    if __q.is_empty() {
+                        ::std::string::String::new()
+                    } else {
+                        ::std::format!("?{}", __q)
+                    }
+                }},
             )
         }
 
-        None => (quote!(), quote!(()), quote!(())),
-    }
+        QueryInput::Raw => (
+            quote!(::core::option::Option<::std::string::String>),
+            quote! {
+                match &#name {
+                    ::core::option::Option::Some(__q) if !__q.is_empty() => {
+                        ::std::format!("?{}", __q)
+                    }
+
+                    _ => ::std::string::String::new(),
+                }
+            },
+        ),
+    };
+
+    Some(((name, param_ty), suffix))
 }
 
 /// Builds the `http::Request<B>` constructor expression for a route: verb + `BASE`-joined URI
-/// (path params substituted) + the body's content type + the typed body value.
+/// (path params substituted, query appended) + the body's content type + the typed body value.
+#[allow(clippy::too_many_arguments)]
 fn request_builder(
     route: &RouteAttr,
     fmt: &str,
     subst: &[TokenStream],
+    query_suffix: &TokenStream,
     encode_ty: &TokenStream,
     body_value: &TokenStream,
+    per_call_headers: bool,
     paths: &Paths,
 ) -> TokenStream {
     let http = paths.plugin("http");
@@ -415,7 +624,23 @@ fn request_builder(
     let subst = subst
         .iter()
         .map(|subst| quote!(#encode_path_segment(&#subst)));
-    let uri = quote!(::std::format!(#fmt, #base #(, #subst)*));
+    // The path template (holes filled) then the query suffix (`"?…"` or `""`).
+    let uri =
+        quote!(::std::format!("{}{}", ::std::format!(#fmt, #base #(, #subst)*), #query_suffix));
+
+    // Fold the per-call `headers` argument (if this method takes one) over the built request; a
+    // caller's header wins over the content type set above (`insert` replaces).
+    let header_merge = if per_call_headers {
+        quote! {
+            if let ::core::option::Option::Some(__headers) = headers {
+                for (__name, __value) in __headers.iter() {
+                    __request.headers_mut().insert(__name.clone(), __value.clone());
+                }
+            }
+        }
+    } else {
+        quote!()
+    };
 
     quote! {{
         let mut __builder = #http::Request::builder()
@@ -426,9 +651,13 @@ fn request_builder(
             __builder = __builder.header(#http::header::CONTENT_TYPE, __ct);
         }
 
-        __builder
+        let mut __request = __builder
             .body(#body_value)
-            .expect("client request is valid by construction")
+            .expect("client request is valid by construction");
+
+        #header_merge
+
+        __request
     }}
 }
 
@@ -453,14 +682,31 @@ pub fn build_stream_client_method(
     let inputs = classify(arg_types)?;
 
     let (_req_param, encode_ty, body_value) = body_parts(&inputs.body, paths);
+    let request_param = body_param_type(&inputs.body, paths);
     let (fmt, holes) = parse_template(&route.path.value());
     let path_plan = plan_path(&holes, inputs.path_ty)?;
+
+    // The query param (after the path params) and the URI suffix it produces.
+    let query_plan = query_parts(&inputs.query, paths);
+    let query_suffix = query_plan
+        .as_ref()
+        .map(|(_, suffix)| suffix.clone())
+        .unwrap_or_else(|| quote!(""));
+
+    let mut extra_args = path_plan.args;
+
+    if let Some((query_arg, _)) = query_plan {
+        extra_args.push(query_arg);
+    }
+
     let request = request_builder(
         route,
         &fmt,
         &path_plan.subst,
+        &query_suffix,
         &encode_ty,
         &body_value,
+        false,
         paths,
     );
 
@@ -471,8 +717,8 @@ pub fn build_stream_client_method(
     let stream_decode = paths.plugin("client::StreamDecode");
     let stream_trait = paths.plugin("__Stream");
 
-    // The body param (raw `T`) is supplied via `request`; the path params via `extra_args`. The
-    // `ServerStreaming` arm assembles `&self, <path params>, request: T` from those.
+    // The body param (raw `T`) is supplied via `request`; the path/query params via `extra_args`. The
+    // `ServerStreaming` arm assembles `&self, <path/query params>, request: T` from those.
     let request = ClientMethodOverrideBody {
         bounds: quote!(C: #http_streaming + #encodes<#encode_ty>),
         // The item type mirrors the server's exactly (`T`, or a `Result<T, E>` the handler chose
@@ -498,17 +744,19 @@ pub fn build_stream_client_method(
         ident: method_ident.clone(),
         path: String::new(),
         capability: Capability::ServerStreaming,
-        request: inputs.body.map(|(_, inner)| inner),
+        request: request_param,
         encode_as: None,
         req_item: None,
         resp_item: None,
         response: item,
         error_ty: None,
-        extra_args: path_plan.args,
+        extra_args,
         request_envelope: None,
         request_builder: None,
         response_envelope: None,
         response_mapper: None,
+        trailing_args: ::std::vec::Vec::new(),
+        attrs: ::std::vec::Vec::new(),
         override_bounds: Some(request.bounds),
         override_ret: Some(request.ret),
         override_body: Some(request.body),
@@ -557,6 +805,19 @@ pub fn build_client_stream_method(
     let decodes = paths.client("Decodes");
     let stream_arg = paths.client("StreamArg");
 
+    // The query param (after the path params) and the URI suffix it produces.
+    let query_plan = query_parts(&inputs.query, paths);
+    let query_suffix = query_plan
+        .as_ref()
+        .map(|(_, suffix)| suffix.clone())
+        .unwrap_or_else(|| quote!(""));
+
+    let mut extra_args = path_plan.args;
+
+    if let Some((query_arg, _)) = query_plan {
+        extra_args.push(query_arg);
+    }
+
     let verb = format_ident!("{}", route.verb.to_string().to_uppercase());
     // Built from the client struct's `Self::BASE` (see `request_builder`).
     let base = quote!(Self::BASE);
@@ -564,7 +825,9 @@ pub fn build_client_stream_method(
     let subst = subst
         .iter()
         .map(|subst| quote!(#encode_path_segment(&#subst)));
-    let uri = quote!(::std::format!(#fmt, #base #(, #subst)*));
+    // The path template (holes filled) then the query suffix (`"?…"` or `""`).
+    let uri =
+        quote!(::std::format!("{}{}", ::std::format!(#fmt, #base #(, #subst)*), #query_suffix));
 
     let request = ClientMethodOverrideBody {
         bounds: quote!(C: #http_client_streaming + #decodes<#response>),
@@ -600,11 +863,13 @@ pub fn build_client_stream_method(
         resp_item: None,
         response,
         error_ty: None,
-        extra_args: path_plan.args,
+        extra_args,
         request_envelope: None,
         request_builder: None,
         response_envelope: None,
         response_mapper: None,
+        trailing_args: ::std::vec::Vec::new(),
+        attrs: ::std::vec::Vec::new(),
         override_bounds: Some(request.bounds),
         override_ret: Some(request.ret),
         override_body: Some(request.body),
@@ -762,29 +1027,40 @@ fn stream_item_binding(impl_trait: &syn::TypeImplTrait) -> Option<Type> {
     None
 }
 
-/// Server-only extractors: resolved on the server, never sent by the client, so they are
-/// dropped from the client signature (the method is still emitted).
-const SERVER_ONLY: &[&str] = &["Inject", "State", "Extension", "ConnectInfo"];
+/// axum extractors that consume wire data the generated client still cannot encode. A route using one
+/// opts out of client generation (see [`classify`]) rather than get a method that silently omits that
+/// data. `Request` (and its alias `RawRequest`) take the *entire* request — headers and an opaque
+/// body — so there is no typed shape to reconstruct on the client. The recognized wire inputs
+/// (`Path`/`Query`/`Json`/`Form`/`Bytes`/`RawForm`/`Multipart`) are handled in [`classify`]; server-only
+/// context (`Inject`/`State`/… and custom `FromRequestParts` guards) carries nothing over the wire and
+/// is dropped, leaving the method intact.
+const UNSUPPORTED_WIRE: &[&str] = &["Request", "RawRequest"];
 
 /// Above this many path holes, the params collapse into a single tuple argument rather than one
 /// named argument each — keeping a long route's client signature compact.
 const MAX_NAMED_PATH_PARAMS: usize = 3;
 
-/// Which body wrapper a `Json`/`Form` argument uses (the `HttpBody` that owns its content type).
+/// Which [`HttpBody`](../overseerd_axum/client/trait.HttpBody.html) wrapper a route's body uses (the
+/// wrapper owns the content type + wire encoding). `Json`/`Form` wrap a serde payload `T`; `Bytes`
+/// and `RawForm` wrap a raw `Vec<u8>`; `Multipart` is the `Multipart` builder, already an `HttpBody`.
 enum BodyKind {
     Json,
     Form,
+    Bytes,
+    RawForm,
+    Multipart,
 }
 
-/// Builds the [`ClientMethod`] hint for one route, or `None` if an argument is not a recognized
-/// client input or droppable server-only extractor (the route then gets no client method).
+/// Builds the client methods for one unary route — the clean `method` and its `method_with_headers`
+/// sibling ([`UnaryMethods`]) — or `None` if an argument is not a recognized client input or a
+/// droppable server-only extractor (the route then gets no client method).
 pub fn build_client_method(
     method_ident: &Ident,
     route: &RouteAttr,
     arg_types: &[&Type],
     output: &ReturnType,
     paths: &Paths,
-) -> Option<ClientMethod> {
+) -> Option<UnaryMethods> {
     // A `streamed` route is server-streaming — see `build_stream_client_method`. The unary form
     // does not apply.
     if route.streamed {
@@ -800,6 +1076,7 @@ pub fn build_client_method(
         route,
         fmt,
         path_plan,
+        inputs.query,
         inputs.body,
         output,
         paths,
@@ -869,83 +1146,110 @@ fn plan_path(holes: &[String], path_ty: Option<Type>) -> Option<PathPlan> {
 }
 
 /// Assembles the hint once the args are classified.
+/// The two forms of a generated unary method: the clean `method` and its `method_with_headers`
+/// sibling (identical but for a trailing per-call `headers` argument the body folds into the request).
+pub struct UnaryMethods {
+    pub base: ClientMethod,
+    pub with_headers: ClientMethod,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn assemble(
     method_ident: &Ident,
     route: &RouteAttr,
     fmt: String,
     path_plan: PathPlan,
-    body: Option<(BodyKind, Type)>,
+    query: Option<QueryInput>,
+    body: Option<Body>,
     output: &ReturnType,
     paths: &Paths,
-) -> ClientMethod {
+) -> UnaryMethods {
     let http = paths.plugin("http");
-    let http_body = paths.plugin("client::HttpBody");
     let http_response = paths.plugin("client::HttpResponse");
-    let encode_path_segment = paths.plugin("client::encode_path_segment");
 
     // The decoded response body: peel a `Json<T>` return to `T`, else the bare return type.
     let response = response_type(output);
 
-    // The URI: the client struct's `Self::BASE` then the route template with each `{name}` hole
-    // replaced by a positional `{}`, filled from the path params. `http::Method::<VERB>` selects
-    // the verb. `Self::BASE` keeps the client decoupled from the server `Controller` trait.
-    let verb = format_ident!("{}", route.verb.to_string().to_uppercase());
-    let base = quote!(Self::BASE);
-    let subst = &path_plan.subst;
-    let subst = subst
-        .iter()
-        .map(|subst| quote!(#encode_path_segment(&#subst)));
-    let uri = quote!(::std::format!(#fmt, #base #(, #subst)*));
+    // The body: the raw `T` (or `Vec<u8>` / `Multipart`) is the param, but the wire body is its
+    // `HttpBody` wrapper — which drives the `Encodes<B>` bound, the envelope, and the content type.
+    let request = body_param_type(&body, paths);
+    let (_body_param, encode_ty, body_value) = body_parts(&body, paths);
+    let encode_as = request.as_ref().map(|_| encode_ty.clone());
 
-    // The body: the raw `T` is the param, but the wire body is its `HttpBody` wrapper
-    // (`Json<T>`/`Form<T>`) — which drives the `Encodes<B>` bound, the envelope, and the
-    // content type. A no-body route uses `()`.
-    let (request, encode_as, body_value, body_ty) = match body {
-        Some((kind, inner)) => {
-            // Client-owned wrappers (not axum's), so the client body path carries no dependency on
-            // the axum server framework and compiles for wasm. The client method still takes the
-            // raw `T` (`request: #inner`), so this swap is invisible to callers.
-            let wrapper = match kind {
-                BodyKind::Json => paths.plugin("client::Json"),
-                BodyKind::Form => paths.plugin("client::Form"),
-            };
-            let wrapped = quote!(#wrapper<#inner>);
+    // The query param (folded in after the path params) and the URI suffix it produces.
+    let query_plan = query_parts(&query, paths);
+    let query_suffix = query_plan
+        .as_ref()
+        .map(|(_, suffix)| suffix.clone())
+        .unwrap_or_else(|| quote!(""));
 
-            (
-                Some(inner),
-                Some(wrapped.clone()),
-                quote!(#wrapper(request)),
-                wrapped,
-            )
-        }
+    let mut extra_args = path_plan.args;
 
-        None => (None, None, quote!(()), quote!(())),
-    };
+    if let Some((query_arg, _)) = query_plan {
+        extra_args.push(query_arg);
+    }
 
-    // Build the `http::Request<B>`: verb + URI, the body's content type (when any), then the
-    // typed body. Header/URI are valid by construction, so the builder cannot fail here.
-    let request_builder = quote! {{
-        let mut __builder = #http::Request::builder()
-            .method(#http::Method::#verb)
-            .uri(#uri);
+    // The single request-building path lives on `_with_headers`: it folds the per-call `headers`
+    // argument over the request. Header/URI are valid by construction, so it cannot fail here.
+    let header_builder = request_builder(
+        route,
+        &fmt,
+        &path_plan.subst,
+        &query_suffix,
+        &encode_ty,
+        &body_value,
+        true,
+        paths,
+    );
 
-        if let ::core::option::Option::Some(__ct) = <#body_ty as #http_body>::CONTENT_TYPE {
-            __builder = __builder.header(#http::header::CONTENT_TYPE, __ct);
-        }
-
-        __builder
-            .body(#body_value)
-            .expect("client request is valid by construction")
-    }};
-
-    let request_envelope = Some(quote!(#http::Request<#body_ty>));
+    let request_envelope = Some(quote!(#http::Request<#encode_ty>));
     let response_envelope = Some(quote!(#http_response<#response>));
 
-    ClientMethod {
-        ident: method_ident.clone(),
+    // The argument names the plain method forwards into `_with_headers` (path/query params, then the
+    // body), followed by `None` for the headers — so the plain call is `_with_headers(.., None)`.
+    let with_ident = format_ident!("{}_with_headers", method_ident);
+    let mut forward_args: Vec<TokenStream> =
+        extra_args.iter().map(|(name, _)| quote!(#name)).collect();
+
+    if request.is_some() {
+        forward_args.push(quote!(request));
+    }
+
+    // `_with_headers` — the real method: the full request-building body plus a trailing
+    // `headers: Option<HeaderMap>` argument.
+    let with_headers = ClientMethod {
+        ident: with_ident.clone(),
         // Empty: the method and the full URI live in the `http::Request` envelope the
         // `request_builder` constructs, so the capability's `path` arg carries nothing for HTTP
         // (it exists for RPC's `"Service.method"` routing). The transport reads `request.uri()`.
+        path: String::new(),
+        capability: Capability::Unary,
+        request: request.clone(),
+        encode_as: encode_as.clone(),
+        req_item: None,
+        resp_item: None,
+        response: response.clone(),
+        error_ty: None,
+        extra_args: extra_args.clone(),
+        request_envelope: request_envelope.clone(),
+        request_builder: Some(header_builder),
+        response_envelope: response_envelope.clone(),
+        response_mapper: None,
+        trailing_args: vec![(
+            format_ident!("headers"),
+            quote!(::core::option::Option<#http::HeaderMap>),
+        )],
+        attrs: Vec::new(),
+        override_bounds: None,
+        override_ret: None,
+        override_body: None,
+    };
+
+    // The plain method: the same signature minus the headers argument, forwarding to `_with_headers`
+    // with no per-call headers. It carries no request builder of its own, so there is a single
+    // request-building path and no drift; `#[inline(always)]` keeps the extra hop free.
+    let base = ClientMethod {
+        ident: method_ident.clone(),
         path: String::new(),
         capability: Capability::Unary,
         request,
@@ -954,15 +1258,21 @@ fn assemble(
         resp_item: None,
         response,
         error_ty: None,
-        extra_args: path_plan.args,
+        extra_args,
         request_envelope,
-        request_builder: Some(request_builder),
+        request_builder: None,
         response_envelope,
         response_mapper: None,
+        trailing_args: Vec::new(),
+        attrs: vec![quote!(#[inline(always)])],
         override_bounds: None,
         override_ret: None,
-        override_body: None,
-    }
+        override_body: Some(quote! {
+            self.#with_ident(#(#forward_args,)* ::core::option::Option::None).await
+        }),
+    };
+
+    UnaryMethods { base, with_headers }
 }
 
 /// The decoded response body type: the `T` of a `Json<T>` return (the common case), or the bare

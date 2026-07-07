@@ -24,7 +24,7 @@ arc-swap = { workspace = true }
 # Native (server): the full protocol stack — ws/stomp controllers, DI middleware, both HTTP client
 # backends. The binary and the server-only modules use these.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-overseerd = { path = "../..", default-features = false, features = ["axum", "ws", "stomp", "uuid", "reqwest", "hyper", "tungstenite", "tracing-subscriber"] }
+overseerd = { path = "../..", default-features = false, features = ["axum", "ws", "stomp", "multipart", "uuid", "reqwest", "hyper", "tungstenite", "tracing-subscriber"] }
 tokio = { workspace = true }
 tracing.workspace = true
 

@@ -53,6 +53,10 @@ watch = ["overseerd-app/watch", "overseerd-config/watch"]
 tracing-subscriber = ["overseerd-app/tracing-subscriber"]
 # WebSocket streaming (client/bidi). Scaffolded; not served yet.
 ws = ["axum/ws"]
+# The `multipart/form-data` request extractor (`axum::extract::Multipart`, re-exported here). Off by
+# default, mirroring axum: enable it to receive uploads on the server. The client-side `Multipart`
+# body builder is always available (it needs no server machinery) under the `client` feature.
+multipart = ["axum/multipart"]
 # STOMP 1.2 pub/sub over WebSocket: the broker, `#[controller(ws = Stomp)]` message handlers, and
 # the typed generated client. Implies `ws`; pulls in the `stomp-parser` frame grammar.
 stomp = ["ws", "dep:stomp-parser"]

@@ -132,6 +132,11 @@ ws = ["axum", "overseerd-axum/ws"]
 # and the typed generated client. Implies `ws`.
 stomp = ["ws", "overseerd-axum/stomp"]
 
+# The `multipart/form-data` request extractor (`overseerd::axum::Multipart`), for upload handlers.
+# Off by default (mirrors axum); implies `axum`. The client-side `Multipart` body builder is always
+# available under `client`.
+multipart = ["axum", "overseerd-axum/multipart"]
+
 # Cross-cutting `uuid` integration: light up `uuid` support in whatever crates are enabled, without
 # forcing any of them on. The `?/` activations fire only for a crate that is already present — so
 # `uuid` composes with `axum`/`stomp`/future protocols rather than pulling them in. Add a new

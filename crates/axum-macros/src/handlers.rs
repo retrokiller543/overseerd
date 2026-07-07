@@ -43,6 +43,12 @@ pub struct AxumHandlers {
     /// *and* wasm.
     wire_types: Vec<Type>,
 
+    /// The `{method}_with_headers` sibling of each unary HTTP route (accumulated during
+    /// [`ParseMethod`]). Header handling is HTTP-specific, so the framework core never sees it: these
+    /// are rendered by [`ParseMethod::extra_client_tokens`] into an extra `impl` block, and the wasm
+    /// wrapper folds the header argument onto the plain method instead.
+    header_methods: Vec<ClientMethod>,
+
     /// Accumulated per `#[message]` ws handler method (during [`ParseMethod`]). A block is either
     /// HTTP (`routes`) or WebSocket (`ws_routes`); mixing the two is a compile error.
     ws_routes: Vec<WsRouteSpec>,
@@ -275,13 +281,23 @@ impl ParseMethod for AxumHandlers {
                 None => None,
             }
         } else {
-            client::build_client_method(
+            // A unary route yields the clean method (the hint the framework renders) plus its
+            // `_with_headers` sibling, which we stash to render ourselves in `extra_client_tokens`.
+            match client::build_client_method(
                 &method.sig.ident,
                 &route_attr,
                 &arg_types,
                 &method.sig.output,
                 &cx.paths,
-            )
+            ) {
+                Some(methods) => {
+                    self.header_methods.push(methods.with_headers);
+
+                    Some(methods.base)
+                }
+
+                None => None,
+            }
         };
 
         // Collect the wire types to assert `Dto` — for a plain unary route only (streaming
@@ -327,6 +343,7 @@ impl ParseMethod for AxumHandlers {
         client::extra_client_tokens(
             client_ident,
             methods,
+            &self.header_methods,
             self.wire_types.clone(),
             backend,
             paths,
@@ -884,6 +901,8 @@ fn build_stomp_send_method(
         request_builder: None,
         response_envelope: None,
         response_mapper: None,
+        trailing_args: ::std::vec::Vec::new(),
+        attrs: ::std::vec::Vec::new(),
         override_bounds: Some(quote!( C: #stomp_send )),
         override_ret: Some(quote!(
             ::core::result::Result<(), #client_error<#stomp_status>>
@@ -939,6 +958,8 @@ fn build_ws_client_method(
         request_builder: None,
         response_envelope: None,
         response_mapper: None,
+        trailing_args: ::std::vec::Vec::new(),
+        attrs: ::std::vec::Vec::new(),
         override_bounds: Some(bounds),
         override_ret: Some(quote!(
             ::core::result::Result<#response, #client_error<#ws_status>>
