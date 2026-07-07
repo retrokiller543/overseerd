@@ -11,6 +11,7 @@ mod body;
 // The shared browser-client `Connection` (wasm-only; needs the reqwest fetch backend).
 #[cfg(all(target_family = "wasm", feature = "reqwest"))]
 mod connection;
+mod headers;
 mod response;
 // The STOMP client transport is cross-target (native + wasm) via `tokio-tungstenite-wasm`.
 #[cfg(all(feature = "stomp", feature = "client"))]
@@ -28,9 +29,10 @@ mod hyper_backend;
 #[cfg(feature = "reqwest")]
 mod reqwest_backend;
 
-pub use body::{Form, HttpBody, Json, OctetStream};
+pub use body::{Form, HttpBody, Json, Multipart, OctetStream, RawForm};
 #[cfg(all(target_family = "wasm", feature = "reqwest"))]
 pub use connection::Connection;
+pub use headers::RequestHeaders;
 pub use response::HttpResponse;
 #[cfg(all(feature = "stomp", feature = "client"))]
 pub use stomp::*;
@@ -60,6 +62,15 @@ pub fn encode_path_segment(value: impl std::fmt::Display) -> String {
     }
 
     out
+}
+
+/// URL-encodes a typed `Query<T>` value into a query string (without the leading `?`). Generated
+/// clients call this for a route's `Query<T>` param when building the request URI. Like path
+/// substitution, it is a "valid by construction" step in the infallible URI builder: a `Dto` query
+/// type serializes cleanly, so an encoder error (a shape `serde_urlencoded` rejects, e.g. a nested
+/// struct) surfaces as a panic rather than a checked error on every call.
+pub fn encode_query<T: serde::Serialize>(value: &T) -> String {
+    serde_urlencoded::to_string(value).expect("query value serializes to a URL-encoded string")
 }
 
 /// Maps a non-success HTTP response into a [`ClientError::Remote`](overseerd_client::ClientError),

@@ -8,7 +8,10 @@ use futures::Stream;
 use futures::StreamExt;
 #[cfg(not(target_family = "wasm"))]
 use futures::stream::BoxStream;
+use std::sync::{Arc, RwLock};
+
 use http::Request;
+use http::header::HeaderMap;
 use overseerd_client::{ClientError, MaybeSend, Transport, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
@@ -19,6 +22,19 @@ use super::{HttpClientStreaming, HttpStreaming};
 #[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
 use super::{WebsocketClient, WsStatus};
 
+/// A callback producing the default headers to attach to every request — the transport-level hook for
+/// dynamic auth: it runs per request, so returning `authorization` from a token store applies (and
+/// refreshes) the token everywhere without rebuilding clients. Per-request and per-call headers still
+/// win over what it returns. Set with [`ReqwestClient::set_header_provider`] (native): the client
+/// transport must be `Send + Sync` (the codec traits require it), so the provider is a Rust closure —
+/// a wasm/browser client instead passes per-call headers to the generated `{method}(…, headers?)`.
+pub type HeaderProvider = Arc<dyn Fn() -> HeaderMap + Send + Sync>;
+
+// A shared, settable slot for the provider, so setting it on one handle is seen by every client
+// cloned from the same transport. Empty on wasm (no `set_header_provider` there) but kept uniform so
+// the transport type — and its `Send + Sync` — is identical across targets.
+type ProviderSlot = Arc<RwLock<Option<HeaderProvider>>>;
+
 /// An HTTP client transport backed by [`reqwest`].
 ///
 /// Holds a base URL (scheme + authority, e.g. `http://localhost:3000`) that the per-call path
@@ -28,6 +44,9 @@ use super::{WebsocketClient, WsStatus};
 pub struct ReqwestClient<W = ()> {
     client: reqwest::Client,
     base_url: String,
+    /// The default-header provider (see [`HeaderProvider`]), shared across clones of the transport so
+    /// it can be installed on the `Connection` and picked up by every client built from it.
+    header_provider: ProviderSlot,
     // Read only by the `WebsocketClient` delegate, which is native-only; on wasm the field is
     // carried (so `with_websocket`/`W` stay uniform across targets) but never read.
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
@@ -40,6 +59,7 @@ impl ReqwestClient<()> {
         Self {
             client: reqwest::Client::new(),
             base_url: base_url.into(),
+            header_provider: ProviderSlot::default(),
             websocket: (),
         }
     }
@@ -50,6 +70,7 @@ impl ReqwestClient<()> {
         Self {
             client,
             base_url: base_url.into(),
+            header_provider: ProviderSlot::default(),
             websocket: (),
         }
     }
@@ -61,8 +82,44 @@ impl<W> ReqwestClient<W> {
         ReqwestClient {
             client: self.client,
             base_url: self.base_url,
+            header_provider: self.header_provider,
             websocket,
         }
+    }
+
+    /// Installs the [`HeaderProvider`] callback, replacing any previous one. It runs on every request
+    /// (through this client and every client sharing the transport), so returning a fresh
+    /// `authorization` header is the auth hook. A request's own headers (content type, per-call
+    /// headers) still take precedence. Native-only — a wasm client passes per-call headers instead.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn set_header_provider<F>(&self, provider: F)
+    where
+        F: Fn() -> HeaderMap + Send + Sync + 'static,
+    {
+        *self
+            .header_provider
+            .write()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(Arc::new(provider));
+    }
+
+    /// Merges the provider's default headers (if one is installed) under a request's own headers (the
+    /// request's — content type and any per-call headers the generated method already folded in — win
+    /// on a clash).
+    fn merged_headers(&self, request_headers: &HeaderMap) -> HeaderMap {
+        let mut merged = match &*self
+            .header_provider
+            .read()
+            .unwrap_or_else(|poison| poison.into_inner())
+        {
+            Some(provider) => provider(),
+            None => HeaderMap::new(),
+        };
+
+        for (name, value) in request_headers {
+            merged.insert(name.clone(), value.clone());
+        }
+
+        merged
     }
 }
 
@@ -124,7 +181,7 @@ where
         let response = self
             .client
             .request(parts.method, url)
-            .headers(parts.headers)
+            .headers(self.merged_headers(&parts.headers))
             .body(bytes)
             .send()
             .await
@@ -171,7 +228,7 @@ where
         let response = self
             .client
             .request(parts.method, url)
-            .headers(parts.headers)
+            .headers(self.merged_headers(&parts.headers))
             .body(bytes)
             .send()
             .await
@@ -213,7 +270,7 @@ where
         let response = self
             .client
             .request(parts.method, url)
-            .headers(parts.headers)
+            .headers(self.merged_headers(&parts.headers))
             .body(reqwest::Body::wrap_stream(body))
             .send()
             .await

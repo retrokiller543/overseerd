@@ -551,6 +551,8 @@ fn client_method(
         request_builder: None,
         response_envelope: None,
         response_mapper: None,
+        trailing_args: ::std::vec::Vec::new(),
+        attrs: ::std::vec::Vec::new(),
         override_bounds: None,
         override_ret: None,
         override_body: None,

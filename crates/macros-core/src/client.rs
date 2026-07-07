@@ -33,6 +33,7 @@ pub enum Capability {
 /// A protocol's description ("hint") of one client method. The protocol fills it from its own
 /// signature analysis (which extractors mean a request body, a stream, an error type); the
 /// framework assembles the call signature and body and emits the capability-partitioned client.
+#[derive(Clone)]
 pub struct ClientMethod {
     /// The generated method name.
     pub ident: Ident,
@@ -87,6 +88,16 @@ pub struct ClientMethod {
     /// (`self.0.<call>(..)`). The framework still assembles the signature; only the body is the
     /// protocol's, for a call the standard capability cannot express (e.g. byte stream + decode).
     pub override_body: Option<TokenStream>,
+
+    /// Extra parameters appended **after** the body (mirroring [`extra_args`](Self::extra_args),
+    /// which lead). Each `(name, type)` becomes a `, name: type` in the signature and is in scope for
+    /// the method body / `request_builder`. Empty for most methods; a protocol uses it for an extra
+    /// trailing input a variant method carries (e.g. the axum HTTP `_with_headers` variant).
+    pub trailing_args: Vec<(Ident, TokenStream)>,
+
+    /// Attributes emitted on the generated `pub async fn` (e.g. `#[inline(always)]` on a thin
+    /// forwarding method). Empty for most methods.
+    pub attrs: Vec<TokenStream>,
 }
 
 impl ClientMethod {
@@ -125,6 +136,14 @@ impl ClientMethod {
             None => (quote!(), quote!(()), quote!(())),
         };
         let unary_encode = self.encode_as.clone().unwrap_or(request_ty);
+
+        // Trailing parameters, appended after the body (empty for most methods). Like `extra_params`,
+        // in scope for `request_builder`.
+        let trailing_params = self
+            .trailing_args
+            .iter()
+            .map(|(name, ty)| quote!(, #name: #ty));
+        let trailing_params = quote!(#(#trailing_params)*);
 
         // Leading path/query parameters (HTTP); empty for RPC. Spliced before the body param
         // and visible to `request_builder`.
@@ -165,7 +184,7 @@ impl ClientMethod {
                 };
 
                 (
-                    quote!(&self #extra_params #req_arg),
+                    quote!(&self #extra_params #req_arg #trailing_params),
                     quote!(::core::result::Result<#resp_env, #client_error<#status, #err>>),
                     quote!(self.0.unary(#path, #call).await #map),
                     quote! {
@@ -239,23 +258,31 @@ pub fn generate_client(
         return quote!();
     }
 
-    let fns = methods.iter().map(|m| {
-        let ident = &m.ident;
-        let (args, ret, body, bounds) = m.build(paths);
-
-        quote! {
-            pub async fn #ident(#args) -> #ret
-            where
-                #bounds,
-            {
-                #body
-            }
-        }
-    });
+    let fns = methods.iter().map(|m| client_method_tokens(m, paths));
 
     quote! {
         impl<C> #client_ident<C> {
             #(#fns)*
+        }
+    }
+}
+
+/// Renders a single [`ClientMethod`] into its `pub async fn` (signature + `where` bound + body) for
+/// an `impl<C> {Service}Client<C>` block. Factored out of [`generate_client`] so a protocol extension
+/// can render an *extra* method it constructs (e.g. the axum HTTP `_with_headers` variant) with the
+/// exact same capability machinery, keeping the rendering in one place.
+pub fn client_method_tokens(m: &ClientMethod, paths: &Paths) -> TokenStream {
+    let ident = &m.ident;
+    let attrs = &m.attrs;
+    let (args, ret, body, bounds) = m.build(paths);
+
+    quote! {
+        #(#attrs)*
+        pub async fn #ident(#args) -> #ret
+        where
+            #bounds,
+        {
+            #body
         }
     }
 }

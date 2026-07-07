@@ -77,6 +77,11 @@ pub use ws::stomp::{
 #[cfg(feature = "stomp")]
 pub use overseerd_transport::CodecError;
 
+/// The `multipart/form-data` request extractor, re-exported from axum under the `multipart` feature
+/// so a handler reaches it through the facade (`overseerd::axum::Multipart`) — pairing with the
+/// client-side [`client::Multipart`] body builder used to send the upload.
+#[cfg(all(feature = "multipart", not(target_family = "wasm")))]
+pub use axum::extract::Multipart;
 #[cfg(not(target_family = "wasm"))]
 pub use extract::{Inject, InjectRejection, ScopeHandle};
 #[cfg(not(target_family = "wasm"))]
