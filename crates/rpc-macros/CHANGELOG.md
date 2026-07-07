@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/retrokiller543/overseerd/compare/overseerd-rpc-macros-v0.10.0...overseerd-rpc-macros-v0.11.0) - 2026-07-07
+
+### Added
+
+- *(axum)* drop custom guards from client codegen; add query/raw/multipart bodies + per-call & transport headers
+
 ## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-rpc-macros-v0.6.0...overseerd-rpc-macros-v0.7.0) - 2026-06-30
 
 ### Other
