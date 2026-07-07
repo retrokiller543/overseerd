@@ -9,10 +9,13 @@
 //! `http::Request` with the verb, the `BASE`+route URI, and the typed body.
 //!
 //! Custom `FromRequestParts` guards (auth, tenant, …) count as server-only context and are
-//! dropped like `Inject`, so a guarded route still gets a client method. Only a route using an
-//! extractor that consumes wire data the client still can't encode ([`UNSUPPORTED_WIRE`], the
-//! whole-request extractors) opts out: it yields `None`, the server route still registers, and it
-//! simply gets no client method (rather than a silently wrong one).
+//! dropped like `Inject`, so a guarded route still gets a client method. The route's path holes are
+//! sourced from the **route template**, not the handler signature, so even a guard that consumes a
+//! path segment internally (reading `Path::<..>` in its own `from_request_parts`) still yields a
+//! complete client method — the hole becomes a `String` param when no `Path` arg types it. Only a
+//! route using an extractor that consumes wire data the client still can't encode
+//! ([`UNSUPPORTED_WIRE`], the whole-request extractors) opts out: it yields `None`, the server route
+//! still registers, and it simply gets no client method (rather than a silently wrong one).
 
 use overseerd_macros_core::attr::{first_type_arg, type_name};
 use overseerd_macros_core::client::{Capability, ClientMethod};
@@ -684,7 +687,7 @@ pub fn build_stream_client_method(
     let (_req_param, encode_ty, body_value) = body_parts(&inputs.body, paths);
     let request_param = body_param_type(&inputs.body, paths);
     let (fmt, holes) = parse_template(&route.path.value());
-    let path_plan = plan_path(&holes, inputs.path_ty)?;
+    let path_plan = plan_path(&holes, inputs.path_ty);
 
     // The query param (after the path params) and the URI suffix it produces.
     let query_plan = query_parts(&inputs.query, paths);
@@ -791,7 +794,7 @@ pub fn build_client_stream_method(
     }
 
     let (fmt, holes) = parse_template(&route.path.value());
-    let path_plan = plan_path(&holes, inputs.path_ty)?;
+    let path_plan = plan_path(&holes, inputs.path_ty);
     let response = response_type(output);
 
     let http = paths.plugin("http");
@@ -1069,7 +1072,7 @@ pub fn build_client_method(
 
     let inputs = classify(arg_types)?;
     let (fmt, holes) = parse_template(&route.path.value());
-    let path_plan = plan_path(&holes, inputs.path_ty)?;
+    let path_plan = plan_path(&holes, inputs.path_ty);
 
     Some(assemble(
         method_ident,
@@ -1090,59 +1093,84 @@ struct PathPlan {
     subst: Vec<TokenStream>,
 }
 
-/// Maps the route's holes to the `Path<T>` type, producing dedicated named params (named after
-/// the holes) up to [`MAX_NAMED_PATH_PARAMS`], or a single tuple param beyond that. Returns
-/// `None` on a hole/type-arity mismatch (a malformed handler — skip its client method).
-fn plan_path(holes: &[String], path_ty: Option<Type>) -> Option<PathPlan> {
+/// The client parameter **type** of each route hole, in route order. Recovered from the handler's
+/// `Path<T>` extractor when its shape maps onto the holes — the whole `T` for a lone hole, or the
+/// tuple elements when the arities line up — else defaulted to one `String` per hole.
+///
+/// The `String` default is what keeps a route whose path segments are consumed by a **custom
+/// guard** (an auth/tenant extractor that reads `Path::<..>` internally, so the handler has no
+/// `Path` arg) from losing its client method: the route template already names every hole, and a
+/// path segment is a string on the wire, so the client can always fill the URL. It also covers the
+/// shapes we can't decompose positionally (a `Path<SomeStruct>`, or a tuple whose arity doesn't
+/// match the holes) — there the client still gets untyped-but-present params rather than being
+/// silently dropped.
+fn hole_param_types(holes: &[String], path_ty: Option<Type>) -> Vec<Type> {
+    let string_per_hole = || -> Vec<Type> {
+        holes
+            .iter()
+            .map(|_| syn::parse_quote!(::std::string::String))
+            .collect()
+    };
+
+    let Some(path_ty) = path_ty else {
+        return string_per_hole();
+    };
+
+    // One hole: the whole `Path<T>` type is that hole's type.
+    if holes.len() == 1 {
+        return vec![path_ty];
+    }
+
+    // Many holes: use the `Path<(A, B, ..)>` tuple elements when the arity matches; otherwise fall
+    // back to `String` params (the method is still emitted, just untyped).
+    match tuple_elems(&path_ty) {
+        Some(elems) if elems.len() == holes.len() => elems,
+
+        _ => string_per_hole(),
+    }
+}
+
+/// Maps the route's holes to client parameters — dedicated params named after the holes (typed via
+/// [`hole_param_types`]) up to [`MAX_NAMED_PATH_PARAMS`], or a single tuple param beyond that.
+///
+/// Sourced from the **route template** (every `{placeholder}` is a hole), so a method is emitted
+/// for *every* route with holes — even one whose segments are consumed by a custom guard rather
+/// than a `Path` arg. The `Path<T>` extractor only refines the parameter types; its absence yields
+/// `String` params, never a dropped method.
+fn plan_path(holes: &[String], path_ty: Option<Type>) -> PathPlan {
     if holes.is_empty() {
-        return Some(PathPlan {
+        return PathPlan {
             args: Vec::new(),
             subst: Vec::new(),
-        });
+        };
     }
 
-    let path_ty = path_ty?;
+    let types = hole_param_types(holes, path_ty);
 
-    // One hole: the whole `Path<T>` type is that param, named after the hole.
-    if holes.len() == 1 {
-        let name = hole_ident(&holes[0], 0);
-
-        return Some(PathPlan {
-            args: vec![(name.clone(), quote!(#path_ty))],
-            subst: vec![quote!(#name)],
-        });
-    }
-
-    // Many holes: `Path<(A, B, ..)>` — the tuple arity must match.
-    let elems = tuple_elems(&path_ty)?;
-
-    if elems.len() != holes.len() {
-        return None;
-    }
-
+    // Up to `MAX_NAMED_PATH_PARAMS`: dedicated params, named after the holes, typed per hole.
     if holes.len() <= MAX_NAMED_PATH_PARAMS {
-        // Dedicated params, named after the holes, typed by the tuple elements.
         let args = holes
             .iter()
-            .zip(&elems)
+            .zip(&types)
             .enumerate()
             .map(|(i, (hole, ty))| (hole_ident(hole, i), quote!(#ty)))
             .collect::<Vec<_>>();
         let subst = args.iter().map(|(name, _)| quote!(#name)).collect();
 
-        return Some(PathPlan { args, subst });
+        return PathPlan { args, subst };
     }
 
-    // Too many: a single tuple param, substituted by index.
+    // Too many: a single tuple param (of the per-hole types), substituted by index.
     let subst = (0..holes.len())
         .map(syn::Index::from)
         .map(|idx| quote!(path.#idx))
         .collect();
+    let tuple_ty: Type = syn::parse_quote!( ( #(#types,)* ) );
 
-    Some(PathPlan {
-        args: vec![(format_ident!("path"), quote!(#path_ty))],
+    PathPlan {
+        args: vec![(format_ident!("path"), quote!(#tuple_ty))],
         subst,
-    })
+    }
 }
 
 /// Assembles the hint once the args are classified.
@@ -1374,7 +1402,85 @@ fn parse_template(template: &str) -> (String, Vec<String>) {
 mod tests {
     use quote::quote;
 
-    use super::{hole_ident, parse_template, response_type};
+    use super::{hole_ident, plan_path, response_type};
+    use super::{parse_template, tuple_elems};
+
+    /// Renders a `PathPlan`'s args as `["name: Type", ..]` for readable assertions.
+    fn plan_args(holes: &[&str], path_ty: Option<syn::Type>) -> Vec<String> {
+        let holes: Vec<String> = holes.iter().map(|h| h.to_string()).collect();
+
+        plan_path(&holes, path_ty)
+            .args
+            .iter()
+            .map(|(name, ty)| format!("{}: {}", name, quote!(#ty)))
+            .collect()
+    }
+
+    /// A hole covered by an explicit `Path<T>` keeps its refined type and its route name.
+    #[test]
+    fn single_hole_uses_path_type() {
+        let plan = plan_args(&["id"], Some(syn::parse_quote!(u64)));
+
+        assert_eq!(plan, vec!["id: u64".to_string()]);
+    }
+
+    /// #61: a hole with **no** `Path` arg (consumed by a guard) still becomes a `String` param
+    /// named after the route template — the method is never dropped.
+    #[test]
+    fn guarded_hole_falls_back_to_string_param() {
+        let plan = plan_args(&["id"], None);
+
+        assert_eq!(plan, vec!["id: :: std :: string :: String".to_string()]);
+    }
+
+    /// Multiple guard-consumed holes each become a named `String` param.
+    #[test]
+    fn multiple_guarded_holes_fall_back_to_string_params() {
+        let plan = plan_args(&["id", "child"], None);
+
+        assert_eq!(
+            plan,
+            vec![
+                "id: :: std :: string :: String".to_string(),
+                "child: :: std :: string :: String".to_string(),
+            ]
+        );
+    }
+
+    /// A matching `Path<(A, B)>` tuple still refines each hole's type.
+    #[test]
+    fn matching_tuple_refines_each_hole() {
+        let plan = plan_args(&["id", "slug"], Some(syn::parse_quote!((u64, String))));
+
+        assert_eq!(
+            plan,
+            vec!["id: u64".to_string(), "slug: String".to_string()]
+        );
+    }
+
+    /// A `Path<T>` whose shape doesn't map onto the holes (arity mismatch / named struct) falls
+    /// back to `String` params rather than dropping the method.
+    #[test]
+    fn unmappable_path_type_falls_back_to_string_params() {
+        let plan = plan_args(&["id", "child"], Some(syn::parse_quote!(SomeStruct)));
+
+        assert_eq!(
+            plan,
+            vec![
+                "id: :: std :: string :: String".to_string(),
+                "child: :: std :: string :: String".to_string(),
+            ]
+        );
+    }
+
+    /// `tuple_elems` recovers a tuple's element types (and rejects non-tuples).
+    #[test]
+    fn tuple_elems_recovers_elements() {
+        let elems = tuple_elems(&syn::parse_quote!((u64, String))).expect("tuple");
+
+        assert_eq!(elems.len(), 2);
+        assert!(tuple_elems(&syn::parse_quote!(u64)).is_none());
+    }
 
     /// The `format!` string starts with `{}` for `BASE`, each param hole is a positional `{}`,
     /// and the hole names are recovered in order — matching matchit 0.8's `{name}` syntax.
