@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.11.0...overseerd-v0.11.1) - 2026-07-07
+
+### Added
+
+- *(axum)* enhance multipart upload support with JS File/Blob integration
+
 ## [0.11.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.10.0...overseerd-v0.11.0) - 2026-07-07
 
 ### Added
