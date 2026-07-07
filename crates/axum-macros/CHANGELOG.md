@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.11.1...overseerd-axum-macros-v0.11.2) - 2026-07-07
+
+### Fixed
+
+- *(axum)* never drop client methods for guard-consumed path params
+
 ## [0.11.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.10.0...overseerd-axum-macros-v0.11.0) - 2026-07-07
 
 ### Added
