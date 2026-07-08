@@ -711,15 +711,35 @@ fn is_content_attr(attr: &syn::Attribute) -> bool {
 
 /// The client's transport type-parameter ident: `C`, unless the topic enum already declares a `C`
 /// type or const generic — appending our own `C` would then be a duplicate-parameter error. In that
-/// (rare) case a `__`-prefixed fallback is used, which a user generic is extremely unlikely to shadow.
+/// (rare) case a `__`-prefixed fallback is used, and if *that* also collides a numeric suffix is
+/// appended until the ident is guaranteed fresh against the enum's full generic parameter set.
 fn transport_param_ident(generics: &Generics) -> Ident {
-    let collides = generics.type_params().any(|param| param.ident == "C")
-        || generics.const_params().any(|param| param.ident == "C");
+    let declared: std::collections::HashSet<String> = generics
+        .type_params()
+        .map(|param| param.ident.to_string())
+        .chain(generics.const_params().map(|param| param.ident.to_string()))
+        .collect();
 
-    if collides {
-        format_ident!("__OverseerdClientTransport")
-    } else {
-        format_ident!("C")
+    if !declared.contains("C") {
+        return format_ident!("C");
+    }
+
+    let base = "__OverseerdClientTransport";
+
+    if !declared.contains(base) {
+        return format_ident!("{base}");
+    }
+
+    let mut suffix = 0usize;
+
+    loop {
+        let candidate = format!("{base}{suffix}");
+
+        if !declared.contains(&candidate) {
+            return format_ident!("{candidate}");
+        }
+
+        suffix += 1;
     }
 }
 

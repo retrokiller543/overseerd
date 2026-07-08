@@ -45,6 +45,19 @@ fn rejects_bad_intervals() {
 }
 
 #[test]
+fn rejects_zero_interval() {
+    for raw in ["0s", "0ms", "0"] {
+        assert!(
+            matches!(
+                Schedule::parse(ScheduleKind::Interval, raw),
+                Err(super::ScheduleError::ZeroInterval { .. })
+            ),
+            "expected zero interval '{raw}' to be rejected"
+        );
+    }
+}
+
+#[test]
 fn parses_cron_expressions() {
     assert!(matches!(
         Schedule::parse(ScheduleKind::Cron, "0 3 * * *").expect("valid cron"),

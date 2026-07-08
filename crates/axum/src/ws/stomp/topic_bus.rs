@@ -19,6 +19,11 @@ use overseerd_transport::CodecError;
 use super::body::{StompBody, Topic};
 use super::broker::Broker;
 
+/// The fan-out concurrency used by the ergonomic [`publish`](StompTopicBus::publish) /
+/// [`Publisher::publish`](super::Publisher::publish) — a sensible default for typical subscriber
+/// counts. Use `publish_to::<N>` to pick an explicit fan-out.
+pub const DEFAULT_PUBLISH_FANOUT: usize = 16;
+
 /// Stable component id for the framework-provided STOMP topic bus.
 pub const STOMP_TOPIC_BUS_ID: &str = "overseerd:axum:stomp-topic-bus";
 
@@ -59,11 +64,18 @@ impl StompTopicBus {
         Ok(())
     }
 
-    /// Awaited publish with **backpressure**, fanning out to up to `N` subscribers concurrently.
+    /// Awaited publish with **backpressure**, at the [default fan-out](DEFAULT_PUBLISH_FANOUT).
     /// Unlike [`emit`](Self::emit), when this resolves the `MESSAGE` is committed to every still-live
-    /// subscriber's buffer — a slow consumer makes this wait instead of losing the message. `N` is
-    /// the fan-out concurrency (`N = 1` is sequential); pick it for the subscriber count you expect.
-    pub async fn publish<const N: usize, T: Topic>(&self, topic: T) -> Result<(), CodecError> {
+    /// subscriber's buffer — a slow consumer makes this wait instead of losing the message. Reach
+    /// for [`publish_to`](Self::publish_to) to tune the fan-out concurrency.
+    pub async fn publish<T: Topic>(&self, topic: T) -> Result<(), CodecError> {
+        self.publish_to::<DEFAULT_PUBLISH_FANOUT, T>(topic).await
+    }
+
+    /// Awaited publish with **backpressure**, fanning out to up to `N` subscribers concurrently.
+    /// Like [`publish`](Self::publish) but with an explicit fan-out concurrency (`N = 1` is
+    /// sequential); pick it for the subscriber count you expect.
+    pub async fn publish_to<const N: usize, T: Topic>(&self, topic: T) -> Result<(), CodecError> {
         let body = topic.encode()?;
 
         self.broker

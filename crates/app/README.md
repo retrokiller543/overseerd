@@ -13,7 +13,7 @@ This crate ties the DI engine, config, hooks, and dirs into a runnable [`App`] t
 Most users depend on the [`overseerd`](../../README.md) facade, which re-exports this crate — you rarely name it directly. You meet it through the `app!` macro (which expands to an [`AppBuilder`]), the `.build().await` / `.serve(..)` lifecycle it produces, and builtin config types like [`ServerConfig`] and [`LoggingConfig`]. Which protocol plugin you install (e.g. `RpcPlugin`, `AxumPlugin`) is the only protocol-specific choice.
 
 ```rust
-use overseerd::daemon::prelude::*;
+use overseerd::{daemon::prelude::*, prelude::*};
 
 #[tokio::main]
 async fn main() -> overseerd::daemon::Result<()> {
