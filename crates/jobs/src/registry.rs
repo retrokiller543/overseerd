@@ -8,7 +8,7 @@
 //! from.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -232,10 +232,12 @@ pub(crate) struct JobEntry {
     manual: Mutex<VecDeque<JobRunId>>,
     /// In-flight run count, for the overlap guard.
     active: AtomicUsize,
-    /// Set when an overlapping firing was deferred under [`OverlapPolicy::QueueOne`].
-    pending: AtomicBool,
-    /// The active run's cancel token, for [`OverlapPolicy::CancelPrevious`].
-    run_token: Mutex<Option<CancellationToken>>,
+    /// The firing deferred under [`OverlapPolicy::QueueOne`], carrying its pre-allocated run id
+    /// and trigger so the eventual run keeps its identity (a manual defer stays manual).
+    pending: Mutex<Option<(JobRunId, JobTrigger)>>,
+    /// The active run's id and cancel token, for [`OverlapPolicy::CancelPrevious`]. Tagged with
+    /// the owning run id so a late-finishing older run cannot clear a replacement's token.
+    run_token: Mutex<Option<(JobRunId, CancellationToken)>>,
     /// Cancelled by the loop as it exits, so [`cancel_and_wait`](crate::JobScheduler::cancel_and_wait)
     /// can await teardown. Awaiting it after exit resolves immediately.
     done: CancellationToken,
@@ -276,7 +278,7 @@ impl JobEntry {
             triggered: Notify::new(),
             manual: Mutex::new(VecDeque::new()),
             active: AtomicUsize::new(0),
-            pending: AtomicBool::new(false),
+            pending: Mutex::new(None),
             run_token: Mutex::new(None),
             done: CancellationToken::new(),
         }
@@ -451,27 +453,44 @@ impl JobEntry {
         self.active.fetch_add(1, Ordering::SeqCst);
     }
 
-    /// Marks a run finished; returns whether a [`QueueOne`](crate::OverlapPolicy::QueueOne)
-    /// deferral is now pending (and clears it).
-    pub fn exit_run(&self) -> bool {
+    /// Marks a run finished; returns the [`QueueOne`](crate::OverlapPolicy::QueueOne) firing
+    /// deferred while it ran (and clears it), so the caller can start it with its original id
+    /// and trigger.
+    pub fn exit_run(&self) -> Option<(JobRunId, JobTrigger)> {
         self.active.fetch_sub(1, Ordering::SeqCst);
 
-        self.pending.swap(false, Ordering::SeqCst)
+        self.pending.lock().expect("pending not poisoned").take()
     }
 
-    /// Marks a firing deferred under [`QueueOne`](crate::OverlapPolicy::QueueOne).
-    pub fn mark_pending(&self) {
-        self.pending.store(true, Ordering::SeqCst);
+    /// Records a firing deferred under [`QueueOne`](crate::OverlapPolicy::QueueOne), preserving
+    /// its run id and trigger. At most one is queued; a later firing while one is already
+    /// pending is dropped.
+    pub fn mark_pending(&self, run_id: JobRunId, trigger: JobTrigger) {
+        let mut pending = self.pending.lock().expect("pending not poisoned");
+
+        if pending.is_none() {
+            *pending = Some((run_id, trigger));
+        }
     }
 
-    /// Records the active run's cancel token (for `CancelPrevious`).
-    pub fn set_run_token(&self, token: Option<CancellationToken>) {
-        *self.run_token.lock().expect("run token not poisoned") = token;
+    /// Records the active run's cancel token (for `CancelPrevious`), tagged with its run id.
+    pub fn set_run_token(&self, run_id: JobRunId, token: CancellationToken) {
+        *self.run_token.lock().expect("run token not poisoned") = Some((run_id, token));
+    }
+
+    /// Clears the active run token, but only if `run_id` still owns it — a late older run must
+    /// not clear a replacement's token under `CancelPrevious`.
+    pub fn clear_run_token(&self, run_id: JobRunId) {
+        let mut slot = self.run_token.lock().expect("run token not poisoned");
+
+        if slot.as_ref().is_some_and(|(owner, _)| *owner == run_id) {
+            *slot = None;
+        }
     }
 
     /// Cancels the active run's token, if any.
     pub fn cancel_active_run(&self) {
-        if let Some(token) = self
+        if let Some((_, token)) = self
             .run_token
             .lock()
             .expect("run token not poisoned")

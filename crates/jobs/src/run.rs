@@ -277,6 +277,10 @@ fn compute_next(entry: &JobEntry) -> NextFire {
 fn maybe_start_run(entry: &Arc<JobEntry>, trigger: JobTrigger, manual_id: Option<JobRunId>) {
     let policy = entry.options().overlap;
 
+    // Allocate the run id up front so a deferred QueueOne firing keeps the same identity (and,
+    // for a manual trigger, the id `run_now` already handed back to the caller).
+    let run_id = manual_id.unwrap_or_else(|| entry.next_run_id());
+
     if entry.active() > 0 {
         match policy {
             OverlapPolicy::Skip => {
@@ -286,7 +290,7 @@ fn maybe_start_run(entry: &Arc<JobEntry>, trigger: JobTrigger, manual_id: Option
             }
 
             OverlapPolicy::QueueOne => {
-                entry.mark_pending();
+                entry.mark_pending(run_id, trigger);
 
                 return;
             }
@@ -295,8 +299,6 @@ fn maybe_start_run(entry: &Arc<JobEntry>, trigger: JobTrigger, manual_id: Option
             OverlapPolicy::Allow => {}
         }
     }
-
-    let run_id = manual_id.unwrap_or_else(|| entry.next_run_id());
 
     start_run(Arc::clone(entry), trigger, run_id);
 }
@@ -309,7 +311,7 @@ fn start_run(entry: Arc<JobEntry>, trigger: JobTrigger, run_id: JobRunId) {
     let run_token = entry.token.child_token();
 
     if matches!(entry.options().overlap, OverlapPolicy::CancelPrevious) {
-        entry.set_run_token(Some(run_token.clone()));
+        entry.set_run_token(run_id, run_token.clone());
     }
 
     tokio::spawn(execute_run(entry, trigger, run_id, run_token));
@@ -348,12 +350,14 @@ async fn execute_run(
     let outcome = run_body(&entry, cx, &run_token, trigger).await;
 
     entry.record_finish(run_id, SystemTime::now(), outcome);
-    entry.set_run_token(None);
+    entry.clear_run_token(run_id);
 
-    if entry.exit_run() && !entry.token.is_cancelled() {
-        let next = entry.next_run_id();
-
-        start_run(entry, JobTrigger::Schedule, next);
+    // A QueueOne firing deferred while this run was active is started now, keeping the run id
+    // and trigger it was queued with.
+    if let Some((pending_id, pending_trigger)) = entry.exit_run()
+        && !entry.token.is_cancelled()
+    {
+        start_run(entry, pending_trigger, pending_id);
     }
 }
 

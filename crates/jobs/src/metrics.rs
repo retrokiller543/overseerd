@@ -10,7 +10,10 @@
 
 use std::time::{Duration, SystemTime};
 
-use crate::registry::JobInfo;
+use crate::registry::{JobInfo, JobState};
+
+#[cfg(test)]
+mod tests;
 
 /// An aggregate snapshot of scheduler activity, cheap to sample on a metrics tick.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -33,8 +36,17 @@ impl JobInfo {
     /// How overdue the next scheduled run is: the time elapsed past [`next_run_at`], or `None`
     /// if the job is paused, has no next occurrence, or is not yet due.
     ///
+    /// The paused check reads [`state`](JobInfo::state) directly rather than relying on
+    /// `next_run_at` being cleared, since `pause` marks the job paused synchronously while the
+    /// scheduler loop clears `next_run_at` only after it wakes — so a freshly paused job is
+    /// never briefly reported as stale.
+    ///
     /// [`next_run_at`]: JobInfo::next_run_at
     pub fn schedule_lag(&self) -> Option<Duration> {
+        if matches!(self.state, JobState::Paused) {
+            return None;
+        }
+
         let next = self.next_run_at?;
 
         SystemTime::now().duration_since(next).ok()
