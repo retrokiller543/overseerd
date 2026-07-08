@@ -39,6 +39,19 @@ where
     Event(T),
 }
 
+/// A templated topic whose lifetime is used *only* by a destination param (`room: &'a str`), not by
+/// the payload. The subscribe client must accept a non-`'static` borrow: the param is rendered into
+/// the destination synchronously and never enters the payload stream, so its lifetime stays free.
+#[topics]
+pub enum Room<'a> {
+    #[topic("/topic/room/{room}")]
+    Message {
+        room: &'a str,
+        #[content]
+        msg: Payload,
+    },
+}
+
 /// The enum's own `C` generic must not clash with the generated client's transport parameter.
 #[topics]
 pub enum UsesC<C>
@@ -80,4 +93,17 @@ fn clients_name_and_construct(transport: StompClientTransport) {
     let _generic: GenericClient<Payload, StompClientTransport> =
         GenericClient::new(transport.clone());
     let _uses_c: UsesCClient<Payload, StompClientTransport> = UsesCClient::new(transport);
+}
+
+/// Regression: a destination-only lifetime must *not* be forced to `'static` on the client. This
+/// function is generic over an arbitrary `'a`, so it compiles only because `RoomClient<'a, _>`
+/// carries no `'a: 'static` bound (the payload is owned; `'a` lives solely on the `room` param).
+#[allow(dead_code)]
+fn destination_only_lifetime_client_is_not_static<'a>(
+    transport: StompClientTransport,
+    room: &'a str,
+) {
+    let _room: RoomClient<'a, StompClientTransport> = RoomClient::new(transport);
+
+    let _ = room;
 }

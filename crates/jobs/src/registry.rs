@@ -535,8 +535,17 @@ impl JobEntry {
     }
 
     /// Records a run finish: updates counters, the recent buffer, and the state (back to
-    /// `Scheduled`/`Paused` once no runs remain active).
+    /// `Scheduled`/`Paused` once no runs remain active), and clears the progress snapshot once
+    /// no run is left to own it.
     pub fn record_finish(&self, run_id: JobRunId, finished_at: SystemTime, outcome: JobRunOutcome) {
+        // Called before `exit_run` decrements the count, so `<= 1` means this is the last
+        // in-flight run — the point at which no run remains to own the progress snapshot.
+        let last_active = self.active() <= 1;
+
+        if last_active {
+            *self.progress.lock().expect("progress not poisoned") = None;
+        }
+
         let mut shared = self.lock();
 
         shared.run_count += 1;
@@ -560,8 +569,7 @@ impl JobEntry {
             finalize(summary);
         }
 
-        if !matches!(shared.state, JobState::Cancelling | JobState::Cancelled) && self.active() <= 1
-        {
+        if !matches!(shared.state, JobState::Cancelling | JobState::Cancelled) && last_active {
             shared.state = if shared.paused {
                 JobState::Paused
             } else {

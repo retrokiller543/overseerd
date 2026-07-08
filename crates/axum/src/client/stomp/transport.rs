@@ -121,6 +121,13 @@ impl StompClientTransport {
         &self.inner.tx
     }
 
+    /// Whether the connection is still live. The actor holds the command-channel receiver for the
+    /// life of the socket and drops it when the loop exits (a close, a fatal `ERROR` frame, or the
+    /// last handle disconnecting), so a closed channel is exactly a dead connection.
+    pub fn is_connected(&self) -> bool {
+        !self.inner.tx.is_closed()
+    }
+
     /// A fresh, monotonically-increasing id (for subscriptions).
     fn next(&self, prefix: &str) -> String {
         format!(

@@ -16,6 +16,7 @@ Most users depend on the [`overseerd`](../../README.md) facade, which re-exports
 use overseerd::{Cfg, config};
 
 #[config]
+#[derive(serde::Deserialize)]
 pub struct GreetConfig {
     #[default = "Hello"]
     pub prefix: String,

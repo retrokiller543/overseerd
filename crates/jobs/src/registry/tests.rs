@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::{JobEntry, JobId, JobMetadata, JobRegistry, JobRunOutcome, JobState, JobTrigger};
 use crate::descriptor::JobOutcome;
-use crate::run::{JobRunContext, Runner};
+use crate::run::{JobProgress, JobRunContext, Runner};
 use crate::schedule::{JobOptions, Schedule};
 
 fn noop_runner() -> Runner {
@@ -62,6 +62,31 @@ fn record_start_then_finish_updates_counts_and_state() {
     assert_eq!(info.run_count, 1);
     assert_eq!(info.failure_count, 0);
     assert_eq!(info.last_run.unwrap().outcome, JobRunOutcome::Success);
+}
+
+#[test]
+fn progress_is_cleared_once_the_run_finishes() {
+    let entry = entry("Test::job");
+    let run_id = entry.next_run_id();
+    let now = SystemTime::now();
+
+    entry.enter_run();
+    entry.record_start(run_id, JobTrigger::Manual, now);
+    *entry.progress_slot().lock().unwrap() = Some(JobProgress::phase("indexing"));
+
+    assert_eq!(
+        entry.info().progress,
+        Some(JobProgress::phase("indexing")),
+        "progress is visible while the run is active"
+    );
+
+    entry.record_finish(run_id, now, JobRunOutcome::Success);
+    entry.exit_run();
+
+    assert!(
+        entry.info().progress.is_none(),
+        "progress is cleared once no run is left to own it"
+    );
 }
 
 #[test]

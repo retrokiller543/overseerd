@@ -71,7 +71,10 @@ impl Connection {
     #[cfg(all(feature = "stomp", feature = "tungstenite"))]
     #[wasm_bindgen(js_name = isStompConnected)]
     pub fn is_stomp_connected(&self) -> bool {
-        self.stomp.borrow().is_some()
+        self.stomp
+            .borrow()
+            .as_ref()
+            .is_some_and(StompClientTransport::is_connected)
     }
 }
 
