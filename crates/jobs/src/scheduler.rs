@@ -312,7 +312,8 @@ fn scheduler_factories() -> &'static [ComponentFactoryDescriptor] {
 
 /// The boxed future a hook call returns — the same shape `overseerd-hooks` uses internally,
 /// named here so the hand-rolled hook signature stays readable.
-type HookCallFuture<'a> = Pin<Box<dyn Future<Output = HookResult<Box<dyn Any + Send>>> + Send + 'a>>;
+type HookCallFuture<'a> =
+    Pin<Box<dyn Future<Output = HookResult<Box<dyn Any + Send>>> + Send + 'a>>;
 
 /// The erased `Startup` hook: resolves the scheduler receiver through the component source and
 /// starts its static jobs. Mirrors the body the `#[hook(Startup)]` macro would generate.
