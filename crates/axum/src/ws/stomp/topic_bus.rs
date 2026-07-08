@@ -44,11 +44,31 @@ impl StompTopicBus {
         &self.broker
     }
 
-    /// Publishes a typed topic value to every current subscriber.
-    pub async fn publish<T: Topic>(&self, topic: T) -> Result<(), CodecError> {
+    /// Fire-and-forget publish of a typed topic value to every current subscriber: encodes the
+    /// payload and fans it out synchronously. Returns only the encode error; the broadcast itself
+    /// never blocks or fails (the broker delivers into each subscriber's buffer without awaiting, so
+    /// a slow/dead subscriber is the broker's concern, not the publisher's) — hence no `async`.
+    ///
+    /// Use [`publish`](Self::publish) when you need to *know* the message reached every live
+    /// subscriber's buffer (backpressure) rather than being dropped for a full one.
+    pub fn emit<T: Topic>(&self, topic: T) -> Result<(), CodecError> {
         let body = topic.encode()?;
 
         self.publish_raw(&topic.destination(), &body);
+
+        Ok(())
+    }
+
+    /// Awaited publish with **backpressure**, fanning out to up to `N` subscribers concurrently.
+    /// Unlike [`emit`](Self::emit), when this resolves the `MESSAGE` is committed to every still-live
+    /// subscriber's buffer — a slow consumer makes this wait instead of losing the message. `N` is
+    /// the fan-out concurrency (`N = 1` is sequential); pick it for the subscriber count you expect.
+    pub async fn publish<const N: usize, T: Topic>(&self, topic: T) -> Result<(), CodecError> {
+        let body = topic.encode()?;
+
+        self.broker
+            .deliver::<N>(&topic.destination(), &body, &[])
+            .await;
 
         Ok(())
     }

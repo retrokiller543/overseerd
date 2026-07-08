@@ -156,9 +156,14 @@ impl ChatHandler {
     ) -> Result<(), CodecError> {
         self.state.record(&message);
 
-        publisher.publish(ChatTopic::Chat(message.clone())).await?;
+        // Awaited fan-out (`N = 1`): when this returns the message reached every live subscriber's
+        // buffer, rather than being dropped for a full one. A pure fire-and-forget path would use
+        // `publisher.emit(..)` instead (sync, no `await`).
         publisher
-            .publish(ChatTopic::Room {
+            .publish::<1>(ChatTopic::Chat(message.clone()))
+            .await?;
+        publisher
+            .publish::<1>(ChatTopic::Room {
                 room: message.room.clone(),
                 message,
             })
