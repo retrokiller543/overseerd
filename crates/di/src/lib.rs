@@ -16,6 +16,7 @@ pub mod container;
 pub mod descriptors;
 pub mod error;
 pub mod registry;
+pub mod root;
 mod seeded;
 
 pub use construct::{
@@ -35,6 +36,7 @@ pub use descriptors::{
 };
 pub use error::{Error, Result};
 pub use registry::ComponentRegistry;
+pub use root::{ROOT_RESOLVER_ID, ROOT_RESOLVER_NAME, RootResolver, root_resolver_descriptor};
 
 /// Re-exported so macro-generated code can reach the `#[distributed_slice]` attribute
 /// through a stable path.

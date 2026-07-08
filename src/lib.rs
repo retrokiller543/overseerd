@@ -41,8 +41,9 @@ pub use overseerd_di::{
     BoxedComponent, COMPONENTS, Component, ComponentConstructionContext, ComponentContainer,
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor,
     ComponentRegistry, ComponentSource, Dep, Dynamic, Factory, FactoryOutput, FromContainer,
-    Injectable, Live, LiveRef, PROVIDERS, Provide, ProviderDescriptor, ScopeContainer,
-    ServiceComponent, Wired, Wiring, dispatch_factory, factory_dependencies, from_boxed,
+    Injectable, Live, LiveRef, PROVIDERS, Provide, ProviderDescriptor, RootResolver,
+    ScopeContainer, ServiceComponent, Wired, Wiring, dispatch_factory, factory_dependencies,
+    from_boxed,
 };
 /// The DI layer's own error/result, exposed under distinct names so macro-generated
 /// **factory** code can name them without colliding with the root [`Error`]/[`Result`].
@@ -246,6 +247,19 @@ pub mod daemon {
         #[cfg(unix)]
         pub use overseerd_transport::UnixTransport;
     }
+}
+
+/// The job scheduler: run `async` methods on an interval or cron schedule as supervised
+/// background tasks, or schedule work at run time.
+///
+/// A protocol-agnostic [`Plugin`](crate::Plugin) — enable the `jobs` feature and register
+/// [`JobsPlugin`](jobs::JobsPlugin) alongside any protocol. Mark methods with
+/// `#[job(every = "..")]` / `#[job(cron = "..")]` (the `#[job]` codegen emits
+/// `::overseerd::jobs::*` paths), or inject `Arc<JobScheduler>` and call
+/// [`schedule`](jobs::JobScheduler::schedule) for dynamic jobs.
+#[cfg(all(feature = "jobs", not(target_family = "wasm")))]
+pub mod jobs {
+    pub use overseerd_jobs::*;
 }
 
 /// The axum/HTTP protocol surface, namespaced so plugin items never collide with the facade

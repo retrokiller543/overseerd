@@ -8,8 +8,8 @@ use overseerd_core::{
     Descriptor, ResolverCtx, ResolverSet, Scope, Singleton as SingletonScope, TypeDescriptor,
 };
 use overseerd_di::{
-    BoxedComponent, Component, ComponentDescriptor, Injectable, ProviderDescriptor, ScopeContainer,
-    ScopeRegistry, topological_sort,
+    BoxedComponent, Component, ComponentDescriptor, Injectable, ProviderDescriptor, RootResolver,
+    ScopeContainer, ScopeRegistry, root_resolver_descriptor, topological_sort,
 };
 use overseerd_dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp};
 use overseerd_hooks::{
@@ -179,6 +179,10 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
         // Consumed by `serve`/`run`; its handle is seeded as a framework injectable.
         let shutdown = ShutdownSignal::new();
 
+        // A run-time handle to the finished root container, seeded now (empty) and attached
+        // once the root is built, so a singleton can resolve from the container after startup.
+        let root_resolver = RootResolver::new();
+
         // The protocol plugin contributes its DI descriptors (for RPC, the connection-scoped
         // `PeerInfo` injectable) before validation.
         let plugin = self.protocol;
@@ -190,8 +194,8 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
             .unwrap_or_else(|| DirectoriesManager::for_app(&self.name));
         seed_directories(&dirs, &mut registry, &mut instances);
 
-        // Other framework singletons (the shutdown handle).
-        seed_builtins(&shutdown, &mut registry, &mut instances);
+        // Other framework singletons (the shutdown handle, the root resolver).
+        seed_builtins(&shutdown, &root_resolver, &mut registry, &mut instances);
 
         // The config reloader and hook manager are always available; their instances are
         // seeded below, once the config slots and collected hooks exist.
@@ -266,6 +270,10 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
         let hook_ctx: Arc<dyn ResolverCtx + Send + Sync> = root.clone();
         hook_manager.attach(hook_ctx);
 
+        // The root resolver hands the finished root to any singleton that needs to resolve
+        // from the container at run time (kept as a `Weak`, so it adds no reference cycle).
+        root_resolver.attach(&root);
+
         info!(target: "overseerd::app",
             app = %self.name,
             components = registry.components.len(),
@@ -322,9 +330,11 @@ fn seed_directories(
     );
 }
 
-/// Seeds the framework builtin singletons — currently the [`ShutdownHandle`].
+/// Seeds the framework builtin singletons — the [`ShutdownHandle`] and the [`RootResolver`]
+/// (seeded unattached; [`RootResolver::attach`] wires it to the finished root after build).
 fn seed_builtins(
     shutdown: &ShutdownSignal,
+    root_resolver: &RootResolver,
     registry: &mut AppRegistry,
     instances: &mut Vec<BoxedComponent>,
 ) {
@@ -332,6 +342,12 @@ fn seed_builtins(
     instances.push(BoxedComponent {
         ty: TypeDescriptor::of::<ShutdownHandle>(<ShutdownHandle as Component>::NAME),
         value: Box::new(shutdown.handle()),
+    });
+
+    registry.components.push(root_resolver_descriptor());
+    instances.push(BoxedComponent {
+        ty: TypeDescriptor::of::<RootResolver>(<RootResolver as Component>::NAME),
+        value: Box::new(Injectable::into_stored(root_resolver.clone())),
     });
 }
 
