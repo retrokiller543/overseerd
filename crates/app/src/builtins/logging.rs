@@ -5,10 +5,16 @@
 //! `tracing-subscriber` feature so the dependency is only pulled in when a binary
 //! actually drives logging setup.
 
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
 
 use crate::builtins::config::LoggingConfig;
+
+/// A type-erased subscriber layer that can be composed onto the framework subscriber, e.g.
+/// per-run job log capture. Boxed so callers in other crates can hand in a layer the
+/// (protocol-agnostic) app core has no knowledge of.
+pub type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
 
 /// Errors raised while installing the global tracing subscriber from a
 /// [`LoggingConfig`].
@@ -37,21 +43,46 @@ pub enum InitTracingError {
 /// `fmt` output format. Returns [`InitTracingError::AlreadyInstalled`] if a global
 /// subscriber is already in place, so callers can decide whether that is fatal.
 pub fn init_tracing(config: &LoggingConfig) -> Result<(), InitTracingError> {
+    init_tracing_with_layers(config, Vec::new())
+}
+
+/// Installs the process-global subscriber from `config`, composing `extra` layers on top of the
+/// framework's filtered `fmt` layer.
+///
+/// The escape hatch for crates above the app core that need to add their own capture — e.g.
+/// `overseerd-jobs` layering per-run log capture — without the app core depending on them.
+/// Layers must be composed before installation, so an already-installed subscriber cannot be
+/// extended after the fact; call this once, at startup.
+pub fn init_tracing_with_layers(
+    config: &LoggingConfig,
+    extra: Vec<BoxedLayer>,
+) -> Result<(), InitTracingError> {
     let filter = EnvFilter::try_new(&config.level).map_err(|source| InitTracingError::Filter {
         filter: config.level.clone(),
         source,
     })?;
 
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_ansi(config.ansi)
-        .with_span_events(FmtSpan::NONE);
+    // Compose every layer over the bare registry so each stays typed `Layer<Registry>` (boxed
+    // layers cannot re-type themselves), then apply the env filter globally on top.
+    let mut layers: Vec<BoxedLayer> = vec![fmt_layer(config)?];
+    layers.extend(extra);
 
-    let installed = match config.format.as_str() {
-        "full" => builder.try_init(),
-        "compact" => builder.compact().try_init(),
-        "pretty" => builder.pretty().try_init(),
-        "json" => builder.json().try_init(),
+    Registry::default()
+        .with(layers)
+        .with(filter)
+        .try_init()
+        .map_err(|_| InitTracingError::AlreadyInstalled)
+}
+
+/// Builds the boxed `fmt` layer for the configured output format, honouring the ansi setting.
+fn fmt_layer(config: &LoggingConfig) -> Result<BoxedLayer, InitTracingError> {
+    let base = fmt::layer().with_ansi(config.ansi);
+
+    let layer = match config.format.as_str() {
+        "full" => base.boxed(),
+        "compact" => base.compact().boxed(),
+        "pretty" => base.pretty().boxed(),
+        "json" => base.json().boxed(),
 
         other => {
             return Err(InitTracingError::UnknownFormat {
@@ -60,7 +91,7 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), InitTracingError> {
         }
     };
 
-    installed.map_err(|_| InitTracingError::AlreadyInstalled)
+    Ok(layer)
 }
 
 #[cfg(test)]
