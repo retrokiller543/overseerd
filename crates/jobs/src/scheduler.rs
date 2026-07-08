@@ -1,14 +1,18 @@
-//! The `JobScheduler` singleton: spawns one supervised loop per job.
+//! The `JobScheduler` singleton: drives one supervised loop per job over a shared [`JobRegistry`].
 //!
 //! Jobs come from two places, both funnelling through the same [`spawn`](JobScheduler::spawn)
 //! path:
 //!
 //! - **static** — every `#[job]` in the binary, discovered at link time from the [`JOBS`]
 //!   slice and started by the scheduler's `Startup` hook.
-//! - **dynamic** — added at run time through [`JobScheduler::schedule`], for jobs whose
-//!   existence or cadence is only known then (e.g. loaded from a database). The scheduler is
-//!   an injectable singleton, so any component can take `Arc<JobScheduler>` and schedule work;
-//!   the returned [`JobHandle`] cancels (un-registers) that job.
+//! - **dynamic** — added at run time through [`JobScheduler::schedule`] /
+//!   [`schedule_named`](JobScheduler::schedule_named), for jobs whose existence or cadence is
+//!   only known then. The scheduler is an injectable singleton, so any component can take
+//!   `Arc<JobScheduler>` and schedule work.
+//!
+//! Both kinds share one [`JobRegistry`], so introspection ([`list_jobs`](JobScheduler::list_jobs),
+//! [`job`](JobScheduler::job)) and control ([`pause`](JobScheduler::pause),
+//! [`run_now`](JobScheduler::run_now), …) do not care where a job came from.
 //!
 //! The scheduler is a framework-internal component. Like the other framework singletons
 //! (`ShutdownHandle`, `HookManager`, `ConfigReloader`), it hand-rolls its DI descriptors
@@ -17,19 +21,14 @@
 //!
 //! Each job runs on its own [child token](CancellationToken::child_token) of the scheduler's
 //! token, so cancelling one job stops only that job while dropping the scheduler (on shutdown)
-//! cancels every one. Because a run is `await`ed sequentially inside its loop, a job whose
-//! body outlasts its period simply skips the ticks it missed — the built-in overlap guard.
+//! cancels every one.
 
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
 use std::future::Future;
-use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use chrono::Utc;
-use croner::Cron;
+use arc_swap::ArcSwap;
 use overseerd_core::{DependencyDescriptor, ResolverCtx, ResolverCtxExt, TypeDescriptor};
 use overseerd_di::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
@@ -39,11 +38,19 @@ use overseerd_di::{
 use overseerd_hooks::{
     Error as HookError, HookDescriptor, HookKind, Result as HookResult, Startup,
 };
+use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, trace};
+use tracing::info;
 
 use crate::descriptor::{JOBS, JobOutcome};
-use crate::schedule::{Schedule, ScheduleError};
+use crate::error::JobError;
+use crate::log::{JobLogRecord, JobLogSink, NoopJobLogStore, SharedSink};
+use crate::metrics::JobMetrics;
+use crate::registry::{
+    JobEntry, JobId, JobInfo, JobMetadata, JobRegistry, JobRunId, JobRunSummary, JobState,
+};
+use crate::run::{Runner, drive_job};
+use crate::schedule::{JobOptions, Schedule, ScheduleError};
 
 #[cfg(test)]
 mod tests;
@@ -54,44 +61,37 @@ const SCHEDULER_ID: &str = "overseerd:job-scheduler";
 /// The display name of the [`JobScheduler`] singleton.
 const SCHEDULER_NAME: &str = "JobScheduler";
 
-/// An erased, re-runnable job body: called once per tick, producing a [`JobOutcome`].
+/// A handle to one scheduled job, returned by [`JobScheduler::schedule`] and friends.
 ///
-/// Static `#[job]`s wrap their generated call (closing over a cloned [`RootResolver`]);
-/// dynamic jobs wrap the user's closure. `Arc` + `Fn` so one runner drives every tick.
-type Runner =
-    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = JobOutcome> + Send + 'static>> + Send + Sync>;
-
-/// An opaque identifier for a scheduled job, unique within one scheduler.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct JobId(u64);
-
-/// A handle to one scheduled job, returned by [`JobScheduler::schedule`].
-///
-/// Use it to [`cancel`](Self::cancel) (un-register) the job. Cloning shares the same
-/// underlying job; cancelling through any clone stops it. Dropping the handle does **not**
-/// cancel the job — a scheduled job runs until explicitly cancelled or the scheduler is
-/// dropped — so a fire-and-forget caller may discard it.
+/// Use it to [`cancel`](Self::cancel) (un-register) the job or read its [`info`](Self::info).
+/// Cloning shares the same underlying job; cancelling through any clone stops it. Dropping the
+/// handle does **not** cancel the job — a scheduled job runs until explicitly cancelled or the
+/// scheduler is dropped — so a fire-and-forget caller may discard it.
 #[derive(Clone)]
 pub struct JobHandle {
-    id: JobId,
-    token: CancellationToken,
+    entry: Arc<JobEntry>,
 }
 
 impl JobHandle {
     /// This job's identifier.
     pub fn id(&self) -> JobId {
-        self.id
+        self.entry.id
     }
 
     /// Cancels (un-registers) the job: its loop stops at the next tick or wake, and it is
-    /// removed from the scheduler. Idempotent.
+    /// removed from the scheduler. In-flight runs have their token cancelled. Idempotent.
     pub fn cancel(&self) {
-        self.token.cancel();
+        self.entry.begin_cancel();
     }
 
-    /// Whether the job has been cancelled.
+    /// Whether cancellation has been requested.
     pub fn is_cancelled(&self) -> bool {
-        self.token.is_cancelled()
+        self.entry.token.is_cancelled()
+    }
+
+    /// A snapshot of the job's current state.
+    pub fn info(&self) -> JobInfo {
+        self.entry.info()
     }
 }
 
@@ -99,46 +99,98 @@ impl JobHandle {
 ///
 /// Seeded as an injectable singleton by the [`JobsPlugin`](crate::plugin::JobsPlugin): its
 /// `Startup` hook starts the static `#[job]`s, and any component can inject
-/// `Arc<JobScheduler>` to [`schedule`](Self::schedule) more at run time.
+/// `Arc<JobScheduler>` to [`schedule`](Self::schedule) more at run time, inspect them with
+/// [`list_jobs`](Self::list_jobs), or control them ([`pause`](Self::pause),
+/// [`run_now`](Self::run_now), …).
 pub struct JobScheduler {
     root: RootResolver,
     /// Parent token: cancelling it (on `Drop`) stops every job. Each job holds a child.
     cancel: CancellationToken,
+    /// Allocates [`JobId`]s.
     next_id: AtomicU64,
-    /// Live jobs by id, for individual cancellation and self-cleanup when a loop ends.
-    jobs: Arc<Mutex<HashMap<JobId, CancellationToken>>>,
+    /// Allocates [`JobRunId`]s, shared with every entry.
+    run_ids: Arc<AtomicU64>,
+    /// The registry of live jobs, shared with each job's loop for self-removal on exit.
+    pub(crate) registry: Arc<JobRegistry>,
+    /// The swappable log sink, shared with every job's loop.
+    sink: SharedSink,
 }
 
 impl JobScheduler {
     /// The factory body: injects the framework-seeded [`RootResolver`].
     async fn create(root: RootResolver) -> Self {
+        let sink: SharedSink = Arc::new(ArcSwap::from_pointee(
+            Arc::new(NoopJobLogStore) as Arc<dyn JobLogSink>
+        ));
+
         Self {
             root,
             cancel: CancellationToken::new(),
             next_id: AtomicU64::new(0),
-            jobs: Arc::new(Mutex::new(HashMap::new())),
+            run_ids: Arc::new(AtomicU64::new(0)),
+            registry: Arc::new(JobRegistry::default()),
+            sink,
         }
     }
 
+    // -- scheduling -------------------------------------------------------
+
     /// Schedules a job to run on `schedule`, invoking `run` on each occurrence. Returns a
-    /// [`JobHandle`] to cancel it. The closure is run fresh each tick, so it may capture live
-    /// dependencies (a `Dep<T>`, or an injected [`RootResolver`] to resolve per run).
+    /// [`JobHandle`] to cancel it. The job is named `"dynamic"`; prefer
+    /// [`schedule_named`](Self::schedule_named) when an application schedules more than one.
     ///
-    /// Runs immediately — no startup phase — so it is the right entry point for jobs
-    /// discovered at run time (e.g. loaded from a database).
+    /// The closure is run fresh each occurrence, so it may capture live dependencies. Runs
+    /// immediately — no startup phase — so it is the right entry point for jobs discovered at
+    /// run time (e.g. loaded from a database).
     pub fn schedule<F, Fut>(&self, schedule: Schedule, run: F) -> JobHandle
     where
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = JobOutcome> + Send + 'static,
     {
+        self.schedule_named("dynamic", schedule, run)
+    }
+
+    /// Schedules a named dynamic job. The name flows into logs, run spans, and introspection,
+    /// so distinct runtime jobs stay distinguishable.
+    pub fn schedule_named<F, Fut>(
+        &self,
+        name: impl Into<Arc<str>>,
+        schedule: Schedule,
+        run: F,
+    ) -> JobHandle
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = JobOutcome> + Send + 'static,
+    {
+        self.schedule_with(
+            JobMetadata::named(name.into()),
+            schedule,
+            JobOptions::default(),
+            run,
+        )
+    }
+
+    /// Schedules a dynamic job with full [`JobMetadata`] (labels, description) and
+    /// [`JobOptions`] (overlap policy, timeout, jitter, …).
+    pub fn schedule_with<F, Fut>(
+        &self,
+        metadata: JobMetadata,
+        schedule: Schedule,
+        options: JobOptions,
+        run: F,
+    ) -> JobHandle
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = JobOutcome> + Send + 'static,
+    {
         let run = Arc::new(run);
-        let runner: Runner = Arc::new(move || {
+        let runner: Runner = Arc::new(move |_cx| {
             let run = Arc::clone(&run);
 
             Box::pin(async move { run().await })
         });
 
-        self.spawn("dynamic".into(), schedule, runner)
+        self.spawn(metadata, schedule, options, runner)
     }
 
     /// Parses every static `#[job]`'s schedule and spawns its loop. An unparseable schedule
@@ -148,11 +200,17 @@ impl JobScheduler {
 
         for job in JOBS.iter() {
             let schedule = Schedule::parse(job.kind, job.schedule)?;
+            let options = job.options.clone();
             let root = self.root.clone();
             let call = job.call;
-            let runner: Runner = Arc::new(move || call(root.clone()));
+            let runner: Runner = Arc::new(move |cx| call(root.clone(), cx));
 
-            self.spawn(job.name.into(), schedule, runner);
+            self.spawn(
+                JobMetadata::named(job.name.into()),
+                schedule,
+                options,
+                runner,
+            );
 
             count += 1;
 
@@ -169,33 +227,171 @@ impl JobScheduler {
         Ok(())
     }
 
-    /// The shared spawn path: registers a child token, launches the loop for `schedule`, and
-    /// arranges the job to remove itself from the registry when its loop ends.
-    fn spawn(&self, name: Arc<str>, schedule: Schedule, run: Runner) -> JobHandle {
-        let id = JobId(self.next_id.fetch_add(1, Ordering::Relaxed));
+    /// The shared spawn path: registers an entry, launches its loop, and arranges the job to
+    /// remove itself from the registry when its loop ends.
+    fn spawn(
+        &self,
+        metadata: JobMetadata,
+        schedule: Schedule,
+        options: JobOptions,
+        runner: Runner,
+    ) -> JobHandle {
+        let id = JobId::from_raw(self.next_id.fetch_add(1, Ordering::Relaxed));
         let token = self.cancel.child_token();
 
-        self.jobs
-            .lock()
-            .expect("scheduler registry not poisoned")
-            .insert(id, token.clone());
+        let entry = Arc::new(JobEntry::new(
+            id,
+            metadata,
+            token,
+            runner,
+            Arc::clone(&self.run_ids),
+            Arc::new(schedule),
+            options,
+        ));
 
-        let registry = Arc::clone(&self.jobs);
-        let loop_token = token.clone();
+        self.registry.insert(Arc::clone(&entry));
 
-        tokio::spawn(async move {
-            match schedule {
-                Schedule::Every(period) => run_interval(&name, &run, &loop_token, period).await,
-                Schedule::Cron(cron) => run_cron(&name, &run, &loop_token, *cron).await,
+        let registry = Arc::clone(&self.registry);
+        let loop_entry = Arc::clone(&entry);
+
+        tokio::spawn(drive_job(loop_entry, move || registry.remove(id)));
+
+        JobHandle { entry }
+    }
+
+    // -- introspection ----------------------------------------------------
+
+    /// A snapshot of every registered job.
+    pub fn list_jobs(&self) -> Vec<JobInfo> {
+        self.registry
+            .entries()
+            .iter()
+            .map(|entry| entry.info())
+            .collect()
+    }
+
+    /// A snapshot of the job with `id`, if registered.
+    pub fn job(&self, id: JobId) -> Option<JobInfo> {
+        self.registry.get(id).map(|entry| entry.info())
+    }
+
+    /// The recent run summaries for `id`, oldest first (empty if the job is unknown).
+    pub fn recent_runs(&self, id: JobId) -> Vec<JobRunSummary> {
+        self.registry
+            .get(id)
+            .map(|entry| entry.recent_runs())
+            .unwrap_or_default()
+    }
+
+    /// An aggregate [`JobMetrics`] snapshot, for feeding an application's metrics/health system.
+    pub fn metrics(&self) -> JobMetrics {
+        let mut metrics = JobMetrics::default();
+
+        for entry in self.registry.entries() {
+            let info = entry.info();
+
+            metrics.jobs_scheduled += 1;
+            metrics.active_runs += entry.active();
+            metrics.completed_runs += info.run_count;
+            metrics.failed_runs += info.failure_count;
+            metrics.skipped_ticks += info.skipped_count;
+
+            if matches!(info.state, JobState::Paused) {
+                metrics.paused_jobs += 1;
             }
+        }
 
-            registry
-                .lock()
-                .expect("scheduler registry not poisoned")
-                .remove(&id);
-        });
+        metrics
+    }
 
-        JobHandle { id, token }
+    /// The jobs overdue by more than `threshold` — a building block for a staleness policy.
+    pub fn stale_jobs(&self, threshold: std::time::Duration) -> Vec<JobInfo> {
+        self.list_jobs()
+            .into_iter()
+            .filter(|info| info.is_stale(threshold))
+            .collect()
+    }
+
+    // -- manual runs ------------------------------------------------------
+
+    /// Runs the job with `id` immediately, without waiting for its next occurrence. The run is
+    /// recorded like a scheduled one but marked [`Manual`](crate::JobTrigger::Manual). It still
+    /// respects the job's overlap policy, so under [`Skip`](crate::OverlapPolicy::Skip) the
+    /// returned run may be skipped if a run is already active.
+    pub async fn run_now(&self, id: JobId) -> Result<JobRunId, JobError> {
+        let entry = self.registry.get(id).ok_or(JobError::UnknownJob(id))?;
+
+        Ok(entry.trigger_manual())
+    }
+
+    /// Runs the first job named `name` immediately. See [`run_now`](Self::run_now).
+    pub async fn run_named(&self, name: &str) -> Result<JobRunId, JobError> {
+        let entry = self
+            .registry
+            .by_name(name)
+            .ok_or_else(|| JobError::UnknownName(name.to_string()))?;
+
+        Ok(entry.trigger_manual())
+    }
+
+    // -- control ----------------------------------------------------------
+
+    /// Suspends scheduling for `id`: no new scheduled runs start until [`resume`](Self::resume),
+    /// but a currently active run is not aborted.
+    pub fn pause(&self, id: JobId) -> Result<(), JobError> {
+        let entry = self.registry.get(id).ok_or(JobError::UnknownJob(id))?;
+        entry.pause();
+
+        Ok(())
+    }
+
+    /// Re-enables scheduling for `id` and recomputes its next fire time.
+    pub fn resume(&self, id: JobId) -> Result<(), JobError> {
+        let entry = self.registry.get(id).ok_or(JobError::UnknownJob(id))?;
+        entry.resume();
+
+        Ok(())
+    }
+
+    /// Changes the future cadence of `id` without losing its run history. The new schedule
+    /// takes effect from the next fire.
+    pub fn reschedule(&self, id: JobId, schedule: Schedule) -> Result<(), JobError> {
+        let entry = self.registry.get(id).ok_or(JobError::UnknownJob(id))?;
+        entry.reschedule(schedule);
+
+        Ok(())
+    }
+
+    /// Cancels `id` and awaits its loop's teardown — useful for graceful shutdown and tests.
+    pub async fn cancel_and_wait(&self, id: JobId) -> Result<(), JobError> {
+        let entry = self.registry.get(id).ok_or(JobError::UnknownJob(id))?;
+        entry.begin_cancel();
+        entry.wait_done().await;
+
+        Ok(())
+    }
+
+    // -- log capture ------------------------------------------------------
+
+    /// Installs a [`JobLogSink`] for per-run log capture, replacing the default no-op sink.
+    /// Pair it with a [`JobLogLayer`](crate::JobLogLayer) added to the tracing subscriber so
+    /// the events emitted inside job runs are captured.
+    pub fn set_log_sink(&self, sink: Arc<dyn JobLogSink>) {
+        self.sink.store(Arc::new(sink));
+    }
+
+    /// The currently installed log sink.
+    pub fn log_sink(&self) -> Arc<dyn JobLogSink> {
+        let full = self.sink.load_full();
+
+        (*full).clone()
+    }
+
+    /// The captured log records for `run_id`, up to `limit`, oldest first.
+    pub async fn log_records(&self, run_id: JobRunId, limit: usize) -> Vec<JobLogRecord> {
+        let sink = self.log_sink();
+
+        sink.records(run_id, limit).await
     }
 }
 
@@ -203,81 +399,6 @@ impl JobScheduler {
 impl Drop for JobScheduler {
     fn drop(&mut self) {
         self.cancel.cancel();
-    }
-}
-
-/// Runs a job every `period`, on the monotonic timer. The immediate first tick is consumed so
-/// `every = "30s"` first fires after 30s rather than at startup; missed ticks are skipped,
-/// which is what makes a long-running body defer (not queue) its next run.
-async fn run_interval(name: &str, run: &Runner, cancel: &CancellationToken, period: Duration) {
-    // `tokio::time::interval` panics on a zero period. `Schedule::parse` rejects it, but the
-    // public `Schedule::Every` variant can still carry one, so guard here rather than panic the
-    // task: a zero-period job never runs and is logged.
-    if period.is_zero() {
-        error!(
-            target: "overseerd::jobs",
-            job = name,
-            "interval job has a zero period; it will not run"
-        );
-
-        return;
-    }
-
-    let mut ticker = tokio::time::interval(period);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-    ticker.tick().await;
-
-    loop {
-        tokio::select! {
-            _ = cancel.cancelled() => break,
-            _ = ticker.tick() => run_once(name, run).await,
-        }
-    }
-}
-
-/// Runs a job at each occurrence of `cron`, computing the next fire time from the wall clock
-/// after each run (so a slow run defers rather than queues its next occurrence).
-async fn run_cron(name: &str, run: &Runner, cancel: &CancellationToken, cron: Cron) {
-    loop {
-        let now = Utc::now();
-
-        let next = match cron.find_next_occurrence(&now, false) {
-            Ok(next) => next,
-
-            Err(error) => {
-                error!(
-                    target: "overseerd::jobs",
-                    job = name,
-                    %error,
-                    "no next cron occurrence; stopping this job"
-                );
-
-                break;
-            }
-        };
-
-        let wait = (next - now).to_std().unwrap_or(Duration::ZERO);
-
-        tokio::select! {
-            _ = cancel.cancelled() => break,
-            _ = tokio::time::sleep(wait) => run_once(name, run).await,
-        }
-    }
-}
-
-/// Invokes a job's runner once, logging the outcome. Errors are logged and swallowed — a job
-/// failure never tears the scheduler (or the daemon) down.
-async fn run_once(name: &str, run: &Runner) {
-    match run().await {
-        Ok(()) => trace!(target: "overseerd::jobs", job = name, "job run completed"),
-
-        Err(error) => error!(
-            target: "overseerd::jobs",
-            job = name,
-            %error,
-            "job run failed"
-        ),
     }
 }
 
