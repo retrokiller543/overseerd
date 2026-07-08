@@ -17,7 +17,7 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
-use syn::{Fields, Ident, ItemEnum, LitStr, Path, Token, Type};
+use syn::{Fields, Generics, Ident, ItemEnum, LitStr, Path, Token, Type, parse_quote};
 
 use overseerd_macros_core::paths::Paths;
 
@@ -92,6 +92,8 @@ impl Parse for TopicsArgs {
 pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Result<TokenStream> {
     let variants = parse_variants(&mut item)?;
     let enum_ident = &item.ident;
+    let generics = item.generics.clone();
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let topic_trait = paths.plugin("Topic");
     let topic_param = paths.plugin("TopicParam");
@@ -148,7 +150,7 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
     });
 
     let topic_impl = quote! {
-        impl #topic_trait for #enum_ident {
+        impl #impl_generics #topic_trait for #enum_ident #ty_generics #where_clause {
             fn destination(&self) -> ::std::borrow::Cow<'static, str> {
                 match self {
                     #(#destination_arms),*
@@ -163,8 +165,8 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
         }
     };
 
-    let client = generate_client(enum_ident, &variants, &codec, paths);
-    let wasm_client = generate_wasm_client(enum_ident, &variants, paths);
+    let client = generate_client(enum_ident, &generics, &variants, &codec, paths);
+    let wasm_client = generate_wasm_client(enum_ident, &generics, &variants, paths);
 
     Ok(quote! {
         #item
@@ -182,6 +184,7 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
 /// without the macro crate's `client` feature (mirroring the HTTP client codegen gate).
 fn generate_client(
     enum_ident: &Ident,
+    generics: &Generics,
     variants: &[TopicVariant],
     codec: &TokenStream,
     paths: &Paths,
@@ -191,6 +194,52 @@ fn generate_client(
     }
 
     let client_ident = format_ident!("{}Client", enum_ident);
+
+    // Weave the topic enum's own generics (`<'a>`, `<T>`, ..) into the client so a generic or
+    // borrowing topic set keeps its parameters. The client wraps a transport param plus the enum's
+    // params; the enum's `where`-clause (e.g. `T: DeserializeOwned`) rides along so a `subscribe_*`
+    // that decodes into a generic payload stays well-formed. A borrowing payload works too when it
+    // is `DeserializeOwned` (e.g. `Cow<'a, T>`, which serializes zero-copy yet decodes to `Owned`).
+    //
+    // The transport param is `C` unless the enum already declares a `C` (type or const) generic —
+    // then it would collide, so a `__`-prefixed fallback is used instead. Threaded through every
+    // client signature as `#transport` so the two never clash.
+    let transport = transport_param_ident(generics);
+
+    // A subscribe client only ever holds *decoded, owned* values, so a borrowing payload is
+    // effectively `'static` on the client side. Bind each of the enum's lifetimes to `'static` in
+    // the client's `where`-clause, so a `Cow<'a, T>` (or any borrow) satisfies the subscription
+    // stream's `M: 'static` requirement — lifetimes are a publish-side concern, not a subscribe one.
+    let enum_lifetimes: Vec<_> = generics.lifetimes().map(|lt| lt.lifetime.clone()).collect();
+
+    let mut client_generics = generics.clone();
+    {
+        let where_clause = client_generics.make_where_clause();
+
+        for lifetime in &enum_lifetimes {
+            where_clause
+                .predicates
+                .push(parse_quote!(#lifetime: 'static));
+        }
+    }
+    client_generics.params.push(parse_quote!(#transport));
+
+    let (client_impl_generics, client_ty_generics, client_where) = client_generics.split_for_impl();
+    let (_, enum_ty_generics, _) = generics.split_for_impl();
+
+    // A generic enum's params must appear in the struct body; a `PhantomData` over the enum type
+    // carries them (and their variance). A non-generic enum keeps the bare newtype so the common
+    // case — and every existing `{Enum}Client::new(..).0` access — is byte-for-byte unchanged.
+    let has_generics = !generics.params.is_empty();
+
+    let (struct_fields, phantom_init) = if has_generics {
+        (
+            quote!((pub #transport, ::core::marker::PhantomData<#enum_ident #enum_ty_generics>)),
+            quote!(, ::core::marker::PhantomData),
+        )
+    } else {
+        (quote!((pub #transport)), quote!())
+    };
     let subscription = paths.plugin("client::Subscription");
     let stomp_subscribe = paths.plugin("client::StompSubscribe");
     let stomp_codec = paths.plugin("StompCodec");
@@ -220,12 +269,12 @@ fn generate_client(
             #[doc = concat!("Subscribes to `", #destination, "`, yielding a typed stream of messages.")]
             pub async fn #method(
                 &self #args,
-            ) -> ::core::result::Result<#subscription<C, #msg>, #client_error<#stomp_status>>
+            ) -> ::core::result::Result<#subscription<#transport, #msg>, #client_error<#stomp_status>>
             where
-                C: #stomp_subscribe + ::core::clone::Clone,
+                #transport: #stomp_subscribe + ::core::clone::Clone,
             {
                 // The topic set's codec decodes each MESSAGE body into `#msg`.
-                <C as #stomp_subscribe>::stomp_subscribe::<#msg>(
+                <#transport as #stomp_subscribe>::stomp_subscribe::<#msg>(
                     &self.0,
                     #dest_expr,
                     <#codec as #stomp_codec>::decode::<#msg>,
@@ -237,12 +286,12 @@ fn generate_client(
 
     quote! {
         #[doc = concat!("Generated STOMP subscription client for the `", stringify!(#enum_ident), "` topics.")]
-        pub struct #client_ident<C>(pub C);
+        pub struct #client_ident #client_impl_generics #struct_fields #client_where;
 
-        impl<C> #client_ident<C> {
+        impl #client_impl_generics #client_ident #client_ty_generics #client_where {
             /// Wraps a STOMP client transport.
-            pub fn new(transport: C) -> Self {
-                Self(transport)
+            pub fn new(transport: #transport) -> Self {
+                Self(transport #phantom_init)
             }
 
             #(#methods)*
@@ -258,10 +307,17 @@ fn generate_client(
 /// transport (`StompClientTransport`), so it is gated on both `reqwest` and `tungstenite`.
 fn generate_wasm_client(
     enum_ident: &Ident,
+    generics: &Generics,
     variants: &[TopicVariant],
     paths: &Paths,
 ) -> TokenStream {
     if !(cfg!(feature = "reqwest") && cfg!(feature = "tungstenite")) {
+        return quote!();
+    }
+
+    // A `#[wasm_bindgen]` type cannot be generic, so a generic/borrowing topic set exposes no JS
+    // binding (its native `{Enum}Client<C>` still works). The concrete common case is unaffected.
+    if !generics.params.is_empty() {
         return quote!();
     }
 
@@ -651,6 +707,20 @@ fn is_topic_attr(attr: &syn::Attribute) -> bool {
 /// Whether an attribute is the `#[content]` field marker.
 fn is_content_attr(attr: &syn::Attribute) -> bool {
     attr.path().is_ident("content")
+}
+
+/// The client's transport type-parameter ident: `C`, unless the topic enum already declares a `C`
+/// type or const generic — appending our own `C` would then be a duplicate-parameter error. In that
+/// (rare) case a `__`-prefixed fallback is used, which a user generic is extremely unlikely to shadow.
+fn transport_param_ident(generics: &Generics) -> Ident {
+    let collides = generics.type_params().any(|param| param.ident == "C")
+        || generics.const_params().any(|param| param.ident == "C");
+
+    if collides {
+        format_ident!("__OverseerdClientTransport")
+    } else {
+        format_ident!("C")
+    }
 }
 
 /// Lower-snake-cases a variant ident (`RoomUpdates` → `room_updates`).

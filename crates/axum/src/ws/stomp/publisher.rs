@@ -22,10 +22,21 @@ pub struct Publisher<T: Topic> {
 }
 
 impl<T: Topic> Publisher<T> {
-    /// Fans a topic value out to its subscribers: reads its destination and serializes its payload
-    /// (both from the [`Topic`] impl), then publishes through the broker.
-    pub async fn publish(&self, topic: T) -> Result<(), CodecError> {
-        self.bus.publish(topic).await
+    /// Fire-and-forget: fans a topic value out to its subscribers — reads its destination and
+    /// serializes its payload (both from the [`Topic`] impl), then publishes through the broker.
+    /// Synchronous (the broker never awaits on fan-out), so a REST handler can emit without being
+    /// `async` for that alone; a full subscriber buffer drops the message and only a payload-encoding
+    /// failure is returned. Reach for [`publish`](Self::publish) when a drop is not acceptable.
+    pub fn emit(&self, topic: T) -> Result<(), CodecError> {
+        self.bus.emit(topic)
+    }
+
+    /// Awaited fan-out with **backpressure**, to up to `N` subscribers concurrently. Unlike
+    /// [`emit`](Self::emit), when this resolves the message is committed to every live subscriber's
+    /// buffer rather than dropped for a full one — the confirmation you want when the publish must
+    /// not be lost. `N` is the fan-out concurrency (`N = 1` is sequential).
+    pub async fn publish<const N: usize>(&self, topic: T) -> Result<(), CodecError> {
+        self.bus.publish::<N, T>(topic).await
     }
 }
 
