@@ -4,6 +4,7 @@
 //! them. The server-only fan-out types ([`Publish`](crate::ws::stomp::Publish) /
 //! [`StompOutcome`](crate::ws::stomp::StompOutcome)) stay in the `ws` broker module.
 
+use std::borrow::Cow;
 use bytes::Bytes;
 use overseerd_transport::CodecError;
 
@@ -80,6 +81,28 @@ topic_param_via_display! {
     String, &str, bool, char,
     u8, u16, u32, u64, u128, usize,
     i8, i16, i32, i64, i128, isize,
+}
+
+impl<T: Topic> Topic for &T {
+    fn destination(&self) -> Cow<'static, str> {
+        T::destination(self)
+    }
+
+    fn encode(&self) -> Result<StompBody, CodecError> {
+        T::encode(self)
+    }
+}
+
+impl<'a, T: TopicParam + Clone> TopicParam for Cow<'a, T> {
+    fn render(&self) -> String {
+        self.as_ref().render()
+    }
+}
+
+impl<'a> TopicParam for Cow<'a, str> {
+    fn render(&self) -> String {
+        self.to_string()
+    }
 }
 
 /// A [`Uuid`](uuid::Uuid) renders as its hyphenated string. A common id type for templated topics
