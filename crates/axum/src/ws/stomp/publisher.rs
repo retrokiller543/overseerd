@@ -31,12 +31,18 @@ impl<T: Topic> Publisher<T> {
         self.bus.emit(topic)
     }
 
-    /// Awaited fan-out with **backpressure**, to up to `N` subscribers concurrently. Unlike
+    /// Awaited fan-out with **backpressure**, at the default fan-out concurrency. Unlike
     /// [`emit`](Self::emit), when this resolves the message is committed to every live subscriber's
     /// buffer rather than dropped for a full one — the confirmation you want when the publish must
-    /// not be lost. `N` is the fan-out concurrency (`N = 1` is sequential).
-    pub async fn publish<const N: usize>(&self, topic: T) -> Result<(), CodecError> {
-        self.bus.publish::<N, T>(topic).await
+    /// not be lost. Reach for [`publish_to`](Self::publish_to) to tune the fan-out.
+    pub async fn publish(&self, topic: T) -> Result<(), CodecError> {
+        self.bus.publish::<T>(topic).await
+    }
+
+    /// Awaited fan-out with **backpressure**, to up to `N` subscribers concurrently. Like
+    /// [`publish`](Self::publish) but with an explicit fan-out concurrency (`N = 1` is sequential).
+    pub async fn publish_to<const N: usize>(&self, topic: T) -> Result<(), CodecError> {
+        self.bus.publish_to::<N, T>(topic).await
     }
 }
 

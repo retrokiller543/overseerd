@@ -160,10 +160,10 @@ impl ChatHandler {
         // buffer, rather than being dropped for a full one. A pure fire-and-forget path would use
         // `publisher.emit(..)` instead (sync, no `await`).
         publisher
-            .publish::<1>(ChatTopic::Chat(message.clone()))
+            .publish_to::<1>(ChatTopic::Chat(message.clone()))
             .await?;
         publisher
-            .publish::<1>(ChatTopic::Room {
+            .publish_to::<1>(ChatTopic::Room {
                 room: message.room.clone(),
                 message,
             })

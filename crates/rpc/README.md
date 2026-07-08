@@ -25,7 +25,7 @@ its `daemon` feature (as `overseerd::daemon`) — you rarely name it directly. Y
 `::overseerd_rpc::*` unless the `facade` feature switches the root).
 
 ```rust
-use overseerd::daemon::prelude::*;
+use overseerd::{daemon::prelude::*, prelude::*};
 
 #[service(id = "notifications", version = "0.1")]
 struct Notifications;
