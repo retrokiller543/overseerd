@@ -7,18 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-rpc-v0.11.2...overseerd-rpc-v0.12.0) - 2026-07-08
+## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-jobs-v0.11.2...overseerd-jobs-v0.12.0) - 2026-07-08
+
+### Added
+
+- *(jobs)* observable, controllable job scheduler
+- *(jobs)* implement job scheduling with interval and cron support
 
 ### Fixed
 
+- *(review)* address PR #65 review findings
+- *(jobs)* address PR #67 review findings
 - *(review)* address PR #66 comments
 
 ### Other
 
 - Added docs to all crates
-
-## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-rpc-v0.6.0...overseerd-rpc-v0.7.0) - 2026-06-30
-
-### Other
-
-- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/overseerd/pull/20))

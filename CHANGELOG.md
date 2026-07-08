@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.11.2...overseerd-v0.12.0) - 2026-07-08
+
+### Added
+
+- *(jobs)* observable, controllable job scheduler
+- *(jobs)* implement job scheduling with interval and cron support
+
+### Other
+
+- *(jobs)* expand the jobs example for the new capabilities
+
 ## [0.11.1](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.11.0...overseerd-v0.11.1) - 2026-07-07
 
 ### Added
