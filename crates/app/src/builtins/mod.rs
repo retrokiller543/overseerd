@@ -15,7 +15,7 @@ pub mod logging;
 pub use config::{LoggingConfig, ServerConfig};
 
 #[cfg(feature = "tracing-subscriber")]
-pub use logging::{InitTracingError, init_tracing};
+pub use logging::{BoxedLayer, InitTracingError, init_tracing, init_tracing_with_layers};
 
 #[cfg(test)]
 mod tests {
