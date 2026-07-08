@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-rpc-macros-v0.11.2...overseerd-rpc-macros-v0.12.0) - 2026-07-08
+
+### Other
+
+- Added docs to all crates
+
 ## [0.11.0](https://github.com/retrokiller543/overseerd/compare/overseerd-rpc-macros-v0.10.0...overseerd-rpc-macros-v0.11.0) - 2026-07-07
 
 ### Added

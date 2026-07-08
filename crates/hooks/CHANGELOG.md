@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-hooks-v0.11.2...overseerd-hooks-v0.12.0) - 2026-07-08
+
+### Fixed
+
+- *(review)* address PR #65 review findings
+
+### Other
+
+- Added docs to all crates
+
 ## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-hooks-v0.6.0...overseerd-hooks-v0.7.0) - 2026-06-30
 
 ### Other
