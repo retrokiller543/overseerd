@@ -67,6 +67,12 @@ impl Connection {
 
         Ok(())
     }
+
+    #[cfg(all(feature = "stomp", feature = "tungstenite"))]
+    #[wasm_bindgen(js_name = isStompConnected)]
+    pub fn is_stomp_connected(&self) -> bool {
+        self.stomp.borrow().is_some()
+    }
 }
 
 // Internal accessors the generated wasm clients build on (not exported to JS).
