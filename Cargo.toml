@@ -189,8 +189,12 @@ di-check = [
 # Enable YAML config sources (`application.yaml`) alongside the default TOML.
 yaml = ["overseerd-config/yaml", "overseerd-app/yaml", "overseerd-rpc?/yaml", "overseerd-axum?/yaml"]
 
-# Provide the `init_tracing` helper, pulling in `tracing-subscriber`.
-tracing-subscriber = ["overseerd-app/tracing-subscriber"]
+# Provide the `init_tracing` helper, pulling in `tracing-subscriber`. When the `jobs` scheduler
+# is also enabled, this turns on its jobs-aware `init_tracing` (per-run log capture layer) too.
+tracing-subscriber = [
+    "overseerd-app/tracing-subscriber",
+    "overseerd-jobs?/tracing-subscriber",
+]
 
 # Watch config files and reload on change (`ConfigManager::watch_config`), via `notify`.
 watch = ["overseerd-config/watch", "overseerd-app/watch", "overseerd-rpc?/watch", "overseerd-axum?/watch"]

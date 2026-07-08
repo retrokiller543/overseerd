@@ -6,7 +6,8 @@ use std::pin::Pin;
 use overseerd_core::TypeDescriptor;
 use overseerd_di::RootResolver;
 
-use crate::schedule::ScheduleKind;
+use crate::run::JobRunContext;
+use crate::schedule::{JobOptions, ScheduleKind};
 
 /// The outcome of one job run: `Ok(())`, or any error the handler produced (a resolution
 /// failure, or a domain error from a `Result`-returning `#[job]`). Boxed because the job
@@ -15,11 +16,13 @@ pub type JobOutcome = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
 /// The erased invocation of one `#[job]` method.
 ///
-/// The macro generates this per job: given the [`RootResolver`], it resolves the method's
-/// `&self` receiver and each `Inject<_>` parameter from the root scope, runs the method, and
-/// normalizes the result into a [`JobOutcome`]. It owns a cloned resolver, so the returned
-/// future is `'static` and can drive a spawned task.
-pub type JobCall = fn(RootResolver) -> Pin<Box<dyn Future<Output = JobOutcome> + Send + 'static>>;
+/// The macro generates this per job: given the [`RootResolver`] and the per-run
+/// [`JobRunContext`], it resolves the method's `&self` receiver and each dependency parameter
+/// from the root scope (passing the context straight through for a `JobRunContext` parameter),
+/// runs the method, and normalizes the result into a [`JobOutcome`]. It owns a cloned resolver,
+/// so the returned future is `'static` and can drive a spawned task.
+pub type JobCall =
+    fn(RootResolver, JobRunContext) -> Pin<Box<dyn Future<Output = JobOutcome> + Send + 'static>>;
 
 /// Static metadata for one `#[job]` method, registered into the [`JOBS`] slice.
 pub struct JobDescriptor {
@@ -33,6 +36,9 @@ pub struct JobDescriptor {
     pub kind: ScheduleKind,
     /// The erased call that runs the job.
     pub call: JobCall,
+    /// The job's execution options (overlap policy, timeout, jitter, …), parsed from the
+    /// extra `#[job(..)]` keys. [`JobOptions::default`] preserves the original behaviour.
+    pub options: JobOptions,
 }
 
 impl std::fmt::Debug for JobDescriptor {

@@ -49,13 +49,65 @@
 //! (un-registers) it.
 //!
 //! ```ignore
-//! let handle = scheduler.schedule(Schedule::interval("5m")?, || async {
+//! let handle = scheduler.schedule_named("poll-upstream", Schedule::interval("5m")?, || async {
 //!     poll_upstream().await?;
 //!     Ok(())
 //! });
 //! // later …
 //! handle.cancel();
 //! ```
+//!
+//! [`schedule_named`](JobScheduler::schedule_named) names a runtime job so it stays
+//! distinguishable in logs and introspection; [`schedule`](JobScheduler::schedule) is the
+//! unnamed convenience wrapper.
+//!
+//! ## Introspection and control
+//!
+//! Every job — static or dynamic — lives in one registry, so the scheduler exposes a uniform
+//! read/control surface: [`list_jobs`](JobScheduler::list_jobs) / [`job`](JobScheduler::job) /
+//! [`recent_runs`](JobScheduler::recent_runs) return [`JobInfo`] / [`JobRunSummary`] snapshots
+//! (state, next run, run/failure counts, recent outcomes); [`run_now`](JobScheduler::run_now)
+//! and [`run_named`](JobScheduler::run_named) trigger a run immediately;
+//! [`pause`](JobScheduler::pause) / [`resume`](JobScheduler::resume) /
+//! [`reschedule`](JobScheduler::reschedule) / [`cancel_and_wait`](JobScheduler::cancel_and_wait)
+//! provide softer operational control than a hard cancel; and [`metrics`](JobScheduler::metrics)
+//! yields an aggregate [`JobMetrics`] snapshot to feed an application's own metrics/health
+//! system (the crate hard-codes no backend and no health policy).
+//!
+//! ## Per-run context and progress
+//!
+//! A `#[job]` method may request the per-run [`JobRunContext`] as a parameter (threaded through
+//! the run, not resolved from DI) to report structured [`JobProgress`] while it executes:
+//!
+//! ```ignore
+//! #[job(every = "5m")]
+//! async fn rebuild_index(&self, cx: JobRunContext) -> Result<()> {
+//!     cx.progress(JobProgress::phase("loading")).await;
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Execution options
+//!
+//! Beyond *when* a job runs, `#[job(..)]` accepts *how* it runs: `run_on_startup`,
+//! `timeout = ".."`, `jitter = ".."`, `max_runtime = ".."`, `overlap = <policy>`
+//! ([`OverlapPolicy`]: `Skip`, `QueueOne`, `Allow`, `CancelPrevious`), and `tz = <zone>`
+//! ([`JobTimezone`]). Every default preserves the original behaviour — no startup run, no
+//! timeout, non-overlapping runs, cron computed from UTC — so adding options is opt-in.
+//!
+//! ```ignore
+//! #[job(every = "30s", overlap = CancelPrevious, timeout = "20s")]
+//! async fn sweep(&self) { /* … */ }
+//! ```
+//!
+//! ## Per-run log capture
+//!
+//! Each run executes inside a `job.run` tracing span. A [`JobLogLayer`] added to the
+//! application's subscriber captures the events emitted under that span into a pluggable
+//! [`JobLogSink`] — the bundled [`InMemoryJobLogStore`] (bounded by runs/bytes/TTL), the
+//! default [`NoopJobLogStore`], or an application-provided sink for out-of-process storage.
+//! Install one with [`set_log_sink`](JobScheduler::set_log_sink) and read it back through
+//! [`log_records`](JobScheduler::log_records).
 //!
 //! ## Standalone job runner
 //!
@@ -71,14 +123,35 @@
 //! plugin is all that is required.
 
 pub mod descriptor;
+pub mod error;
+pub mod log;
+#[cfg(feature = "tracing-subscriber")]
+pub mod logging;
+pub mod metrics;
 pub mod plugin;
+pub mod registry;
+pub mod run;
 pub mod schedule;
 pub mod scheduler;
 
 pub use descriptor::{JOBS, JobCall, JobDescriptor, JobOutcome};
+pub use error::JobError;
+pub use log::{
+    InMemoryJobLogStore, JobLogConfig, JobLogLayer, JobLogLevel, JobLogRecord, JobLogSink,
+    NoopJobLogStore,
+};
+#[cfg(feature = "tracing-subscriber")]
+pub use logging::init_tracing;
+pub use metrics::JobMetrics;
 pub use plugin::JobsPlugin;
-pub use schedule::{Schedule, ScheduleError, ScheduleKind};
-pub use scheduler::{JobHandle, JobId, JobScheduler};
+pub use registry::{
+    JobId, JobInfo, JobMetadata, JobRunId, JobRunOutcome, JobRunSummary, JobState, JobTrigger,
+};
+pub use run::{JobProgress, JobRunContext};
+pub use schedule::{
+    JobOptions, JobTimezone, OverlapPolicy, Schedule, ScheduleError, ScheduleInfo, ScheduleKind,
+};
+pub use scheduler::{JobHandle, JobScheduler};
 
 /// The `#[jobs]` impl-block macro and its `#[job]` method marker, owned by
 /// `overseerd-jobs-macros` and re-exported here (the plugin crate owns its macros).
