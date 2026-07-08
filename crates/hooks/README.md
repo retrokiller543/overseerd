@@ -18,7 +18,7 @@ use overseerd::prelude::*;
 #[component]
 pub struct Cache;
 
-#[handlers]
+#[methods]
 impl Cache {
     // Runs when the framework fires the Startup kind; reached via `&self`,
     // dependencies are not passed as parameters.

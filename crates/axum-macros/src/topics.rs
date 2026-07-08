@@ -206,10 +206,21 @@ fn generate_client(
     // client signature as `#transport` so the two never clash.
     let transport = transport_param_ident(generics);
 
-    // A subscribe client only ever holds *decoded, owned* values, so a borrowing payload is
-    // effectively `'static` on the client side. Bind each of the enum's lifetimes to `'static` in
-    // the client's `where`-clause, so a `Cow<'a, T>` (or any borrow) satisfies the subscription
-    // stream's `M: 'static` requirement — lifetimes are a publish-side concern, not a subscribe one.
+    // A `subscribe_*` yields a stream of *decoded, owned* payloads, which the subscription stream
+    // requires to be `M: 'static`. So a lifetime the payload borrows over must be pinned to
+    // `'static` on the client side (a `Cow<'a, T>` still satisfies it — it decodes to `Owned`). But
+    // a lifetime used *only* by a templated destination param (e.g. `room: &'a str`) is consumed
+    // synchronously while rendering the destination and never reaches the stream, so it stays free —
+    // pinning it would reject valid non-`'static` call sites. Bind `'static` to exactly the
+    // lifetimes that appear in some variant's payload type.
+    let content_lifetimes: std::collections::HashSet<String> = variants
+        .iter()
+        .flat_map(|variant| match &variant.kind {
+            VariantKind::Static { payload } => lifetimes_in_type(payload),
+            VariantKind::Templated { content_type, .. } => lifetimes_in_type(content_type),
+        })
+        .collect();
+
     let enum_lifetimes: Vec<_> = generics.lifetimes().map(|lt| lt.lifetime.clone()).collect();
 
     let mut client_generics = generics.clone();
@@ -217,9 +228,11 @@ fn generate_client(
         let where_clause = client_generics.make_where_clause();
 
         for lifetime in &enum_lifetimes {
-            where_clause
-                .predicates
-                .push(parse_quote!(#lifetime: 'static));
+            if content_lifetimes.contains(&lifetime.ident.to_string()) {
+                where_clause
+                    .predicates
+                    .push(parse_quote!(#lifetime: 'static));
+            }
         }
     }
     client_generics.params.push(parse_quote!(#transport));
@@ -422,6 +435,38 @@ fn generate_wasm_client(
 /// The TypeScript type name for a payload type, so a typed callback reads `(message: T) => void`.
 /// Maps the common primitives to their TS names; a user `#[dto]` type keeps its ident (which is the
 /// name `tsify` generates). A path type falls back to its last segment.
+/// Collects the names of every lifetime mentioned in `ty` (`&'a str` → `{"a"}`). Walks the type's
+/// token stream (a lifetime is a `'` punct joined to an ident) rather than pulling in syn's `visit`
+/// feature. Used to decide which client lifetimes a borrowing payload pins to `'static`.
+fn lifetimes_in_type(ty: &Type) -> std::collections::HashSet<String> {
+    use proc_macro2::TokenTree;
+
+    fn walk(tokens: TokenStream, out: &mut std::collections::HashSet<String>) {
+        let mut iter = tokens.into_iter().peekable();
+
+        while let Some(tree) = iter.next() {
+            match tree {
+                TokenTree::Punct(punct) if punct.as_char() == '\'' => {
+                    if let Some(TokenTree::Ident(ident)) = iter.peek() {
+                        out.insert(ident.to_string());
+                        iter.next();
+                    }
+                }
+
+                TokenTree::Group(group) => walk(group.stream(), out),
+
+                _ => {}
+            }
+        }
+    }
+
+    let mut out = std::collections::HashSet::new();
+
+    walk(quote!(#ty), &mut out);
+
+    out
+}
+
 fn ts_type_name(ty: &Type) -> String {
     let ident = match ty {
         Type::Path(path) => path.path.segments.last().map(|s| s.ident.to_string()),
