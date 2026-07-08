@@ -47,6 +47,10 @@ pub enum ScheduleError {
         source: humantime::DurationError,
     },
 
+    /// A zero interval, which would never make progress (and panics `tokio::time::interval`).
+    #[error("invalid interval '{expr}': the period must be greater than zero")]
+    ZeroInterval { expr: String },
+
     /// A `cron = ".."` expression the cron parser rejected. Cron nicknames (`@hourly`, …) are
     /// accepted natively by the parser.
     #[error("invalid cron expression '{expr}': {source}")]
@@ -79,12 +83,21 @@ impl Schedule {
         let expr = raw.trim();
 
         match kind {
-            ScheduleKind::Interval => humantime::parse_duration(expr)
-                .map(Schedule::Every)
-                .map_err(|source| ScheduleError::Interval {
-                    expr: raw.to_string(),
-                    source,
-                }),
+            ScheduleKind::Interval => {
+                let period =
+                    humantime::parse_duration(expr).map_err(|source| ScheduleError::Interval {
+                        expr: raw.to_string(),
+                        source,
+                    })?;
+
+                if period.is_zero() {
+                    return Err(ScheduleError::ZeroInterval {
+                        expr: raw.to_string(),
+                    });
+                }
+
+                Ok(Schedule::Every(period))
+            }
 
             ScheduleKind::Cron => Cron::from_str(expr)
                 .map(|cron| Schedule::Cron(Box::new(cron)))

@@ -50,7 +50,7 @@ impl Chat {
         Inject(publisher): Inject<Publisher<ChatTopics>>,
     ) -> Result<(), CodecError> {
         publisher
-            .publish::<1>(ChatTopics::Room(RoomMsg { text: msg.text }))
+            .publish_to::<1>(ChatTopics::Room(RoomMsg { text: msg.text }))
             .await
     }
 }
@@ -226,7 +226,7 @@ impl Marked {
         Inject(publisher): Inject<Publisher<MarkedTopics>>,
     ) -> Result<(), CodecError> {
         publisher
-            .publish::<1>(MarkedTopics::Marked(RoomMsg { text: msg.text }))
+            .publish_to::<1>(MarkedTopics::Marked(RoomMsg { text: msg.text }))
             .await
     }
 }

@@ -210,6 +210,19 @@ impl Drop for JobScheduler {
 /// `every = "30s"` first fires after 30s rather than at startup; missed ticks are skipped,
 /// which is what makes a long-running body defer (not queue) its next run.
 async fn run_interval(name: &str, run: &Runner, cancel: &CancellationToken, period: Duration) {
+    // `tokio::time::interval` panics on a zero period. `Schedule::parse` rejects it, but the
+    // public `Schedule::Every` variant can still carry one, so guard here rather than panic the
+    // task: a zero-period job never runs and is logged.
+    if period.is_zero() {
+        error!(
+            target: "overseerd::jobs",
+            job = name,
+            "interval job has a zero period; it will not run"
+        );
+
+        return;
+    }
+
     let mut ticker = tokio::time::interval(period);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
