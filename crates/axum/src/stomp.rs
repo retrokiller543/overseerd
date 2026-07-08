@@ -4,9 +4,9 @@
 //! them. The server-only fan-out types ([`Publish`](crate::ws::stomp::Publish) /
 //! [`StompOutcome`](crate::ws::stomp::StompOutcome)) stay in the `ws` broker module.
 
-use std::borrow::Cow;
 use bytes::Bytes;
 use overseerd_transport::CodecError;
+use std::borrow::Cow;
 
 /// A STOMP frame body: opaque bytes with an optional `content-type`. Handlers usually receive a
 /// decoded type (via [`WsCodec`](crate::ws::WsCodec) JSON decoding) rather than this directly.
