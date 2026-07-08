@@ -1370,6 +1370,8 @@ dependencies = [
 name = "overseerd-jobs"
 version = "0.11.2"
 dependencies = [
+ "arc-swap",
+ "async-trait",
  "chrono",
  "croner",
  "humantime",
@@ -1383,12 +1385,14 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "overseerd-jobs-macros"
 version = "0.11.2"
 dependencies = [
+ "humantime",
  "overseerd-macros-core",
  "proc-macro2",
  "quote",

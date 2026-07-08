@@ -113,8 +113,44 @@ impl ToTokens for Jobs {
     }
 }
 
-/// Parses the `#[job(..)]` attribute's single `every = ".."` or `cron = ".."` argument.
-fn parse_job_args(attr: &syn::Attribute) -> syn::Result<(JobKind, LitStr)> {
+/// Whether a parameter type is the per-run `JobRunContext`, matched by its final path segment
+/// (`JobRunContext`, `jobs::JobRunContext`, `overseerd::jobs::JobRunContext`, …). A context
+/// parameter is fed the threaded run context rather than resolved from the DI container.
+fn is_run_context(ty: &Type) -> bool {
+    let Type::Path(path) = ty else {
+        return false;
+    };
+
+    path.path
+        .segments
+        .last()
+        .is_some_and(|segment| segment.ident == "JobRunContext")
+}
+
+/// The parsed `#[job(..)]` attribute: the schedule plus any execution options.
+struct JobArgs {
+    kind: JobKind,
+    schedule: LitStr,
+    /// A `JobOptions { .. }` literal built from the option keys, ready to drop into the
+    /// emitted descriptor.
+    options: TokenStream,
+}
+
+/// The raw option keys accumulated while parsing, before they are lowered to a `JobOptions`
+/// literal.
+#[derive(Default)]
+struct RawOptions {
+    run_on_startup: bool,
+    timeout: Option<LitStr>,
+    jitter: Option<LitStr>,
+    max_runtime: Option<LitStr>,
+    overlap: Option<Ident>,
+    timezone: Option<Ident>,
+}
+
+/// Parses the `#[job(..)]` attribute: the mandatory `every = ".."` / `cron = ".."` schedule
+/// first, then any comma-separated execution options.
+fn parse_job_args(attr: &syn::Attribute, paths: &Paths) -> syn::Result<JobArgs> {
     let Meta::List(list) = &attr.meta else {
         return Err(syn::Error::new_spanned(
             attr,
@@ -125,7 +161,7 @@ fn parse_job_args(attr: &syn::Attribute) -> syn::Result<(JobKind, LitStr)> {
     list.parse_args_with(|input: ParseStream| {
         let key: Ident = input.parse()?;
         input.parse::<Token![=]>()?;
-        let value: LitStr = input.parse()?;
+        let schedule: LitStr = input.parse()?;
 
         let kind = match key.to_string().as_str() {
             "every" => JobKind::Interval,
@@ -134,7 +170,117 @@ fn parse_job_args(attr: &syn::Attribute) -> syn::Result<(JobKind, LitStr)> {
             _ => return Err(syn::Error::new_spanned(&key, "expected `every` or `cron`")),
         };
 
-        Ok((kind, value))
+        let mut raw = RawOptions::default();
+
+        while !input.is_empty() {
+            input.parse::<Token![,]>()?;
+
+            // A trailing comma is allowed.
+            if input.is_empty() {
+                break;
+            }
+
+            parse_option(input, &mut raw)?;
+        }
+
+        Ok(JobArgs {
+            kind,
+            schedule,
+            options: build_options(&raw, paths)?,
+        })
+    })
+}
+
+/// Parses one `key = value` (or bare flag) execution option into `raw`.
+fn parse_option(input: ParseStream, raw: &mut RawOptions) -> syn::Result<()> {
+    let key: Ident = input.parse()?;
+    let name = key.to_string();
+
+    // `run_on_startup` may be a bare flag or `run_on_startup = true`.
+    if name == "run_on_startup" {
+        raw.run_on_startup = if input.peek(Token![=]) {
+            input.parse::<Token![=]>()?;
+
+            input.parse::<syn::LitBool>()?.value
+        } else {
+            true
+        };
+
+        return Ok(());
+    }
+
+    input.parse::<Token![=]>()?;
+
+    match name.as_str() {
+        "timeout" => raw.timeout = Some(input.parse()?),
+        "jitter" => raw.jitter = Some(input.parse()?),
+        "max_runtime" => raw.max_runtime = Some(input.parse()?),
+        "overlap" => raw.overlap = Some(input.parse()?),
+        "tz" | "timezone" => raw.timezone = Some(input.parse()?),
+
+        _ => {
+            return Err(syn::Error::new_spanned(
+                &key,
+                "expected one of: run_on_startup, timeout, jitter, max_runtime, overlap, tz",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Lowers the accumulated [`RawOptions`] into a const `JobOptions { .. }` literal.
+fn build_options(raw: &RawOptions, paths: &Paths) -> syn::Result<TokenStream> {
+    let job_options = paths.plugin("JobOptions");
+    let overlap_policy = paths.plugin("OverlapPolicy");
+    let timezone_ty = paths.plugin("JobTimezone");
+
+    let run_on_startup = raw.run_on_startup;
+    let timeout = optional_duration(raw.timeout.as_ref())?;
+    let jitter = optional_duration(raw.jitter.as_ref())?;
+    let max_runtime = optional_duration(raw.max_runtime.as_ref())?;
+
+    // The overlap / timezone values are the enum variant idents verbatim
+    // (`overlap = CancelPrevious`, `tz = Local`); an unknown variant is a compile error at the
+    // emitted path, so new variants need no macro change.
+    let overlap = match &raw.overlap {
+        Some(variant) => quote! { #overlap_policy::#variant },
+        None => quote! { #overlap_policy::Skip },
+    };
+
+    let timezone = match &raw.timezone {
+        Some(variant) => quote! { ::core::option::Option::Some(#timezone_ty::#variant) },
+        None => quote! { ::core::option::Option::None },
+    };
+
+    Ok(quote! {
+        #job_options {
+            run_on_startup: #run_on_startup,
+            timeout: #timeout,
+            jitter: #jitter,
+            overlap: #overlap,
+            max_runtime: #max_runtime,
+            timezone: #timezone,
+        }
+    })
+}
+
+/// Parses an optional humantime duration literal into a const `Option<Duration>` token stream.
+/// An invalid duration is a compile error, so a misconfigured `#[job]` never reaches runtime.
+fn optional_duration(lit: Option<&LitStr>) -> syn::Result<TokenStream> {
+    let Some(lit) = lit else {
+        return Ok(quote! { ::core::option::Option::None });
+    };
+
+    let parsed = humantime::parse_duration(&lit.value())
+        .map_err(|error| syn::Error::new_spanned(lit, format!("invalid duration: {error}")))?;
+
+    let nanos = parsed.as_nanos();
+    let nanos =
+        u64::try_from(nanos).map_err(|_| syn::Error::new_spanned(lit, "duration is too large"))?;
+
+    Ok(quote! {
+        ::core::option::Option::Some(::core::time::Duration::from_nanos(#nanos))
     })
 }
 
@@ -155,7 +301,11 @@ fn generate_job(
         ));
     }
 
-    let (kind, schedule) = parse_job_args(attr)?;
+    let JobArgs {
+        kind,
+        schedule,
+        options,
+    } = parse_job_args(attr, paths)?;
 
     let mut takes_self = false;
     let mut param_types: Vec<Type> = Vec::new();
@@ -188,6 +338,7 @@ fn generate_job(
 
     let job_descriptor = paths.plugin("JobDescriptor");
     let job_outcome = paths.plugin("JobOutcome");
+    let job_run_context = paths.plugin("JobRunContext");
     let schedule_kind = paths.plugin("ScheduleKind");
     let jobs_slice = paths.plugin("JOBS");
     let distributed_slice = paths.plugin("linkme::distributed_slice");
@@ -215,6 +366,21 @@ fn generate_job(
             as ::std::boxed::Box<dyn ::std::error::Error + ::core::marker::Send + ::core::marker::Sync>
     };
 
+    // Each parameter is resolved from the container per run — except a `JobRunContext`, which is
+    // the per-run context threaded through the call rather than a DI dependency.
+    let arg_resolvers = arg_idents.iter().zip(&param_types).map(|(ident, ty)| {
+        if is_run_context(ty) {
+            quote! { let #ident = _cx.clone(); }
+        } else {
+            quote! {
+                let #ident = __root
+                    .extract::<#ty>()
+                    .await
+                    .map_err(#box_err)?;
+            }
+        }
+    });
+
     // Normalize the method's return into a `JobOutcome`: a `Result` funnels its error into the
     // boxed job error, anything else is discarded and reported as success.
     let normalize = if is_result {
@@ -232,6 +398,7 @@ fn generate_job(
     Ok(quote! {
         fn #call_fn(
             __root: #root_resolver,
+            _cx: #job_run_context,
         ) -> ::core::pin::Pin<
             ::std::boxed::Box<
                 dyn ::core::future::Future<Output = #job_outcome> + ::core::marker::Send + 'static,
@@ -242,12 +409,7 @@ fn generate_job(
                     .component::<#self_ty>()
                     .map_err(#box_err)?;
 
-                #(
-                    let #arg_idents = __root
-                        .extract::<#param_types>()
-                        .await
-                        .map_err(#box_err)?;
-                )*
+                #(#arg_resolvers)*
 
                 let __out = __receiver.#method_ident(#(#arg_idents),*).await;
 
@@ -263,6 +425,7 @@ fn generate_job(
             schedule: #schedule,
             kind: #schedule_kind::#kind_variant,
             call: #call_fn,
+            options: #options,
         };
     })
 }

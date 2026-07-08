@@ -21,6 +21,9 @@ di-check = [
 # facade). Off (the default) keeps them at this standalone crate (`::overseerd_jobs::*`), so
 # depending on `overseerd-jobs` directly works.
 facade = ["overseerd-jobs-macros/facade"]
+# Provide the jobs-aware `init_tracing`, which composes the per-run `JobLogLayer` onto the
+# framework subscriber. Pulls in the app's `init_tracing` helper (and its `tracing-subscriber`).
+tracing-subscriber = ["overseerd-app/tracing-subscriber"]
 
 [dependencies]
 overseerd-app = { workspace = true }
@@ -32,7 +35,15 @@ linkme = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
+# Per-run log capture is a normal `tracing_subscriber::Layer`, so it composes with the
+# application's existing subscriber. Registry + Layer traits only; no openssl/rsa.
+tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
+# Swappable log-sink slot (`set_log_sink` is observed by every running job loop). Lock-free
+# `Arc` swap; dependency-free, no openssl/rsa.
+arc-swap = { workspace = true }
+# `#[async_trait]` for the object-safe `JobLogSink` trait (async methods on a `dyn` trait).
+async-trait = { workspace = true }
 # Cron expression parser (5/6-field + `@hourly`/`@daily`/… nicknames, handled natively). Pure
 # Rust; its only dependency is `chrono` — no `openssl`/`rsa`, keeping the banned-crate rule.
 croner = "3"
