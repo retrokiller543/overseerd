@@ -50,7 +50,7 @@ impl Chat {
         Inject(publisher): Inject<Publisher<ChatTopics>>,
     ) -> Result<(), CodecError> {
         publisher
-            .publish(ChatTopics::Room(RoomMsg { text: msg.text }))
+            .publish::<1>(ChatTopics::Room(RoomMsg { text: msg.text }))
             .await
     }
 }
@@ -67,9 +67,9 @@ impl RestEvents {
         Inject(publisher): Inject<Publisher<ChatTopics>>,
         Json(msg): Json<RoomMsg>,
     ) -> Json<RoomMsg> {
+        // A REST endpoint emits fire-and-forget: no `await`, just the encode result.
         publisher
-            .publish(ChatTopics::Room(msg.clone()))
-            .await
+            .emit(ChatTopics::Room(msg.clone()))
             .expect("test topic encodes");
 
         Json(msg)
@@ -226,7 +226,7 @@ impl Marked {
         Inject(publisher): Inject<Publisher<MarkedTopics>>,
     ) -> Result<(), CodecError> {
         publisher
-            .publish(MarkedTopics::Marked(RoomMsg { text: msg.text }))
+            .publish::<1>(MarkedTopics::Marked(RoomMsg { text: msg.text }))
             .await
     }
 }

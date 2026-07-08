@@ -30,6 +30,38 @@ async fn publish_reaches_only_matching_subscribers() {
 }
 
 #[tokio::test]
+async fn deliver_awaits_capacity_instead_of_dropping() {
+    let broker = Broker::new();
+    let conn = broker.register();
+    // Capacity-1 channel: a second frame has nowhere to go until the first is drained.
+    let (tx, mut rx) = mpsc::channel(1);
+
+    broker.subscribe(conn, "sub-1", "/topic/room", tx);
+
+    // Fill the single slot, then race a backpressuring `deliver` against a drain. `deliver` must
+    // block on capacity (not drop, the way `try_send` would) and complete only once room frees up.
+    broker.publish("/topic/room", &body("first"), &[]);
+
+    let second_body = body("second");
+    let deliver = broker.deliver::<4>("/topic/room", &second_body, &[]);
+    let drain = async {
+        let first = rx.recv().await.expect("first frame");
+        assert!(matches!(first, OutFrame::Frame(_)));
+
+        rx.recv()
+            .await
+            .expect("second frame delivered under backpressure")
+    };
+
+    let (_, second) = tokio::join!(deliver, drain);
+
+    assert!(
+        matches!(second, OutFrame::Frame(_)),
+        "the backpressured frame is delivered, not dropped"
+    );
+}
+
+#[tokio::test]
 async fn unsubscribe_and_unregister_stop_delivery() {
     let broker = Broker::new();
     let conn = broker.register();
