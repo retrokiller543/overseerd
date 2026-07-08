@@ -294,6 +294,48 @@ async fn skip_overlap_defers_while_a_run_is_active() {
 }
 
 #[tokio::test]
+async fn queue_one_preserves_the_deferred_manual_run_identity() {
+    use crate::schedule::{JobOptions, OverlapPolicy};
+
+    let scheduler = JobScheduler::create(RootResolver::new()).await;
+    let options = JobOptions {
+        overlap: OverlapPolicy::QueueOne,
+        ..JobOptions::default()
+    };
+    // Long interval + slow body: manual triggers drive the runs, and the second overlaps the
+    // first so it is deferred under QueueOne.
+    let handle = scheduler.schedule_with(
+        crate::registry::JobMetadata::named("Queued::job".into()),
+        Schedule::every(Duration::from_secs(3600)),
+        options,
+        || async {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+
+            Ok(())
+        },
+    );
+
+    let first = scheduler.run_now(handle.id()).await.expect("job exists");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let second = scheduler.run_now(handle.id()).await.expect("job exists");
+
+    // Let the first run finish and the deferred second run start and finish.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let recent = scheduler.recent_runs(handle.id());
+
+    // The deferred run keeps the id `run_now` returned and stays classified as manual — it is
+    // not restarted with a fresh id or reclassified as scheduled.
+    let deferred = recent
+        .iter()
+        .find(|r| r.run_id == second)
+        .expect("deferred manual run recorded under its returned id");
+
+    assert_eq!(deferred.trigger, JobTrigger::Manual);
+    assert!(recent.iter().any(|r| r.run_id == first));
+}
+
+#[tokio::test]
 async fn allow_overlap_permits_concurrent_runs() {
     use crate::schedule::{JobOptions, OverlapPolicy};
 

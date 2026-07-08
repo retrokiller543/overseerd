@@ -74,6 +74,24 @@ async fn max_bytes_per_run_sheds_oldest_records() {
 }
 
 #[tokio::test]
+async fn a_single_oversized_record_is_retained() {
+    let config = JobLogConfig {
+        max_bytes_per_run: 8,
+        ..JobLogConfig::default()
+    };
+    let store = InMemoryJobLogStore::new(config);
+
+    // One record far larger than the cap must still be kept — never leave a run with no logs.
+    store
+        .record(record(1, "a message much larger than eight bytes"))
+        .await;
+
+    let kept = store.records(JobRunId::from_raw(1), 10).await;
+
+    assert_eq!(kept.len(), 1);
+}
+
+#[tokio::test]
 async fn disabled_store_drops_everything() {
     let config = JobLogConfig {
         enabled: false,
