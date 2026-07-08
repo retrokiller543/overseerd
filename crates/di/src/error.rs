@@ -33,6 +33,11 @@ pub enum Error {
     MissingComponent(&'static str),
 
     #[error(
+        "the root resolver is unavailable: the root container was never attached or has been dropped"
+    )]
+    RootUnavailable,
+
+    #[error(
         "scope violation: component '{component}' ({component_scope}) depends on \
          '{dependency}' ({dependency_scope}), which is shorter-lived"
     )]

@@ -1,0 +1,47 @@
+[package]
+name = "overseerd-jobs"
+description = "The Overseerd job scheduler: declare `#[job]` methods that run on an interval or cron schedule as supervised background tasks, integrated as a plugin over the protocol-agnostic overseerd-app core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+di-check = [
+    "overseerd-app/di-check",
+    "overseerd-di/di-check",
+    "overseerd-jobs-macros/di-check",
+]
+# Root the macros' generated plugin types at `::overseerd::jobs::*` (set by the `overseerd`
+# facade). Off (the default) keeps them at this standalone crate (`::overseerd_jobs::*`), so
+# depending on `overseerd-jobs` directly works.
+facade = ["overseerd-jobs-macros/facade"]
+
+[dependencies]
+overseerd-app = { workspace = true }
+overseerd-core = { workspace = true }
+overseerd-di = { workspace = true }
+overseerd-hooks = { workspace = true }
+overseerd-jobs-macros = { workspace = true }
+linkme = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+# Cron expression parser (5/6-field + `@hourly`/`@daily`/… nicknames, handled natively). Pure
+# Rust; its only dependency is `chrono` — no `openssl`/`rsa`, keeping the banned-crate rule.
+croner = "3"
+# `every = ".."` interval parsing (`30s`, `5m`, `1h 30m`, `500ms`). Dependency-free, so no
+# openssl/rsa; the ecosystem-standard human-duration parser rather than a bespoke one.
+humantime = "2"
+# Wall-clock `now()` for computing a cron job's next fire time (interval jobs use the
+# monotonic tokio timer instead). `chrono` pulls no `openssl`/`rsa`.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+tokio = { workspace = true }

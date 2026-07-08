@@ -4,6 +4,7 @@ members = [
     "crates/*",
     "examples/daemon",
     "examples/http",
+    "examples/jobs",
 ]
 resolver = "3"
 
@@ -25,6 +26,8 @@ overseerd-core = { path = "crates/core", version = "0.11.2" }
 overseerd-di = { path = "crates/di", version = "0.11.2" }
 overseerd-dirs = { path = "crates/dirs", version = "0.11.2" }
 overseerd-hooks = { path = "crates/hooks", version = "0.11.2" }
+overseerd-jobs = { path = "crates/jobs", version = "0.11.2" }
+overseerd-jobs-macros = { path = "crates/jobs-macros", version = "0.11.2" }
 overseerd-app = { path = "crates/app", version = "0.11.2" }
 overseerd-client = { path = "crates/client", version = "0.11.2" }
 overseerd-rpc = { path = "crates/rpc", version = "0.11.2" }
@@ -127,6 +130,12 @@ daemon = ["dep:overseerd-rpc", "overseerd-rpc/facade"]
 # enable both to host RPC and HTTP side by side.
 axum = ["dep:overseerd-axum", "overseerd-axum/facade"]
 
+# The job scheduler (`overseerd::jobs`): `#[job(every = ..)]` / `#[job(cron = ..)]` methods and
+# a runtime `JobScheduler::schedule` API, run as supervised background tasks. Protocol-neutral —
+# compose it with `daemon` and/or `axum`. Enables the plugin crate's `facade` feature so its
+# macros root generated types at `::overseerd::jobs::*`.
+jobs = ["dep:overseerd-jobs", "overseerd-jobs/facade"]
+
 # WebSocket controllers for the axum protocol (`#[controller(ws = ..)]`, `register_ws`). Opt-in,
 # since WebSockets pull in extra machinery a plain HTTP app does not need. Implies `axum`.
 ws = ["axum", "overseerd-axum/ws"]
@@ -174,6 +183,7 @@ di-check = [
     "overseerd-app/di-check",
     "overseerd-rpc?/di-check",
     "overseerd-axum?/di-check",
+    "overseerd-jobs?/di-check",
 ]
 
 # Enable YAML config sources (`application.yaml`) alongside the default TOML.
@@ -208,6 +218,7 @@ overseerd-dirs = { workspace = true }
 overseerd-config = { workspace = true }
 overseerd-app = { workspace = true }
 overseerd-rpc = { workspace = true, optional = true }
+overseerd-jobs = { workspace = true, optional = true }
 tokio = { workspace = true }
 postcard = { workspace = true }
 
