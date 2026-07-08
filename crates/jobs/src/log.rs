@@ -17,7 +17,7 @@ use std::time::{Duration, SystemTime};
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
-use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
+use tokio::sync::mpsc::{Sender, channel};
 use tracing::field::{Field, Visit};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
@@ -141,8 +141,9 @@ struct RunLog {
 /// Bounds are enforced on every [`record`](JobLogSink::record): expired runs (older than
 /// [`ttl`](JobLogConfig::ttl)) are dropped, a run over [`max_bytes_per_run`](JobLogConfig::max_bytes_per_run)
 /// sheds its oldest records, and the oldest run is evicted once [`max_runs`](JobLogConfig::max_runs)
-/// is exceeded. Not intended for durable or out-of-process storage — supply your own
-/// [`JobLogSink`] for that.
+/// is exceeded. The most recent record of a run is always retained, so a single record larger
+/// than `max_bytes_per_run` is kept in full rather than leaving the run with no logs at all.
+/// Not intended for durable or out-of-process storage — supply your own [`JobLogSink`] for that.
 pub struct InMemoryJobLogStore {
     config: JobLogConfig,
     runs: Mutex<HashMap<JobRunId, RunLog>>,
@@ -322,15 +323,21 @@ impl Visit for MessageVisitor {
     }
 }
 
+/// The capture forwarding channel's capacity. Bounds in-flight records so a burst of job logs
+/// (or a slow sink) cannot grow the queue without limit; excess records are dropped rather than
+/// buffered, keeping capture best-effort and memory-safe.
+const CAPTURE_CHANNEL_CAPACITY: usize = 8192;
+
 /// A [`tracing_subscriber::Layer`] that captures the events emitted inside a
 /// [`job.run`](RUN_SPAN_NAME) span into a [`JobLogSink`].
 ///
-/// Records are forwarded to the (async) sink through an unbounded channel drained by a
-/// background task, so the synchronous tracing path never blocks on storage and the sink may
-/// be an out-of-process backend. Construct within a Tokio runtime — the drain task is spawned
-/// on `new`.
+/// Records are forwarded to the (async) sink through a bounded channel drained by a background
+/// task, so the synchronous tracing path never blocks on storage and the sink may be an
+/// out-of-process backend. If the channel fills (a very chatty job, or a slow sink), further
+/// records are dropped rather than buffered — capture is best-effort. Construct within a Tokio
+/// runtime — the drain task is spawned on `new`.
 pub struct JobLogLayer {
-    tx: UnboundedSender<JobLogRecord>,
+    tx: Sender<JobLogRecord>,
     capture_level: tracing::Level,
 }
 
@@ -338,7 +345,7 @@ impl JobLogLayer {
     /// Builds a layer forwarding captured records to `sink`, capturing events at or above
     /// `capture_level`.
     pub fn new(sink: Arc<dyn JobLogSink>, capture_level: tracing::Level) -> Self {
-        let (tx, mut rx) = unbounded_channel::<JobLogRecord>();
+        let (tx, mut rx) = channel::<JobLogRecord>(CAPTURE_CHANNEL_CAPACITY);
 
         tokio::spawn(async move {
             while let Some(record) = rx.recv().await {
@@ -410,7 +417,8 @@ where
             message: visitor.render(),
         };
 
-        // A full/closed channel simply drops the record — capture is best-effort.
-        let _ = self.tx.send(record);
+        // A full or closed channel simply drops the record — capture is best-effort, and
+        // `try_send` never blocks the synchronous tracing path.
+        let _ = self.tx.try_send(record);
     }
 }
