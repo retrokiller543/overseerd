@@ -7,6 +7,7 @@
 //! loop clearing its call table on disconnect).
 
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -56,6 +57,7 @@ enum Command {
     /// Sent when the last client handle drops: write a `DISCONNECT` and close gracefully.
     Disconnect {
         frame: Vec<u8>,
+        ack: Option<Ack>,
     },
 }
 
@@ -72,13 +74,110 @@ impl Drop for TransportInner {
         // Best-effort — a already-closed connection needs no goodbye. The frame is queued on `tx`
         // just before it drops, so the actor drains it, writes DISCONNECT, then sees the channel end.
         let frame: Vec<u8> = DisconnectFrameBuilder::new("bye".to_owned()).build().into();
-        let _ = self.tx.try_send(Command::Disconnect { frame });
+        let _ = self.tx.try_send(Command::Disconnect { frame, ack: None });
+    }
+}
+
+/// Authentication and custom headers sent on the STOMP `CONNECT` frame.
+#[cfg_attr(target_family = "wasm", ::wasm_bindgen::prelude::wasm_bindgen)]
+#[derive(Clone, Default)]
+pub struct StompConnectOptions {
+    host: Option<String>,
+    login: Option<String>,
+    passcode: Option<String>,
+    headers: Vec<(String, String)>,
+}
+
+impl fmt::Debug for StompConnectOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let header_names: Vec<&str> = self.headers.iter().map(|(name, _)| name.as_str()).collect();
+
+        f.debug_struct("StompConnectOptions")
+            .field("host", &self.host)
+            .field("login", &self.login)
+            .field("passcode", &self.passcode.as_ref().map(|_| "[REDACTED]"))
+            .field("header_names", &header_names)
+            .finish()
+    }
+}
+
+#[cfg_attr(target_family = "wasm", ::wasm_bindgen::prelude::wasm_bindgen)]
+impl StompConnectOptions {
+    /// Empty CONNECT options (`host` defaults to `localhost`).
+    #[cfg_attr(
+        target_family = "wasm",
+        ::wasm_bindgen::prelude::wasm_bindgen(constructor)
+    )]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the STOMP virtual host.
+    #[cfg_attr(
+        target_family = "wasm",
+        ::wasm_bindgen::prelude::wasm_bindgen(js_name = setHost)
+    )]
+    pub fn set_host(&mut self, host: String) {
+        self.host = Some(host);
+    }
+
+    /// Sets the standard STOMP login credential.
+    #[cfg_attr(
+        target_family = "wasm",
+        ::wasm_bindgen::prelude::wasm_bindgen(js_name = setLogin)
+    )]
+    pub fn set_login(&mut self, login: String) {
+        self.login = Some(login);
+    }
+
+    /// Sets the standard STOMP passcode credential.
+    #[cfg_attr(
+        target_family = "wasm",
+        ::wasm_bindgen::prelude::wasm_bindgen(js_name = setPasscode)
+    )]
+    pub fn set_passcode(&mut self, passcode: String) {
+        self.passcode = Some(passcode);
+    }
+
+    /// Adds an application-specific CONNECT header (for example a bearer token).
+    #[cfg_attr(
+        target_family = "wasm",
+        ::wasm_bindgen::prelude::wasm_bindgen(js_name = addHeader)
+    )]
+    pub fn add_header(&mut self, name: String, value: String) {
+        self.headers.push((name, value));
+    }
+}
+
+impl StompConnectOptions {
+    /// Sets the STOMP virtual host with builder syntax.
+    pub fn with_host(mut self, host: impl Into<String>) -> Self {
+        self.host = Some(host.into());
+        self
+    }
+
+    /// Sets the standard STOMP login with builder syntax.
+    pub fn with_login(mut self, login: impl Into<String>) -> Self {
+        self.login = Some(login.into());
+        self
+    }
+
+    /// Sets the standard STOMP passcode with builder syntax.
+    pub fn with_passcode(mut self, passcode: impl Into<String>) -> Self {
+        self.passcode = Some(passcode.into());
+        self
+    }
+
+    /// Adds an application-specific CONNECT header with builder syntax.
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
     }
 }
 
 /// A persistent STOMP client over one WebSocket connection. Cheap to clone (an `Arc`-backed handle
-/// onto the actor); every clone shares the same connection, and the connection is `DISCONNECT`ed
-/// only when the last clone drops.
+/// onto the actor); every clone shares the same connection. [`disconnect`](Self::disconnect) closes
+/// it for every clone, and last-handle drop remains a best-effort graceful fallback.
 #[derive(Clone)]
 pub struct StompClientTransport {
     inner: Arc<TransportInner>,
@@ -87,18 +186,21 @@ pub struct StompClientTransport {
 impl StompClientTransport {
     /// Connects to a STOMP-over-WebSocket endpoint, performs the handshake, and starts the actor.
     pub async fn connect(url: impl AsRef<str>) -> Result<Self, ClientError<StompStatus>> {
+        Self::connect_with_options(url, StompConnectOptions::default()).await
+    }
+
+    /// Connects with credentials and/or custom STOMP CONNECT headers.
+    pub async fn connect_with_options(
+        url: impl AsRef<str>,
+        options: StompConnectOptions,
+    ) -> Result<Self, ClientError<StompStatus>> {
         let socket = tokio_tungstenite_wasm::connect(url.as_ref())
             .await
             .map_err(net_err)?;
         let (mut write, mut read) = socket.split();
 
         // Offer 1.2/1.1 and await CONNECTED before anything else may flow.
-        let connect: Vec<u8> = ConnectFrameBuilder::new(
-            "localhost".to_owned(),
-            StompVersions(vec![StompVersion::V1_2, StompVersion::V1_1]),
-        )
-        .build()
-        .into();
+        let connect = connect_frame(options);
 
         write.send(to_message(connect)).await.map_err(net_err)?;
 
@@ -126,6 +228,49 @@ impl StompClientTransport {
     /// last handle disconnecting), so a closed channel is exactly a dead connection.
     pub fn is_connected(&self) -> bool {
         !self.inner.tx.is_closed()
+    }
+
+    /// Gracefully disconnects this shared transport.
+    ///
+    /// The operation is idempotent and closes the actor for every clone, including transports held
+    /// by already-created generated clients and subscriptions.
+    pub async fn disconnect(&self) -> Result<(), ClientError<StompStatus>> {
+        if !self.is_connected() {
+            return Ok(());
+        }
+
+        let frame: Vec<u8> = DisconnectFrameBuilder::new("disconnect".to_owned())
+            .build()
+            .into();
+        let (ack, ack_rx) = oneshot::channel();
+
+        if self
+            .tx()
+            .send(Command::Disconnect {
+                frame,
+                ack: Some(ack),
+            })
+            .await
+            .is_err()
+        {
+            return Ok(());
+        }
+
+        ack_rx.await.unwrap_or(Ok(()))
+    }
+
+    /// Starts a best-effort disconnect without waiting for the close frame to flush.
+    ///
+    /// Used by synchronous drop paths such as the browser [`Connection`](crate::client::Connection).
+    pub fn disconnect_now(&self) {
+        if !self.is_connected() {
+            return;
+        }
+
+        let frame: Vec<u8> = DisconnectFrameBuilder::new("disconnect".to_owned())
+            .build()
+            .into();
+        let _ = self.tx().try_send(Command::Disconnect { frame, ack: None });
     }
 
     /// A fresh, monotonically-increasing id (for subscriptions).
@@ -236,10 +381,18 @@ async fn actor(mut write: WsWrite, mut read: WsRead, mut rx: mpsc::Receiver<Comm
                         let _ = write.send(to_message(frame)).await;
                     }
 
-                    Command::Disconnect { frame } => {
-                        // Last handle dropped: say goodbye, then close.
-                        let _ = write.send(to_message(frame)).await;
-                        let _ = write.close().await;
+                    Command::Disconnect { frame, ack } => {
+                        // Explicit disconnect and last-handle drop share this path. Closing the
+                        // receiver first makes every cloned sender immediately observe dead state.
+                        rx.close();
+                        let result = match write.send(to_message(frame)).await {
+                            Ok(()) => write.close().await.map_err(net_err),
+                            Err(error) => Err(net_err(error)),
+                        };
+
+                        if let Some(ack) = ack {
+                            let _ = ack.send(result);
+                        }
 
                         break;
                     }
@@ -409,3 +562,28 @@ fn to_message(bytes: Vec<u8>) -> Message {
 fn net_err(error: WsError) -> ClientError<StompStatus> {
     ClientError::Transport(TransportError::Io(std::io::Error::other(error.to_string())))
 }
+
+/// Builds the CONNECT frame from the public options.
+fn connect_frame(options: StompConnectOptions) -> Vec<u8> {
+    let mut builder = ConnectFrameBuilder::new(
+        options.host.unwrap_or_else(|| "localhost".to_owned()),
+        StompVersions(vec![StompVersion::V1_2, StompVersion::V1_1]),
+    );
+
+    if let Some(login) = options.login {
+        builder = builder.login(login);
+    }
+
+    if let Some(passcode) = options.passcode {
+        builder = builder.passcode(passcode);
+    }
+
+    for (name, value) in options.headers {
+        builder = builder.add_custom_header(name, value);
+    }
+
+    builder.build().into()
+}
+
+#[cfg(test)]
+mod tests;

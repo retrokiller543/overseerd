@@ -6,9 +6,12 @@
 //! server is shut down at the end so the test never hangs.
 
 use futures::StreamExt;
-use overseerd::axum::client::{ReqwestClient, StompClientTransport};
+use overseerd::axum::client::{ReqwestClient, StompClientTransport, StompConnectOptions};
 use overseerd::axum::prelude::*;
-use overseerd::axum::{CodecError, StompBody, StompCodec};
+use overseerd::axum::{
+    CodecError, StompAuthenticationError, StompBody, StompCodec, StompConfig, StompConnect,
+    StompPrincipal,
+};
 use overseerd::prelude::*;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -121,6 +124,69 @@ async fn stomp_send_is_broadcast_to_typed_subscribers() {
         .expect("a decoded RoomMsg");
 
     assert_eq!(received.text, "hello stomp");
+
+    shutdown.shutdown();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn stomp_connect_authentication_and_explicit_disconnect_share_lifecycle() {
+    let config = StompConfig::default().with_authenticator(|connect: StompConnect| async move {
+        if connect.login() == Some("alice")
+            && connect.passcode() == Some("secret")
+            && connect.headers().get("tenant") == Some("acme")
+        {
+            Ok(StompPrincipal::authenticated("alice").with_attribute("tenant", "acme"))
+        } else {
+            Err(StompAuthenticationError::new("invalid credentials"))
+        }
+    });
+    let app = app! {
+        name: "stomp-auth-test",
+        protocol: overseerd::axum::AxumPlugin,
+    }
+    .register_ws_with::<Stomp>("/stomp", config)
+    .build()
+    .await
+    .expect("app builds");
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let shutdown = app.shutdown_handle();
+    let server = tokio::spawn(async move { app.serve(listener).await });
+    let url = format!("ws://{addr}/stomp");
+
+    let rejected = StompClientTransport::connect_with_options(
+        &url,
+        StompConnectOptions::new()
+            .with_login("mallory")
+            .with_passcode("wrong"),
+    )
+    .await;
+    assert!(rejected.is_err(), "invalid credentials must be rejected");
+
+    let connection = StompClientTransport::connect_with_options(
+        &url,
+        StompConnectOptions::new()
+            .with_login("alice")
+            .with_passcode("secret")
+            .with_header("tenant", "acme"),
+    )
+    .await
+    .expect("valid credentials connect");
+    let generated_client_handle = connection.clone();
+
+    assert!(connection.is_connected());
+    connection.disconnect().await.expect("disconnect cleanly");
+    assert!(!connection.is_connected());
+    assert!(
+        !generated_client_handle.is_connected(),
+        "all cloned/generated client handles observe the shared disconnect"
+    );
+    connection
+        .disconnect()
+        .await
+        .expect("disconnect is idempotent");
 
     shutdown.shutdown();
     let _ = server.await;

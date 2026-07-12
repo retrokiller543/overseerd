@@ -30,6 +30,8 @@ pub mod stream;
 // Server-only modules: the DI bridge, controllers, the serve loop, and the ws broker. None of
 // these exist on a wasm client target, where only the generated HTTP client is compiled.
 #[cfg(not(target_family = "wasm"))]
+pub mod config;
+#[cfg(not(target_family = "wasm"))]
 pub mod controller;
 #[cfg(not(target_family = "wasm"))]
 pub mod error;
@@ -48,6 +50,8 @@ pub mod scope;
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub mod ws;
 
+#[cfg(not(target_family = "wasm"))]
+pub use config::{AXUM_CONFIG_PATH, AxumConfig};
 #[cfg(not(target_family = "wasm"))]
 pub use controller::{CONTROLLERS, Controller, ControllerDescriptor};
 #[cfg(not(target_family = "wasm"))]
@@ -68,8 +72,9 @@ pub use stomp::{JsonCodec, StompBody, StompCodec, Topic, TopicParam};
 /// its broker/session/publish types. Server-only.
 #[cfg(all(feature = "stomp", not(target_family = "wasm")))]
 pub use ws::stomp::{
-    Broker, Publish, Publisher, Stomp, StompConfig, StompError, StompHeaders, StompOutcome,
-    StompSession, StompTopicBus,
+    Broker, Publish, Publisher, Stomp, StompAuthFuture, StompAuthenticationError,
+    StompAuthenticator, StompConfig, StompConnect, StompError, StompHeaders, StompOutcome,
+    StompPrincipal, StompSession, StompTopicBus,
 };
 
 /// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a
@@ -98,7 +103,7 @@ pub use overseerd_axum_macros::{
     controller, delete, get, handlers, head, message, options, patch, post, put, route,
 };
 #[cfg(not(target_family = "wasm"))]
-pub use plugin::{AxumAppBuilder, AxumPlugin};
+pub use plugin::{AxumAppBuilder, AxumAppServe, AxumPlugin};
 #[cfg(not(target_family = "wasm"))]
 pub use protocol::Axum;
 #[cfg(not(target_family = "wasm"))]

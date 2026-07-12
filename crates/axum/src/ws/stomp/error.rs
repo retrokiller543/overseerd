@@ -7,6 +7,8 @@
 
 use crate::ws::WsDispatchError;
 
+use super::StompAuthenticationError;
+
 /// A STOMP protocol-level error on one connection.
 #[derive(Debug, thiserror::Error)]
 pub enum StompError {
@@ -24,6 +26,10 @@ pub enum StompError {
         /// The client's `accept-version` header, verbatim.
         offered: String,
     },
+
+    /// The endpoint authenticator rejected the CONNECT credentials.
+    #[error("authentication failed: {0}")]
+    Authentication(#[from] StompAuthenticationError),
 
     /// A frame was missing a header the command requires.
     #[error("missing required header `{0}`")]

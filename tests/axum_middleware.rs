@@ -22,8 +22,9 @@ use overseerd::axum::axum::{Router, middleware as axum_middleware};
 use overseerd::axum::prelude::*;
 use overseerd::axum::tower::ServiceExt;
 use overseerd::axum::{AxumMiddleware, RequestMeta, ScopeHandle};
+use overseerd::config::Toml;
 use overseerd::prelude::*;
-use overseerd::{component, methods};
+use overseerd::{ConfigManager, component, methods};
 
 /// Reads a JSON response body into the given type.
 async fn json_body<T: serde::de::DeserializeOwned>(response: Response) -> T {
@@ -32,6 +33,75 @@ async fn json_body<T: serde::de::DeserializeOwned>(response: Response) -> T {
         .unwrap();
 
     serde_json::from_slice(&bytes).unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// Protocol configuration is auto-bound and actively enforces server-wide limits.
+// ---------------------------------------------------------------------------
+
+#[controller(path = "/configured")]
+struct ConfiguredController {}
+
+#[handlers]
+impl ConfiguredController {
+    #[post("/echo")]
+    async fn echo(&self, _body: overseerd::axum::bytes::Bytes) {}
+
+    #[get("/slow")]
+    async fn slow(&self) {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn axum_config_is_automatic_and_enforces_body_and_request_limits() {
+    let config = ConfigManager::<Toml>::from_str(
+        r#"
+            [axum]
+            bind = "127.0.0.1"
+            port = 4321
+            max_request_body_bytes = 4
+            request_timeout_ms = 5
+            graceful_shutdown_timeout_ms = 25
+        "#,
+    )
+    .expect("parse axum config");
+    let app = app! {
+        name: "configured-axum",
+        protocol: overseerd::axum::AxumPlugin,
+    }
+    .config_source(config)
+    .build()
+    .await
+    .expect("app builds with the plugin-owned binding");
+
+    assert_eq!(app.protocol().configured_addr().port(), 4321);
+    assert_eq!(app.protocol().config().max_request_body_bytes, 4);
+
+    let router: Router = app.protocol().router().clone();
+    let too_large = router
+        .clone()
+        .oneshot(
+            HttpRequest::builder()
+                .method("POST")
+                .uri("/configured/echo")
+                .body(Body::from("12345"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(too_large.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+    let timed_out = router
+        .oneshot(
+            HttpRequest::builder()
+                .uri("/configured/slow")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(timed_out.status(), StatusCode::REQUEST_TIMEOUT);
 }
 
 // ---------------------------------------------------------------------------

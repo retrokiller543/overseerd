@@ -12,6 +12,10 @@ deliberately deferred.
 - **Frames.** `CONNECT`/`STOMP` → `CONNECTED` (with version negotiation over `accept-version`),
   `SUBSCRIBE`/`UNSUBSCRIBE`, `SEND`, server-pushed `MESSAGE`, `DISCONNECT`, and `ERROR` on a
   protocol violation. A hostless `CONNECT` (e.g. from stomp.js) is tolerated.
+- **CONNECT authentication.** `StompConfig::with_authenticator` validates standard
+  `login`/`passcode` credentials or custom CONNECT headers before `CONNECTED`; successful auth
+  produces an `Inject<StompPrincipal>` available to message handlers, while rejection returns
+  `ERROR` and never registers the connection with the broker.
 - **App handlers.** `#[controller(ws = Stomp)]` + `#[handlers(ws = Stomp)] #[message("/app/..")]`;
   handlers get frame headers (`Inject<StompHeaders>`), a session (`Inject<StompSession>`), and a
   typed publisher (`Inject<Publisher<T>>`), plus the usual request-scoped DI.
@@ -21,7 +25,9 @@ deliberately deferred.
   and a `{Enum}Client<C>` with typed `subscribe_<variant>(..)` methods (client subscribe).
 - **Typed client.** `StompClientTransport` is one connection, `Clone`-shared across the generated
   `{Controller}Client` (typed `send`s) and `{Topics}Client` (typed `subscribe`s). A `Subscription`
-  is a `Stream` that `UNSUBSCRIBE`s on drop; the transport `DISCONNECT`s when its last handle drops.
+  is a `Stream` that `UNSUBSCRIBE`s on drop. `StompConnectOptions` carries credentials/custom
+  headers, and explicit `disconnect()` closes the socket for every cloned client handle (last-handle
+  drop remains a best-effort fallback).
 - **Pluggable codec.** `StompCodec` (default `JsonCodec`), selected per surface with
   `#[topics(codec = ..)]` and `#[handlers(ws = Stomp, codec = ..)]`. The SEND path is codec-agnostic
   and symmetric (client encode = server decode).

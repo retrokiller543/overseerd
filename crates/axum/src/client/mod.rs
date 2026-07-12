@@ -12,6 +12,7 @@ mod body;
 #[cfg(all(target_family = "wasm", feature = "reqwest"))]
 mod connection;
 mod headers;
+mod interceptor;
 mod response;
 // The STOMP client transport is cross-target (native + wasm) via `tokio-tungstenite-wasm`.
 #[cfg(all(feature = "stomp", feature = "client"))]
@@ -33,6 +34,9 @@ pub use body::{Form, HttpBody, Json, Multipart, OctetStream, RawForm};
 #[cfg(all(target_family = "wasm", feature = "reqwest"))]
 pub use connection::Connection;
 pub use headers::RequestHeaders;
+#[cfg(target_family = "wasm")]
+pub use interceptor::WasmClientInterceptor;
+pub use interceptor::{ClientInterceptor, DefaultClientInterceptor};
 pub use response::HttpResponse;
 #[cfg(all(feature = "stomp", feature = "client"))]
 pub use stomp::*;

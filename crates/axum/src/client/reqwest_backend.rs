@@ -10,13 +10,13 @@ use futures::StreamExt;
 use futures::stream::BoxStream;
 use std::sync::{Arc, RwLock};
 
-use http::Request;
 use http::header::HeaderMap;
+use http::{Request, Uri};
 use overseerd_client::{ClientError, MaybeSend, Transport, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
-use super::{HttpBody, HttpResponse};
+use super::{ClientInterceptor, DefaultClientInterceptor, HttpBody, HttpResponse};
 #[cfg(not(target_family = "wasm"))]
 use super::{HttpClientStreaming, HttpStreaming};
 #[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
@@ -41,25 +41,28 @@ type ProviderSlot = Arc<RwLock<Option<HeaderProvider>>>;
 /// is appended to. Implements the [`Unary`] capability with a `http::Request` envelope and an
 /// [`HttpResponse`] reply, so a generated controller client runs over it.
 #[derive(Clone)]
-pub struct ReqwestClient<W = ()> {
+pub struct ReqwestClient<W = (), I: ClientInterceptor = DefaultClientInterceptor> {
     client: reqwest::Client,
     base_url: String,
     /// The default-header provider (see [`HeaderProvider`]), shared across clones of the transport so
     /// it can be installed on the `Connection` and picked up by every client built from it.
     header_provider: ProviderSlot,
+    /// The interceptor value, stored directly and carried through every generated client.
+    interceptor: I,
     // Read only by the `WebsocketClient` delegate, which is native-only; on wasm the field is
     // carried (so `with_websocket`/`W` stay uniform across targets) but never read.
     #[cfg_attr(target_family = "wasm", allow(dead_code))]
     websocket: W,
 }
 
-impl ReqwestClient<()> {
+impl ReqwestClient<(), DefaultClientInterceptor> {
     /// A client against `base_url` (e.g. `"http://localhost:3000"`) with a default reqwest client.
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             client: reqwest::Client::new(),
             base_url: base_url.into(),
             header_provider: ProviderSlot::default(),
+            interceptor: DefaultClientInterceptor::default(),
             websocket: (),
         }
     }
@@ -71,20 +74,38 @@ impl ReqwestClient<()> {
             client,
             base_url: base_url.into(),
             header_provider: ProviderSlot::default(),
+            interceptor: DefaultClientInterceptor::default(),
             websocket: (),
         }
     }
 }
 
-impl<W> ReqwestClient<W> {
+impl<W, I: ClientInterceptor> ReqwestClient<W, I> {
     /// Attaches a websocket request/reply transport while keeping this HTTP backend.
-    pub fn with_websocket<Ws>(self, websocket: Ws) -> ReqwestClient<Ws> {
+    pub fn with_websocket<Ws>(self, websocket: Ws) -> ReqwestClient<Ws, I> {
         ReqwestClient {
             client: self.client,
             base_url: self.base_url,
             header_provider: self.header_provider,
+            interceptor: self.interceptor,
             websocket,
         }
+    }
+
+    /// Replaces the interceptor type stored directly on this client.
+    pub fn with_interceptor<J: ClientInterceptor>(self, interceptor: J) -> ReqwestClient<W, J> {
+        ReqwestClient {
+            client: self.client,
+            base_url: self.base_url,
+            header_provider: self.header_provider,
+            interceptor,
+            websocket: self.websocket,
+        }
+    }
+
+    /// The interceptor stored on this transport.
+    pub fn interceptor(&self) -> &I {
+        &self.interceptor
     }
 
     /// Installs the [`HeaderProvider`] callback, replacing any previous one. It runs on every request
@@ -121,13 +142,48 @@ impl<W> ReqwestClient<W> {
 
         merged
     }
+
+    fn prepare_request<E>(
+        &self,
+        mut parts: http::request::Parts,
+    ) -> Result<http::request::Parts, ClientError<http::StatusCode, E>>
+    where
+        I: ClientInterceptor,
+    {
+        parts.uri = format!("{}{}", self.base_url, parts.uri)
+            .parse::<Uri>()
+            .map_err(|error| self.fail(ClientError::Encode(error.to_string())))?;
+        parts.headers = self.merged_headers(&parts.headers);
+        self.interceptor.on_request(&mut parts);
+        Ok(parts)
+    }
+
+    fn response_parts(&self, status: http::StatusCode, headers: HeaderMap) -> http::response::Parts
+    where
+        I: ClientInterceptor,
+    {
+        let (mut parts, ()) = http::Response::new(()).into_parts();
+        parts.status = status;
+        parts.headers = headers;
+        self.interceptor.on_response(&mut parts);
+        parts
+    }
+
+    fn fail<E>(&self, error: ClientError<http::StatusCode, E>) -> ClientError<http::StatusCode, E>
+    where
+        I: ClientInterceptor,
+    {
+        self.interceptor.on_error(&error);
+        error
+    }
 }
 
 /// JSON is the body codec for the bytes; the body *wrapper* ([`HttpBody`]) already chose the
 /// format and set the content type, so here we only forward its bytes.
-impl<W, B> Encodes<B> for ReqwestClient<W>
+impl<W, I, B> Encodes<B> for ReqwestClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
     B: HttpBody + Send,
 {
     fn encode(&self, value: B) -> Result<Vec<u8>, CodecError> {
@@ -136,9 +192,10 @@ where
 }
 
 /// Responses are decoded as JSON by default.
-impl<W, R> Decodes<R> for ReqwestClient<W>
+impl<W, I, R> Decodes<R> for ReqwestClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
     R: DeserializeOwned,
 {
     fn decode(&self, body: Vec<u8>) -> Result<R, CodecError> {
@@ -147,16 +204,18 @@ where
 }
 
 /// The HTTP client's protocol status is the genuine [`http::StatusCode`].
-impl<W> Transport for ReqwestClient<W>
+impl<W, I> Transport for ReqwestClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
 {
     type Status = http::StatusCode;
 }
 
-impl<W> Unary for ReqwestClient<W>
+impl<W, I> Unary for ReqwestClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
 {
     type Request<B> = Request<B>;
     type Response<R> = HttpResponse<R>;
@@ -174,39 +233,46 @@ where
         let (parts, body) = request.into_parts();
         let bytes = self
             .encode(body)
-            .map_err(|e| ClientError::Encode(e.to_string()))?;
-
-        let url = format!("{}{}", self.base_url, parts.uri);
+            .map_err(|error| self.fail(ClientError::Encode(error.to_string())))?;
+        let parts = self.prepare_request(parts)?;
 
         let response = self
             .client
-            .request(parts.method, url)
-            .headers(self.merged_headers(&parts.headers))
+            .request(parts.method, parts.uri.to_string())
+            .headers(parts.headers)
             .body(bytes)
             .send()
             .await
-            .map_err(net_err)?;
+            .map_err(|error| self.fail(net_err(error)))?;
 
-        let status = response.status();
-        let headers = response.headers().clone();
-        let body_bytes = response.bytes().await.map_err(net_err)?.to_vec();
+        let mut parts = self.response_parts(response.status(), response.headers().clone());
+        let body_bytes = response
+            .bytes()
+            .await
+            .map_err(|error| self.fail(net_err(error)))?
+            .to_vec();
 
-        if !status.is_success() {
-            return Err(super::remote_error(status, body_bytes).typed());
+        if !parts.status.is_success() {
+            return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 
         let decoded = self
             .decode(body_bytes)
-            .map_err(|e| ClientError::Decode(e.to_string()))?;
+            .map_err(|error| self.fail(ClientError::Decode(error.to_string())))?;
 
-        Ok(HttpResponse::new(status, headers, decoded))
+        Ok(HttpResponse::new(
+            parts.status,
+            std::mem::take(&mut parts.headers),
+            decoded,
+        ))
     }
 }
 
 #[cfg(not(target_family = "wasm"))]
-impl<W> HttpStreaming for ReqwestClient<W>
+impl<W, I> HttpStreaming for ReqwestClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
 {
     type ByteStream = BoxStream<'static, Result<Bytes, ClientError<http::StatusCode>>>;
 
@@ -221,26 +287,29 @@ where
         let (parts, body) = request.into_parts();
         let bytes = self
             .encode(body)
-            .map_err(|e| ClientError::Encode(e.to_string()))?;
-
-        let url = format!("{}{}", self.base_url, parts.uri);
+            .map_err(|error| self.fail(ClientError::Encode(error.to_string())))?;
+        let parts = self.prepare_request(parts)?;
 
         let response = self
             .client
-            .request(parts.method, url)
-            .headers(self.merged_headers(&parts.headers))
+            .request(parts.method, parts.uri.to_string())
+            .headers(parts.headers)
             .body(bytes)
             .send()
             .await
-            .map_err(net_err)?;
+            .map_err(|error| self.fail(net_err(error)))?;
+        let parts = self.response_parts(response.status(), response.headers().clone());
 
         // A non-success status is a pre-stream failure (the handler errored before streaming);
         // surface it as the outer `Err` rather than streaming an error body as items.
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.bytes().await.map_err(net_err)?.to_vec();
+        if !parts.status.is_success() {
+            let body = response
+                .bytes()
+                .await
+                .map_err(|error| self.fail(net_err(error)))?
+                .to_vec();
 
-            return Err(super::remote_error(status, body));
+            return Err(self.fail(super::remote_error(parts.status, body)));
         }
 
         Ok(response
@@ -251,9 +320,10 @@ where
 }
 
 #[cfg(not(target_family = "wasm"))]
-impl<W> HttpClientStreaming for ReqwestClient<W>
+impl<W, I> HttpClientStreaming for ReqwestClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
 {
     async fn send_stream<S, Resp, E>(
         &self,
@@ -265,39 +335,47 @@ where
         Resp: Send,
     {
         let (parts, body) = request.into_parts();
-        let url = format!("{}{}", self.base_url, parts.uri);
+        let parts = self.prepare_request(parts)?;
 
         let response = self
             .client
-            .request(parts.method, url)
-            .headers(self.merged_headers(&parts.headers))
+            .request(parts.method, parts.uri.to_string())
+            .headers(parts.headers)
             .body(reqwest::Body::wrap_stream(body))
             .send()
             .await
-            .map_err(net_err)?;
+            .map_err(|error| self.fail(net_err(error)))?;
 
         // A client-streaming call returns a unary response. Preserve non-success statuses as
         // remote errors before decoding the success body.
-        let status = response.status();
-        let headers = response.headers().clone();
-        let body_bytes = response.bytes().await.map_err(net_err)?.to_vec();
+        let mut parts = self.response_parts(response.status(), response.headers().clone());
+        let body_bytes = response
+            .bytes()
+            .await
+            .map_err(|error| self.fail(net_err(error)))?
+            .to_vec();
 
-        if !status.is_success() {
-            return Err(super::remote_error(status, body_bytes).typed());
+        if !parts.status.is_success() {
+            return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 
         let decoded = self
             .decode(body_bytes)
-            .map_err(|e| ClientError::Decode(e.to_string()))?;
+            .map_err(|error| self.fail(ClientError::Decode(error.to_string())))?;
 
-        Ok(HttpResponse::new(status, headers, decoded))
+        Ok(HttpResponse::new(
+            parts.status,
+            std::mem::take(&mut parts.headers),
+            decoded,
+        ))
     }
 }
 
 #[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
-impl<W, P, Req, Resp> WebsocketClient<P, Req, Resp> for ReqwestClient<W>
+impl<W, I, P, Req, Resp> WebsocketClient<P, Req, Resp> for ReqwestClient<W, I>
 where
     W: WebsocketClient<P, Req, Resp>,
+    I: ClientInterceptor + Send + Sync,
     P: super::WebsocketClientProtocol,
     Req: Send,
     Resp: Send,

@@ -7,10 +7,12 @@ use futures::{Stream, StreamExt};
 use overseerd::axum::Ndjson;
 use overseerd::axum::axum::extract::Path;
 use overseerd::axum::axum::{Json, http};
-use overseerd::axum::client::{HyperClient, ReqwestClient};
+use overseerd::axum::client::{ClientInterceptor, HyperClient, ReqwestClient};
 use overseerd::axum::prelude::*;
 use overseerd::client::{ClientError, Unary};
 use overseerd::prelude::*;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::TcpListener;
 
 #[dto]
@@ -30,6 +32,31 @@ struct SumIn {
 #[derive(PartialEq, Debug)]
 struct ItemError {
     reason: String,
+}
+
+#[derive(Clone, Default)]
+struct TestInterceptor {
+    errors: Arc<AtomicUsize>,
+}
+
+impl ClientInterceptor for TestInterceptor {
+    fn on_request(&self, request: &mut http::request::Parts) {
+        request.headers.insert(
+            "x-client-interceptor",
+            http::HeaderValue::from_static("injected"),
+        );
+    }
+
+    fn on_response(&self, response: &mut http::response::Parts) {
+        response.headers.insert(
+            "x-response-interceptor",
+            http::HeaderValue::from_static("observed"),
+        );
+    }
+
+    fn on_error<E>(&self, _error: &ClientError<http::StatusCode, E>) {
+        self.errors.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 /// A controller with a path-param route and a JSON-body route.
@@ -56,6 +83,17 @@ impl Api {
     #[post("/sum")]
     async fn sum(&self, Json(input): Json<SumIn>) -> Json<i64> {
         Json(input.a + input.b)
+    }
+
+    #[get("/interceptor")]
+    async fn interceptor(&self, headers: http::HeaderMap) -> Json<String> {
+        Json(
+            headers
+                .get("x-client-interceptor")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or_default()
+                .to_owned(),
+        )
     }
 
     /// Two path params: the client exposes them as dedicated named args (`a`, `b`).
@@ -262,6 +300,42 @@ async fn generated_client_round_trips_over_reqwest() {
         .await
         .expect("hyper collect call");
     assert_eq!(*total, 60);
+
+    // One concrete generic interceptor value is stored directly on either backend. It can mutate
+    // request/response HTTP parts and observes the actual typed client error.
+    let reqwest_interceptor = TestInterceptor::default();
+    let reqwest_backend =
+        ReqwestClient::new(format!("http://{addr}")).with_interceptor(reqwest_interceptor.clone());
+    let hooked = ApiClient::new(reqwest_backend.clone());
+    let response = hooked
+        .interceptor()
+        .await
+        .expect("reqwest interceptor call");
+    assert_eq!(*response, "injected");
+    assert_eq!(response.headers()["x-response-interceptor"], "observed");
+    let missing = http::Request::builder()
+        .method(http::Method::GET)
+        .uri("/api/missing")
+        .body(())
+        .unwrap();
+    let _ =
+        Unary::unary::<(), EchoOut, overseerd::client::Raw>(&reqwest_backend, "", missing).await;
+    assert_eq!(reqwest_interceptor.errors.load(Ordering::SeqCst), 1);
+
+    let hyper_interceptor = TestInterceptor::default();
+    let hyper_backend =
+        HyperClient::new(format!("http://{addr}")).with_interceptor(hyper_interceptor.clone());
+    let hooked = ApiClient::new(hyper_backend.clone());
+    let response = hooked.interceptor().await.expect("hyper interceptor call");
+    assert_eq!(*response, "injected");
+    assert_eq!(response.headers()["x-response-interceptor"], "observed");
+    let missing = http::Request::builder()
+        .method(http::Method::GET)
+        .uri("/api/missing")
+        .body(())
+        .unwrap();
+    let _ = Unary::unary::<(), EchoOut, overseerd::client::Raw>(&hyper_backend, "", missing).await;
+    assert_eq!(hyper_interceptor.errors.load(Ordering::SeqCst), 1);
 
     shutdown.shutdown();
     let _ = server.await;

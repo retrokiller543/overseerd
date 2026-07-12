@@ -17,7 +17,7 @@ use wasm_bindgen::prelude::*;
 
 use super::ReqwestClient;
 #[cfg(all(feature = "stomp", feature = "tungstenite"))]
-use super::StompClientTransport;
+use super::{StompClientTransport, StompConnectOptions};
 
 /// The shared connection every generated browser client is constructed from. Holds one HTTP
 /// transport (and, once [`connectStomp`](Connection::connect_stomp) has run, one STOMP socket),
@@ -51,6 +51,27 @@ impl Connection {
         }
     }
 
+    /// Installs or clears the global synchronous request callback. It receives a mutable
+    /// `ClientRequest`, whose method, URL, and headers can be changed before fetch runs.
+    #[wasm_bindgen(js_name = onRequest)]
+    pub fn on_request(&self, callback: Option<js_sys::Function>) {
+        self.http.interceptor().set_on_request(callback);
+    }
+
+    /// Installs or clears the global synchronous response callback. It receives a mutable
+    /// `ClientResponse` before status classification and body decoding.
+    #[wasm_bindgen(js_name = onResponse)]
+    pub fn on_response(&self, callback: Option<js_sys::Function>) {
+        self.http.interceptor().set_on_response(callback);
+    }
+
+    /// Installs or clears the global error callback. It receives a read-only `ClientError` with
+    /// `kind`, `message`, and an optional HTTP `status`.
+    #[wasm_bindgen(js_name = onError)]
+    pub fn on_error(&self, callback: Option<js_sys::Function>) {
+        self.http.interceptor().set_on_error(callback);
+    }
+
     /// Connects (and performs the STOMP handshake over) the WebSocket at `endpoint` — the upgrade
     /// *path* on this connection's own host (e.g. `"/ws/stomp"`). The scheme is derived from the
     /// base URL (`http`→`ws`, `https`→`wss`), so the STOMP socket rides the same host as REST. Await
@@ -58,12 +79,45 @@ impl Connection {
     #[cfg(all(feature = "stomp", feature = "tungstenite"))]
     #[wasm_bindgen(js_name = connectStomp)]
     pub async fn connect_stomp(&self, endpoint: String) -> Result<(), JsError> {
+        self.connect_stomp_with_options(endpoint, StompConnectOptions::default())
+            .await
+    }
+
+    /// Connects STOMP with standard credentials and/or custom CONNECT headers. Reconnecting first
+    /// disconnects the previous shared socket, so clients created from this `Connection` observe a
+    /// single deterministic lifecycle.
+    #[cfg(all(feature = "stomp", feature = "tungstenite"))]
+    #[wasm_bindgen(js_name = connectStompWithOptions)]
+    pub async fn connect_stomp_with_options(
+        &self,
+        endpoint: String,
+        options: StompConnectOptions,
+    ) -> Result<(), JsError> {
+        self.disconnect_stomp().await?;
+
         let url = self.ws_url(&endpoint);
-        let transport = StompClientTransport::connect(url)
+        let transport = StompClientTransport::connect_with_options(url, options)
             .await
             .map_err(|e| JsError::new(&e.to_string()))?;
 
         *self.stomp.borrow_mut() = Some(transport);
+
+        Ok(())
+    }
+
+    /// Gracefully disconnects the shared STOMP socket. Idempotent; all generated clients and live
+    /// subscriptions created from this `Connection` observe the same connection closing.
+    #[cfg(all(feature = "stomp", feature = "tungstenite"))]
+    #[wasm_bindgen(js_name = disconnectStomp)]
+    pub async fn disconnect_stomp(&self) -> Result<(), JsError> {
+        let transport = self.stomp.borrow_mut().take();
+
+        if let Some(transport) = transport {
+            transport
+                .disconnect()
+                .await
+                .map_err(|error| JsError::new(&error.to_string()))?;
+        }
 
         Ok(())
     }
@@ -114,9 +168,25 @@ impl Connection {
     /// A handle to the shared STOMP transport, or an error if `connectStomp` has not run yet.
     #[cfg(all(feature = "stomp", feature = "tungstenite"))]
     pub fn stomp(&self) -> Result<StompClientTransport, JsError> {
-        self.stomp
-            .borrow()
-            .clone()
-            .ok_or_else(|| JsError::new("STOMP is not connected — call `connectStomp(url)` first"))
+        let transport = self.stomp.borrow().clone().ok_or_else(|| {
+            JsError::new("STOMP is not connected — call `connectStomp(url)` first")
+        })?;
+
+        if !transport.is_connected() {
+            return Err(JsError::new(
+                "STOMP connection is closed — call `connectStomp(url)` to reconnect",
+            ));
+        }
+
+        Ok(transport)
+    }
+}
+
+#[cfg(all(feature = "stomp", feature = "tungstenite"))]
+impl Drop for Connection {
+    fn drop(&mut self) {
+        if let Some(transport) = self.stomp.get_mut().take() {
+            transport.disconnect_now();
+        }
     }
 }

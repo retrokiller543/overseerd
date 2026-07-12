@@ -15,7 +15,7 @@ use overseerd_client::{ClientError, MaybeSend, Transport, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes, Error as TransportError};
 use serde::de::DeserializeOwned;
 
-use super::{HttpBody, HttpClientStreaming, HttpResponse, HttpStreaming};
+use super::{ClientInterceptor, HttpBody, HttpClientStreaming, HttpResponse, HttpStreaming};
 #[cfg(all(feature = "ws", feature = "client"))]
 use super::{WebsocketClient, WsStatus};
 
@@ -28,31 +28,71 @@ type HyperBody = UnsyncBoxBody<Bytes, TransportError>;
 /// Holds a base URL (scheme + authority) the per-call path is appended to, and implements the
 /// [`Unary`] capability with a `http::Request` envelope and an [`HttpResponse`] reply.
 #[derive(Clone)]
-pub struct HyperClient<W = ()> {
+pub struct HyperClient<W = (), I: ClientInterceptor = ()> {
     client: Client<HttpConnector, HyperBody>,
     base_url: String,
+    interceptor: I,
     websocket: W,
 }
 
-impl HyperClient<()> {
+impl HyperClient<(), ()> {
     /// A client against `base_url` (e.g. `"http://localhost:3000"`) with a default pooled client.
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             client: Client::builder(TokioExecutor::new()).build_http(),
             base_url: base_url.into(),
+            interceptor: (),
             websocket: (),
         }
     }
 }
 
-impl<W> HyperClient<W> {
+impl<W, I: ClientInterceptor> HyperClient<W, I> {
     /// Attaches a websocket request/reply transport while keeping this HTTP backend.
-    pub fn with_websocket<Ws>(self, websocket: Ws) -> HyperClient<Ws> {
+    pub fn with_websocket<Ws>(self, websocket: Ws) -> HyperClient<Ws, I> {
         HyperClient {
             client: self.client,
             base_url: self.base_url,
+            interceptor: self.interceptor,
             websocket,
         }
+    }
+
+    /// Replaces the interceptor type stored directly on this client.
+    pub fn with_interceptor<J: ClientInterceptor>(self, interceptor: J) -> HyperClient<W, J> {
+        HyperClient {
+            client: self.client,
+            base_url: self.base_url,
+            interceptor,
+            websocket: self.websocket,
+        }
+    }
+
+    /// The interceptor stored on this transport.
+    pub fn interceptor(&self) -> &I {
+        &self.interceptor
+    }
+
+    fn prepare_parts<E>(
+        &self,
+        mut parts: http::request::Parts,
+    ) -> Result<http::request::Parts, ClientError<http::StatusCode, E>>
+    where
+        I: ClientInterceptor,
+    {
+        parts.uri = format!("{}{}", self.base_url, parts.uri)
+            .parse::<Uri>()
+            .map_err(|error| self.fail(ClientError::Encode(error.to_string())))?;
+        self.interceptor.on_request(&mut parts);
+        Ok(parts)
+    }
+
+    fn fail<E>(&self, error: ClientError<http::StatusCode, E>) -> ClientError<http::StatusCode, E>
+    where
+        I: ClientInterceptor,
+    {
+        self.interceptor.on_error(&error);
+        error
     }
 
     /// Encodes the body and resolves the path-only URI against the base authority, producing the
@@ -63,17 +103,15 @@ impl<W> HyperClient<W> {
     ) -> Result<Request<HyperBody>, ClientError<http::StatusCode, E>>
     where
         Self: Encodes<B>,
+        I: ClientInterceptor,
     {
         let (parts, body) = request.into_parts();
         let bytes = self
             .encode(body)
-            .map_err(|e| ClientError::Encode(e.to_string()))?;
+            .map_err(|error| self.fail(ClientError::Encode(error.to_string())))?;
+        let parts = self.prepare_parts(parts)?;
 
-        let uri: Uri = format!("{}{}", self.base_url, parts.uri)
-            .parse()
-            .map_err(|e: http::uri::InvalidUri| ClientError::Encode(e.to_string()))?;
-
-        let mut builder = Request::builder().method(parts.method).uri(uri);
+        let mut builder = Request::builder().method(parts.method).uri(parts.uri);
 
         if let Some(headers) = builder.headers_mut() {
             *headers = parts.headers;
@@ -81,7 +119,7 @@ impl<W> HyperClient<W> {
 
         builder
             .body(full_body(Bytes::from(bytes)))
-            .map_err(|e| ClientError::Encode(e.to_string()))
+            .map_err(|error| self.fail(ClientError::Encode(error.to_string())))
     }
 
     fn build_stream_request<S, E>(
@@ -90,13 +128,12 @@ impl<W> HyperClient<W> {
     ) -> Result<Request<HyperBody>, ClientError<http::StatusCode, E>>
     where
         S: Stream<Item = Result<Bytes, CodecError>> + Send + 'static,
+        I: ClientInterceptor,
     {
         let (parts, body) = request.into_parts();
-        let uri: Uri = format!("{}{}", self.base_url, parts.uri)
-            .parse()
-            .map_err(|e: http::uri::InvalidUri| ClientError::Encode(e.to_string()))?;
+        let parts = self.prepare_parts(parts)?;
 
-        let mut builder = Request::builder().method(parts.method).uri(uri);
+        let mut builder = Request::builder().method(parts.method).uri(parts.uri);
 
         if let Some(headers) = builder.headers_mut() {
             *headers = parts.headers;
@@ -104,14 +141,15 @@ impl<W> HyperClient<W> {
 
         builder
             .body(stream_body(body))
-            .map_err(|e| ClientError::Encode(e.to_string()))
+            .map_err(|error| self.fail(ClientError::Encode(error.to_string())))
     }
 }
 
 /// The body wrapper ([`HttpBody`]) already chose the format and content type; forward its bytes.
-impl<W, B> Encodes<B> for HyperClient<W>
+impl<W, I, B> Encodes<B> for HyperClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
     B: HttpBody + Send,
 {
     fn encode(&self, value: B) -> Result<Vec<u8>, CodecError> {
@@ -120,9 +158,10 @@ where
 }
 
 /// Responses are decoded as JSON by default.
-impl<W, R> Decodes<R> for HyperClient<W>
+impl<W, I, R> Decodes<R> for HyperClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
     R: DeserializeOwned,
 {
     fn decode(&self, body: Vec<u8>) -> Result<R, CodecError> {
@@ -131,16 +170,18 @@ where
 }
 
 /// The HTTP client's protocol status is the genuine [`http::StatusCode`].
-impl<W> Transport for HyperClient<W>
+impl<W, I> Transport for HyperClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
 {
     type Status = http::StatusCode;
 }
 
-impl<W> Unary for HyperClient<W>
+impl<W, I> Unary for HyperClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
 {
     type Request<B> = Request<B>;
     type Response<R> = HttpResponse<R>;
@@ -156,33 +197,37 @@ where
         Resp: MaybeSend,
     {
         let request = self.build_request(request)?;
-        let response = self.client.request(request).await.map_err(net_err)?;
-        let status = response.status();
-        let headers = response.headers().clone();
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|error| self.fail(net_err(error)))?;
+        let (mut parts, body) = response.into_parts();
+        self.interceptor.on_response(&mut parts);
 
-        let body_bytes = response
-            .into_body()
+        let body_bytes = body
             .collect()
             .await
-            .map_err(net_err)?
+            .map_err(|error| self.fail(net_err(error)))?
             .to_bytes()
             .to_vec();
 
-        if !status.is_success() {
-            return Err(super::remote_error(status, body_bytes).typed());
+        if !parts.status.is_success() {
+            return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 
         let decoded = self
             .decode(body_bytes)
-            .map_err(|e| ClientError::Decode(e.to_string()))?;
+            .map_err(|error| self.fail(ClientError::Decode(error.to_string())))?;
 
-        Ok(HttpResponse::new(status, headers, decoded))
+        Ok(HttpResponse::new(parts.status, parts.headers, decoded))
     }
 }
 
-impl<W> HttpStreaming for HyperClient<W>
+impl<W, I> HttpStreaming for HyperClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
 {
     type ByteStream = BoxStream<'static, Result<Bytes, ClientError<http::StatusCode>>>;
 
@@ -195,25 +240,29 @@ where
         B: Send,
     {
         let request = self.build_request(request)?;
-        let response = self.client.request(request).await.map_err(net_err)?;
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|error| self.fail(net_err(error)))?;
+        let (mut parts, body) = response.into_parts();
+        self.interceptor.on_response(&mut parts);
 
         // A non-success status is a pre-stream failure; surface it as the outer `Err` rather than
         // streaming an error body as items.
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response
-                .into_body()
+        if !parts.status.is_success() {
+            let body = body
                 .collect()
                 .await
-                .map_err(net_err)?
+                .map_err(|error| self.fail(net_err(error)))?
                 .to_bytes()
                 .to_vec();
 
-            return Err(super::remote_error(status, body));
+            return Err(self.fail(super::remote_error(parts.status, body)));
         }
 
         // Body frames → data-chunk stream; trailer frames are dropped.
-        let stream = BodyStream::new(response.into_body())
+        let stream = BodyStream::new(body)
             .filter_map(|frame| async move {
                 match frame {
                     Ok(frame) => frame.into_data().ok().map(Ok),
@@ -226,9 +275,10 @@ where
     }
 }
 
-impl<W> HttpClientStreaming for HyperClient<W>
+impl<W, I> HttpClientStreaming for HyperClient<W, I>
 where
     W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
 {
     async fn send_stream<S, Resp, E>(
         &self,
@@ -240,34 +290,38 @@ where
         Resp: Send,
     {
         let request = self.build_stream_request(request)?;
-        let response = self.client.request(request).await.map_err(net_err)?;
-        let status = response.status();
-        let headers = response.headers().clone();
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|error| self.fail(net_err(error)))?;
+        let (mut parts, body) = response.into_parts();
+        self.interceptor.on_response(&mut parts);
 
-        let body_bytes = response
-            .into_body()
+        let body_bytes = body
             .collect()
             .await
-            .map_err(net_err)?
+            .map_err(|error| self.fail(net_err(error)))?
             .to_bytes()
             .to_vec();
 
-        if !status.is_success() {
-            return Err(super::remote_error(status, body_bytes).typed());
+        if !parts.status.is_success() {
+            return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 
         let decoded = self
             .decode(body_bytes)
-            .map_err(|e| ClientError::Decode(e.to_string()))?;
+            .map_err(|error| self.fail(ClientError::Decode(error.to_string())))?;
 
-        Ok(HttpResponse::new(status, headers, decoded))
+        Ok(HttpResponse::new(parts.status, parts.headers, decoded))
     }
 }
 
 #[cfg(all(feature = "ws", feature = "client"))]
-impl<W, P, Req, Resp> WebsocketClient<P, Req, Resp> for HyperClient<W>
+impl<W, I, P, Req, Resp> WebsocketClient<P, Req, Resp> for HyperClient<W, I>
 where
     W: WebsocketClient<P, Req, Resp>,
+    I: ClientInterceptor + Send + Sync,
     P: super::WebsocketClientProtocol,
     Req: Send,
     Resp: Send,
