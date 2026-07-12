@@ -21,22 +21,22 @@ pub trait ClientInterceptor {
 
 impl ClientInterceptor for () {}
 
-/// The default interceptor stored by [`ReqwestClient`](super::ReqwestClient).
-#[cfg(not(target_family = "wasm"))]
+/// The default interceptor stored by the bundled HTTP client transports.
+#[cfg(not(all(target_family = "wasm", feature = "reqwest")))]
 pub type DefaultClientInterceptor = ();
 
 /// The default interceptor stored by [`ReqwestClient`](super::ReqwestClient) in a browser build.
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 pub type DefaultClientInterceptor = WasmClientInterceptor;
 
 /// Browser interceptor holding the three JavaScript callbacks directly.
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 #[derive(Clone, Default)]
 pub struct WasmClientInterceptor {
     callbacks: std::sync::Arc<std::sync::RwLock<WasmCallbacks>>,
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 #[derive(Default)]
 struct WasmCallbacks {
     request: Option<js_sys::Function>,
@@ -44,7 +44,7 @@ struct WasmCallbacks {
     error: Option<js_sys::Function>,
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 impl WasmClientInterceptor {
     pub(crate) fn set_on_request(&self, callback: Option<js_sys::Function>) {
         self.callbacks
@@ -89,7 +89,7 @@ impl WasmClientInterceptor {
     }
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 impl ClientInterceptor for WasmClientInterceptor {
     fn on_request(&self, request: &mut request::Parts) {
         use wasm_bindgen::JsValue;
@@ -151,17 +151,17 @@ impl ClientInterceptor for WasmClientInterceptor {
     }
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 fn empty_request_parts() -> request::Parts {
     http::Request::new(()).into_parts().0
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 fn empty_response_parts() -> response::Parts {
     http::Response::new(()).into_parts().0
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 fn error_kind<E>(error: &ClientError<StatusCode, E>) -> &'static str {
     match error {
         ClientError::Transport(_) => "transport",
@@ -172,7 +172,7 @@ fn error_kind<E>(error: &ClientError<StatusCode, E>) -> &'static str {
     }
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 fn remote_status<E>(error: &ClientError<StatusCode, E>) -> Option<u16> {
     match error {
         ClientError::Remote(error) => Some(error.code().as_u16()),
@@ -180,7 +180,7 @@ fn remote_status<E>(error: &ClientError<StatusCode, E>) -> Option<u16> {
     }
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 fn get_header(headers: &http::HeaderMap, name: &str) -> Option<String> {
     headers
         .get(name)
@@ -188,7 +188,7 @@ fn get_header(headers: &http::HeaderMap, name: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 fn set_header(
     headers: &mut http::HeaderMap,
     name: String,
@@ -206,13 +206,13 @@ fn set_header(
     Ok(())
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = ClientRequest)]
 struct WasmRequestParts {
     state: std::rc::Rc<std::cell::RefCell<request::Parts>>,
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 #[wasm_bindgen::prelude::wasm_bindgen(js_class = ClientRequest)]
 impl WasmRequestParts {
     #[wasm_bindgen::prelude::wasm_bindgen(getter)]
@@ -257,13 +257,13 @@ impl WasmRequestParts {
     }
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = ClientResponse)]
 struct WasmResponseParts {
     state: std::rc::Rc<std::cell::RefCell<response::Parts>>,
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 #[wasm_bindgen::prelude::wasm_bindgen(js_class = ClientResponse)]
 impl WasmResponseParts {
     #[wasm_bindgen::prelude::wasm_bindgen(getter)]
@@ -294,7 +294,7 @@ impl WasmResponseParts {
     }
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = ClientError)]
 struct WasmError {
     kind: String,
@@ -302,7 +302,7 @@ struct WasmError {
     status: Option<u16>,
 }
 
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 #[wasm_bindgen::prelude::wasm_bindgen(js_class = ClientError)]
 impl WasmError {
     #[wasm_bindgen::prelude::wasm_bindgen(getter)]

@@ -92,6 +92,26 @@ jobs:
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
         run: cargo build -p ${{ matrix.crate }} --all-features --locked
 
+  # The axum client is intentionally transport-generic on wasm. Check both the backend-free SDK
+  # surface and the default browser fetch backend so optional dependency and capability bounds do
+  # not regress unnoticed.
+  wasm-client:
+    name: Wasm clients
+    runs-on: ubuntu-latest
+    steps:
+      - *checkout
+      - *cache
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Check transport-generic client
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo check -p overseerd-axum --target wasm32-unknown-unknown --no-default-features --features client --locked
+      - name: Check reqwest browser client
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo check -p overseerd-axum --target wasm32-unknown-unknown --no-default-features --features reqwest --locked
+
   # Full workspace test suite via nextest. Note: nextest does not run doctests.
   test:
     name: Test suite
