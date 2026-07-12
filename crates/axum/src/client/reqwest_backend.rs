@@ -12,7 +12,7 @@ use std::sync::{Arc, RwLock};
 
 use http::header::HeaderMap;
 use http::{Request, Uri};
-use overseerd_client::{ClientError, MaybeSend, Transport, Unary};
+use overseerd_client::{ClientError, MaybeSend, MaybeSync, Transport, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
@@ -206,16 +206,16 @@ where
 /// The HTTP client's protocol status is the genuine [`http::StatusCode`].
 impl<W, I> Transport for ReqwestClient<W, I>
 where
-    W: Send + Sync,
-    I: ClientInterceptor + Send + Sync,
+    W: MaybeSend + MaybeSync,
+    I: ClientInterceptor + MaybeSend + MaybeSync,
 {
     type Status = http::StatusCode;
 }
 
 impl<W, I> Unary for ReqwestClient<W, I>
 where
-    W: Send + Sync,
-    I: ClientInterceptor + Send + Sync,
+    W: MaybeSend + MaybeSync,
+    I: ClientInterceptor + MaybeSend + MaybeSync,
 {
     type Request<B> = Request<B>;
     type Response<R> = HttpResponse<R>;
@@ -267,6 +267,15 @@ where
         ))
     }
 }
+
+// Keep the default browser transport wired into the target-relaxed client capabilities. This is a
+// compile-time assertion: no wasm test runner is needed.
+#[cfg(target_family = "wasm")]
+const _: fn() = || {
+    fn assert_client_capabilities<T: Transport + Unary>() {}
+
+    assert_client_capabilities::<ReqwestClient>();
+};
 
 #[cfg(not(target_family = "wasm"))]
 impl<W, I> HttpStreaming for ReqwestClient<W, I>

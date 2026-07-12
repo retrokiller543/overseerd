@@ -34,7 +34,7 @@ pub use body::{Form, HttpBody, Json, Multipart, OctetStream, RawForm};
 #[cfg(all(target_family = "wasm", feature = "reqwest"))]
 pub use connection::Connection;
 pub use headers::RequestHeaders;
-#[cfg(target_family = "wasm")]
+#[cfg(all(target_family = "wasm", feature = "reqwest"))]
 pub use interceptor::WasmClientInterceptor;
 pub use interceptor::{ClientInterceptor, DefaultClientInterceptor};
 pub use response::HttpResponse;
