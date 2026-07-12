@@ -6,16 +6,16 @@
 //!
 //! ```text
 //! cargo run -p overseerd-example-http
-//! curl localhost:3001/greet/world
-//! curl -X POST localhost:3001/greet -H 'content-type: application/json' -d '"there"'
-//! curl localhost:3001/greet/world/ticket
+//! curl localhost:3000/greet/world
+//! curl -X POST localhost:3000/greet -H 'content-type: application/json' -d '"there"'
+//! curl localhost:3000/greet/world/ticket
 //!
 //! # WebSocket (using websocat: https://github.com/vi/websocat)
-//! echo '{"dest":"greet","id":1,"payload":{"who":"world"}}' | websocat ws://localhost:3001/ws
+//! echo '{"dest":"greet","id":1,"payload":{"who":"world"}}' | websocat ws://localhost:3000/ws
 //! # → {"dest":"greet","id":1,"ok":{"message":"Hello, world!","count":1}}
 //!
 //! # Middleware (see the library's `auth` module):
-//! curl localhost:3001/me/whoami -H 'authorization: Bearer alice'
+//! curl localhost:3000/me/whoami -H 'authorization: Bearer alice'
 //! # → {"name":"user:alice","same_instance":true}
 //! ```
 
@@ -30,8 +30,6 @@ extern crate overseerd_example_http;
 // so the bin target still compiles under `cargo build --target wasm32`).
 #[cfg(not(target_family = "wasm"))]
 mod server {
-    use std::net::SocketAddr;
-
     use overseerd::axum::Stomp;
     use overseerd::axum::prelude::*;
     use overseerd::prelude::*;
@@ -57,10 +55,10 @@ mod server {
 
         println!("{app}");
 
-        let addr = SocketAddr::from(([127, 0, 0, 1], 3001));
+        let addr = app.protocol().configured_addr();
         println!("listening on http://{addr}");
 
-        app.serve(addr).await
+        app.serve_configured().await
     }
 }
 

@@ -106,7 +106,6 @@ impl GreetController {
 
 ```rust
 // main.rs — build and serve (you own the runtime)
-use std::net::SocketAddr;
 use overseerd::axum::prelude::*;
 use overseerd::prelude::*;
 
@@ -123,8 +122,21 @@ async fn main() -> overseerd::axum::Result<()> {
     .build()
     .await?;
 
-    app.serve(SocketAddr::from(([127, 0, 0, 1], 3000))).await
+    app.serve_configured().await
 }
+```
+
+`AxumPlugin` always binds `[axum]`; every field has an environment-aware default, so the example
+serves on `127.0.0.1:3000` even without a config file. Override listener and server-wide limits in
+`application.toml` (or with the corresponding `AXUM_*` environment variables):
+
+```toml
+[axum]
+bind = "0.0.0.0"
+port = 8080
+max_request_body_bytes = 2097152
+request_timeout_ms = 30000
+graceful_shutdown_timeout_ms = 30000
 ```
 
 ## An RPC daemon
@@ -190,6 +202,32 @@ let client = GreetControllerClient::new(ReqwestClient::new("http://localhost:300
 let greeting = client.greet("world".into()).await?; // -> Greeting, fully typed
 ```
 
+Both native HTTP backends store a generic interceptor value directly:
+
+```rust
+use overseerd::axum::client::{ClientInterceptor, ReqwestClient};
+use overseerd::axum::http;
+
+struct Hooks;
+
+impl ClientInterceptor for Hooks {
+    fn on_request(&self, request: &mut http::request::Parts) {
+        request.headers.insert("authorization", "Bearer token".parse().unwrap());
+    }
+
+    fn on_response(&self, response: &mut http::response::Parts) {
+        tracing::debug!(status = %response.status, "client response");
+    }
+
+    fn on_error<E>(&self, error: &overseerd::client::ClientError<http::StatusCode, E>) {
+        tracing::error!(%error, "client call failed");
+    }
+}
+
+let transport = ReqwestClient::new("http://localhost:3000").with_interceptor(Hooks);
+let client = GreetControllerClient::new(transport);
+```
+
 A route the client can't express (e.g. a streamed body over HTTP/1.1) is simply absent from the
 generated client — a protocol limit expressed as a compile error at the call site, never a wrong
 call.
@@ -202,11 +240,19 @@ server code is `cfg`-stripped; only the generated client survives, exported to J
 controller's own name with TypeScript types from your `#[dto]`s.
 
 ```js
-import init, { Connection, GreetControllerClient } from "./pkg";
+import init, {
+  Connection,
+  GreetControllerClient,
+  StompConnectOptions,
+} from "./pkg";
 await init();
 
 // One shared Connection backs every client — one HTTP pool (+ cookies) and, for STOMP, one socket.
 const conn = new Connection("http://localhost:3000");
+conn.onRequest((request) => request.setHeader("authorization", "Bearer token"));
+conn.onResponse((response) => console.debug("response", response.status));
+conn.onError((error) => console.error(error.kind, error.message, error.status));
+
 const greet = new GreetControllerClient(conn);
 
 const greeting = await greet.greet("world"); // typed as Greeting in TS
@@ -216,7 +262,11 @@ STOMP works in the browser too — publish and subscribe over the shared connect
 message callbacks generated from your `#[topics]` enum:
 
 ```js
-await conn.connectStomp("/ws/stomp");         // ws:// derived from the base URL
+const stompAuth = new StompConnectOptions();
+stompAuth.setLogin("alice");
+stompAuth.setPasscode("secret");
+stompAuth.addHeader("tenant", "acme");
+await conn.connectStompWithOptions("/ws/stomp", stompAuth); // ws:// derived from the base URL
 
 const topics = new ChatTopicClient(conn);
 const sub = await topics.subscribe_room("general", (msg /* : ChatMessage */) => {
@@ -227,6 +277,7 @@ const chat = new ChatHandlerClient(conn);      // same socket
 await chat.on_chat({ room: "general", sender: "me", text: "hi" });
 
 sub.unsubscribe();
+await conn.disconnectStomp();                  // closes the socket shared by every client
 ```
 
 The `overseerd` DI/config core is wasm-safe; only the server-hosting pieces (socket transports, file

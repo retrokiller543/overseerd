@@ -14,6 +14,7 @@
 //! v1 covers the core pub/sub path; see `docs/stomp.md` for what is deferred (RECEIPT,
 //! heart-beating, ACK modes, transactions, destination wildcards).
 
+mod auth;
 mod body;
 mod broker;
 mod error;
@@ -42,6 +43,9 @@ use super::{
 };
 use crate::scope::Request as RequestScope;
 
+pub use auth::{
+    StompAuthFuture, StompAuthenticationError, StompAuthenticator, StompConnect, StompPrincipal,
+};
 pub use body::{JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic, TopicParam};
 pub use broker::{Broker, ConnectionId};
 pub use error::StompError;
@@ -64,6 +68,10 @@ pub struct StompConfig {
 
     /// The protocol versions the server accepts, highest preference first.
     pub versions: Vec<StompVersion>,
+
+    /// Optional CONNECT authenticator. When present, a connection receives `CONNECTED` only after
+    /// it returns a principal; a rejection receives `ERROR` and is closed.
+    pub authenticator: Option<Arc<dyn StompAuthenticator>>,
 }
 
 impl Default for StompConfig {
@@ -71,7 +79,20 @@ impl Default for StompConfig {
         Self {
             server_heartbeat: None,
             versions: vec![StompVersion::V1_2, StompVersion::V1_1],
+            authenticator: None,
         }
+    }
+}
+
+impl StompConfig {
+    /// Requires successful authentication for this endpoint using `authenticator`.
+    pub fn with_authenticator<A>(mut self, authenticator: A) -> Self
+    where
+        A: StompAuthenticator,
+    {
+        self.authenticator = Some(Arc::new(authenticator));
+
+        self
     }
 }
 
@@ -132,13 +153,11 @@ impl WebsocketProtocol for Stomp {
         mut shutdown: WsShutdown,
     ) {
         let (mut sender, mut receiver) = socket.split();
-        let conn_id = self.broker.register();
-
         // The handshake must come first: read one frame and expect CONNECT/STOMP. A non-CONNECT
         // opener (or a parse failure) is a protocol violation — reply ERROR and abandon the socket.
-        let negotiated = match receiver.next().await {
-            Some(Ok(message)) => match self.negotiate(message) {
-                Ok(version) => version,
+        let (negotiated, principal) = match receiver.next().await {
+            Some(Ok(message)) => match self.negotiate(message).await {
+                Ok(handshake) => handshake,
 
                 Err(error) => {
                     let _ = sender.send(to_message(error_frame(&error))).await;
@@ -149,6 +168,9 @@ impl WebsocketProtocol for Stomp {
 
             _ => return,
         };
+
+        // A rejected connection never enters the broker registry.
+        let conn_id = self.broker.register();
 
         let (tx, rx) = mpsc::channel::<OutFrame>(OUTBOUND_BUFFER);
         let writer = tokio::spawn(writer_task(sender, rx, self.config.server_heartbeat));
@@ -176,7 +198,7 @@ impl WebsocketProtocol for Stomp {
                         Some(Ok(Message::Text(text))) if is_heartbeat(text.as_bytes()) => {}
 
                         Some(Ok(Message::Text(text))) => {
-                            if self.dispatch(text.as_bytes().to_vec(), &tx, conn_id, &connection).await.is_break() {
+                            if self.dispatch(text.as_bytes().to_vec(), &tx, conn_id, &connection, &principal).await.is_break() {
                                 break;
                             }
                         }
@@ -184,7 +206,7 @@ impl WebsocketProtocol for Stomp {
                         Some(Ok(Message::Binary(bytes))) if is_heartbeat(&bytes) => {}
 
                         Some(Ok(Message::Binary(bytes))) => {
-                            if self.dispatch(bytes.to_vec(), &tx, conn_id, &connection).await.is_break() {
+                            if self.dispatch(bytes.to_vec(), &tx, conn_id, &connection, &principal).await.is_break() {
                                 break;
                             }
                         }
@@ -218,7 +240,10 @@ impl Stomp {
 
     /// Negotiates the protocol version from a CONNECT/STOMP frame, erroring on a non-CONNECT opener
     /// or when no offered version is supported.
-    fn negotiate(&self, message: Message) -> Result<StompVersion, StompError> {
+    async fn negotiate(
+        &self,
+        message: Message,
+    ) -> Result<(StompVersion, StompPrincipal), StompError> {
         let bytes = match message {
             Message::Text(text) => text.as_bytes().to_vec(),
             Message::Binary(bytes) => bytes.to_vec(),
@@ -243,14 +268,23 @@ impl Stomp {
 
         let offered: &StompVersions = connect.accept_version().value();
 
-        self.config
+        let version = self
+            .config
             .versions
             .iter()
             .find(|candidate| offered.iter().any(|v| v == *candidate))
             .cloned()
             .ok_or_else(|| StompError::VersionMismatch {
                 offered: offered.to_string(),
-            })
+            })?;
+
+        let connect = connect_metadata(&connect);
+        let principal = match &self.config.authenticator {
+            Some(authenticator) => authenticator.authenticate(connect).await?,
+            None => StompPrincipal::anonymous(),
+        };
+
+        Ok((version, principal))
     }
 
     /// Parses and routes one inbound frame. Returns [`ControlFlow::Break`] when the connection
@@ -261,6 +295,7 @@ impl Stomp {
         tx: &mpsc::Sender<OutFrame>,
         conn_id: ConnectionId,
         connection: &Arc<ScopeContainer>,
+        principal: &StompPrincipal,
     ) -> std::ops::ControlFlow<()> {
         use std::ops::ControlFlow::{Break, Continue};
 
@@ -324,16 +359,11 @@ impl Stomp {
                         .map(bytes::Bytes::copy_from_slice)
                         .unwrap_or_default(),
                 };
+                let headers =
+                    StompHeaders::new(send_header_seed(&destination, content_type, custom_headers));
 
-                self.route_send(
-                    &destination,
-                    body,
-                    content_type,
-                    custom_headers,
-                    conn_id,
-                    connection,
-                )
-                .await;
+                self.route_send(&destination, body, headers, conn_id, connection, principal)
+                    .await;
                 self.send_receipt(tx, receipt).await;
 
                 Continue(())
@@ -365,10 +395,10 @@ impl Stomp {
         &self,
         destination: &str,
         body: StompBody,
-        content_type: Option<String>,
-        custom_headers: Vec<(String, String)>,
+        headers: StompHeaders,
         conn_id: ConnectionId,
         connection: &Arc<ScopeContainer>,
+        principal: &StompPrincipal,
     ) {
         let Some(handler) = self.app_routes.get(destination) else {
             self.broker.publish(destination, &body, &[]);
@@ -376,16 +406,18 @@ impl Stomp {
             return;
         };
 
-        let header_list = send_header_seed(destination, content_type, custom_headers);
-
         let seeds = vec![
             BoxedComponent {
                 ty: TypeDescriptor::of::<StompHeaders>("StompHeaders"),
-                value: Box::new(StompHeaders::new(header_list)),
+                value: Box::new(headers),
             },
             BoxedComponent {
                 ty: TypeDescriptor::of::<StompSession>("StompSession"),
                 value: Box::new(StompSession::new(Arc::clone(&self.broker), conn_id)),
+            },
+            BoxedComponent {
+                ty: TypeDescriptor::of::<StompPrincipal>("StompPrincipal"),
+                value: Box::new(principal.clone()),
             },
         ];
 
@@ -606,4 +638,25 @@ fn send_header_seed(
     header_list.extend(custom_headers);
 
     header_list
+}
+
+/// Copies the authentication-relevant CONNECT fields out of the parser's borrowing frame.
+fn connect_metadata(connect: &stomp_parser::client::ConnectFrame<'_>) -> StompConnect {
+    let headers = connect
+        .custom
+        .iter()
+        .map(|header| {
+            (
+                header.header_name().to_owned(),
+                (*header.value()).to_owned(),
+            )
+        })
+        .collect();
+
+    StompConnect::new(
+        connect.host().value().to_owned(),
+        connect.login().map(|value| value.value().to_owned()),
+        connect.passcode().map(|value| value.value().to_owned()),
+        headers,
+    )
 }

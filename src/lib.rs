@@ -300,7 +300,9 @@ pub mod axum {
         #[cfg(not(target_family = "wasm"))]
         pub use super::scope::Request;
         #[cfg(not(target_family = "wasm"))]
-        pub use super::{App, AxumAppBuilder, AxumPlugin, Controller, Inject};
+        pub use super::{
+            App, AxumAppBuilder, AxumAppServe, AxumConfig, AxumPlugin, Controller, Inject,
+        };
 
         /// WebSocket controller imports (`#[controller(ws = ..)]` + `#[message]`, the per-connection
         /// [`Connection`](super::scope::Connection) scope), available with the `ws` feature.
@@ -313,7 +315,10 @@ pub mod axum {
         /// [`Publisher`](super::Publisher) and [`Topic`](super::Topic)), available with the
         /// `stomp` feature.
         #[cfg(all(feature = "stomp", not(target_family = "wasm")))]
-        pub use super::{Publisher, Stomp, StompSession, StompTopicBus, Topic, topics};
+        pub use super::{
+            Publisher, Stomp, StompConfig, StompConnect, StompPrincipal, StompSession,
+            StompTopicBus, Topic, topics,
+        };
     }
 }
 

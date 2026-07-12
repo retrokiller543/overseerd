@@ -1,6 +1,7 @@
 //! The axum protocol plugin and its builder extension.
 
 use std::convert::Infallible;
+use std::future::Future;
 use std::sync::Arc;
 
 use axum::extract::Request;
@@ -8,10 +9,12 @@ use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::Route;
 use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin};
+use overseerd_config::{ConfigBinding, ContainerConfigExt};
 use overseerd_core::{Descriptor, Scope, TypeDescriptor};
 use overseerd_di::{BoxedComponent, Component, ComponentDescriptor};
 use tower::{Layer, Service};
 
+use crate::config::{AXUM_CONFIG_PATH, AxumConfig};
 use crate::controller::{CONTROLLERS, ControllerDescriptor};
 use crate::extract::ScopeHandle;
 use crate::middleware::{AxumMiddleware, MiddlewareApplier, as_layer};
@@ -75,12 +78,19 @@ impl Plugin for AxumPlugin {
     }
 
     fn register(&self, registry: &mut AppRegistry) {
+        // Protocol configuration is a builtin: it is present even when the app does not call
+        // `auto_discover`, and its field defaults make a missing `[axum]` subtree valid.
+        registry
+            .config_bindings
+            .push(ConfigBinding::of::<AxumConfig>(AXUM_CONFIG_PATH));
         registry.components.push(REQUEST_META_DESCRIPTOR);
 
         #[cfg(feature = "stomp")]
-        registry
-            .components
-            .push(crate::ws::stomp::STOMP_TOPIC_BUS_DESCRIPTOR);
+        {
+            registry
+                .components
+                .push(crate::ws::stomp::STOMP_TOPIC_BUS_DESCRIPTOR);
+        }
     }
 }
 
@@ -93,6 +103,12 @@ impl ProtocolPlugin for AxumPlugin {
     const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
 
     fn build(self, runtime: &AppRuntime) -> crate::Result<Axum> {
+        let config = runtime
+            .root()
+            .config::<AxumConfig>(AXUM_CONFIG_PATH)
+            .expect("AxumConfig missing from config store; AxumPlugin should register it");
+        let config_snapshot = config.snapshot();
+
         // Merge every controller's routes. Each builder resolves its controller singleton
         // from the runtime and captures it in the route handlers, so the merged router owns
         // ready-to-call handlers.
@@ -134,6 +150,22 @@ impl ProtocolPlugin for AxumPlugin {
         // of user middleware — raw or DI-backed — can `Inject` request-scoped state.
         for applier in self.middleware.into_iter().rev() {
             router = applier(runtime, router);
+        }
+
+        // Protocol-wide limits are real router policy, not passive configuration. The body limit
+        // feeds Axum's buffered extractors; the timeout covers user middleware and the handler.
+        router = router.layer(axum::extract::DefaultBodyLimit::max(
+            config_snapshot.max_request_body_bytes,
+        ));
+
+        if config_snapshot.request_timeout_ms > 0 {
+            let timeout = std::time::Duration::from_millis(config_snapshot.request_timeout_ms);
+            router = router.layer(middleware::from_fn(move |request, next: Next| async move {
+                match tokio::time::timeout(timeout, next.run(request)).await {
+                    Ok(response) => response,
+                    Err(_) => axum::http::StatusCode::REQUEST_TIMEOUT.into_response(),
+                }
+            }));
         }
 
         // The bridge: a per-request layer that opens the Request scope (parented at the
@@ -184,12 +216,29 @@ impl ProtocolPlugin for AxumPlugin {
             },
         ));
 
-        let axum = Axum::new(router);
+        let axum = Axum::new(router, config);
 
         #[cfg(feature = "ws")]
         let axum = axum.with_ws_endpoints(ws_endpoints);
 
         Ok(axum)
+    }
+}
+
+/// Configured serving for a built axum app.
+///
+/// This is the zero-boilerplate counterpart to [`overseerd_app::App::serve`]: it binds the
+/// listener described by the plugin-owned [`AxumConfig`] instead of requiring a `SocketAddr` at
+/// the call site. Explicit `SocketAddr` and pre-bound `TcpListener` serving remain available for
+/// tests and advanced embedding.
+pub trait AxumAppServe {
+    /// Serves on the listener configured at [`AXUM_CONFIG_PATH`].
+    fn serve_configured(self) -> impl Future<Output = crate::Result<()>> + Send;
+}
+
+impl AxumAppServe for overseerd_app::App<AxumPlugin> {
+    fn serve_configured(self) -> impl Future<Output = crate::Result<()>> + Send {
+        self.serve(())
     }
 }
 

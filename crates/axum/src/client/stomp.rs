@@ -160,7 +160,7 @@ impl StompSubscribe for () {
 mod transport;
 
 #[cfg(feature = "tungstenite")]
-pub use transport::StompClientTransport;
+pub use transport::{StompClientTransport, StompConnectOptions};
 
 // The wasm/JS subscription bridge (callback + handle). wasm-only; generated `subscribe_*` bindings
 // and the `#[topics]` macro's codegen use `pump` + `StompSubscription`.
