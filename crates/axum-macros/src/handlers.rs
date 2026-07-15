@@ -357,9 +357,10 @@ impl ParseMethod for AxumHandlers {
 
     /// The axum extension's client-side extras: the `Dto` wire-type assertions and the wasm
     /// `#[wasm_bindgen]` binding methods. The wasm backend is chosen by the block's protocol — a
-    /// STOMP block's `SEND` methods bind over the STOMP socket, an HTTP block over the fetch client,
-    /// and a JsonWs request/reply block has no wasm transport yet (`None`). The extension owns this
-    /// target gating, so the framework core never learns about wasm.
+    /// pub/sub block's message methods bind over the protocol's socket (generically, via
+    /// `TopicWasmClient`), an HTTP block over the fetch client, and a JsonWs request/reply block has
+    /// no wasm transport yet (`None`). The extension owns this target gating, so the framework core
+    /// never learns about wasm.
     fn extra_client_tokens(
         &self,
         client_ident: &Ident,
@@ -368,7 +369,9 @@ impl ParseMethod for AxumHandlers {
     ) -> TokenStream {
         let backend = match &self.ws_protocol {
             Some(protocol) if is_pubsub_protocol(Some(protocol)) => {
-                Some(client::WasmBackend::Stomp)
+                Some(client::WasmBackend::PubSub {
+                    protocol: protocol.clone(),
+                })
             }
             // A JsonWs request/reply block: no wasm ws transport yet.
             Some(_) => None,
