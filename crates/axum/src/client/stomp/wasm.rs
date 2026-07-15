@@ -24,7 +24,7 @@ use super::{StompClientTransport, Subscription, TopicSubscribe};
 /// protocol-specific step in the generated wasm topics binding; the rest (the [`TopicSubscription`]
 /// handle and the [`pump`]) is protocol-agnostic. STOMP implements it over its shared socket; a new
 /// protocol implements its own, and the generated binding names neither concretely.
-pub trait TopicWasmClient: TopicClientProtocol {
+pub trait TopicWasmClient: TopicClientProtocol + Sized {
     /// The concrete transport, obtained from the shared connection, that speaks this protocol.
     type Transport: TopicSubscribe<Self> + Clone + Unpin + 'static;
 

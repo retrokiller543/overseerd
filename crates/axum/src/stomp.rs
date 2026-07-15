@@ -18,6 +18,9 @@ use std::borrow::Cow;
 use bytes::Bytes;
 use overseerd_transport::CodecError;
 
+#[cfg(all(test, feature = "ws", not(target_family = "wasm")))]
+mod tests;
+
 #[cfg(not(target_family = "wasm"))]
 use std::collections::HashMap;
 #[cfg(not(target_family = "wasm"))]
