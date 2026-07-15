@@ -29,6 +29,14 @@ pub struct ChatMessage {
     pub text: String,
 }
 
+/// The reply to a request `#[message]`: a room and its message count after recording.
+#[dto]
+#[derive(Clone)]
+pub struct RoomCount {
+    pub room: String,
+    pub count: usize,
+}
+
 /// The chat broadcast topics — one static, one templated, in the same set.
 ///
 /// `Chat` is a global firehose: `/topic/chat` carries every room's messages (a subscriber filters
@@ -176,7 +184,7 @@ impl ChatHandler {
     /// message (like `on_chat`) and echoes back the room's new message count so the caller learns its
     /// own position without subscribing.
     #[message("/app/count")]
-    async fn count(&self, message: ChatMessage) -> Result<usize, CodecError> {
+    async fn count(&self, message: ChatMessage) -> Result<RoomCount, CodecError> {
         self.state.record(&message);
 
         let count = self
@@ -184,7 +192,10 @@ impl ChatHandler {
             .room(&message.room)
             .map_or(0, |room| room.with_messages(<[ChatMessage]>::len));
 
-        Ok(count)
+        Ok(RoomCount {
+            room: message.room,
+            count,
+        })
     }
 }
 
@@ -391,8 +402,9 @@ mod tests {
             .await
             .expect("second count reply");
 
-        assert_eq!(first, 1);
-        assert_eq!(second, 2);
+        assert_eq!(first.room, "general");
+        assert_eq!(first.count, 1);
+        assert_eq!(second.count, 2);
 
         shutdown.shutdown();
         let _ = server.await;

@@ -393,16 +393,24 @@ fn wasm_client_methods(
             };
 
             let response = &m.response;
+            let response_is_unit = tuple_elems(response).is_some_and(|elems| elems.is_empty());
 
-            // The reply shape depends on the transport: an HTTP unary yields an `HttpResponse`
-            // envelope whose body is the typed payload; a STOMP `SEND` yields unit (`void` in JS).
+            // The reply shape depends on the transport and the method: an HTTP unary yields an
+            // `HttpResponse` envelope whose body is the typed payload; a STOMP `SEND` yields unit
+            // (`void` in JS); a STOMP request yields its decoded reply value directly (no envelope).
             let (ret, ret_expr) = match backend {
                 WasmBackend::Http if ts => (
                     quote!(::tsify::Ts<#response>),
                     quote!(__response.into_body().into_ts().map_err(::wasm_bindgen::JsError::from)?),
                 ),
                 WasmBackend::Http => (quote!(#response), quote!(__response.into_body())),
-                WasmBackend::Stomp => (quote!(()), quote!(__response)),
+
+                WasmBackend::Stomp if response_is_unit => (quote!(()), quote!(__response)),
+                WasmBackend::Stomp if ts => (
+                    quote!(::tsify::Ts<#response>),
+                    quote!(__response.into_ts().map_err(::wasm_bindgen::JsError::from)?),
+                ),
+                WasmBackend::Stomp => (quote!(#response), quote!(__response)),
             };
 
             quote! {
