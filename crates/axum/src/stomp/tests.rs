@@ -114,6 +114,25 @@ impl Topic for TestTopics {
 /// `TestTopics::Protocol = TestProto: PubSubProtocol`.
 fn _publisher_is_protocol_generic(_: &Publisher<TestTopics>) {}
 
+/// The generated controller/topics clients bind on `MessageSend<P>`, `MessageRequest<P>`, and
+/// `TopicSubscribe<P>` — the capability traits the `#[message]`/`#[topics]` codegen emits. These
+/// bounds resolve for the non-STOMP `TestProto` only because the traits carry no STOMP type, so a
+/// transport that implements them for `TestProto` slots into the generated code unchanged. The `()`
+/// transport implements all three for any `P: TopicClientProtocol`, so naming it here is the
+/// compile-time proof that the client seam is protocol-generic.
+#[cfg(feature = "client")]
+fn _message_client_is_protocol_generic() {
+    use crate::client::{MessageRequest, MessageSend, TopicSubscribe};
+
+    fn assert_send<C: MessageSend<TestProto>>() {}
+    fn assert_request<C: MessageRequest<TestProto>>() {}
+    fn assert_subscribe<C: TopicSubscribe<TestProto>>() {}
+
+    assert_send::<()>();
+    assert_request::<()>();
+    assert_subscribe::<()>();
+}
+
 #[tokio::test]
 async fn topic_bus_round_trips_over_a_non_stomp_protocol() {
     let bus = TopicBus::<TestProto>::new();
