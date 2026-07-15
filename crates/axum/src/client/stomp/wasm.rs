@@ -18,7 +18,8 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use crate::client::Connection;
-use crate::stomp::{MessagingClientProtocol, Stomp};
+use crate::messaging::MessagingClientProtocol;
+use crate::stomp::Stomp;
 
 use super::{MessageRequest, MessageSend, StompClientTransport, Subscription, TopicSubscribe};
 

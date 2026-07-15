@@ -228,13 +228,13 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
 }
 
 /// A [`WebsocketProtocol`] that carries topic pub/sub: it frames a delivered message for one
-/// subscriber. This is the server-side companion to [`MessagingProtocol`](crate::stomp::MessagingProtocol)
+/// subscriber. This is the server-side companion to [`MessagingProtocol`](crate::messaging::MessagingProtocol)
 /// (which supplies the wire body and default codec); together they let the neutral
 /// [`SubscriptionRegistry`](crate::ws::stomp::SubscriptionRegistry) and
 /// [`TopicBus`](crate::ws::stomp::TopicBus) fan out for any protocol. STOMP is one implementation;
 /// a new protocol adds its own `frame_message` without touching the registry/bus.
 #[cfg(feature = "stomp")]
-pub trait PubSubProtocol: WebsocketProtocol + crate::stomp::MessagingProtocol {
+pub trait PubSubProtocol: WebsocketProtocol + crate::messaging::MessagingProtocol {
     /// The outbound frame this protocol delivers to a subscriber's writer task.
     type OutFrame: Send + 'static;
 

@@ -10,10 +10,10 @@
 // STOMP's `StompBody`/`StompCodec`/`JsonCodec`) lives in the wasm-safe `crate::stomp` module so the
 // browser client can name it too; re-exported here so the broker's internal `crate::ws::stomp::*`
 // paths and the crate's public surface are unchanged.
-pub use crate::stomp::{
-    JsonCodec, MessagingClientProtocol, MessagingProtocol, StompBody, StompCodec, Topic,
-    TopicCodec, TopicParam,
+pub use crate::messaging::{
+    MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec, TopicParam,
 };
+pub use crate::stomp::{JsonCodec, StompBody, StompCodec};
 
 /// One outbound fan-out: a destination, its body, and any extra headers to attach to the `MESSAGE`.
 pub struct Publish {

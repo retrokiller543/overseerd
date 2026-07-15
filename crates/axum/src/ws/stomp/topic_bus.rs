@@ -18,7 +18,8 @@ use overseerd_di::{
 use overseerd_hooks::no_hooks;
 use overseerd_transport::CodecError;
 
-use crate::stomp::{Stomp, Topic};
+use crate::messaging::Topic;
+use crate::stomp::Stomp;
 use crate::ws::PubSubProtocol;
 
 use super::broker::{Broker, SubscriptionRegistry};

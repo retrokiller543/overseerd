@@ -17,8 +17,15 @@ pub mod client;
 /// server both assert it), so it lives outside the server gate.
 pub mod dto;
 
-/// The wasm-safe STOMP wire types (`StompBody`, `StompCodec`, `Topic`, `TopicParam`) shared by the
-/// server broker and the browser client. Available on every target so the wasm client names them.
+/// The wasm-safe, protocol-generic messaging wire contract (`MessagingProtocol`, `TopicCodec`,
+/// `Topic`, `TopicParam`, …) shared by every WebSocket pub/sub protocol. Behind `ws` (not `stomp`)
+/// and available on every target, so a non-STOMP protocol reuses the machinery and the wasm client
+/// names it.
+#[cfg(feature = "ws")]
+pub mod messaging;
+
+/// STOMP's implementation of the [`messaging`] wire contract (`StompBody`, `StompCodec`, the `Stomp`
+/// tag). Available on every target so the wasm client names them.
 #[cfg(feature = "stomp")]
 pub mod stomp;
 
@@ -69,15 +76,17 @@ pub use ws::{
 #[cfg(all(feature = "stomp", not(target_family = "wasm")))]
 pub use ws::{MessageReply, PubSubProtocol};
 
-/// The wasm-safe topic wire contract, re-exported at the crate root on every target — the browser
-/// client's generated `#[topics]`/`#[message]` code names it through the plugin path. Includes the
-/// [`Stomp`] protocol tag (its server-only state is `cfg`-gated) so a `#[topics(protocol = Stomp)]`
-/// set and its client compile on wasm.
+/// The protocol-generic messaging wire contract, re-exported at the crate root on every target — the
+/// browser client's generated `#[topics]`/`#[message]` code names it through the plugin path. Behind
+/// `ws` so a non-STOMP protocol reuses it without enabling `stomp`.
+#[cfg(feature = "ws")]
+pub use messaging::{MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec, TopicParam};
+
+/// STOMP's wire types, re-exported at the crate root on every target. Includes the [`Stomp`]
+/// protocol tag (its server-only state is `cfg`-gated) so a `#[topics(protocol = Stomp)]` set and
+/// its client compile on wasm.
 #[cfg(feature = "stomp")]
-pub use stomp::{
-    JsonCodec, MessagingClientProtocol, MessagingProtocol, Stomp, StompBody, StompCodec, Topic,
-    TopicCodec, TopicParam,
-};
+pub use stomp::{JsonCodec, Stomp, StompBody, StompCodec};
 
 /// The STOMP pub/sub protocol surface (server side): the broker/registry/session/publish types.
 /// Server-only.
@@ -90,8 +99,9 @@ pub use ws::stomp::{
 };
 
 /// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a
-/// separate `overseerd-transport` dependency.
-#[cfg(feature = "stomp")]
+/// separate `overseerd-transport` dependency. Behind `ws` so a non-STOMP protocol's generated code
+/// names it too.
+#[cfg(feature = "ws")]
 pub use overseerd_transport::CodecError;
 
 /// The `multipart/form-data` request extractor, re-exported from axum under the `multipart` feature

@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 use overseerd_di::{ComponentConstructionContext, DependencyDescriptor, FromContainer};
 use overseerd_transport::CodecError;
 
-use crate::stomp::Topic;
+use crate::messaging::Topic;
 use crate::ws::PubSubProtocol;
 
 use super::topic_bus::TopicBus;

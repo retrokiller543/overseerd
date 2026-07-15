@@ -18,7 +18,8 @@ use futures::Stream;
 use overseerd_client::ClientError;
 use overseerd_transport::CodecError;
 
-use crate::stomp::{MessagingClientProtocol, Stomp};
+use crate::messaging::MessagingClientProtocol;
+use crate::stomp::Stomp;
 
 /// The status carried by a STOMP [`ClientError::Remote`], mirroring
 /// [`WsStatus`](super::WsStatus). This is [`Stomp`]'s [`MessagingClientProtocol::Status`].

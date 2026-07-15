@@ -11,7 +11,7 @@ use overseerd_app::AppRuntime;
 use overseerd_di::ScopeContainer;
 use serde::{Deserialize, Serialize};
 
-use crate::stomp::{MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec};
+use crate::messaging::{MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec};
 use crate::ws::stomp::{Publisher, TopicBus};
 use crate::ws::{PubSubProtocol, WebsocketProtocol, WsControllerDescriptor, WsShutdown};
 use overseerd_transport::CodecError;
