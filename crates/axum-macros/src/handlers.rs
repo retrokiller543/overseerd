@@ -885,7 +885,7 @@ impl AxumHandlers {
 
 /// Builds the generated typed pub/sub `SEND` client method for a `#[message("dest")]` handler: a
 /// fire-and-forget `fn(&self, payload) -> Result<(), ClientError<P::Status>>` bound on
-/// `C: TopicSend<P>`, with the destination baked in. The payload is encoded to `P::Body` by the
+/// `C: MessageSend<P>`, with the destination baked in. The payload is encoded to `P::Body` by the
 /// block's `codec` (so the SEND path is codec-agnostic, matching the server decode); a no-payload
 /// method sends the protocol body's default. Mirrors the JsonWs precedent ([`build_ws_client_method`]).
 fn build_pubsub_send_method(
@@ -898,7 +898,7 @@ fn build_pubsub_send_method(
 ) -> syn::Result<Option<ClientMethod>> {
     let payload = ws_payload_type(method)?;
     let client_error = paths.client("ClientError");
-    let topic_send = paths.plugin("client::TopicSend");
+    let topic_send = paths.plugin("client::MessageSend");
     let topic_client_protocol = paths.plugin("TopicClientProtocol");
     let topic_protocol = paths.plugin("TopicProtocol");
     let topic_codec = paths.plugin("TopicCodec");

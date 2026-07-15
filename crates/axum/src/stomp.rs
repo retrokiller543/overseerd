@@ -189,7 +189,7 @@ impl TopicParam for uuid::Uuid {
 /// The STOMP protocol tag and (on the server) its stateful pub/sub state.
 ///
 /// On wasm this is a fieldless tag: it names the protocol for a `#[topics(protocol = Stomp)]` set
-/// and the generated client's `TopicSend<Stomp>`/`TopicSubscribe<Stomp>` bounds. On the server its
+/// and the generated client's `MessageSend<Stomp>`/`TopicSubscribe<Stomp>` bounds. On the server its
 /// `cfg`-gated fields hold the `/app/**` handler table, the shared [`Broker`], the runtime, and the
 /// endpoint config; the [`WebsocketProtocol`](crate::ws::WebsocketProtocol) impl and serve loop live
 /// in [`crate::ws::stomp`].

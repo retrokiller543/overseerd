@@ -1,12 +1,12 @@
 //! The topic pub/sub client: typed `send`/`subscribe` capabilities, generic over the protocol.
 //!
-//! [`TopicSend<P>`] and [`TopicSubscribe<P>`] are the protocol-generic client capabilities the
+//! [`MessageSend<P>`] and [`TopicSubscribe<P>`] are the protocol-generic client capabilities the
 //! generated `#[topics]`/`#[message]` clients bind on; a transport (STOMP's [`StompClientTransport`],
 //! or another protocol's) implements them for its protocol tag. Unlike the request/reply
 //! [`WebsocketClientProtocol`](super::WebsocketClientProtocol) (one reply per request), a topic
 //! subscription is a *durable* [`Subscription`] stream keyed by a client-chosen id.
 //!
-//! [`TopicSend`] is fire-and-forget; STOMP's transport sends no heart-beats in v1 (see
+//! [`MessageSend`] is fire-and-forget; STOMP's transport sends no heart-beats in v1 (see
 //! `docs/stomp.md` for the deferred-feature list).
 
 use std::marker::PhantomData;
@@ -44,7 +44,7 @@ pub struct ReceiptId(pub String);
 
 /// A transport that can send one typed payload to a destination (fire-and-forget) over protocol `P`.
 /// The generated `send_<name>()` client methods bind on this.
-pub trait TopicSend<P: TopicClientProtocol>: Send + Sync {
+pub trait MessageSend<P: TopicClientProtocol>: Send + Sync {
     /// Writes a send frame carrying `body` to `destination`. The body is already encoded (by the
     /// generated method's codec), so the transport is codec-agnostic — it ships the protocol body.
     /// Takes `&str` (not `&'static str`) so a templated destination works too.
@@ -140,7 +140,7 @@ impl<P: TopicClientProtocol, C: TopicSubscribe<P>, M> Drop for Subscription<P, C
 
 /// The always-closed `()` transport: lets a generated client type-check without a wired transport
 /// (mirrors the `()` impls for the request/reply websocket client).
-impl<P: TopicClientProtocol> TopicSend<P> for () {
+impl<P: TopicClientProtocol> MessageSend<P> for () {
     async fn send(&self, _: &str, _: P::Body) -> Result<(), ClientError<P::Status>> {
         Err(ClientError::Transport(overseerd_transport::Error::Closed))
     }
