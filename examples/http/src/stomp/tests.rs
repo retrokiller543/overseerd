@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use futures::StreamExt;
-use overseerd::axum::client::StompClientTransport;
+use overseerd::axum::StompBody;
+use overseerd::axum::client::{MessageRequest, StompClientTransport, StompConnectOptions};
 use overseerd::prelude::*;
 use tokio::net::TcpListener;
 
@@ -221,6 +222,51 @@ async fn a_failing_request_message_resolves_err_not_hang() {
     .expect("the follow-up request succeeds on the still-open connection");
 
     assert_eq!(ok.room, "general");
+
+    shutdown.shutdown();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn a_request_without_a_reply_times_out() {
+    let app = app! {
+        name: "chat-timeout-test",
+        protocol: overseerd::axum::AxumPlugin,
+    }
+    .register_ws::<Stomp>("/ws/stomp")
+    .build()
+    .await
+    .expect("app builds");
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let shutdown = app.shutdown_handle();
+    let server = tokio::spawn(async move { app.serve(listener).await });
+
+    let url = format!("ws://{addr}/ws/stomp");
+    let connection = StompClientTransport::connect_with_options(
+        &url,
+        StompConnectOptions::default().with_request_timeout(Some(Duration::from_millis(300))),
+    )
+    .await
+    .expect("connects");
+
+    // A request to a destination with no handler is never replied to. With the connection healthy,
+    // the call must give up after the configured timeout rather than hang until the socket closes;
+    // the outer guard turns a regression into a fast failure instead of a stuck test.
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        connection.request("/app/no-such-handler", StompBody::json(b"{}".to_vec())),
+    )
+    .await
+    .expect("the request resolves before the outer guard (it must not hang)");
+
+    let error = result.expect_err("a request with no reply must resolve Err");
+
+    assert!(
+        error.to_string().contains("timed out"),
+        "expected a timeout error, got: {error}"
+    );
 
     shutdown.shutdown();
     let _ = server.await;

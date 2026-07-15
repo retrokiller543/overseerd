@@ -169,6 +169,7 @@ fn error_kind<E>(error: &ClientError<StatusCode, E>) -> &'static str {
         ClientError::Decode(_) => "decode",
         ClientError::Remote(_) => "remote",
         ClientError::ConnectionClosed => "connectionClosed",
+        ClientError::Timeout => "timeout",
     }
 }
 

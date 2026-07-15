@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
@@ -57,6 +58,11 @@ enum Command {
         correlation_id: String,
         reply: ReplyTx,
     },
+    /// Drops a pending request's reply slot after its caller gave up (a timeout), so a late reply is
+    /// discarded and the correlation table does not retain an abandoned entry.
+    CancelRequest {
+        correlation_id: String,
+    },
     Subscribe {
         id: SubscriptionId,
         frame: Vec<u8>,
@@ -79,6 +85,10 @@ enum Command {
 struct TransportInner {
     tx: mpsc::Sender<Command>,
     next_id: AtomicU64,
+
+    /// The reply timeout applied to every `request` on this connection (from
+    /// [`StompConnectOptions`]).
+    request_timeout: Option<Duration>,
 }
 
 impl Drop for TransportInner {
@@ -91,14 +101,37 @@ impl Drop for TransportInner {
     }
 }
 
-/// Authentication and custom headers sent on the STOMP `CONNECT` frame.
+/// The default [`request`](MessageRequest::request) reply timeout when
+/// [`StompConnectOptions`] does not override it.
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Authentication and custom headers sent on the STOMP `CONNECT` frame, plus the request/response
+/// reply timeout.
 #[cfg_attr(target_family = "wasm", ::wasm_bindgen::prelude::wasm_bindgen)]
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct StompConnectOptions {
     host: Option<String>,
     login: Option<String>,
     passcode: Option<String>,
     headers: Vec<(String, String)>,
+
+    /// How long a `request` awaits its correlated reply before abandoning the call with
+    /// [`ClientError::Timeout`]. `None` waits indefinitely (until the connection closes). Defaults to
+    /// [`DEFAULT_REQUEST_TIMEOUT`]. Applied on native; on wasm the timer is not yet wired, so the call
+    /// awaits until a reply or connection close.
+    request_timeout: Option<Duration>,
+}
+
+impl Default for StompConnectOptions {
+    fn default() -> Self {
+        Self {
+            host: None,
+            login: None,
+            passcode: None,
+            headers: Vec::new(),
+            request_timeout: Some(DEFAULT_REQUEST_TIMEOUT),
+        }
+    }
 }
 
 impl fmt::Debug for StompConnectOptions {
@@ -186,6 +219,12 @@ impl StompConnectOptions {
         self.headers.push((name.into(), value.into()));
         self
     }
+
+    /// Sets the request/response reply timeout (`None` waits indefinitely). Applied on native.
+    pub fn with_request_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.request_timeout = timeout;
+        self
+    }
 }
 
 /// A persistent STOMP client over one WebSocket connection. Cheap to clone (an `Arc`-backed handle
@@ -212,6 +251,8 @@ impl StompClientTransport {
             .map_err(net_err)?;
         let (mut write, mut read) = socket.split();
 
+        let request_timeout = options.request_timeout;
+
         // Offer 1.2/1.1 and await CONNECTED before anything else may flow.
         let connect = connect_frame(options);
 
@@ -227,6 +268,7 @@ impl StompClientTransport {
             inner: Arc::new(TransportInner {
                 tx,
                 next_id: AtomicU64::new(1),
+                request_timeout,
             }),
         })
     }
@@ -348,14 +390,53 @@ impl MessageRequest<Stomp> for StompClientTransport {
         self.tx()
             .send(Command::Request {
                 frame,
-                correlation_id,
+                correlation_id: correlation_id.clone(),
                 reply,
             })
             .await
             .map_err(|_| ClientError::ConnectionClosed)?;
 
-        reply_rx.await.map_err(|_| ClientError::ConnectionClosed)?
+        let outcome = await_reply(reply_rx, self.inner.request_timeout).await;
+
+        // A timed-out call abandons its reply slot; tell the actor to drop it so a late reply is
+        // discarded and the correlation table retains no orphaned entry.
+        if matches!(outcome, Err(ClientError::Timeout)) {
+            let _ = self
+                .tx()
+                .send(Command::CancelRequest { correlation_id })
+                .await;
+        }
+
+        outcome
     }
+}
+
+/// Awaits a request's correlated reply, bounded by `timeout` when set. Native uses
+/// [`tokio::time::timeout`]; on wasm no timer is wired yet, so the reply is awaited unbounded (the
+/// call still resolves on an error reply or connection close).
+#[cfg(not(target_family = "wasm"))]
+async fn await_reply(
+    rx: oneshot::Receiver<Result<StompBody, ClientError<StompStatus>>>,
+    timeout: Option<Duration>,
+) -> Result<StompBody, ClientError<StompStatus>> {
+    let Some(timeout) = timeout else {
+        return rx.await.map_err(|_| ClientError::ConnectionClosed)?;
+    };
+
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(received) => received.map_err(|_| ClientError::ConnectionClosed)?,
+
+        Err(_elapsed) => Err(ClientError::Timeout),
+    }
+}
+
+/// See the native variant. On wasm the reply is awaited unbounded until a reply or connection close.
+#[cfg(target_family = "wasm")]
+async fn await_reply(
+    rx: oneshot::Receiver<Result<StompBody, ClientError<StompStatus>>>,
+    _timeout: Option<Duration>,
+) -> Result<StompBody, ClientError<StompStatus>> {
+    rx.await.map_err(|_| ClientError::ConnectionClosed)?
 }
 
 impl TopicSubscribe<Stomp> for StompClientTransport {
@@ -427,6 +508,10 @@ async fn actor(mut write: WsWrite, mut read: WsRead, mut rx: mpsc::Receiver<Comm
                         {
                             let _ = reply.send(Err(error));
                         }
+                    }
+
+                    Command::CancelRequest { correlation_id } => {
+                        requests.remove(&correlation_id);
                     }
 
                     Command::Subscribe { id, frame, items, ack } => {

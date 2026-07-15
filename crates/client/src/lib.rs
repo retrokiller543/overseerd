@@ -155,6 +155,9 @@ pub enum ClientError<S, E = Raw> {
     Decode(String),
     Remote(ErrorBody<S, E>),
     ConnectionClosed,
+    /// A request awaited its reply longer than the configured timeout — the call is abandoned
+    /// (its pending slot dropped) rather than blocking until the connection eventually closes.
+    Timeout,
 }
 
 impl<S> ClientError<S, Raw> {
@@ -177,6 +180,8 @@ impl<S: std::fmt::Debug, E> std::fmt::Debug for ClientError<S, E> {
             ClientError::Remote(b) => f.debug_tuple("Remote").field(b).finish(),
 
             ClientError::ConnectionClosed => f.write_str("ConnectionClosed"),
+
+            ClientError::Timeout => f.write_str("Timeout"),
         }
     }
 }
@@ -193,6 +198,8 @@ impl<S: std::fmt::Debug, E> std::fmt::Display for ClientError<S, E> {
             ClientError::Remote(b) => write!(f, "remote error (status {:?})", b.code),
 
             ClientError::ConnectionClosed => write!(f, "connection closed before response"),
+
+            ClientError::Timeout => write!(f, "timed out waiting for response"),
         }
     }
 }
@@ -227,6 +234,8 @@ pub fn retype<S, E>(err: ClientError<S, Raw>) -> ClientError<S, E> {
         ClientError::Remote(b) => ClientError::Remote(b.cast()),
 
         ClientError::ConnectionClosed => ClientError::ConnectionClosed,
+
+        ClientError::Timeout => ClientError::Timeout,
     }
 }
 
