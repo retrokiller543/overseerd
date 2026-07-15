@@ -34,12 +34,21 @@ pub fn is_message_attr(attr: &Attribute) -> bool {
 /// How a `#[message]` handler's client method is shaped. Inferred from the handler's return type
 /// (unit → [`Send`](MessageMode::Send), non-unit → [`Request`](MessageMode::Request)) unless the
 /// attribute names it explicitly — mirroring how `#[rpc(stream)]` overrides RPC capability inference.
+///
+/// Because inference keys purely on unit-vs-non-unit, a handler that returns a value for a reason
+/// *other* than replying to the caller — e.g. returning a `Publish`/`Vec<Publish>` to imperatively
+/// broadcast — is inferred as a request and will not compile (a broadcast value is not the reply
+/// type the client decodes). Annotate such a handler `#[message(send)]` to force the fire-and-forget
+/// path. (The idiomatic imperative-broadcast route is an injected `Publisher`, which returns `()`.)
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MessageMode {
     /// Infer from the return type: `()` is a fire-and-forget SEND, anything else a request/response.
     Infer,
 
-    /// Force a fire-and-forget SEND (the handler's return, if any, is not sent back to the caller).
+    /// Force a fire-and-forget SEND. The return is routed through the protocol's SEND path (for
+    /// STOMP: `()`, a `Publish`/`Vec<Publish>` to broadcast, a `StompOutcome`, or a `Result` of
+    /// those) — never sent back to the caller. Forcing `send` on a handler returning an arbitrary
+    /// reply DTO is therefore a compile error; use the inferred/`request` mode for that.
     Send,
 
     /// Force a request/response: the handler's return is routed back to the requester.

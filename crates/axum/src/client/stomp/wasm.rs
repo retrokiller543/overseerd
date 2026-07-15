@@ -1,14 +1,16 @@
-//! The wasm/JS bridge for topic subscriptions.
+//! The wasm/JS bridge shared by both generated wasm clients: the `#[topics]` subscribe client and
+//! the `#[controller(ws = ..)]` message (send/request) client.
 //!
 //! A [`Subscription`](super::Subscription) is a Rust `Stream` — JavaScript can't poll it. This
 //! bridges it to the idiomatic JS shape: `subscribe_*` hands back a [`TopicSubscription`] handle and
 //! delivers each decoded message to a callback. Both the handle and the [`pump`] are
 //! protocol-agnostic; the only protocol-specific step — pulling the transport out of the shared
-//! [`Connection`] — is [`TopicWasmClient`], which STOMP implements here. The generated method takes
-//! a **typed** callback (`(message: T) => void`, via a per-method `typescript_type` extern), so
-//! JS/TS sees the real message type, not `any`; at runtime it is a plain `js_sys::Function` here.
-//! `handle.unsubscribe()` (or GC'ing the handle) aborts the pump task, which drops the
-//! `Subscription` and deregisters.
+//! [`Connection`] — is [`TopicWasmClient`], which STOMP implements here. Both wasm clients route
+//! through it: the topics binding to subscribe, the controller binding to send/request. The
+//! generated method takes a **typed** callback (`(message: T) => void`, via a per-method
+//! `typescript_type` extern), so JS/TS sees the real message type, not `any`; at runtime it is a
+//! plain `js_sys::Function` here. `handle.unsubscribe()` (or GC'ing the handle) aborts the pump
+//! task, which drops the `Subscription` and deregisters.
 
 use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable};
@@ -18,15 +20,24 @@ use wasm_bindgen::prelude::*;
 use crate::client::Connection;
 use crate::stomp::{Stomp, TopicClientProtocol};
 
-use super::{StompClientTransport, Subscription, TopicSubscribe};
+use super::{MessageRequest, MessageSend, StompClientTransport, Subscription, TopicSubscribe};
 
 /// Pulls a protocol's client transport out of the shared browser [`Connection`]. This is the only
-/// protocol-specific step in the generated wasm topics binding; the rest (the [`TopicSubscription`]
-/// handle and the [`pump`]) is protocol-agnostic. STOMP implements it over its shared socket; a new
-/// protocol implements its own, and the generated binding names neither concretely.
+/// protocol-specific step in either generated wasm client (the topics subscribe binding and the
+/// controller message binding); the rest (the [`TopicSubscription`] handle and the [`pump`]) is
+/// protocol-agnostic. STOMP implements it over its shared socket; a new protocol implements its own,
+/// and the generated bindings name neither concretely.
 pub trait TopicWasmClient: TopicClientProtocol + Sized {
-    /// The concrete transport, obtained from the shared connection, that speaks this protocol.
-    type Transport: TopicSubscribe<Self> + Clone + Unpin + 'static;
+    /// The concrete transport, obtained from the shared connection, that speaks this protocol. It
+    /// must support every wasm client surface both bindings emit — topic subscription plus the
+    /// point-to-point message send/request — so a missing capability is an error at the
+    /// `impl TopicWasmClient` site rather than inside a generated method body.
+    type Transport: TopicSubscribe<Self>
+        + MessageSend<Self>
+        + MessageRequest<Self>
+        + Clone
+        + Unpin
+        + 'static;
 
     /// Pulls this protocol's transport out of the shared connection (errors if it isn't connected).
     fn transport(connection: &Connection) -> Result<Self::Transport, JsError>;

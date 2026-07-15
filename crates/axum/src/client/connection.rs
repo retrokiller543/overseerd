@@ -24,8 +24,10 @@ use super::{StompClientTransport, StompConnectOptions};
 /// cheaply cloned into each client so they all share the same underlying Rust connection.
 #[wasm_bindgen]
 pub struct Connection {
-    /// The base URL (scheme + authority, e.g. `http://localhost:3001`) shared by the HTTP transport
-    /// and, with the ws scheme swapped in, the STOMP upgrade.
+    /// The base URL (scheme + authority, e.g. `http://localhost:3001`), kept so the ws scheme can be
+    /// swapped in for the STOMP upgrade. The HTTP transport holds its own copy, so this is needed
+    /// only when a ws transport can be attached — hence gated to that build.
+    #[cfg(all(feature = "stomp", feature = "tungstenite"))]
     base_url: String,
 
     /// The shared HTTP transport — one `reqwest::Client` (pool + cookies) for every REST client.
@@ -45,6 +47,7 @@ impl Connection {
     pub fn new(base_url: String) -> Connection {
         Connection {
             http: ReqwestClient::new(base_url.clone()),
+            #[cfg(all(feature = "stomp", feature = "tungstenite"))]
             base_url,
             #[cfg(all(feature = "stomp", feature = "tungstenite"))]
             stomp: RefCell::new(None),

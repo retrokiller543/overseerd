@@ -399,17 +399,14 @@ impl Stomp {
                 };
                 let headers =
                     StompHeaders::new(send_header_seed(&destination, content_type, custom_headers));
-
-                self.route_send(
-                    &destination,
+                let message = InboundMessage {
+                    destination,
                     body,
                     headers,
-                    conn_id,
-                    connection,
-                    principal,
-                    reply,
-                )
-                .await;
+                };
+
+                self.route_send(message, conn_id, connection, principal, reply)
+                    .await;
                 self.send_receipt(tx, receipt).await;
 
                 Continue(())
@@ -439,16 +436,20 @@ impl Stomp {
     /// the frame headers and a session handle); any other destination is a direct broker publish.
     async fn route_send(
         &self,
-        destination: &str,
-        body: StompBody,
-        headers: StompHeaders,
+        message: InboundMessage,
         conn_id: ConnectionId,
         connection: &Arc<ScopeContainer>,
         principal: &StompPrincipal,
         reply: ReplyContext<'_>,
     ) {
-        let Some(handler) = self.app_routes.get(destination) else {
-            self.broker.publish(destination, &body, &[]);
+        let InboundMessage {
+            destination,
+            body,
+            headers,
+        } = message;
+
+        let Some(handler) = self.app_routes.get(destination.as_str()) else {
+            self.broker.publish(&destination, &body, &[]);
 
             return;
         };
@@ -491,13 +492,13 @@ impl Stomp {
             }
 
             Ok(StompOutcome::Reply(reply_body)) => {
-                self.deliver_reply(destination, reply_body, &reply).await;
+                self.deliver_reply(&destination, reply_body, &reply).await;
             }
 
             Ok(StompOutcome::Nothing) => {}
 
             Err(error) => {
-                tracing::warn!(target: "overseerd::axum", %error, dest = destination, "STOMP handler failed");
+                tracing::warn!(target: "overseerd::axum", %error, dest = %destination, "STOMP handler failed");
                 self.deliver_error_reply(&error, &reply).await;
             }
         }
@@ -729,6 +730,14 @@ fn connected_frame(version: StompVersion, _config: &StompConfig) -> Vec<u8> {
 /// Serializes an `ERROR` frame carrying the error's message.
 fn error_frame(error: &StompError) -> Vec<u8> {
     ErrorFrame::from_message(&error.to_string()).into()
+}
+
+/// A decoded inbound `SEND`: the destination it targets, its body, and the header set seeded into
+/// the message scope for a handler. Groups the three frame-derived inputs `route_send` consumes.
+struct InboundMessage {
+    destination: String,
+    body: StompBody,
+    headers: StompHeaders,
 }
 
 /// Where a request handler's outcome (a reply or an error) is routed: the requester's own writer
