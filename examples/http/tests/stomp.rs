@@ -5,12 +5,15 @@
 //! topic; the subscriber's typed `Subscription` stream then yields the broadcast message. The
 //! server is shut down at the end so the test never hangs.
 
+use std::sync::Arc;
+
 use futures::StreamExt;
+use overseerd::ScopeContainer;
 use overseerd::axum::client::{ReqwestClient, StompClientTransport, StompConnectOptions};
 use overseerd::axum::prelude::*;
 use overseerd::axum::{
-    CodecError, StompAuthenticationError, StompBody, StompCodec, StompConfig, StompConnect,
-    StompPrincipal,
+    CodecError, Injected, StompAuthFuture, StompAuthenticationError, StompAuthenticator, StompBody,
+    StompCodec, StompConfig, StompConnect, StompPrincipal,
 };
 use overseerd::prelude::*;
 use serde::Serialize;
@@ -190,6 +193,115 @@ async fn stomp_connect_authentication_and_explicit_disconnect_share_lifecycle() 
 
     shutdown.shutdown();
     let _ = server.await;
+}
+
+/// A stand-in user directory for the DI-native authenticator tests. A singleton component, so an
+/// authenticator can inject `Arc<UserStore>` as a parameter or hold it as a field.
+#[component]
+struct UserStore;
+
+impl UserStore {
+    /// Accepts the demo credentials (`alice` / `secret`).
+    fn validate(&self, login: Option<&str>, passcode: Option<&str>) -> bool {
+        login == Some("alice") && passcode == Some("secret")
+    }
+}
+
+/// A component authenticator: DI injects its [`UserStore`] dependency, then `authenticate` validates
+/// the CONNECT credentials against it. Installed with `Injected::<TokenAuth>::new()`.
+#[component]
+struct TokenAuth {
+    users: Arc<UserStore>,
+}
+
+#[methods]
+impl TokenAuth {
+    #[init]
+    async fn init(users: Arc<UserStore>) -> Self {
+        Self { users }
+    }
+}
+
+impl StompAuthenticator for TokenAuth {
+    fn authenticate(
+        self: Arc<Self>,
+        connect: StompConnect,
+        _connection: Arc<ScopeContainer>,
+    ) -> StompAuthFuture {
+        Box::pin(async move {
+            if self.users.validate(connect.login(), connect.passcode()) {
+                Ok(StompPrincipal::authenticated("alice"))
+            } else {
+                Err(StompAuthenticationError::new("invalid credentials"))
+            }
+        })
+    }
+}
+
+/// Serves a STOMP endpoint configured with `config` and asserts that the demo credentials
+/// (`alice` / `secret`) are accepted while others are rejected — the shared body of the two
+/// DI-native authenticator tests.
+async fn assert_credentials_are_enforced(config: StompConfig) {
+    let app = app! {
+        name: "stomp-auth-di-test",
+        protocol: overseerd::axum::AxumPlugin,
+    }
+    .register_ws_with::<Stomp>("/stomp", config)
+    .build()
+    .await
+    .expect("app builds");
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let shutdown = app.shutdown_handle();
+    let server = tokio::spawn(async move { app.serve(listener).await });
+    let url = format!("ws://{addr}/stomp");
+
+    let rejected = StompClientTransport::connect_with_options(
+        &url,
+        StompConnectOptions::new()
+            .with_login("mallory")
+            .with_passcode("wrong"),
+    )
+    .await;
+    assert!(rejected.is_err(), "invalid credentials must be rejected");
+
+    let connection = StompClientTransport::connect_with_options(
+        &url,
+        StompConnectOptions::new()
+            .with_login("alice")
+            .with_passcode("secret"),
+    )
+    .await
+    .expect("valid credentials connect");
+    assert!(connection.is_connected());
+
+    connection.disconnect().await.expect("disconnect cleanly");
+
+    shutdown.shutdown();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn stomp_authenticator_injects_dependencies_from_params() {
+    let config = StompConfig::default().with_authenticator(
+        |connect: StompConnect, users: Arc<UserStore>| async move {
+            if users.validate(connect.login(), connect.passcode()) {
+                Ok(StompPrincipal::authenticated("alice"))
+            } else {
+                Err(StompAuthenticationError::new("invalid credentials"))
+            }
+        },
+    );
+
+    assert_credentials_are_enforced(config).await;
+}
+
+#[tokio::test]
+async fn stomp_authenticator_resolves_a_di_component() {
+    let config = StompConfig::default().with_authenticator(Injected::<TokenAuth>::new());
+
+    assert_credentials_are_enforced(config).await;
 }
 
 #[tokio::test]

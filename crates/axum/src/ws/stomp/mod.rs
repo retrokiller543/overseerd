@@ -44,7 +44,8 @@ use super::{
 use crate::scope::Request as RequestScope;
 
 pub use auth::{
-    StompAuthFuture, StompAuthenticationError, StompAuthenticator, StompConnect, StompPrincipal,
+    Direct, Injected, IntoAuthenticator, ResolvedAuthenticator, StompAuthFuture,
+    StompAuthenticationError, StompAuthenticator, StompConnect, StompPrincipal,
 };
 pub use body::{JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic, TopicParam};
 pub use broker::{Broker, ConnectionId};
@@ -86,11 +87,15 @@ impl Default for StompConfig {
 
 impl StompConfig {
     /// Requires successful authentication for this endpoint using `authenticator`.
-    pub fn with_authenticator<A>(mut self, authenticator: A) -> Self
+    ///
+    /// Accepts either an async function whose arguments after [`StompConnect`] are injected from the
+    /// connection's DI scope, a value that implements [`StompAuthenticator`] directly, or an
+    /// [`Injected<T>`] adapter that resolves a component authenticator from the container.
+    pub fn with_authenticator<A, M>(mut self, authenticator: A) -> Self
     where
-        A: StompAuthenticator,
+        A: IntoAuthenticator<M>,
     {
-        self.authenticator = Some(Arc::new(authenticator));
+        self.authenticator = Some(authenticator.into_authenticator());
 
         self
     }
@@ -156,7 +161,7 @@ impl WebsocketProtocol for Stomp {
         // The handshake must come first: read one frame and expect CONNECT/STOMP. A non-CONNECT
         // opener (or a parse failure) is a protocol violation — reply ERROR and abandon the socket.
         let (negotiated, principal) = match receiver.next().await {
-            Some(Ok(message)) => match self.negotiate(message).await {
+            Some(Ok(message)) => match self.negotiate(message, &connection).await {
                 Ok(handshake) => handshake,
 
                 Err(error) => {
@@ -243,6 +248,7 @@ impl Stomp {
     async fn negotiate(
         &self,
         message: Message,
+        connection: &Arc<ScopeContainer>,
     ) -> Result<(StompVersion, StompPrincipal), StompError> {
         let bytes = match message {
             Message::Text(text) => text.as_bytes().to_vec(),
@@ -280,7 +286,12 @@ impl Stomp {
 
         let connect = connect_metadata(&connect);
         let principal = match &self.config.authenticator {
-            Some(authenticator) => authenticator.authenticate(connect).await?,
+            Some(authenticator) => {
+                Arc::clone(authenticator)
+                    .authenticate(connect, Arc::clone(connection))
+                    .await?
+            }
+
             None => StompPrincipal::anonymous(),
         };
 

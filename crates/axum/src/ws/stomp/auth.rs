@@ -3,10 +3,11 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use overseerd_di::Injectable;
+use overseerd_di::{Component, FromContainer, Injectable, ScopeContainer};
 
 use super::StompHeaders;
 
@@ -161,27 +162,212 @@ pub type StompAuthFuture = Pin<
 
 /// Authenticates one parsed STOMP `CONNECT` frame before the broker sends `CONNECTED`.
 ///
-/// Async closures implement this trait directly, so most applications configure authentication
-/// without a named type:
+/// The constant input is the [`StompConnect`] frame the authenticator must inspect; the
+/// connection's [`ScopeContainer`] is handed in too, so an implementation can resolve dependencies
+/// from DI. Where an implementation gets its dependencies is its own choice:
 ///
-/// ```ignore
-/// StompConfig::default().with_authenticator(|connect: StompConnect| async move {
-///     validate(connect.login(), connect.passcode()).await?;
-///     Ok(StompPrincipal::authenticated(connect.login().unwrap()))
-/// })
-/// ```
+/// - **From parameters** — an async closure/fn whose arguments after `StompConnect` are injected
+///   from the connection scope (anything a constructor parameter can be — `Arc<T>`, `Dep<T>`, a
+///   by-value injectable, `Cfg<T>`, `Option`/`Vec`/`HashMap` of providers). Async closures and
+///   functions implement this trait directly, so most applications need no named type:
+///
+///   ```ignore
+///   StompConfig::default().with_authenticator(
+///       |connect: StompConnect, users: Arc<UserStore>| async move {
+///           users.validate(connect.login(), connect.passcode()).await?;
+///           Ok(StompPrincipal::authenticated(connect.login().unwrap()))
+///       },
+///   )
+///   ```
+///
+/// - **From `self`** — a component that hand-implements this trait and holds its own injected
+///   fields. Install a built instance directly, or resolve one from the container at CONNECT time
+///   with the [`Injected`] adapter: `with_authenticator(Injected::<TokenAuth>::new())`.
+///
+/// Dependencies resolved from parameters or by [`Injected`] are resolved at CONNECT time and are
+/// **not** covered by `di-check`; a missing provider rejects the connection with a logged error —
+/// the same runtime-resolution semantics as a handler's `Inject<T>`.
 pub trait StompAuthenticator: Send + Sync + 'static {
-    /// Resolves to a principal on success or rejects the connection before `CONNECTED`.
-    fn authenticate(&self, connect: StompConnect) -> StompAuthFuture;
+    /// Resolves to a principal on success or rejects the connection before `CONNECTED`. The
+    /// `connection` scope is the DI handle an implementation may resolve dependencies from.
+    fn authenticate(
+        self: Arc<Self>,
+        connect: StompConnect,
+        connection: Arc<ScopeContainer>,
+    ) -> StompAuthFuture;
 }
 
-impl<F, Fut> StompAuthenticator for F
+/// Maps a DI resolution failure during authentication into a connection rejection. Logged because a
+/// missing provider is a wiring bug the client cannot act on.
+fn authenticator_dependency_error(
+    dependency: &'static str,
+    error: overseerd_di::Error,
+) -> StompAuthenticationError {
+    tracing::error!(
+        target: "overseerd::axum",
+        dependency,
+        %error,
+        "STOMP authenticator dependency could not be resolved from the connection scope",
+    );
+
+    StompAuthenticationError::new("authenticator misconfigured")
+}
+
+/// Converts a value accepted by [`with_authenticator`](super::StompConfig::with_authenticator) into
+/// a shared [`StompAuthenticator`]. `Marker` disambiguates the two blanket forms — a value that is
+/// already a `StompAuthenticator` (a component or the [`Injected`] adapter) versus an async function
+/// whose arguments after [`StompConnect`] are DI-injected — so both install through the one builder
+/// method without the blanket impls overlapping.
+pub trait IntoAuthenticator<Marker> {
+    /// Erases the value into a shared authenticator.
+    fn into_authenticator(self) -> Arc<dyn StompAuthenticator>;
+}
+
+/// The [`IntoAuthenticator`] marker for a value that already implements [`StompAuthenticator`].
+pub struct Direct;
+
+impl<A> IntoAuthenticator<Direct> for A
 where
-    F: Fn(StompConnect) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<StompPrincipal, StompAuthenticationError>> + Send + 'static,
+    A: StompAuthenticator,
 {
-    fn authenticate(&self, connect: StompConnect) -> StompAuthFuture {
-        Box::pin(self(connect))
+    fn into_authenticator(self) -> Arc<dyn StompAuthenticator> {
+        Arc::new(self)
+    }
+}
+
+/// Adapts an authenticator function into a [`StompAuthenticator`], resolving the function's injected
+/// arguments from the connection scope on each CONNECT. `Args` records the argument tuple so the
+/// parameter type variables stay constrained (mirroring the DI crate's `Factory<Args>`).
+pub struct FnAuthenticator<F, Args> {
+    function: F,
+    _args: PhantomData<fn() -> Args>,
+}
+
+/// Implements the function-authenticator forms for one argument arity: the [`IntoAuthenticator`]
+/// blanket that boxes the function into a [`FnAuthenticator`], and the [`StompAuthenticator`] impl
+/// that resolves each injected argument and calls it. Arity zero is the plain `Fn(StompConnect)`.
+macro_rules! impl_authenticator_fn {
+    ( $($ty:ident),* ) => {
+        impl<F, Fut, $($ty,)*> IntoAuthenticator<fn($($ty,)*)> for F
+        where
+            F: Fn(StompConnect, $($ty,)*) -> Fut + Send + Sync + 'static,
+            Fut: Future<Output = Result<StompPrincipal, StompAuthenticationError>> + Send + 'static,
+            $( $ty: FromContainer + Send + 'static, )*
+        {
+            fn into_authenticator(self) -> Arc<dyn StompAuthenticator> {
+                Arc::new(FnAuthenticator::<F, ($($ty,)*)> {
+                    function: self,
+                    _args: PhantomData,
+                })
+            }
+        }
+
+        impl<F, Fut, $($ty,)*> StompAuthenticator for FnAuthenticator<F, ($($ty,)*)>
+        where
+            F: Fn(StompConnect, $($ty,)*) -> Fut + Send + Sync + 'static,
+            Fut: Future<Output = Result<StompPrincipal, StompAuthenticationError>> + Send + 'static,
+            $( $ty: FromContainer + Send + 'static, )*
+        {
+            #[allow(non_snake_case, unused_variables)]
+            fn authenticate(
+                self: Arc<Self>,
+                connect: StompConnect,
+                connection: Arc<ScopeContainer>,
+            ) -> StompAuthFuture {
+                Box::pin(async move {
+                    $(
+                        let $ty = connection
+                            .extract::<$ty>()
+                            .await
+                            .map_err(|error| {
+                                authenticator_dependency_error(::std::any::type_name::<$ty>(), error)
+                            })?;
+                    )*
+
+                    (self.function)(connect, $($ty,)*).await
+                })
+            }
+        }
+    };
+}
+
+impl_authenticator_fn!();
+impl_authenticator_fn!(P1);
+impl_authenticator_fn!(P1, P2);
+impl_authenticator_fn!(P1, P2, P3);
+impl_authenticator_fn!(P1, P2, P3, P4);
+impl_authenticator_fn!(P1, P2, P3, P4, P5);
+
+/// A resolved component handle that can serve as a [`StompAuthenticator`]: an `Arc<T>` handle for a
+/// reference-counted component, or a by-value component that is itself the authenticator. The
+/// `Target = Self` bound on the by-value impl excludes `Arc<T>` (`Target = T`), so the two do not
+/// overlap — the same disjointness the DI crate's `FromContainer` relies on.
+pub trait ResolvedAuthenticator {
+    /// Erases the concrete handle into a shared authenticator, wrapping a by-value component in an
+    /// `Arc` so it can be called through the `self: Arc<Self>` receiver.
+    fn into_authenticator(self) -> Arc<dyn StompAuthenticator>;
+}
+
+impl<T> ResolvedAuthenticator for Arc<T>
+where
+    T: StompAuthenticator,
+{
+    fn into_authenticator(self) -> Arc<dyn StompAuthenticator> {
+        self
+    }
+}
+
+impl<T> ResolvedAuthenticator for T
+where
+    T: StompAuthenticator + Injectable<Target = T>,
+{
+    fn into_authenticator(self) -> Arc<dyn StompAuthenticator> {
+        Arc::new(self)
+    }
+}
+
+/// Installs a DI-resolved component as the [`StompAuthenticator`].
+///
+/// The component `T` is resolved from the connection scope at CONNECT time (so its own injected
+/// fields are already wired) and its [`authenticate`](StompAuthenticator::authenticate) runs. Works
+/// for both a reference-counted `#[component]` (resolved as `Arc<T>`) and a by-value component
+/// (resolved by value). Use it through the single builder:
+/// `with_authenticator(Injected::<TokenAuth>::new())`.
+pub struct Injected<T>(PhantomData<fn() -> T>);
+
+impl<T> Injected<T> {
+    /// Builds the adapter that resolves component `T` from the connection scope.
+    pub fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T> Default for Injected<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> StompAuthenticator for Injected<T>
+where
+    T: Component,
+    T::Handle: ResolvedAuthenticator + FromContainer + Send + 'static,
+{
+    fn authenticate(
+        self: Arc<Self>,
+        connect: StompConnect,
+        connection: Arc<ScopeContainer>,
+    ) -> StompAuthFuture {
+        Box::pin(async move {
+            let handle = connection.extract::<T::Handle>().await.map_err(|error| {
+                authenticator_dependency_error(::std::any::type_name::<T>(), error)
+            })?;
+
+            handle
+                .into_authenticator()
+                .authenticate(connect, connection)
+                .await
+        })
     }
 }
 

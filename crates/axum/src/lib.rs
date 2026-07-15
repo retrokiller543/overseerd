@@ -72,9 +72,9 @@ pub use stomp::{JsonCodec, StompBody, StompCodec, Topic, TopicParam};
 /// its broker/session/publish types. Server-only.
 #[cfg(all(feature = "stomp", not(target_family = "wasm")))]
 pub use ws::stomp::{
-    Broker, Publish, Publisher, Stomp, StompAuthFuture, StompAuthenticationError,
-    StompAuthenticator, StompConfig, StompConnect, StompError, StompHeaders, StompOutcome,
-    StompPrincipal, StompSession, StompTopicBus,
+    Broker, Direct, Injected, IntoAuthenticator, Publish, Publisher, ResolvedAuthenticator, Stomp,
+    StompAuthFuture, StompAuthenticationError, StompAuthenticator, StompConfig, StompConnect,
+    StompError, StompHeaders, StompOutcome, StompPrincipal, StompSession, StompTopicBus,
 };
 
 /// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a
