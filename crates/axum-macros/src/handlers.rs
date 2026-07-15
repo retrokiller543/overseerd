@@ -16,6 +16,7 @@ use syn::{
     ReturnType, Type, TypeParamBound, parse_quote,
 };
 
+use overseerd_macros_core::attr::first_type_arg;
 use overseerd_macros_core::client::ClientMethod;
 use overseerd_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
 use overseerd_macros_core::methods::self_ty_ident;
@@ -817,13 +818,9 @@ fn build_ws_route(
         let topic_codec = paths.plugin("TopicCodec");
         let message_reply = paths.plugin("MessageReply");
 
-        // A `Result` return propagates its error as an encode failure; a bare value is encoded
-        // directly. Either way the reply body is the handler's peeled success value.
-        let ok_value = if is_result_return(&method.sig.output) {
-            quote!(__resp.map_err(|__e| #dispatch_error::Encode(::std::string::ToString::to_string(&__e)))?)
-        } else {
-            quote!(__resp)
-        };
+        // The reply body is the handler's success value, peeled the same way the client decodes it
+        // (`client::response_type` peels `Result` then `Json`) so the two stay in lock-step.
+        let ok_value = message_reply_ok_value(&method.sig.output, &dispatch_error);
 
         quote! {
             let __ok = #ok_value;
@@ -1105,17 +1102,35 @@ fn is_unit_type(ty: &Type) -> bool {
     matches!(ty, Type::Tuple(tuple) if tuple.elems.is_empty())
 }
 
-/// Whether a return type is a `Result<..>` (by its last path segment), so the request server route
-/// knows to propagate the handler's error before encoding the reply.
-fn is_result_return(output: &ReturnType) -> bool {
-    match output {
-        ReturnType::Type(_, ty) => matches!(
-            &**ty,
-            Type::Path(path) if path.path.segments.last().is_some_and(|seg| seg.ident == "Result")
-        ),
+/// The expression that turns a request handler's return (`__resp`) into the success value the
+/// client decodes, peeling exactly what [`client::response_type`] peels: a `Result` (its error
+/// becomes an encode failure) then a `Json<T>` wrapper (unwrapped to its inner `T`). Keeping the two
+/// peels in lock-step keeps the server's reply encoding symmetric with the client's decode.
+///
+/// Detection keys on the literal `Result`/`Json` path segments, so a type alias
+/// (`type MyResult<T> = Result<T, E>`) is not seen through — the handler must return a bare
+/// `Result`/`Json` (or annotate `#[message(send|request)]`); this matches the RPC macro's behavior.
+fn message_reply_ok_value(output: &ReturnType, dispatch_error: &syn::Path) -> TokenStream {
+    let ty = match output {
+        ReturnType::Type(_, ty) => (**ty).clone(),
 
-        ReturnType::Default => false,
+        ReturnType::Default => return quote!(__resp),
+    };
+
+    let mut expr = quote!(__resp);
+    let inner = if let Some(ok) = first_type_arg(&ty, "Result") {
+        expr = quote!((#expr).map_err(|__e| #dispatch_error::Encode(::std::string::ToString::to_string(&__e)))?);
+
+        ok
+    } else {
+        ty
+    };
+
+    if first_type_arg(&inner, "Json").is_some() {
+        expr = quote!((#expr).0);
     }
+
+    expr
 }
 
 /// Builds the generated typed websocket client method for one `#[message("dest")]` handler.

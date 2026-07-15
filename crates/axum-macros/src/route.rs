@@ -40,6 +40,11 @@ pub fn is_message_attr(attr: &Attribute) -> bool {
 /// broadcast — is inferred as a request and will not compile (a broadcast value is not the reply
 /// type the client decodes). Annotate such a handler `#[message(send)]` to force the fire-and-forget
 /// path. (The idiomatic imperative-broadcast route is an injected `Publisher`, which returns `()`.)
+///
+/// The request reply type is the return with a `Result` then a `Json<T>` wrapper peeled off, keyed
+/// on the literal `Result`/`Json` path segments. A type alias (`type MyResult<T> = Result<T, E>`) is
+/// **not** seen through — return a bare `Result`/`Json` (or annotate `#[message(send|request)]`) so
+/// the peel is unambiguous. This matches the RPC macro's alias limitation.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MessageMode {
     /// Infer from the return type: `()` is a fire-and-forget SEND, anything else a request/response.
