@@ -169,6 +169,23 @@ impl ChatHandler {
             })
             .await
     }
+
+    /// A **request/response** `#[message]` on the same pub/sub controller: it returns a value (not
+    /// `()`), so the generated client method awaits a correlated reply instead of being
+    /// fire-and-forget — and the reply goes only to the caller, never broadcast. Here it records the
+    /// message (like `on_chat`) and echoes back the room's new message count so the caller learns its
+    /// own position without subscribing.
+    #[message("/app/count")]
+    async fn count(&self, message: ChatMessage) -> Result<usize, CodecError> {
+        self.state.record(&message);
+
+        let count = self
+            .state
+            .room(&message.room)
+            .map_or(0, |room| room.with_messages(<[ChatMessage]>::len));
+
+        Ok(count)
+    }
 }
 
 /// The chat history REST surface (mounted under `/chat`), sharing the same [`ChatState`] the
@@ -329,6 +346,53 @@ mod tests {
         // went to `/topic/room/random`, a different destination this subscription never saw.
         assert_eq!(received.room, "general");
         assert_eq!(received.text, "for general");
+
+        shutdown.shutdown();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn a_request_message_awaits_a_correlated_reply() {
+        let app = app! {
+            name: "chat-request-test",
+            protocol: overseerd::axum::AxumPlugin,
+        }
+        .register_ws::<Stomp>("/ws/stomp")
+        .build()
+        .await
+        .expect("app builds");
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let shutdown = app.shutdown_handle();
+        let server = tokio::spawn(async move { app.serve(listener).await });
+
+        let url = format!("ws://{addr}/ws/stomp");
+        let connection = StompClientTransport::connect(&url).await.expect("connects");
+
+        // `count` returns a value, so the generated client method is a request that awaits its
+        // correlated reply — no subscription involved. Two sends to the same room reply 1, then 2.
+        let client = ChatHandlerClient::new(connection.clone());
+
+        let first = client
+            .count(ChatMessage {
+                room: "general".into(),
+                sender: "alice".into(),
+                text: "one".into(),
+            })
+            .await
+            .expect("first count reply");
+        let second = client
+            .count(ChatMessage {
+                room: "general".into(),
+                sender: "bob".into(),
+                text: "two".into(),
+            })
+            .await
+            .expect("second count reply");
+
+        assert_eq!(first, 1);
+        assert_eq!(second, 2);
 
         shutdown.shutdown();
         let _ = server.await;
