@@ -55,12 +55,14 @@ pub struct AxumHandlers {
 
     /// `ws = P` — the WebSocket protocol this handlers block speaks, mirroring
     /// `#[controller(ws = P)]`. It selects how `#[message]` *client* methods are generated: the
-    /// default (`None`) / `JsonWs` emits request/reply methods; `Stomp` emits typed `SEND` methods.
+    /// default (`None`) / `JsonWs` emits request/reply methods; a pub/sub protocol (`Stomp`, …) emits
+    /// per-message SEND or request methods (chosen by each handler's return type).
     ws_protocol: Option<syn::Path>,
 
-    /// `codec = C` — the STOMP body codec for this block's `#[message]` SENDs (default `JsonCodec`).
-    /// Encodes the payload on the generated client method and decodes it in the server handler, so
-    /// the SEND path is codec-agnostic and symmetric. Ignored for a `JsonWs` block.
+    /// `codec = C` — the pub/sub body codec for this block's `#[message]`s (default: the protocol's
+    /// [`TopicProtocol::DefaultCodec`]). Encodes the payload on the generated client method and
+    /// decodes it in the server handler (and encodes/decodes a request reply), so the message path is
+    /// codec-agnostic and symmetric. Ignored for a `JsonWs` block.
     ws_codec: Option<syn::Path>,
 }
 

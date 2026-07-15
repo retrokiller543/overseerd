@@ -1,13 +1,14 @@
-//! The topic pub/sub client: typed `send`/`subscribe` capabilities, generic over the protocol.
+//! The pub/sub client capabilities, generic over the protocol: point-to-point *messages* and topic
+//! *subscription*.
 //!
-//! [`MessageSend<P>`] and [`TopicSubscribe<P>`] are the protocol-generic client capabilities the
-//! generated `#[topics]`/`#[message]` clients bind on; a transport (STOMP's [`StompClientTransport`],
-//! or another protocol's) implements them for its protocol tag. Unlike the request/reply
-//! [`WebsocketClientProtocol`](super::WebsocketClientProtocol) (one reply per request), a topic
-//! subscription is a *durable* [`Subscription`] stream keyed by a client-chosen id.
+//! Two message capabilities back the generated `#[message]` controller-client methods:
+//! [`MessageSend<P>`] (fire-and-forget) and [`MessageRequest<P>`] (send-and-await-a-reply). The
+//! topic capability [`TopicSubscribe<P>`] backs the `#[topics]` `subscribe_*` client — a *durable*
+//! [`Subscription`] stream keyed by a client-chosen id, unlike the request/reply
+//! [`WebsocketClientProtocol`](super::WebsocketClientProtocol) (one reply per request). A transport
+//! (STOMP's [`StompClientTransport`], or another protocol's) implements them for its protocol tag.
 //!
-//! [`MessageSend`] is fire-and-forget; STOMP's transport sends no heart-beats in v1 (see
-//! `docs/stomp.md` for the deferred-feature list).
+//! STOMP's transport sends no heart-beats in v1 (see `docs/stomp.md` for the deferred-feature list).
 
 use std::marker::PhantomData;
 use std::pin::Pin;
