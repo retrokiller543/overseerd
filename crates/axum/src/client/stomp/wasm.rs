@@ -18,7 +18,7 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use crate::client::Connection;
-use crate::stomp::{Stomp, TopicClientProtocol};
+use crate::stomp::{Stomp, MessagingClientProtocol};
 
 use super::{MessageRequest, MessageSend, StompClientTransport, Subscription, TopicSubscribe};
 
@@ -27,7 +27,7 @@ use super::{MessageRequest, MessageSend, StompClientTransport, Subscription, Top
 /// controller message binding); the rest (the [`TopicSubscription`] handle and the [`pump`]) is
 /// protocol-agnostic. STOMP implements it over its shared socket; a new protocol implements its own,
 /// and the generated bindings name neither concretely.
-pub trait TopicWasmClient: TopicClientProtocol + Sized {
+pub trait TopicWasmClient: MessagingClientProtocol + Sized {
     /// The concrete transport, obtained from the shared connection, that speaks this protocol. It
     /// must support every wasm client surface both bindings emit — topic subscription plus the
     /// point-to-point message send/request — so a missing capability is an error at the
@@ -83,7 +83,7 @@ pub fn pump<P, C, M>(
     on_message: js_sys::Function,
 ) -> TopicSubscription
 where
-    P: TopicClientProtocol,
+    P: MessagingClientProtocol,
     C: TopicSubscribe<P> + Clone + Unpin + 'static,
     M: Serialize + Unpin + 'static,
 {

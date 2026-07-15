@@ -105,12 +105,12 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
 
     let topic_trait = paths.plugin("Topic");
     let topic_param = paths.plugin("TopicParam");
-    let topic_protocol = paths.plugin("TopicProtocol");
+    let topic_protocol = paths.plugin("MessagingProtocol");
     let topic_codec = paths.plugin("TopicCodec");
     let codec_error = paths.plugin("CodecError");
 
     // The pub/sub protocol this topic set is published over: the user's `protocol = ..` or the
-    // default `Stomp`. Everything the macro emits is generic over it (`<P as TopicProtocol>::Body`,
+    // default `Stomp`. Everything the macro emits is generic over it (`<P as MessagingProtocol>::Body`,
     // `TopicCodec<P>`, the client's `TopicSubscribe<P>`), so a new protocol needs no macro change.
     let protocol = match &args.protocol {
         Some(path) => quote!(#path),
@@ -276,7 +276,7 @@ fn generate_client(
     let subscription = paths.plugin("client::Subscription");
     let topic_subscribe = paths.plugin("client::TopicSubscribe");
     let topic_codec = paths.plugin("TopicCodec");
-    let topic_client_protocol = paths.plugin("TopicClientProtocol");
+    let topic_client_protocol = paths.plugin("MessagingClientProtocol");
     let topic_param = paths.plugin("TopicParam");
     let client_error = paths.client("ClientError");
 

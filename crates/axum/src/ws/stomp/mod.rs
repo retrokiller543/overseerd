@@ -49,8 +49,8 @@ pub use auth::{
     StompAuthenticationError, StompAuthenticator, StompConnect, StompPrincipal,
 };
 pub use body::{
-    JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic, TopicClientProtocol,
-    TopicCodec, TopicParam, TopicProtocol,
+    JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic, MessagingClientProtocol,
+    TopicCodec, TopicParam, MessagingProtocol,
 };
 pub use broker::{Broker, ConnectionId, SubscriptionRegistry};
 pub use error::StompError;

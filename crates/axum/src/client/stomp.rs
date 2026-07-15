@@ -18,10 +18,10 @@ use futures::Stream;
 use overseerd_client::ClientError;
 use overseerd_transport::CodecError;
 
-use crate::stomp::{Stomp, TopicClientProtocol};
+use crate::stomp::{Stomp, MessagingClientProtocol};
 
 /// The status carried by a STOMP [`ClientError::Remote`], mirroring
-/// [`WsStatus`](super::WsStatus). This is [`Stomp`]'s [`TopicClientProtocol::Status`].
+/// [`WsStatus`](super::WsStatus). This is [`Stomp`]'s [`MessagingClientProtocol::Status`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StompStatus {
     /// The broker sent an `ERROR` frame (fatal — the connection is torn down).
@@ -35,7 +35,7 @@ pub enum StompStatus {
     Handler,
 }
 
-impl TopicClientProtocol for Stomp {
+impl MessagingClientProtocol for Stomp {
     type Status = StompStatus;
 }
 
@@ -49,7 +49,7 @@ pub struct ReceiptId(pub String);
 
 /// A transport that can send one typed payload to a destination (fire-and-forget) over protocol `P`.
 /// The generated `send_<name>()` client methods bind on this.
-pub trait MessageSend<P: TopicClientProtocol>: Send + Sync {
+pub trait MessageSend<P: MessagingClientProtocol>: Send + Sync {
     /// Writes a send frame carrying `body` to `destination`. The body is already encoded (by the
     /// generated method's codec), so the transport is codec-agnostic — it ships the protocol body.
     /// Takes `&str` (not `&'static str`) so a templated destination works too.
@@ -63,7 +63,7 @@ pub trait MessageSend<P: TopicClientProtocol>: Send + Sync {
 /// A transport that can send one typed payload to a destination and await a correlated typed reply
 /// over protocol `P` — the point-to-point request/response companion to [`MessageSend`]. The
 /// generated `<name>()` client methods for a non-unit-returning `#[message]` handler bind on this.
-pub trait MessageRequest<P: TopicClientProtocol>: Send + Sync {
+pub trait MessageRequest<P: MessagingClientProtocol>: Send + Sync {
     /// Sends `body` to `destination` and resolves with the raw reply body. The request body is
     /// already encoded and the reply is decoded by the generated method's codec, so the transport is
     /// codec-agnostic. Takes `&str` so a templated destination works too.
@@ -77,7 +77,7 @@ pub trait MessageRequest<P: TopicClientProtocol>: Send + Sync {
 /// A transport that can subscribe to a destination and yield a decoded stream of messages over
 /// protocol `P`. The generated `subscribe_<topic>()` client methods bind on this; `decode` is the
 /// topic set's codec.
-pub trait TopicSubscribe<P: TopicClientProtocol>: Send + Sync {
+pub trait TopicSubscribe<P: MessagingClientProtocol>: Send + Sync {
     /// Registers a subscription and returns a [`Subscription`] streaming decoded messages. Takes
     /// `&str` so a templated topic's runtime-rendered destination works too.
     fn subscribe<M>(
@@ -95,7 +95,7 @@ pub trait TopicSubscribe<P: TopicClientProtocol>: Send + Sync {
 
 /// A live subscription: a [`Stream`] of decoded topic messages that deregisters on drop. Returned by
 /// every generated `subscribe_<topic>()` method, typed to the topic's message and protocol `P`.
-pub struct Subscription<P: TopicClientProtocol, C: TopicSubscribe<P>, M> {
+pub struct Subscription<P: MessagingClientProtocol, C: TopicSubscribe<P>, M> {
     id: SubscriptionId,
     items: tokio::sync::mpsc::Receiver<P::Body>,
     decode: fn(P::Body) -> Result<M, CodecError>,
@@ -103,7 +103,7 @@ pub struct Subscription<P: TopicClientProtocol, C: TopicSubscribe<P>, M> {
     _marker: PhantomData<fn() -> M>,
 }
 
-impl<P: TopicClientProtocol, C: TopicSubscribe<P>, M> Subscription<P, C, M> {
+impl<P: MessagingClientProtocol, C: TopicSubscribe<P>, M> Subscription<P, C, M> {
     /// Assembles a subscription handle. Called by the transport once the subscribe is registered.
     pub(crate) fn new(
         id: SubscriptionId,
@@ -128,7 +128,7 @@ impl<P: TopicClientProtocol, C: TopicSubscribe<P>, M> Subscription<P, C, M> {
 
 impl<P, C, M> Stream for Subscription<P, C, M>
 where
-    P: TopicClientProtocol,
+    P: MessagingClientProtocol,
     C: TopicSubscribe<P> + Unpin,
     M: Unpin,
 {
@@ -151,7 +151,7 @@ where
     }
 }
 
-impl<P: TopicClientProtocol, C: TopicSubscribe<P>, M> Drop for Subscription<P, C, M> {
+impl<P: MessagingClientProtocol, C: TopicSubscribe<P>, M> Drop for Subscription<P, C, M> {
     fn drop(&mut self) {
         self.transport.unsubscribe(self.id.clone());
     }
@@ -159,19 +159,19 @@ impl<P: TopicClientProtocol, C: TopicSubscribe<P>, M> Drop for Subscription<P, C
 
 /// The always-closed `()` transport: lets a generated client type-check without a wired transport
 /// (mirrors the `()` impls for the request/reply websocket client).
-impl<P: TopicClientProtocol> MessageSend<P> for () {
+impl<P: MessagingClientProtocol> MessageSend<P> for () {
     async fn send(&self, _: &str, _: P::Body) -> Result<(), ClientError<P::Status>> {
         Err(ClientError::Transport(overseerd_transport::Error::Closed))
     }
 }
 
-impl<P: TopicClientProtocol> MessageRequest<P> for () {
+impl<P: MessagingClientProtocol> MessageRequest<P> for () {
     async fn request(&self, _: &str, _: P::Body) -> Result<P::Body, ClientError<P::Status>> {
         Err(ClientError::Transport(overseerd_transport::Error::Closed))
     }
 }
 
-impl<P: TopicClientProtocol> TopicSubscribe<P> for () {
+impl<P: MessagingClientProtocol> TopicSubscribe<P> for () {
     async fn subscribe<M>(
         &self,
         _: &str,

@@ -60,7 +60,7 @@ pub struct AxumHandlers {
     ws_protocol: Option<syn::Path>,
 
     /// `codec = C` — the pub/sub body codec for this block's `#[message]`s (default: the protocol's
-    /// [`TopicProtocol::DefaultCodec`]). Encodes the payload on the generated client method and
+    /// [`MessagingProtocol::DefaultCodec`]). Encodes the payload on the generated client method and
     /// decodes it in the server handler (and encodes/decodes a request reply), so the message path is
     /// codec-agnostic and symmetric. Ignored for a `JsonWs` block.
     ws_codec: Option<syn::Path>,
@@ -922,7 +922,7 @@ pub(crate) fn is_pubsub_protocol(protocol: Option<&syn::Path>) -> bool {
 
 impl AxumHandlers {
     /// The pub/sub body codec for this block as a token stream: the block's `codec = ..` path, or —
-    /// when unset — the protocol's own [`TopicProtocol::DefaultCodec`], matching `#[topics]`. Keying
+    /// when unset — the protocol's own [`MessagingProtocol::DefaultCodec`], matching `#[topics]`. Keying
     /// the default off the protocol (not a hardcoded `JsonCodec`) keeps a non-STOMP protocol's SEND
     /// and subscribe codecs aligned.
     fn resolve_pubsub_codec(&self, paths: &Paths) -> TokenStream {
@@ -930,7 +930,7 @@ impl AxumHandlers {
             Some(path) => quote!(#path),
 
             None => {
-                let topic_protocol = paths.plugin("TopicProtocol");
+                let topic_protocol = paths.plugin("MessagingProtocol");
                 let protocol = self
                     .ws_protocol
                     .as_ref()
@@ -958,8 +958,8 @@ fn build_message_send_method(
     let payload = ws_payload_type(method)?;
     let client_error = paths.client("ClientError");
     let message_send = paths.plugin("client::MessageSend");
-    let topic_client_protocol = paths.plugin("TopicClientProtocol");
-    let topic_protocol = paths.plugin("TopicProtocol");
+    let topic_client_protocol = paths.plugin("MessagingClientProtocol");
+    let topic_protocol = paths.plugin("MessagingProtocol");
     let topic_codec = paths.plugin("TopicCodec");
 
     // Encode the payload to the protocol body via the codec, or send the body's default for a
@@ -1024,8 +1024,8 @@ fn build_message_request_method(
     let response = client::response_type(&method.sig.output);
     let client_error = paths.client("ClientError");
     let message_request = paths.plugin("client::MessageRequest");
-    let topic_client_protocol = paths.plugin("TopicClientProtocol");
-    let topic_protocol = paths.plugin("TopicProtocol");
+    let topic_client_protocol = paths.plugin("MessagingClientProtocol");
+    let topic_protocol = paths.plugin("MessagingProtocol");
     let topic_codec = paths.plugin("TopicCodec");
 
     // Encode the payload to the protocol body via the codec, or send the body's default for a

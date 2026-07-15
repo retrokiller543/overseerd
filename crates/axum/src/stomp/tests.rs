@@ -11,7 +11,7 @@ use overseerd_app::AppRuntime;
 use overseerd_di::ScopeContainer;
 use serde::{Deserialize, Serialize};
 
-use crate::stomp::{Topic, TopicClientProtocol, TopicCodec, TopicProtocol};
+use crate::stomp::{Topic, MessagingClientProtocol, TopicCodec, MessagingProtocol};
 use crate::ws::stomp::{Publisher, TopicBus};
 use crate::ws::{PubSubProtocol, WebsocketProtocol, WsControllerDescriptor, WsShutdown};
 use overseerd_transport::CodecError;
@@ -39,12 +39,12 @@ impl TopicCodec<TestProto> for TestCodec {
     }
 }
 
-impl TopicProtocol for TestProto {
+impl MessagingProtocol for TestProto {
     type Body = TestBody;
     type DefaultCodec = TestCodec;
 }
 
-impl TopicClientProtocol for TestProto {
+impl MessagingClientProtocol for TestProto {
     type Status = ();
 }
 
@@ -118,7 +118,7 @@ fn _publisher_is_protocol_generic(_: &Publisher<TestTopics>) {}
 /// `TopicSubscribe<P>` — the capability traits the `#[message]`/`#[topics]` codegen emits. These
 /// bounds resolve for the non-STOMP `TestProto` only because the traits carry no STOMP type, so a
 /// transport that implements them for `TestProto` slots into the generated code unchanged. The `()`
-/// transport implements all three for any `P: TopicClientProtocol`, so naming it here is the
+/// transport implements all three for any `P: MessagingClientProtocol`, so naming it here is the
 /// compile-time proof that the client seam is protocol-generic.
 #[cfg(feature = "client")]
 fn _message_client_is_protocol_generic() {

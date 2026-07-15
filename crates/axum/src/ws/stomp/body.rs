@@ -11,8 +11,8 @@
 // browser client can name it too; re-exported here so the broker's internal `crate::ws::stomp::*`
 // paths and the crate's public surface are unchanged.
 pub use crate::stomp::{
-    JsonCodec, StompBody, StompCodec, Topic, TopicClientProtocol, TopicCodec, TopicParam,
-    TopicProtocol,
+    JsonCodec, StompBody, StompCodec, Topic, MessagingClientProtocol, TopicCodec, TopicParam,
+    MessagingProtocol,
 };
 
 /// One outbound fan-out: a destination, its body, and any extra headers to attach to the `MESSAGE`.

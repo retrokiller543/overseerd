@@ -1,6 +1,6 @@
 //! The wasm-safe topic wire contract and STOMP's implementation of it.
 //!
-//! The protocol capability traits ([`TopicProtocol`], [`TopicClientProtocol`]), the pluggable
+//! The protocol capability traits ([`MessagingProtocol`], [`MessagingClientProtocol`]), the pluggable
 //! [`TopicCodec`], and the [`Topic`] contract are pure (bytes + serde, no tokio/axum), so they
 //! compile on every target: the server broker (native) and the browser client (wasm) both name
 //! them. They are generic over the protocol, so STOMP is one implementation and a new protocol
@@ -49,11 +49,11 @@ use crate::ws::stomp::{Broker, StompConfig};
 
 /// A pub/sub WebSocket protocol's topic wire vocabulary: the frame body a topic value encodes to,
 /// and the codec used when a topic set names none. A protocol "has topics" by implementing this
-/// (plus [`TopicClientProtocol`] for a client and [`PubSubProtocol`](crate::ws::PubSubProtocol) for
+/// (plus [`MessagingClientProtocol`] for a client and [`PubSubProtocol`](crate::ws::PubSubProtocol) for
 /// server publish); `#[topics]`, [`Topic`], the publisher, and the client are all generic over it,
 /// so STOMP is one implementation and another protocol adds its own without touching the topics
 /// machinery.
-pub trait TopicProtocol: 'static {
+pub trait MessagingProtocol: 'static {
     /// The wire body a [`Topic`] value encodes to and the broker fans out to subscribers. Its
     /// `Default` is the empty body a no-payload `#[message]` SEND ships. This body is shared by both
     /// surfaces of a pub/sub-capable protocol: topic pub/sub (`#[topics]`) and point-to-point
@@ -64,12 +64,12 @@ pub trait TopicProtocol: 'static {
     type DefaultCodec: TopicCodec<Self>;
 }
 
-/// A [`TopicProtocol`] that also exposes a client. Adds the opaque error status a client surfaces;
+/// A [`MessagingProtocol`] that also exposes a client. Adds the opaque error status a client surfaces;
 /// the framework never inspects it — a protocol owns what its failures mean. Its `Body` (from
-/// [`TopicProtocol`]) and `Status` are shared by both client surfaces: topic subscription
+/// [`MessagingProtocol`]) and `Status` are shared by both client surfaces: topic subscription
 /// ([`TopicSubscribe`](crate::client::TopicSubscribe)) and point-to-point messages
 /// ([`MessageSend`](crate::client::MessageSend) / `MessageRequest`).
-pub trait TopicClientProtocol: TopicProtocol {
+pub trait MessagingClientProtocol: MessagingProtocol {
     /// The status carried by a client [`ClientError`](overseerd_client::ClientError) for this
     /// protocol (STOMP uses [`StompStatus`](crate::client::StompStatus)).
     type Status: std::fmt::Debug + Clone + Send + 'static;
@@ -82,7 +82,7 @@ pub trait TopicClientProtocol: TopicProtocol {
 /// topic.
 pub trait Topic {
     /// The protocol this topic set is published over — determines the wire body and the bus.
-    type Protocol: TopicProtocol;
+    type Protocol: MessagingProtocol;
 
     /// This value's destination. A static `#[topic("/topic/x")]` borrows the literal; a templated
     /// `#[topic("/topic/{room}")]` substitutes the variant's typed fields into an owned string —
@@ -90,7 +90,7 @@ pub trait Topic {
     fn destination(&self) -> Cow<'static, str>;
 
     /// Serializes this value's payload into the protocol's body (using the topic set's codec).
-    fn encode(&self) -> Result<<Self::Protocol as TopicProtocol>::Body, CodecError>;
+    fn encode(&self) -> Result<<Self::Protocol as MessagingProtocol>::Body, CodecError>;
 }
 
 /// A typed value that fills one `{name}` hole in a templated [`Topic`] destination — on the server
@@ -110,12 +110,12 @@ pub trait TopicParam {
 /// The wire codec for a topic set's message bodies, generic over the protocol `P` whose body it
 /// produces and consumes — how a payload is serialized on the server's publish and deserialized on
 /// the client's subscribe. Selected per topic set with `#[topics(codec = ..)]`; a protocol supplies
-/// its default via [`TopicProtocol::DefaultCodec`]. The same codec type is named on both sides, so
+/// its default via [`MessagingProtocol::DefaultCodec`]. The same codec type is named on both sides, so
 /// both directions follow it. For STOMP, implement the simpler [`StompCodec`] — a blanket impl makes
 /// any `StompCodec` a `TopicCodec<Stomp>`.
 pub trait TopicCodec<P>: Send + Sync + 'static
 where
-    P: TopicProtocol + ?Sized,
+    P: MessagingProtocol + ?Sized,
 {
     /// Serializes a payload into the protocol body.
     fn encode<T: serde::Serialize>(value: &T) -> Result<P::Body, CodecError>;
@@ -178,7 +178,7 @@ impl<T: Topic> Topic for &T {
         T::destination(self)
     }
 
-    fn encode(&self) -> Result<<T::Protocol as TopicProtocol>::Body, CodecError> {
+    fn encode(&self) -> Result<<T::Protocol as MessagingProtocol>::Body, CodecError> {
         T::encode(self)
     }
 }
@@ -230,7 +230,7 @@ pub struct Stomp {
     pub(crate) config: StompConfig,
 }
 
-impl TopicProtocol for Stomp {
+impl MessagingProtocol for Stomp {
     type Body = StompBody;
     type DefaultCodec = JsonCodec;
 }
