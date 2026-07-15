@@ -1,58 +1,84 @@
-//! The wasm/JS bridge for STOMP subscriptions.
+//! The wasm/JS bridge for topic subscriptions.
 //!
 //! A [`Subscription`](super::Subscription) is a Rust `Stream` — JavaScript can't poll it. This
-//! bridges it to the idiomatic JS shape: `subscribe_*` hands back a [`StompSubscription`] handle and
-//! delivers each decoded message to a callback. The generated method takes a **typed** callback
-//! (`(message: T) => void`, via a per-method `typescript_type` extern), so JS/TS sees the real
-//! message type, not `any`; at runtime it is a plain `js_sys::Function` here. `handle.unsubscribe()`
-//! (or GC'ing the handle) aborts the pump task, which drops the `Subscription` and sends
-//! `UNSUBSCRIBE`.
+//! bridges it to the idiomatic JS shape: `subscribe_*` hands back a [`TopicSubscription`] handle and
+//! delivers each decoded message to a callback. Both the handle and the [`pump`] are
+//! protocol-agnostic; the only protocol-specific step — pulling the transport out of the shared
+//! [`Connection`] — is [`TopicWasmClient`], which STOMP implements here. The generated method takes
+//! a **typed** callback (`(message: T) => void`, via a per-method `typescript_type` extern), so
+//! JS/TS sees the real message type, not `any`; at runtime it is a plain `js_sys::Function` here.
+//! `handle.unsubscribe()` (or GC'ing the handle) aborts the pump task, which drops the
+//! `Subscription` and deregisters.
 
 use futures::StreamExt;
 use futures::future::{AbortHandle, Abortable};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use super::{StompSubscribe, Subscription};
+use crate::client::Connection;
+use crate::stomp::{Stomp, TopicClientProtocol};
 
-/// A live STOMP subscription handle returned to JS. Call [`unsubscribe`](Self::unsubscribe) to stop
-/// receiving (it aborts the delivery task, which sends `UNSUBSCRIBE`). Dropping the handle in JS
-/// (letting it be garbage-collected) does the same.
+use super::{StompClientTransport, Subscription, TopicSubscribe};
+
+/// Pulls a protocol's client transport out of the shared browser [`Connection`]. This is the only
+/// protocol-specific step in the generated wasm topics binding; the rest (the [`TopicSubscription`]
+/// handle and the [`pump`]) is protocol-agnostic. STOMP implements it over its shared socket; a new
+/// protocol implements its own, and the generated binding names neither concretely.
+pub trait TopicWasmClient: TopicClientProtocol {
+    /// The concrete transport, obtained from the shared connection, that speaks this protocol.
+    type Transport: TopicSubscribe<Self> + Clone + Unpin + 'static;
+
+    /// Pulls this protocol's transport out of the shared connection (errors if it isn't connected).
+    fn transport(connection: &Connection) -> Result<Self::Transport, JsError>;
+}
+
+impl TopicWasmClient for Stomp {
+    type Transport = StompClientTransport;
+
+    fn transport(connection: &Connection) -> Result<StompClientTransport, JsError> {
+        connection.stomp()
+    }
+}
+
+/// A live subscription handle returned to JS. Call [`unsubscribe`](Self::unsubscribe) to stop
+/// receiving (it aborts the delivery task, which deregisters). Dropping the handle in JS (letting it
+/// be garbage-collected) does the same.
 #[wasm_bindgen]
-pub struct StompSubscription {
+pub struct TopicSubscription {
     abort: AbortHandle,
 }
 
 #[wasm_bindgen]
-impl StompSubscription {
-    /// Stops the subscription: aborts message delivery and sends `UNSUBSCRIBE` to the broker.
+impl TopicSubscription {
+    /// Stops the subscription: aborts message delivery and deregisters from the broker.
     pub fn unsubscribe(&self) {
         self.abort.abort();
     }
 }
 
-impl Drop for StompSubscription {
+impl Drop for TopicSubscription {
     fn drop(&mut self) {
         self.abort.abort();
     }
 }
 
 /// Spawns the task pumping `subscription`'s decoded messages into the JS `on_message` callback, and
-/// returns the [`StompSubscription`] handle controlling it. Each message is serialized to its JS
+/// returns the [`TopicSubscription`] handle controlling it. Each message is serialized to its JS
 /// value; a decode/transport error ends the stream (logged), matching the native stream's behavior.
-/// Generated `subscribe_*` wasm methods call this (having converted their typed callback param to a
-/// `js_sys::Function`).
-pub fn pump<C, M>(
-    subscription: Subscription<C, M>,
+/// Fully protocol-generic. Generated `subscribe_*` wasm methods call this (having converted their
+/// typed callback param to a `js_sys::Function`).
+pub fn pump<P, C, M>(
+    subscription: Subscription<P, C, M>,
     on_message: js_sys::Function,
-) -> StompSubscription
+) -> TopicSubscription
 where
-    C: StompSubscribe + Clone + Unpin + 'static,
+    P: TopicClientProtocol,
+    C: TopicSubscribe<P> + Clone + Unpin + 'static,
     M: Serialize + Unpin + 'static,
 {
     let (abort, registration) = AbortHandle::new_pair();
 
-    // The pump owns the `Subscription`; aborting drops it → its `Drop` sends `UNSUBSCRIBE`.
+    // The pump owns the `Subscription`; aborting drops it → its `Drop` deregisters.
     let task = Abortable::new(
         async move {
             let mut subscription = subscription;
@@ -70,7 +96,7 @@ where
                             tracing::warn!(
                                 target: "overseerd::axum",
                                 %error,
-                                "STOMP message failed to serialize for JS; skipping"
+                                "topic message failed to serialize for JS; skipping"
                             );
                         }
                     },
@@ -78,8 +104,8 @@ where
                     Err(error) => {
                         tracing::warn!(
                             target: "overseerd::axum",
-                            %error,
-                            "STOMP subscription error; ending subscription"
+                            ?error,
+                            "topic subscription error; ending subscription"
                         );
 
                         break;
@@ -95,5 +121,5 @@ where
         let _ = task.await;
     });
 
-    StompSubscription { abort }
+    TopicSubscription { abort }
 }

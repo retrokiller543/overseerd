@@ -6,10 +6,14 @@
 //! protocol's [`Outcome`](crate::ws::WebsocketProtocol::Outcome): what a `#[message]` handler
 //! returns, either nothing or a set of fan-out [`Publish`]es.
 
-// The wire types (`StompBody`, `StompCodec`/`JsonCodec`, `Topic`, `TopicParam`) live in the
-// wasm-safe `crate::stomp` module so the browser client can name them too; re-exported here so the
-// broker's internal `crate::ws::stomp::*` paths and the crate's public surface are unchanged.
-pub use crate::stomp::{JsonCodec, StompBody, StompCodec, Topic, TopicParam};
+// The wire contract (the protocol capability traits, the pluggable codec, the `Topic` contract, and
+// STOMP's `StompBody`/`StompCodec`/`JsonCodec`) lives in the wasm-safe `crate::stomp` module so the
+// browser client can name it too; re-exported here so the broker's internal `crate::ws::stomp::*`
+// paths and the crate's public surface are unchanged.
+pub use crate::stomp::{
+    JsonCodec, StompBody, StompCodec, Topic, TopicClientProtocol, TopicCodec, TopicParam,
+    TopicProtocol,
+};
 
 /// One outbound fan-out: a destination, its body, and any extra headers to attach to the `MESSAGE`.
 pub struct Publish {

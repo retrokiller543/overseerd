@@ -1,10 +1,16 @@
 //! The subscription registry and `MESSAGE` fan-out.
 //!
-//! One [`Broker`] is shared (via `Arc`) across every connection served by a [`Stomp`](super::Stomp)
-//! endpoint. Each connection registers an outbound channel; a `SUBSCRIBE` records interest in a
-//! destination; a `SEND` to a `/topic/**` destination (or an app handler's `Publisher`) fans a
-//! `MESSAGE` out to every matching subscriber. This is the server-push inversion: the broker holds
-//! each connection's write-half sender, so a message can reach a socket with no request in flight.
+//! [`SubscriptionRegistry<F>`] is the protocol-neutral core: a destination → subscribers map plus id
+//! counters, generic over the outbound frame type `F` a protocol delivers. It is shared (via `Arc`)
+//! across every connection served by a pub/sub endpoint and by the [`TopicBus`](super::TopicBus) so
+//! an HTTP handler and a message handler reach the same live subscriptions. A `SUBSCRIBE` records
+//! interest; a publish fans a frame out to every matching subscriber — the server-push inversion:
+//! the registry holds each connection's write-half sender, so a message can reach a socket with no
+//! request in flight. The registry never frames a message itself; the caller supplies a *framer*
+//! closure, so STOMP frames a `MESSAGE` and another protocol frames its own event.
+//!
+//! [`Broker`] is STOMP's instantiation (`SubscriptionRegistry<OutFrame>`) with a `publish`/`deliver`
+//! surface that frames a STOMP `MESSAGE` from a [`StompBody`].
 
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -16,7 +22,7 @@ use tokio::sync::mpsc;
 
 use super::body::StompBody;
 
-/// Identifies one live connection on a broker. Minted by [`Broker::register`].
+/// Identifies one live connection on a registry. Minted by [`SubscriptionRegistry::register`].
 pub type ConnectionId = u64;
 
 /// A frame queued to a connection's writer task. `Heartbeat` is an empty server heart-beat
@@ -30,24 +36,24 @@ pub enum OutFrame {
 }
 
 /// One live subscription: the connection, its client-chosen id, and that connection's writer sink.
-/// Holding the `tx` here lets [`publish`](Broker::publish) fan out without touching a second lock.
-struct SubEntry {
+/// Holding the `tx` here lets a publish fan out without touching a second lock.
+struct SubEntry<F> {
     conn: ConnectionId,
     sub_id: String,
-    tx: mpsc::Sender<OutFrame>,
+    tx: mpsc::Sender<F>,
 }
 
-/// The subscription registry: destination → subscribers, plus id counters. Publishing takes a read
-/// lock only long enough to clone the matching senders, then releases it before sending — no
-/// `await` is ever held across the lock (see [`publish`](Broker::publish)).
-pub struct Broker {
-    subs: RwLock<HashMap<String, Vec<SubEntry>>>,
+/// The protocol-neutral subscription registry: destination → subscribers, plus id counters, generic
+/// over the outbound frame type `F`. Publishing takes a read lock only long enough to clone the
+/// matching senders, then releases it before sending — no `await` is ever held across the lock.
+pub struct SubscriptionRegistry<F> {
+    subs: RwLock<HashMap<String, Vec<SubEntry<F>>>>,
     next_conn: AtomicU64,
     next_message: AtomicU64,
 }
 
-impl Broker {
-    /// A fresh, empty broker.
+impl<F> SubscriptionRegistry<F> {
+    /// A fresh, empty registry.
     pub fn new() -> Self {
         Self {
             subs: RwLock::new(HashMap::new()),
@@ -61,15 +67,15 @@ impl Broker {
         self.next_conn.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Records a subscription: `conn`'s `sub_id` now receives messages published to `destination`.
+    /// Records a subscription: `conn`'s `sub_id` now receives frames published to `destination`.
     pub fn subscribe(
         &self,
         conn: ConnectionId,
         sub_id: &str,
         destination: &str,
-        tx: mpsc::Sender<OutFrame>,
+        tx: mpsc::Sender<F>,
     ) {
-        let mut subs = self.subs.write().expect("broker subs lock poisoned");
+        let mut subs = self.subs.write().expect("registry subs lock poisoned");
 
         subs.entry(destination.to_owned())
             .or_default()
@@ -83,7 +89,7 @@ impl Broker {
     /// Removes one subscription by `(conn, sub_id)`. The destination is not needed — a client
     /// `UNSUBSCRIBE` carries only the id.
     pub fn unsubscribe(&self, conn: ConnectionId, sub_id: &str) {
-        let mut subs = self.subs.write().expect("broker subs lock poisoned");
+        let mut subs = self.subs.write().expect("registry subs lock poisoned");
 
         for entries in subs.values_mut() {
             entries.retain(|entry| !(entry.conn == conn && entry.sub_id == sub_id));
@@ -92,7 +98,7 @@ impl Broker {
 
     /// Drops every subscription belonging to `conn` (called when its socket closes).
     pub fn unregister(&self, conn: ConnectionId) {
-        let mut subs = self.subs.write().expect("broker subs lock poisoned");
+        let mut subs = self.subs.write().expect("registry subs lock poisoned");
 
         for entries in subs.values_mut() {
             entries.retain(|entry| entry.conn != conn);
@@ -101,113 +107,130 @@ impl Broker {
         subs.retain(|_, entries| !entries.is_empty());
     }
 
-    /// Fans `body` out to every subscriber of `destination` as a `MESSAGE` frame. Collects the
-    /// matching senders under a read lock, releases it, then sends — a slow/backpressured consumer
-    /// never blocks the registry. Dead connections are cleaned up on their own `unregister`.
-    pub fn publish(&self, destination: &str, body: &StompBody, extra_headers: &[(String, String)]) {
-        let targets: Vec<(String, mpsc::Sender<OutFrame>)> = {
-            let subs = self.subs.read().expect("broker subs lock poisoned");
+    /// Collects the `(sub_id, tx)` of every subscriber of `destination` under a read lock, releasing
+    /// it before the caller sends — so a slow/backpressured consumer never blocks the registry.
+    fn targets(&self, destination: &str) -> Vec<(String, mpsc::Sender<F>)>
+    where
+        F: Send,
+    {
+        let subs = self.subs.read().expect("registry subs lock poisoned");
 
-            match subs.get(destination) {
-                Some(entries) => entries
-                    .iter()
-                    .map(|entry| (entry.sub_id.clone(), entry.tx.clone()))
-                    .collect(),
+        match subs.get(destination) {
+            Some(entries) => entries
+                .iter()
+                .map(|entry| (entry.sub_id.clone(), entry.tx.clone()))
+                .collect(),
 
-                None => Vec::new(),
-            }
-        };
-
-        for (sub_id, tx) in targets {
-            let frame = self.build_message(&sub_id, destination, body, extra_headers);
-
-            // A full or closed channel means a slow/gone consumer; drop the message for it rather
-            // than block the publisher. `try_send` never awaits, so no lock concern here.
-            let _ = tx.try_send(OutFrame::Frame(frame));
+            None => Vec::new(),
         }
     }
 
-    /// Fans `body` out with **backpressure**, up to `N` subscribers concurrently. Like
-    /// [`publish`](Self::publish), but awaits room in each subscriber's buffer (`Sender::send`)
-    /// instead of dropping the frame when a queue is full (`try_send`). When it returns, the
-    /// `MESSAGE` is committed to every still-live subscriber's outbound queue — the delivery
-    /// guarantee the fire-and-forget path deliberately forgoes.
-    ///
-    /// `N` is the fan-out concurrency the caller picks: the sends run as a `buffer_unordered(N)`
-    /// stream, so at most `N` subscriber buffers are awaited at once (`N = 1` is fully sequential).
-    /// A slow consumer then only stalls its own lane, not the whole fan-out. A subscriber whose
-    /// channel has already closed (its socket is gone) resolves to an `Err` and is skipped; it is
-    /// removed on its own `unregister`. The senders are cloned out under the read lock, which is
-    /// released *before* any `await`, so no lock is held across the backpressure wait.
-    pub async fn deliver<const N: usize>(
+    /// Fire-and-forget fan-out: builds a frame per subscriber via `make_frame` (given the
+    /// subscriber's id and a fresh message id) and drops it into each subscriber's buffer without
+    /// awaiting. A full or closed channel means a slow/gone consumer; the frame is dropped for it
+    /// rather than blocking the publisher. Cleanup happens on the consumer's own `unregister`.
+    pub fn publish_frames(&self, destination: &str, make_frame: impl Fn(&str, u64) -> F)
+    where
+        F: Send,
+    {
+        let targets = self.targets(destination);
+
+        for (sub_id, tx) in targets {
+            let message_id = self.next_message.fetch_add(1, Ordering::Relaxed);
+            let frame = make_frame(&sub_id, message_id);
+
+            let _ = tx.try_send(frame);
+        }
+    }
+
+    /// Fans out with **backpressure**, up to `N` subscribers concurrently. Like
+    /// [`publish_frames`](Self::publish_frames) but awaits room in each subscriber's buffer
+    /// (`Sender::send`) instead of dropping when a queue is full. When it returns, the frame is
+    /// committed to every still-live subscriber's outbound queue. The sends run as a
+    /// `buffer_unordered(N)` stream, so at most `N` buffers are awaited at once (`N = 1` is
+    /// sequential); a subscriber whose channel has closed resolves to an `Err` and is skipped.
+    pub async fn deliver_frames<const N: usize>(
         &self,
         destination: &str,
-        body: &StompBody,
-        extra_headers: &[(String, String)],
-    ) {
-        let targets: Vec<(String, mpsc::Sender<OutFrame>)> = {
-            let subs = self.subs.read().expect("broker subs lock poisoned");
-
-            match subs.get(destination) {
-                Some(entries) => entries
-                    .iter()
-                    .map(|entry| (entry.sub_id.clone(), entry.tx.clone()))
-                    .collect(),
-
-                None => Vec::new(),
-            }
-        };
+        make_frame: impl Fn(&str, u64) -> F,
+    ) where
+        F: Send,
+    {
+        let targets = self.targets(destination);
 
         // `N == 0` would make `buffer_unordered` poll nothing and stall forever; clamp it to a
         // sequential fan-out so a mistaken `deliver::<0>` degrades to `deliver::<1>` rather than hang.
         let concurrency = N.max(1);
 
         futures::stream::iter(targets.into_iter().map(|(sub_id, tx)| {
-            let frame = self.build_message(&sub_id, destination, body, extra_headers);
+            let message_id = self.next_message.fetch_add(1, Ordering::Relaxed);
+            let frame = make_frame(&sub_id, message_id);
 
-            // Awaits capacity rather than dropping; an `Err` means the consumer's channel closed
-            // (its socket is gone), which its own `unregister` cleans up — nothing to do here.
             async move {
-                let _ = tx.send(OutFrame::Frame(frame)).await;
+                let _ = tx.send(frame).await;
             }
         }))
         .buffer_unordered(concurrency)
         .for_each(|()| async {})
         .await;
     }
+}
 
-    /// Serializes one `MESSAGE` frame for `sub_id` carrying `body`.
-    fn build_message(
-        &self,
-        sub_id: &str,
-        destination: &str,
-        body: &StompBody,
-        extra_headers: &[(String, String)],
-    ) -> Vec<u8> {
-        let message_id = self.next_message.fetch_add(1, Ordering::Relaxed);
-
-        let mut builder = MessageFrameBuilder::new(
-            message_id.to_string(),
-            destination.to_owned(),
-            sub_id.to_owned(),
-        )
-        .content_length(body.bytes.len() as u32);
-
-        if let Some(content_type) = &body.content_type {
-            builder = builder.content_type(content_type.clone());
-        }
-
-        for (name, value) in extra_headers {
-            builder = builder.add_custom_header(name.clone(), value.clone());
-        }
-
-        builder.body(body.bytes.to_vec()).build().into()
+impl<F> Default for SubscriptionRegistry<F> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-impl Default for Broker {
-    fn default() -> Self {
-        Self::new()
+/// STOMP's subscription registry: fans a `MESSAGE` frame out from a [`StompBody`].
+pub type Broker = SubscriptionRegistry<OutFrame>;
+
+/// Serializes one STOMP `MESSAGE` frame for `sub_id` carrying `body`, tagged with `message_id`. The
+/// framer STOMP hands the registry (and [`PubSubProtocol::frame_message`](crate::ws::PubSubProtocol)).
+pub(crate) fn build_message(
+    message_id: u64,
+    destination: &str,
+    sub_id: &str,
+    body: &StompBody,
+    extra_headers: &[(String, String)],
+) -> OutFrame {
+    let mut builder = MessageFrameBuilder::new(
+        message_id.to_string(),
+        destination.to_owned(),
+        sub_id.to_owned(),
+    )
+    .content_length(body.bytes.len() as u32);
+
+    if let Some(content_type) = &body.content_type {
+        builder = builder.content_type(content_type.clone());
+    }
+
+    for (name, value) in extra_headers {
+        builder = builder.add_custom_header(name.clone(), value.clone());
+    }
+
+    OutFrame::Frame(builder.body(body.bytes.to_vec()).build().into())
+}
+
+impl SubscriptionRegistry<OutFrame> {
+    /// Fans `body` out to every subscriber of `destination` as a `MESSAGE` frame (fire-and-forget).
+    pub fn publish(&self, destination: &str, body: &StompBody, extra_headers: &[(String, String)]) {
+        self.publish_frames(destination, |sub_id, message_id| {
+            build_message(message_id, destination, sub_id, body, extra_headers)
+        });
+    }
+
+    /// Fans `body` out with **backpressure**, up to `N` subscribers concurrently.
+    pub async fn deliver<const N: usize>(
+        &self,
+        destination: &str,
+        body: &StompBody,
+        extra_headers: &[(String, String)],
+    ) {
+        self.deliver_frames::<N>(destination, |sub_id, message_id| {
+            build_message(message_id, destination, sub_id, body, extra_headers)
+        })
+        .await;
     }
 }
 

@@ -26,7 +26,8 @@ use tokio::sync::{mpsc, oneshot};
 // on native, the JS `WebSocket` on wasm) is hidden, so this transport is target-agnostic.
 use tokio_tungstenite_wasm::{Error as WsError, Message, WebSocketStream};
 
-use super::{StompBody, StompSend, StompStatus, StompSubscribe, Subscription, SubscriptionId};
+use super::{StompStatus, Subscription, SubscriptionId, TopicSend, TopicSubscribe};
+use crate::stomp::{Stomp, StompBody};
 
 /// The write and read halves of a connected WebSocket, split for the actor loop.
 type WsWrite = SplitSink<WebSocketStream, Message>;
@@ -282,8 +283,8 @@ impl StompClientTransport {
     }
 }
 
-impl StompSend for StompClientTransport {
-    async fn stomp_send(
+impl TopicSend<Stomp> for StompClientTransport {
+    async fn send(
         &self,
         destination: &str,
         body: StompBody,
@@ -308,12 +309,12 @@ impl StompSend for StompClientTransport {
     }
 }
 
-impl StompSubscribe for StompClientTransport {
-    async fn stomp_subscribe<M>(
+impl TopicSubscribe<Stomp> for StompClientTransport {
+    async fn subscribe<M>(
         &self,
         destination: &str,
         decode: fn(StompBody) -> Result<M, CodecError>,
-    ) -> Result<Subscription<Self, M>, ClientError<StompStatus>>
+    ) -> Result<Subscription<Stomp, Self, M>, ClientError<StompStatus>>
     where
         M: Send + 'static,
     {

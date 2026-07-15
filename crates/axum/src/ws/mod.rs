@@ -227,6 +227,28 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
     ) -> impl Future<Output = ()> + Send;
 }
 
+/// A [`WebsocketProtocol`] that carries topic pub/sub: it frames a delivered message for one
+/// subscriber. This is the server-side companion to [`TopicProtocol`](crate::stomp::TopicProtocol)
+/// (which supplies the wire body and default codec); together they let the neutral
+/// [`SubscriptionRegistry`](crate::ws::stomp::SubscriptionRegistry) and
+/// [`TopicBus`](crate::ws::stomp::TopicBus) fan out for any protocol. STOMP is one implementation;
+/// a new protocol adds its own `frame_message` without touching the registry/bus.
+#[cfg(feature = "stomp")]
+pub trait PubSubProtocol: WebsocketProtocol + crate::stomp::TopicProtocol {
+    /// The outbound frame this protocol delivers to a subscriber's writer task.
+    type OutFrame: Send + 'static;
+
+    /// Frames one delivery: the registry supplies a fresh `message_id` and the target's `sub_id`;
+    /// the protocol renders its wire frame from the encoded `body` and any extra `headers`.
+    fn frame_message(
+        message_id: u64,
+        destination: &str,
+        sub_id: &str,
+        body: &Self::Body,
+        headers: &[(String, String)],
+    ) -> Self::OutFrame;
+}
+
 /// A connection-side graceful-shutdown signal. A protocol's [`serve`](WebsocketProtocol::serve) loop
 /// races [`wait`](Self::wait) against reading the socket, so it can drain on app shutdown rather than
 /// blocking the server's graceful stop on a long-lived connection.

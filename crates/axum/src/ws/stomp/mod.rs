@@ -39,7 +39,8 @@ use stomp_parser::server::{ConnectedFrameBuilder, ErrorFrame, ReceiptFrameBuilde
 use tokio::sync::mpsc;
 
 use super::{
-    WebsocketProtocol, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsRespond, WsShutdown,
+    PubSubProtocol, WebsocketProtocol, WsControllerDescriptor, WsDispatchError, WsHandlerFn,
+    WsRespond, WsShutdown,
 };
 use crate::scope::Request as RequestScope;
 
@@ -47,15 +48,18 @@ pub use auth::{
     Direct, Injected, IntoAuthenticator, ResolvedAuthenticator, StompAuthFuture,
     StompAuthenticationError, StompAuthenticator, StompConnect, StompPrincipal,
 };
-pub use body::{JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic, TopicParam};
-pub use broker::{Broker, ConnectionId};
+pub use body::{
+    JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic, TopicClientProtocol,
+    TopicCodec, TopicParam, TopicProtocol,
+};
+pub use broker::{Broker, ConnectionId, SubscriptionRegistry};
 pub use error::StompError;
 pub use headers::{StompHeaders, StompSession};
 pub use publisher::Publisher;
 pub(crate) use topic_bus::STOMP_TOPIC_BUS_DESCRIPTOR;
-pub use topic_bus::StompTopicBus;
+pub use topic_bus::{DEFAULT_PUBLISH_FANOUT, StompTopicBus, TopicBus};
 
-use broker::OutFrame;
+use broker::{OutFrame, build_message};
 
 /// The outbound-frame channel depth per connection before publishes to a slow consumer are dropped.
 const OUTBOUND_BUFFER: usize = 64;
@@ -101,13 +105,23 @@ impl StompConfig {
     }
 }
 
-/// The STOMP protocol: a destination → `#[message]` handler table for `/app/**` plus a shared
-/// [`Broker`] for `/topic/**` fan-out.
-pub struct Stomp {
-    app_routes: HashMap<&'static str, WsHandlerFn<Stomp>>,
-    broker: Arc<Broker>,
-    runtime: AppRuntime,
-    config: StompConfig,
+// The `Stomp` struct is defined in the wasm-safe `crate::stomp` module (so a `#[topics(protocol =
+// Stomp)]` set and its client can name it on wasm), with its server-only fields behind a `cfg`. The
+// stateful protocol behavior — the `WebsocketProtocol` impl and serve loop — lives here.
+use crate::stomp::Stomp;
+
+impl PubSubProtocol for Stomp {
+    type OutFrame = OutFrame;
+
+    fn frame_message(
+        message_id: u64,
+        destination: &str,
+        sub_id: &str,
+        body: &StompBody,
+        headers: &[(String, String)],
+    ) -> OutFrame {
+        build_message(message_id, destination, sub_id, body, headers)
+    }
 }
 
 impl WebsocketProtocol for Stomp {

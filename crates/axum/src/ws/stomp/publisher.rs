@@ -3,28 +3,38 @@
 //! A handler takes `Inject<Publisher<ChatTopics>>` and calls `publish(ChatTopics::Room(msg))`. The
 //! destination and body come from the [`Topic`] value itself, so a wrong payload type for a topic
 //! is a compile error, not a runtime mismatch. `Publisher<T>` is not a seeded component — it is a
-//! [`FromContainer`] that resolves the shared [`StompTopicBus`](super::StompTopicBus), so it works
-//! from both STOMP message handlers and ordinary HTTP handlers without a per-`T` descriptor.
+//! [`FromContainer`] that resolves the shared [`TopicBus`](super::TopicBus) for the topic set's
+//! protocol (`T::Protocol`), so it works from both message handlers and ordinary HTTP handlers
+//! without a per-`T` descriptor.
 
 use std::marker::PhantomData;
 
 use overseerd_di::{ComponentConstructionContext, DependencyDescriptor, FromContainer};
 use overseerd_transport::CodecError;
 
-use super::body::Topic;
-use super::topic_bus::StompTopicBus;
+use crate::stomp::Topic;
+use crate::ws::PubSubProtocol;
 
-/// Publishes typed [`Topic`] values to the broker. Generic over a topic-set `T` (an enum via
-/// `#[topics]`), so `publish` only accepts that set's variants.
-pub struct Publisher<T: Topic> {
-    bus: StompTopicBus,
+use super::topic_bus::TopicBus;
+
+/// Publishes typed [`Topic`] values to the bus. Generic over a topic-set `T` (an enum via
+/// `#[topics]`), so `publish` only accepts that set's variants and routes to `T::Protocol`'s bus.
+pub struct Publisher<T: Topic>
+where
+    T::Protocol: PubSubProtocol,
+{
+    bus: TopicBus<T::Protocol>,
     _marker: PhantomData<fn(T)>,
 }
 
-impl<T: Topic> Publisher<T> {
+impl<T> Publisher<T>
+where
+    T: Topic,
+    T::Protocol: PubSubProtocol,
+{
     /// Fire-and-forget: fans a topic value out to its subscribers — reads its destination and
-    /// serializes its payload (both from the [`Topic`] impl), then publishes through the broker.
-    /// Synchronous (the broker never awaits on fan-out), so a REST handler can emit without being
+    /// serializes its payload (both from the [`Topic`] impl), then publishes through the bus.
+    /// Synchronous (the registry never awaits on fan-out), so a REST handler can emit without being
     /// `async` for that alone; a full subscriber buffer drops the message and only a payload-encoding
     /// failure is returned. Reach for [`publish`](Self::publish) when a drop is not acceptable.
     pub fn emit(&self, topic: T) -> Result<(), CodecError> {
@@ -49,15 +59,17 @@ impl<T: Topic> Publisher<T> {
 impl<T> FromContainer for Publisher<T>
 where
     T: Topic + Send + Sync + 'static,
+    T::Protocol: PubSubProtocol,
+    TopicBus<T::Protocol>: FromContainer,
 {
     fn dependency() -> DependencyDescriptor {
         // A `Publisher<T>` needs only the shared bus; report that edge so DI validation and ordering
         // see the real dependency (not the phantom `T`).
-        <StompTopicBus as FromContainer>::dependency()
+        <TopicBus<T::Protocol> as FromContainer>::dependency()
     }
 
     async fn from_container(cx: &ComponentConstructionContext) -> overseerd_di::Result<Self> {
-        let bus = <StompTopicBus as FromContainer>::from_container(cx).await?;
+        let bus = <TopicBus<T::Protocol> as FromContainer>::from_container(cx).await?;
 
         Ok(Self {
             bus,
@@ -67,6 +79,11 @@ where
 }
 
 /// Under `di-check`, a `Publisher<T>` resolves from the framework-provided bus, so the
-/// compile-time checker treats it as always provided (for any topic set `T`).
+/// compile-time checker treats it as always provided (for any pub/sub topic set `T`).
 #[cfg(feature = "di-check")]
-impl<T> overseerd_di::Provide<Publisher<T>> for overseerd_di::Wiring where T: Topic {}
+impl<T> overseerd_di::Provide<Publisher<T>> for overseerd_di::Wiring
+where
+    T: Topic,
+    T::Protocol: PubSubProtocol,
+{
+}

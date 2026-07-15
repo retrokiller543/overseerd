@@ -63,18 +63,29 @@ pub use ws::{
     WsControllerDescriptor, WsDispatchError, WsReply, WsRespond, WsRoute, WsShutdown,
 };
 
-/// The wasm-safe STOMP wire types, re-exported at the crate root on every target — the browser
-/// client's generated `#[topics]`/`#[message]` code names them through the plugin path.
-#[cfg(feature = "stomp")]
-pub use stomp::{JsonCodec, StompBody, StompCodec, Topic, TopicParam};
+/// The stomp `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements
+/// so the neutral registry/bus fan out for it.
+#[cfg(all(feature = "stomp", not(target_family = "wasm")))]
+pub use ws::PubSubProtocol;
 
-/// The STOMP pub/sub protocol surface (server side): the [`Stomp`](ws::stomp::Stomp) protocol and
-/// its broker/session/publish types. Server-only.
+/// The wasm-safe topic wire contract, re-exported at the crate root on every target — the browser
+/// client's generated `#[topics]`/`#[message]` code names it through the plugin path. Includes the
+/// [`Stomp`] protocol tag (its server-only state is `cfg`-gated) so a `#[topics(protocol = Stomp)]`
+/// set and its client compile on wasm.
+#[cfg(feature = "stomp")]
+pub use stomp::{
+    JsonCodec, Stomp, StompBody, StompCodec, Topic, TopicClientProtocol, TopicCodec, TopicParam,
+    TopicProtocol,
+};
+
+/// The STOMP pub/sub protocol surface (server side): the broker/registry/session/publish types.
+/// Server-only.
 #[cfg(all(feature = "stomp", not(target_family = "wasm")))]
 pub use ws::stomp::{
-    Broker, Direct, Injected, IntoAuthenticator, Publish, Publisher, ResolvedAuthenticator, Stomp,
+    Broker, Direct, Injected, IntoAuthenticator, Publish, Publisher, ResolvedAuthenticator,
     StompAuthFuture, StompAuthenticationError, StompAuthenticator, StompConfig, StompConnect,
     StompError, StompHeaders, StompOutcome, StompPrincipal, StompSession, StompTopicBus,
+    SubscriptionRegistry, TopicBus,
 };
 
 /// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a

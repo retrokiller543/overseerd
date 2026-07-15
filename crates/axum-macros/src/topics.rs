@@ -53,19 +53,27 @@ struct TopicVariant {
     kind: VariantKind,
 }
 
-/// The `#[topics(...)]` arguments — currently just an optional `codec = <Path>`.
+/// The `#[topics(...)]` arguments: an optional `protocol = <Path>` (the pub/sub protocol, default
+/// `Stomp`) and an optional `codec = <Path>` (the body codec, default the protocol's `DefaultCodec`).
 pub struct TopicsArgs {
+    protocol: Option<Path>,
     codec: Option<Path>,
 }
 
 impl Parse for TopicsArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut protocol = None;
         let mut codec = None;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
 
             match key.to_string().as_str() {
+                "protocol" => {
+                    input.parse::<Token![=]>()?;
+                    protocol = Some(input.parse()?);
+                }
+
                 "codec" => {
                     input.parse::<Token![=]>()?;
                     codec = Some(input.parse()?);
@@ -74,7 +82,7 @@ impl Parse for TopicsArgs {
                 _ => {
                     return Err(syn::Error::new_spanned(
                         &key,
-                        "unknown #[topics] argument (expected `codec = <Type>`)",
+                        "unknown #[topics] argument (expected `protocol = <Type>` or `codec = <Type>`)",
                     ));
                 }
             }
@@ -84,7 +92,7 @@ impl Parse for TopicsArgs {
             }
         }
 
-        Ok(Self { codec })
+        Ok(Self { protocol, codec })
     }
 }
 
@@ -97,20 +105,29 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
 
     let topic_trait = paths.plugin("Topic");
     let topic_param = paths.plugin("TopicParam");
-    let stomp_codec = paths.plugin("StompCodec");
-    let stomp_body = paths.plugin("StompBody");
+    let topic_protocol = paths.plugin("TopicProtocol");
+    let topic_codec = paths.plugin("TopicCodec");
     let codec_error = paths.plugin("CodecError");
 
-    // The body codec for this topic set: the user's `codec = ..` or the default `JsonCodec`. Both
-    // `Topic::encode` (server publish) and the client `subscribe_*` decode route through it.
-    let codec = match &args.codec {
+    // The pub/sub protocol this topic set is published over: the user's `protocol = ..` or the
+    // default `Stomp`. Everything the macro emits is generic over it (`<P as TopicProtocol>::Body`,
+    // `TopicCodec<P>`, the client's `TopicSubscribe<P>`), so a new protocol needs no macro change.
+    let protocol = match &args.protocol {
         Some(path) => quote!(#path),
 
         None => {
-            let json_codec = paths.plugin("JsonCodec");
+            let stomp = paths.plugin("Stomp");
 
-            quote!(#json_codec)
+            quote!(#stomp)
         }
+    };
+
+    // The body codec for this topic set: the user's `codec = ..` or the protocol's `DefaultCodec`.
+    // Both `Topic::encode` (server publish) and the client `subscribe_*` decode route through it.
+    let codec = match &args.codec {
+        Some(path) => quote!(#path),
+
+        None => quote!(<#protocol as #topic_protocol>::DefaultCodec),
     };
 
     let destination_arms = variants.iter().map(|variant| {
@@ -140,24 +157,26 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
 
         match &variant.kind {
             VariantKind::Static { .. } => {
-                quote!(#enum_ident::#ident(__payload) => <#codec as #stomp_codec>::encode(__payload))
+                quote!(#enum_ident::#ident(__payload) => <#codec as #topic_codec<#protocol>>::encode(__payload))
             }
 
             VariantKind::Templated { content_field, .. } => {
-                quote!(#enum_ident::#ident { #content_field, .. } => <#codec as #stomp_codec>::encode(#content_field))
+                quote!(#enum_ident::#ident { #content_field, .. } => <#codec as #topic_codec<#protocol>>::encode(#content_field))
             }
         }
     });
 
     let topic_impl = quote! {
         impl #impl_generics #topic_trait for #enum_ident #ty_generics #where_clause {
+            type Protocol = #protocol;
+
             fn destination(&self) -> ::std::borrow::Cow<'static, str> {
                 match self {
                     #(#destination_arms),*
                 }
             }
 
-            fn encode(&self) -> ::core::result::Result<#stomp_body, #codec_error> {
+            fn encode(&self) -> ::core::result::Result<<#protocol as #topic_protocol>::Body, #codec_error> {
                 match self {
                     #(#encode_arms),*
                 }
@@ -165,8 +184,8 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
         }
     };
 
-    let client = generate_client(enum_ident, &generics, &variants, &codec, paths);
-    let wasm_client = generate_wasm_client(enum_ident, &generics, &variants, paths);
+    let client = generate_client(enum_ident, &generics, &variants, &protocol, &codec, paths);
+    let wasm_client = generate_wasm_client(enum_ident, &generics, &variants, &protocol, paths);
 
     Ok(quote! {
         #item
@@ -186,6 +205,7 @@ fn generate_client(
     enum_ident: &Ident,
     generics: &Generics,
     variants: &[TopicVariant],
+    protocol: &TokenStream,
     codec: &TokenStream,
     paths: &Paths,
 ) -> TokenStream {
@@ -254,9 +274,9 @@ fn generate_client(
         (quote!((pub #transport)), quote!())
     };
     let subscription = paths.plugin("client::Subscription");
-    let stomp_subscribe = paths.plugin("client::StompSubscribe");
-    let stomp_codec = paths.plugin("StompCodec");
-    let stomp_status = paths.plugin("client::StompStatus");
+    let topic_subscribe = paths.plugin("client::TopicSubscribe");
+    let topic_codec = paths.plugin("TopicCodec");
+    let topic_client_protocol = paths.plugin("TopicClientProtocol");
     let topic_param = paths.plugin("TopicParam");
     let client_error = paths.client("ClientError");
 
@@ -282,15 +302,18 @@ fn generate_client(
             #[doc = concat!("Subscribes to `", #destination, "`, yielding a typed stream of messages.")]
             pub async fn #method(
                 &self #args,
-            ) -> ::core::result::Result<#subscription<#transport, #msg>, #client_error<#stomp_status>>
+            ) -> ::core::result::Result<
+                #subscription<#protocol, #transport, #msg>,
+                #client_error<<#protocol as #topic_client_protocol>::Status>,
+            >
             where
-                #transport: #stomp_subscribe + ::core::clone::Clone,
+                #transport: #topic_subscribe<#protocol> + ::core::clone::Clone,
             {
-                // The topic set's codec decodes each MESSAGE body into `#msg`.
-                <#transport as #stomp_subscribe>::stomp_subscribe::<#msg>(
+                // The topic set's codec decodes each inbound message body into `#msg`.
+                <#transport as #topic_subscribe<#protocol>>::subscribe::<#msg>(
                     &self.0,
                     #dest_expr,
-                    <#codec as #stomp_codec>::decode::<#msg>,
+                    <#codec as #topic_codec<#protocol>>::decode::<#msg>,
                 )
                 .await
             }
@@ -322,6 +345,7 @@ fn generate_wasm_client(
     enum_ident: &Ident,
     generics: &Generics,
     variants: &[TopicVariant],
+    protocol: &TokenStream,
     paths: &Paths,
 ) -> TokenStream {
     if !(cfg!(feature = "reqwest") && cfg!(feature = "tungstenite")) {
@@ -338,9 +362,9 @@ fn generate_wasm_client(
     let js_name = client_ident.to_string();
     let wrapper = format_ident!("__{}Wasm", client_ident);
     let connection = paths.plugin("client::Connection");
-    let transport = paths.plugin("client::StompClientTransport");
+    let topic_wasm_client = paths.plugin("client::TopicWasmClient");
     let pump = paths.plugin("client::pump");
-    let subscription = paths.plugin("client::StompSubscription");
+    let subscription = paths.plugin("client::TopicSubscription");
     let ts = cfg!(feature = "wasm-ts");
 
     // Per-method typed callback extern + the subscribe method itself.
@@ -415,16 +439,18 @@ fn generate_wasm_client(
         #[cfg(target_family = "wasm")]
         #[doc(hidden)]
         #[::wasm_bindgen::prelude::wasm_bindgen(js_name = #js_name)]
-        pub struct #wrapper(#client_ident<#transport>);
+        pub struct #wrapper(#client_ident<<#protocol as #topic_wasm_client>::Transport>);
 
         #[cfg(target_family = "wasm")]
         #[::wasm_bindgen::prelude::wasm_bindgen(js_class = #js_name)]
         impl #wrapper {
-            /// Builds the subscribe client from a shared [`Connection`] (its STOMP socket must be
-            /// connected via `connectStomp` first).
+            /// Builds the subscribe client from a shared [`Connection`] (the protocol's socket must be
+            /// connected first).
             #[::wasm_bindgen::prelude::wasm_bindgen(constructor)]
             pub fn new(connection: &#connection) -> ::core::result::Result<#wrapper, ::wasm_bindgen::JsError> {
-                ::core::result::Result::Ok(Self(#client_ident::new(connection.stomp()?)))
+                ::core::result::Result::Ok(Self(#client_ident::new(
+                    <#protocol as #topic_wasm_client>::transport(connection)?,
+                )))
             }
 
             #(#methods)*
