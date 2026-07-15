@@ -169,12 +169,12 @@ impl ParseMethod for AxumHandlers {
             // A pub/sub protocol's payload codec (block `codec = ..`, default the protocol's
             // `DefaultCodec`) drives both the server decode and the client SEND encode, so they stay
             // symmetric. A JsonWs block has no codec seam (its `WsCodec` is JSON), so pass `None`.
-            let stomp_codec = is_pubsub.then(|| self.resolve_stomp_codec(&cx.paths));
+            let pubsub_codec = is_pubsub.then(|| self.resolve_pubsub_codec(&cx.paths));
             let spec = build_ws_route(
                 &cx.self_ty,
                 method,
                 &destination,
-                stomp_codec.as_ref(),
+                pubsub_codec.as_ref(),
                 &cx.paths,
             )?;
 
@@ -182,7 +182,7 @@ impl ParseMethod for AxumHandlers {
             // fire-and-forget typed SEND (payload encoded via the codec); JsonWs emits a
             // request/reply call.
             let hint = if is_pubsub {
-                let codec = stomp_codec.expect("pub/sub block resolves a codec");
+                let codec = pubsub_codec.expect("pub/sub block resolves a codec");
                 let protocol = self
                     .ws_protocol
                     .as_ref()
@@ -676,7 +676,7 @@ fn build_ws_route(
     self_ty: &Type,
     method: &ImplItemFn,
     destination: &LitStr,
-    stomp_codec: Option<&TokenStream>,
+    pubsub_codec: Option<&TokenStream>,
     paths: &Paths,
 ) -> syn::Result<WsRouteSpec> {
     let takes_self = matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)));
@@ -745,7 +745,7 @@ fn build_ws_route(
                 // A pub/sub protocol decodes the body via the block's codec (symmetric with the
                 // client SEND encode) through the protocol-generic `TopicCodec<P>`; every other
                 // protocol uses its `WsCodec` (JsonWs = JSON).
-                let decode = match stomp_codec {
+                let decode = match pubsub_codec {
                     Some(codec) => {
                         let topic_codec_trait = paths.plugin("TopicCodec");
 
@@ -844,13 +844,13 @@ fn ws_payload_type(method: &ImplItemFn) -> syn::Result<Option<Type>> {
     Ok(payload)
 }
 
-/// Whether a `ws = P` names the STOMP protocol, by the path's last segment. Shared with the
-/// controller macro (`router.rs`) to pick the wasm SEND-client backend.
-/// The built-in **request/reply** WebSocket protocols, by the last segment of their path. The macro
-/// can't run trait resolution to know a protocol's shape, so it treats these as request/reply and
-/// **every other** `ws = P` (STOMP, WAMP, a user's own protocol) as pub/sub — so a user-defined
-/// pub/sub protocol gets topic codegen with no macro change. `JsonWs` is the framework's built-in
-/// request/reply protocol; a user request/reply protocol adds one entry here.
+/// The built-in **request/reply** WebSocket protocols, by the last segment of their path. This is
+/// only the "does this protocol have a topic/message codec seam" signal (pub/sub vs request/reply):
+/// the SEND-vs-request decision is per-`#[message]`, from the handler's return type, not per
+/// protocol. The macro can't run trait resolution to know a protocol's shape, so it treats these as
+/// request/reply and **every other** `ws = P` (STOMP, WAMP, a user's own protocol) as pub/sub — so a
+/// user-defined pub/sub protocol gets topic codegen with no macro change. `JsonWs` is the
+/// framework's built-in request/reply protocol; a user request/reply protocol adds one entry here.
 pub(crate) fn request_reply_protocols() -> &'static [&'static str] {
     &["JsonWs"]
 }
@@ -869,15 +869,22 @@ pub(crate) fn is_pubsub_protocol(protocol: Option<&syn::Path>) -> bool {
 }
 
 impl AxumHandlers {
-    /// The STOMP body codec for this block as a token stream: the `codec = ..` path, or `JsonCodec`.
-    fn resolve_stomp_codec(&self, paths: &Paths) -> TokenStream {
+    /// The pub/sub body codec for this block as a token stream: the block's `codec = ..` path, or —
+    /// when unset — the protocol's own [`TopicProtocol::DefaultCodec`], matching `#[topics]`. Keying
+    /// the default off the protocol (not a hardcoded `JsonCodec`) keeps a non-STOMP protocol's SEND
+    /// and subscribe codecs aligned.
+    fn resolve_pubsub_codec(&self, paths: &Paths) -> TokenStream {
         match &self.ws_codec {
             Some(path) => quote!(#path),
 
             None => {
-                let json_codec = paths.plugin("JsonCodec");
+                let topic_protocol = paths.plugin("TopicProtocol");
+                let protocol = self
+                    .ws_protocol
+                    .as_ref()
+                    .expect("pub/sub block has a protocol");
 
-                quote!(#json_codec)
+                quote!(<#protocol as #topic_protocol>::DefaultCodec)
             }
         }
     }

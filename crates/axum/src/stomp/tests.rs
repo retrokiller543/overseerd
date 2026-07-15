@@ -21,7 +21,7 @@ use overseerd_transport::CodecError;
 struct TestProto;
 
 /// `TestProto`'s wire body: a distinct type, so a body welded to STOMP would fail to compile here.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct TestBody(Vec<u8>);
 
 /// `TestProto`'s codec: length-prefix-free JSON over the custom body.

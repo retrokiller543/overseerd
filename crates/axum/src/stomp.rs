@@ -41,15 +41,21 @@ use crate::ws::stomp::{Broker, StompConfig};
 /// so STOMP is one implementation and another protocol adds its own without touching the topics
 /// machinery.
 pub trait TopicProtocol: 'static {
-    /// The wire body a [`Topic`] value encodes to and the broker fans out to subscribers.
-    type Body: Clone + Send + Sync + 'static;
+    /// The wire body a [`Topic`] value encodes to and the broker fans out to subscribers. Its
+    /// `Default` is the empty body a no-payload `#[message]` SEND ships. This body is shared by both
+    /// surfaces of a pub/sub-capable protocol: topic pub/sub (`#[topics]`) and point-to-point
+    /// messages (`#[message]`).
+    type Body: Clone + Default + Send + Sync + 'static;
 
     /// The codec a topic set uses when it names none via `#[topics(codec = ..)]`.
     type DefaultCodec: TopicCodec<Self>;
 }
 
 /// A [`TopicProtocol`] that also exposes a client. Adds the opaque error status a client surfaces;
-/// the framework never inspects it — a protocol owns what its failures mean.
+/// the framework never inspects it — a protocol owns what its failures mean. Its `Body` (from
+/// [`TopicProtocol`]) and `Status` are shared by both client surfaces: topic subscription
+/// ([`TopicSubscribe`](crate::client::TopicSubscribe)) and point-to-point messages
+/// ([`MessageSend`](crate::client::MessageSend) / `MessageRequest`).
 pub trait TopicClientProtocol: TopicProtocol {
     /// The status carried by a client [`ClientError`](overseerd_client::ClientError) for this
     /// protocol (STOMP uses [`StompStatus`](crate::client::StompStatus)).
