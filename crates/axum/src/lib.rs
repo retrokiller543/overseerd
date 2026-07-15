@@ -75,8 +75,8 @@ pub use ws::{MessageReply, PubSubProtocol};
 /// set and its client compile on wasm.
 #[cfg(feature = "stomp")]
 pub use stomp::{
-    JsonCodec, Stomp, StompBody, StompCodec, Topic, MessagingClientProtocol, TopicCodec, TopicParam,
-    MessagingProtocol,
+    JsonCodec, MessagingClientProtocol, MessagingProtocol, Stomp, StompBody, StompCodec, Topic,
+    TopicCodec, TopicParam,
 };
 
 /// The STOMP pub/sub protocol surface (server side): the broker/registry/session/publish types.
