@@ -48,4 +48,9 @@ pub enum StompOutcome {
 
     /// The handler asks the broker to fan these out.
     Publish(Vec<Publish>),
+
+    /// A point-to-point reply body, routed back to the requester (via the inbound frame's
+    /// `reply-to`/`correlation-id`) rather than broadcast. Produced by
+    /// [`MessageReply`](crate::ws::MessageReply) for a non-unit-returning `#[message]` handler.
+    Reply(StompBody),
 }

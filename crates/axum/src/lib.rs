@@ -64,9 +64,10 @@ pub use ws::{
 };
 
 /// The stomp `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements
-/// so the neutral registry/bus fan out for it.
+/// so the neutral registry/bus fan out for it. [`MessageReply`] is its request/response companion —
+/// a protocol that routes a `#[message]` handler's non-unit return back to the requester.
 #[cfg(all(feature = "stomp", not(target_family = "wasm")))]
-pub use ws::PubSubProtocol;
+pub use ws::{MessageReply, PubSubProtocol};
 
 /// The wasm-safe topic wire contract, re-exported at the crate root on every target — the browser
 /// client's generated `#[topics]`/`#[message]` code names it through the plugin path. Includes the

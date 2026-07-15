@@ -55,6 +55,20 @@ pub trait MessageSend<P: TopicClientProtocol>: Send + Sync {
     ) -> impl std::future::Future<Output = Result<(), ClientError<P::Status>>> + Send;
 }
 
+/// A transport that can send one typed payload to a destination and await a correlated typed reply
+/// over protocol `P` — the point-to-point request/response companion to [`MessageSend`]. The
+/// generated `<name>()` client methods for a non-unit-returning `#[message]` handler bind on this.
+pub trait MessageRequest<P: TopicClientProtocol>: Send + Sync {
+    /// Sends `body` to `destination` and resolves with the raw reply body. The request body is
+    /// already encoded and the reply is decoded by the generated method's codec, so the transport is
+    /// codec-agnostic. Takes `&str` so a templated destination works too.
+    fn request(
+        &self,
+        destination: &str,
+        body: P::Body,
+    ) -> impl std::future::Future<Output = Result<P::Body, ClientError<P::Status>>> + Send;
+}
+
 /// A transport that can subscribe to a destination and yield a decoded stream of messages over
 /// protocol `P`. The generated `subscribe_<topic>()` client methods bind on this; `decode` is the
 /// topic set's codec.
@@ -142,6 +156,12 @@ impl<P: TopicClientProtocol, C: TopicSubscribe<P>, M> Drop for Subscription<P, C
 /// (mirrors the `()` impls for the request/reply websocket client).
 impl<P: TopicClientProtocol> MessageSend<P> for () {
     async fn send(&self, _: &str, _: P::Body) -> Result<(), ClientError<P::Status>> {
+        Err(ClientError::Transport(overseerd_transport::Error::Closed))
+    }
+}
+
+impl<P: TopicClientProtocol> MessageRequest<P> for () {
+    async fn request(&self, _: &str, _: P::Body) -> Result<P::Body, ClientError<P::Status>> {
         Err(ClientError::Transport(overseerd_transport::Error::Closed))
     }
 }

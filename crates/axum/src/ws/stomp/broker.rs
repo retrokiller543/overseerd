@@ -67,6 +67,12 @@ impl<F> SubscriptionRegistry<F> {
         self.next_conn.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// Mints a fresh outbound `message-id`, shared with the fan-out counter so a directed reply
+    /// (routed outside the subscription tables) never collides with a broadcast frame.
+    pub fn next_message_id(&self) -> u64 {
+        self.next_message.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// Records a subscription: `conn`'s `sub_id` now receives frames published to `destination`.
     pub fn subscribe(
         &self,

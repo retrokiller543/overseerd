@@ -19,14 +19,14 @@ use stomp_parser::client::{
     ConnectFrameBuilder, DisconnectFrameBuilder, SendFrameBuilder, SubscribeFrameBuilder,
     UnsubscribeFrameBuilder,
 };
-use stomp_parser::headers::{StompVersion, StompVersions};
+use stomp_parser::headers::{HeaderValue, StompVersion, StompVersions};
 use stomp_parser::server::ServerFrame;
 use tokio::sync::{mpsc, oneshot};
 // One unified WebSocket type across native and wasm — the socket naming (`MaybeTlsStream<TcpStream>`
 // on native, the JS `WebSocket` on wasm) is hidden, so this transport is target-agnostic.
 use tokio_tungstenite_wasm::{Error as WsError, Message, WebSocketStream};
 
-use super::{StompStatus, Subscription, SubscriptionId, MessageSend, TopicSubscribe};
+use super::{MessageRequest, MessageSend, StompStatus, Subscription, SubscriptionId, TopicSubscribe};
 use crate::stomp::{Stomp, StompBody};
 
 /// The write and read halves of a connected WebSocket, split for the actor loop.
@@ -39,11 +39,21 @@ const CHANNEL_DEPTH: usize = 64;
 /// An acknowledgement that a queued command reached (or failed to reach) the socket.
 type Ack = oneshot::Sender<Result<(), ClientError<StompStatus>>>;
 
+/// The delivery of a request's correlated reply body (or the connection error that ended it).
+type ReplyTx = oneshot::Sender<Result<StompBody, ClientError<StompStatus>>>;
+
 /// A command from a client handle to the connection actor.
 enum Command {
     Send {
         frame: Vec<u8>,
         ack: Ack,
+    },
+    /// A request: write the `SEND` and register the reply channel keyed by its `correlation-id`, so
+    /// the inbound `MESSAGE` carrying that id resolves the awaiting call.
+    Request {
+        frame: Vec<u8>,
+        correlation_id: String,
+        reply: ReplyTx,
     },
     Subscribe {
         id: SubscriptionId,
@@ -309,6 +319,43 @@ impl MessageSend<Stomp> for StompClientTransport {
     }
 }
 
+impl MessageRequest<Stomp> for StompClientTransport {
+    async fn request(
+        &self,
+        destination: &str,
+        body: StompBody,
+    ) -> Result<StompBody, ClientError<StompStatus>> {
+        // A client-chosen reply destination plus a correlation id: the server echoes the id on the
+        // reply MESSAGE, which the actor demuxes to this call's channel.
+        let correlation_id = self.next("corr");
+        let reply_to = format!("/reply/{correlation_id}");
+
+        let mut builder = SendFrameBuilder::new(destination.to_owned());
+
+        builder = builder.add_custom_header("reply-to".to_owned(), reply_to);
+        builder = builder.add_custom_header("correlation-id".to_owned(), correlation_id.clone());
+
+        if let Some(content_type) = &body.content_type {
+            builder = builder.content_type(content_type.clone());
+        }
+
+        let frame: Vec<u8> = builder.body(body.bytes.to_vec()).build().into();
+
+        let (reply, reply_rx) = oneshot::channel();
+
+        self.tx()
+            .send(Command::Request {
+                frame,
+                correlation_id,
+                reply,
+            })
+            .await
+            .map_err(|_| ClientError::ConnectionClosed)?;
+
+        reply_rx.await.map_err(|_| ClientError::ConnectionClosed)?
+    }
+}
+
 impl TopicSubscribe<Stomp> for StompClientTransport {
     async fn subscribe<M>(
         &self,
@@ -354,6 +401,7 @@ impl TopicSubscribe<Stomp> for StompClientTransport {
 async fn actor(mut write: WsWrite, mut read: WsRead, mut rx: mpsc::Receiver<Command>) {
     let mut subs: HashMap<SubscriptionId, mpsc::Sender<StompBody>> = HashMap::new();
     let mut receipts: HashMap<String, Ack> = HashMap::new();
+    let mut requests: HashMap<String, ReplyTx> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -366,6 +414,17 @@ async fn actor(mut write: WsWrite, mut read: WsRead, mut rx: mpsc::Receiver<Comm
                     Command::Send { frame, ack } => {
                         let result = write.send(to_message(frame)).await.map_err(net_err);
                         let _ = ack.send(result);
+                    }
+
+                    Command::Request { frame, correlation_id, reply } => {
+                        // Register before writing so an immediate reply can never miss its channel.
+                        requests.insert(correlation_id.clone(), reply);
+
+                        if let Err(error) = write.send(to_message(frame)).await.map_err(net_err)
+                            && let Some(reply) = requests.remove(&correlation_id)
+                        {
+                            let _ = reply.send(Err(error));
+                        }
                     }
 
                     Command::Subscribe { id, frame, items, ack } => {
@@ -407,13 +466,13 @@ async fn actor(mut write: WsWrite, mut read: WsRead, mut rx: mpsc::Receiver<Comm
                             continue;
                         }
 
-                        if route(text.as_bytes().to_vec(), &subs, &mut receipts).is_break() {
+                        if route(text.as_bytes().to_vec(), &subs, &mut receipts, &mut requests).is_break() {
                             break;
                         }
                     }
 
                     Some(Ok(Message::Binary(bytes))) => {
-                        if route(bytes.to_vec(), &subs, &mut receipts).is_break() {
+                        if route(bytes.to_vec(), &subs, &mut receipts, &mut requests).is_break() {
                             break;
                         }
                     }
@@ -426,9 +485,10 @@ async fn actor(mut write: WsWrite, mut read: WsRead, mut rx: mpsc::Receiver<Comm
         }
     }
 
-    // Fail everything outstanding: dropping the sub senders ends their streams; receipts resolve
-    // with a connection error.
+    // Fail everything outstanding: dropping the sub senders ends their streams; receipts and pending
+    // requests resolve with a connection error.
     fail_receipts(receipts);
+    fail_requests(requests);
     drop(subs);
 }
 
@@ -437,6 +497,7 @@ fn route(
     bytes: Vec<u8>,
     subs: &HashMap<SubscriptionId, mpsc::Sender<StompBody>>,
     receipts: &mut HashMap<String, Ack>,
+    requests: &mut HashMap<String, ReplyTx>,
 ) -> std::ops::ControlFlow<()> {
     use std::ops::ControlFlow::{Break, Continue};
 
@@ -448,7 +509,6 @@ fn route(
 
     match frame {
         ServerFrame::Message(message) => {
-            let id = SubscriptionId(message.subscription().value().to_owned());
             let body = StompBody {
                 content_type: message.content_type().map(|c| c.value().to_owned()),
                 bytes: message
@@ -456,6 +516,18 @@ fn route(
                     .map(bytes::Bytes::copy_from_slice)
                     .unwrap_or_default(),
             };
+
+            // A `correlation-id` marks a request/response reply: resolve the awaiting call (terminal)
+            // and stop, so it never also spills into a subscription stream.
+            if let Some(correlation_id) = message_correlation_id(&message)
+                && let Some(reply) = requests.remove(&correlation_id)
+            {
+                let _ = reply.send(Ok(body));
+
+                return Continue(());
+            }
+
+            let id = SubscriptionId(message.subscription().value().to_owned());
 
             if let Some(sender) = subs.get(&id) {
                 let _ = sender.try_send(body);
@@ -480,12 +552,25 @@ fn route(
             fail_receipts_with(receipts, || {
                 ClientError::Remote(ErrorBody::new(StompStatus::Error, body.clone()))
             });
+            fail_requests_with(requests, || {
+                ClientError::Remote(ErrorBody::new(StompStatus::Error, body.clone()))
+            });
 
             Break(())
         }
 
         ServerFrame::Connected(_) => Continue(()),
     }
+}
+
+/// The `correlation-id` custom header of a server `MESSAGE`, if present — the routing key for a
+/// request/response reply.
+fn message_correlation_id(message: &stomp_parser::server::MessageFrame<'_>) -> Option<String> {
+    message
+        .custom
+        .iter()
+        .find(|header| header.header_name() == "correlation-id")
+        .map(|header| (*header.value()).to_owned())
 }
 
 /// Reads frames until `CONNECTED` (ok), an `ERROR` (protocol error), or the socket closes.
@@ -542,6 +627,23 @@ fn fail_receipts_with(
 ) {
     for (_, ack) in receipts.drain() {
         let _ = ack.send(Err(error()));
+    }
+}
+
+/// Fails every pending request with a plain connection-closed error.
+fn fail_requests(requests: HashMap<String, ReplyTx>) {
+    for (_, reply) in requests {
+        let _ = reply.send(Err(ClientError::ConnectionClosed));
+    }
+}
+
+/// Fails every pending request with a freshly-built error (used for a broker `ERROR`).
+fn fail_requests_with(
+    requests: &mut HashMap<String, ReplyTx>,
+    error: impl Fn() -> ClientError<StompStatus>,
+) {
+    for (_, reply) in requests.drain() {
+        let _ = reply.send(Err(error()));
     }
 }
 

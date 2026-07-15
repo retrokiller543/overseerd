@@ -31,8 +31,59 @@ pub fn is_message_attr(attr: &Attribute) -> bool {
     attr.path().is_ident(MESSAGE_ATTR)
 }
 
-/// Parses `#[message("destination")]` into its destination literal.
-pub fn parse_message_attr(attr: &Attribute) -> syn::Result<LitStr> {
+/// How a `#[message]` handler's client method is shaped. Inferred from the handler's return type
+/// (unit → [`Send`](MessageMode::Send), non-unit → [`Request`](MessageMode::Request)) unless the
+/// attribute names it explicitly — mirroring how `#[rpc(stream)]` overrides RPC capability inference.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MessageMode {
+    /// Infer from the return type: `()` is a fire-and-forget SEND, anything else a request/response.
+    Infer,
+
+    /// Force a fire-and-forget SEND (the handler's return, if any, is not sent back to the caller).
+    Send,
+
+    /// Force a request/response: the handler's return is routed back to the requester.
+    Request,
+}
+
+/// A parsed `#[message("destination"[, send|request])]`: the destination literal and the mode.
+pub struct MessageArgs {
+    /// The message destination (e.g. `"/app/chat"`).
+    pub destination: LitStr,
+
+    /// The explicit or inferred SEND-vs-request mode.
+    pub mode: MessageMode,
+}
+
+impl Parse for MessageArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let destination: LitStr = input.parse()?;
+
+        let mode = if input.is_empty() {
+            MessageMode::Infer
+        } else {
+            input.parse::<Token![,]>()?;
+            let keyword: Ident = input.parse()?;
+
+            match keyword.to_string().as_str() {
+                "send" => MessageMode::Send,
+                "request" => MessageMode::Request,
+
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        &keyword,
+                        "unknown #[message] flag; expected `send` or `request`",
+                    ));
+                }
+            }
+        };
+
+        Ok(MessageArgs { destination, mode })
+    }
+}
+
+/// Parses `#[message("destination"[, send|request])]` into its destination and mode.
+pub fn parse_message_attr(attr: &Attribute) -> syn::Result<MessageArgs> {
     attr.parse_args()
 }
 

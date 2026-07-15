@@ -249,6 +249,18 @@ pub trait PubSubProtocol: WebsocketProtocol + crate::stomp::TopicProtocol {
     ) -> Self::OutFrame;
 }
 
+/// A [`PubSubProtocol`] that can direct a point-to-point reply back to a requester — the server-side
+/// companion to the client's [`MessageRequest`](crate::client::MessageRequest). A `#[message]`
+/// handler that returns a non-unit value has its (codec-encoded) return wrapped by
+/// [`reply`](Self::reply) into an outcome the protocol routes to the *requester* (STOMP: via the
+/// inbound frame's `reply-to`/`correlation-id`), never broadcast. A handler returning `()` uses
+/// [`WsRespond`] instead, so a protocol without request/response simply never needs this.
+#[cfg(feature = "stomp")]
+pub trait MessageReply: PubSubProtocol {
+    /// Wraps an already-encoded reply `body` into this protocol's outcome.
+    fn reply(body: Self::Body) -> Self::Outcome;
+}
+
 /// A connection-side graceful-shutdown signal. A protocol's [`serve`](WebsocketProtocol::serve) loop
 /// races [`wait`](Self::wait) against reading the socket, so it can drain on app shutdown rather than
 /// blocking the server's graceful stop on a long-lived connection.
