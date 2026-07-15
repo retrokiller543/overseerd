@@ -29,6 +29,10 @@ pub enum StompStatus {
 
     /// A protocol violation (e.g. no `CONNECTED` during the handshake, or a version mismatch).
     Protocol,
+
+    /// A request/response handler on the server returned an error. Non-fatal: only this one call
+    /// resolves `Err`, and the connection stays open for further messages.
+    Handler,
 }
 
 impl TopicClientProtocol for Stomp {

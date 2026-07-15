@@ -21,6 +21,19 @@ use overseerd_transport::CodecError;
 #[cfg(all(test, feature = "ws", not(target_family = "wasm")))]
 mod tests;
 
+/// The `subscription` header value the server stamps on a request/response reply `MESSAGE`. It is a
+/// sentinel (never a real client subscription id, which are `sub-*`), so the client consults its
+/// request-correlation table only for frames actually carrying a reply — a broadcast can never be
+/// mistaken for one. Named on both sides (server framing, client demux), so it lives in this
+/// target-agnostic module.
+pub(crate) const REPLY_SUBSCRIPTION_ID: &str = "reply";
+
+/// The custom header the server sets on a request/response reply `MESSAGE` to mark it an *error*
+/// reply (the handler failed). Its presence flips the client's awaiting call from `Ok(body)` to
+/// `Err`, so a failing request handler resolves the caller instead of hanging it. Shared by the
+/// server (framing) and the client (demux).
+pub(crate) const MESSAGE_ERROR_HEADER: &str = "overseerd-error";
+
 #[cfg(not(target_family = "wasm"))]
 use std::collections::HashMap;
 #[cfg(not(target_family = "wasm"))]

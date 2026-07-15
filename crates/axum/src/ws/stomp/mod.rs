@@ -108,7 +108,7 @@ impl StompConfig {
 // The `Stomp` struct is defined in the wasm-safe `crate::stomp` module (so a `#[topics(protocol =
 // Stomp)]` set and its client can name it on wasm), with its server-only fields behind a `cfg`. The
 // stateful protocol behavior — the `WebsocketProtocol` impl and serve loop — lives here.
-use crate::stomp::Stomp;
+use crate::stomp::{MESSAGE_ERROR_HEADER, REPLY_SUBSCRIPTION_ID, Stomp};
 
 impl PubSubProtocol for Stomp {
     type OutFrame = OutFrame;
@@ -392,8 +392,11 @@ impl Stomp {
                 };
                 // A request carries a `reply-to` destination (and usually a `correlation-id`); the
                 // handler's non-unit return is routed back there rather than broadcast.
-                let reply_to = header_value(&custom_headers, "reply-to");
-                let correlation_id = header_value(&custom_headers, "correlation-id");
+                let reply = ReplyContext {
+                    tx,
+                    reply_to: header_value(&custom_headers, "reply-to"),
+                    correlation_id: header_value(&custom_headers, "correlation-id"),
+                };
                 let headers =
                     StompHeaders::new(send_header_seed(&destination, content_type, custom_headers));
 
@@ -404,9 +407,7 @@ impl Stomp {
                     conn_id,
                     connection,
                     principal,
-                    tx,
-                    reply_to,
-                    correlation_id,
+                    reply,
                 )
                 .await;
                 self.send_receipt(tx, receipt).await;
@@ -436,7 +437,6 @@ impl Stomp {
 
     /// Routes a `SEND`: an `/app/**` destination invokes its handler (seeding the message scope with
     /// the frame headers and a session handle); any other destination is a direct broker publish.
-    #[allow(clippy::too_many_arguments)]
     async fn route_send(
         &self,
         destination: &str,
@@ -445,9 +445,7 @@ impl Stomp {
         conn_id: ConnectionId,
         connection: &Arc<ScopeContainer>,
         principal: &StompPrincipal,
-        tx: &mpsc::Sender<OutFrame>,
-        reply_to: Option<String>,
-        correlation_id: Option<String>,
+        reply: ReplyContext<'_>,
     ) {
         let Some(handler) = self.app_routes.get(destination) else {
             self.broker.publish(destination, &body, &[]);
@@ -493,14 +491,14 @@ impl Stomp {
             }
 
             Ok(StompOutcome::Reply(reply_body)) => {
-                self.deliver_reply(destination, reply_body, tx, reply_to, correlation_id)
-                    .await;
+                self.deliver_reply(destination, reply_body, &reply).await;
             }
 
             Ok(StompOutcome::Nothing) => {}
 
             Err(error) => {
                 tracing::warn!(target: "overseerd::axum", %error, dest = destination, "STOMP handler failed");
+                self.deliver_error_reply(&error, &reply).await;
             }
         }
     }
@@ -509,15 +507,8 @@ impl Stomp {
     /// `MESSAGE` to the frame's `reply-to`, carrying the `correlation-id` so the client demuxes it to
     /// the awaiting call. A request handler that ran without a `reply-to` is a client bug — the reply
     /// has nowhere to go, so it is logged and dropped.
-    async fn deliver_reply(
-        &self,
-        destination: &str,
-        body: StompBody,
-        tx: &mpsc::Sender<OutFrame>,
-        reply_to: Option<String>,
-        correlation_id: Option<String>,
-    ) {
-        let Some(reply_to) = reply_to else {
+    async fn deliver_reply(&self, destination: &str, body: StompBody, reply: &ReplyContext<'_>) {
+        let Some(reply_to) = &reply.reply_to else {
             tracing::warn!(
                 target: "overseerd::axum",
                 dest = destination,
@@ -527,13 +518,47 @@ impl Stomp {
             return;
         };
 
-        let message_id = self.broker.next_message_id();
-        let extra_headers = correlation_id
-            .map(|id| vec![("correlation-id".to_owned(), id)])
-            .unwrap_or_default();
-        let frame = build_message(message_id, &reply_to, "reply", &body, &extra_headers);
+        let extra_headers = reply.correlation_headers(&[]);
 
-        let _ = tx.send(frame).await;
+        let message_id = self.broker.next_message_id();
+        let frame = build_message(
+            message_id,
+            reply_to,
+            REPLY_SUBSCRIPTION_ID,
+            &body,
+            &extra_headers,
+        );
+
+        let _ = reply.tx.send(frame).await;
+    }
+
+    /// Routes a request handler's *error* back to the requester as a directed `MESSAGE` marked with
+    /// the error header (and the `correlation-id`), so the client's awaiting call resolves `Err`
+    /// rather than hanging on a reply that will never come. A plain fire-and-forget `SEND` (no
+    /// `reply-to`) has no awaiting caller, so the error is only logged (by the caller) and nothing is
+    /// sent here.
+    async fn deliver_error_reply(&self, error: &WsDispatchError, reply: &ReplyContext<'_>) {
+        let Some(reply_to) = &reply.reply_to else {
+            return;
+        };
+
+        let body = StompBody {
+            content_type: Some("text/plain".to_owned()),
+            bytes: bytes::Bytes::from(error.to_string()),
+        };
+        let extra_headers =
+            reply.correlation_headers(&[(MESSAGE_ERROR_HEADER.to_owned(), "1".to_owned())]);
+
+        let message_id = self.broker.next_message_id();
+        let frame = build_message(
+            message_id,
+            reply_to,
+            REPLY_SUBSCRIPTION_ID,
+            &body,
+            &extra_headers,
+        );
+
+        let _ = reply.tx.send(frame).await;
     }
 
     /// Sends a `RECEIPT` for `receipt_id`, if the client requested one.
@@ -706,9 +731,29 @@ fn error_frame(error: &StompError) -> Vec<u8> {
     ErrorFrame::from_message(&error.to_string()).into()
 }
 
-/// Builds the `StompHeaders` seed for an app `SEND`: `destination`, then `content-type` if
-/// present, then every other header the client sent (in wire order) so a handler injecting
-/// `StompHeaders` sees the triggering frame's full header set, not just the two typed ones.
+/// Where a request handler's outcome (a reply or an error) is routed: the requester's own writer
+/// `tx`, plus the `reply-to` destination and `correlation-id` it supplied. A plain fire-and-forget
+/// `SEND` leaves `reply_to`/`correlation_id` `None`, so nothing is routed back.
+struct ReplyContext<'a> {
+    tx: &'a mpsc::Sender<OutFrame>,
+    reply_to: Option<String>,
+    correlation_id: Option<String>,
+}
+
+impl ReplyContext<'_> {
+    /// The reply's extra headers: `extra` (e.g. the error marker) plus the `correlation-id`, when
+    /// the request carried one, so the client demuxes the reply to the awaiting call.
+    fn correlation_headers(&self, extra: &[(String, String)]) -> Vec<(String, String)> {
+        let mut headers = extra.to_vec();
+
+        if let Some(id) = &self.correlation_id {
+            headers.push(("correlation-id".to_owned(), id.clone()));
+        }
+
+        headers
+    }
+}
+
 /// The first value of a custom header by (case-sensitive) name, cloned out of the parsed list.
 fn header_value(headers: &[(String, String)], name: &str) -> Option<String> {
     headers
@@ -717,6 +762,9 @@ fn header_value(headers: &[(String, String)], name: &str) -> Option<String> {
         .map(|(_, value)| value.clone())
 }
 
+/// Builds the `StompHeaders` seed for an app `SEND`: `destination`, then `content-type` if
+/// present, then every other header the client sent (in wire order) so a handler injecting
+/// `StompHeaders` sees the triggering frame's full header set, not just the two typed ones.
 fn send_header_seed(
     destination: &str,
     content_type: Option<String>,

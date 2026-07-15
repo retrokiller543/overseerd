@@ -197,6 +197,15 @@ impl ChatHandler {
             count,
         })
     }
+
+    /// A **request** `#[message]` that always fails: it proves the error path routes back to the
+    /// caller. A request handler returning `Err` sends a directed *error* reply (not a broadcast, not
+    /// silence), so the client's awaiting call resolves `Err` on a live connection instead of hanging
+    /// forever waiting for a reply that never comes.
+    #[message("/app/reject")]
+    async fn reject(&self, _message: ChatMessage) -> Result<RoomCount, CodecError> {
+        Err(CodecError::internal("rejected by the handler".to_owned()))
+    }
 }
 
 /// The chat history REST surface (mounted under `/chat`), sharing the same [`ChatState`] the
@@ -405,6 +414,66 @@ mod tests {
         assert_eq!(first.room, "general");
         assert_eq!(first.count, 1);
         assert_eq!(second.count, 2);
+
+        shutdown.shutdown();
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn a_failing_request_message_resolves_err_not_hang() {
+        let app = app! {
+            name: "chat-reject-test",
+            protocol: overseerd::axum::AxumPlugin,
+        }
+        .register_ws::<Stomp>("/ws/stomp")
+        .build()
+        .await
+        .expect("app builds");
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let shutdown = app.shutdown_handle();
+        let server = tokio::spawn(async move { app.serve(listener).await });
+
+        let url = format!("ws://{addr}/ws/stomp");
+        let connection = StompClientTransport::connect(&url).await.expect("connects");
+
+        let client = ChatHandlerClient::new(connection.clone());
+
+        // `reject` always returns `Err`. The server must route a directed error reply back so this
+        // resolves `Err` — the `timeout` turns a regression (the old hang-forever bug) into a fast
+        // failure rather than a stuck test.
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.reject(ChatMessage {
+                room: "general".into(),
+                sender: "alice".into(),
+                text: "please fail".into(),
+            }),
+        )
+        .await
+        .expect("the request resolves before the timeout (it must not hang)");
+
+        assert!(
+            outcome.is_err(),
+            "a failing request handler must resolve Err, but the call returned Ok"
+        );
+
+        // The connection stays usable after a handler error (non-fatal): a subsequent request
+        // succeeds on the same socket.
+        let ok = tokio::time::timeout(
+            Duration::from_secs(5),
+            client.count(ChatMessage {
+                room: "general".into(),
+                sender: "bob".into(),
+                text: "still alive".into(),
+            }),
+        )
+        .await
+        .expect("a follow-up request resolves before the timeout")
+        .expect("the follow-up request succeeds on the still-open connection");
+
+        assert_eq!(ok.room, "general");
 
         shutdown.shutdown();
         let _ = server.await;

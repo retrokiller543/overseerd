@@ -29,7 +29,7 @@ use tokio_tungstenite_wasm::{Error as WsError, Message, WebSocketStream};
 use super::{
     MessageRequest, MessageSend, StompStatus, Subscription, SubscriptionId, TopicSubscribe,
 };
-use crate::stomp::{Stomp, StompBody};
+use crate::stomp::{MESSAGE_ERROR_HEADER, REPLY_SUBSCRIPTION_ID, Stomp, StompBody};
 
 /// The write and read halves of a connected WebSocket, split for the actor loop.
 type WsWrite = SplitSink<WebSocketStream, Message>;
@@ -519,12 +519,24 @@ fn route(
                     .unwrap_or_default(),
             };
 
-            // A `correlation-id` marks a request/response reply: resolve the awaiting call (terminal)
-            // and stop, so it never also spills into a subscription stream.
-            if let Some(correlation_id) = message_correlation_id(&message)
+            // A request/response reply is stamped with the reply sentinel subscription and a
+            // `correlation-id`: resolve the awaiting call (terminal) and stop, so it never spills
+            // into a subscription stream. The sentinel gate means a broadcast MESSAGE can never be
+            // mistaken for a reply, even one carrying a colliding `correlation-id` header.
+            if message.subscription().value() == REPLY_SUBSCRIPTION_ID
+                && let Some(correlation_id) = message_correlation_id(&message)
                 && let Some(reply) = requests.remove(&correlation_id)
             {
-                let _ = reply.send(Ok(body));
+                let outcome = if message_is_error(&message) {
+                    Err(ClientError::Remote(ErrorBody::new(
+                        StompStatus::Handler,
+                        body.bytes.to_vec(),
+                    )))
+                } else {
+                    Ok(body)
+                };
+
+                let _ = reply.send(outcome);
 
                 return Continue(());
             }
@@ -573,6 +585,15 @@ fn message_correlation_id(message: &stomp_parser::server::MessageFrame<'_>) -> O
         .iter()
         .find(|header| header.header_name() == "correlation-id")
         .map(|header| (*header.value()).to_owned())
+}
+
+/// Whether a reply `MESSAGE` is an *error* reply (the server marks a failed request handler): its
+/// body becomes a [`ClientError::Remote`] resolving the awaiting call `Err`, not `Ok`.
+fn message_is_error(message: &stomp_parser::server::MessageFrame<'_>) -> bool {
+    message
+        .custom
+        .iter()
+        .any(|header| header.header_name() == MESSAGE_ERROR_HEADER)
 }
 
 /// Reads frames until `CONNECTED` (ok), an `ERROR` (protocol error), or the socket closes.
