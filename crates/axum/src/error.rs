@@ -16,6 +16,12 @@ pub enum Error {
     /// Binding the listener or serving the HTTP connection failed.
     #[error("axum serve error: {0}")]
     Serve(#[from] std::io::Error),
+
+    /// A configuration value is internally inconsistent and would fail router construction — caught
+    /// before mounting so it surfaces as an error rather than a build-time panic (e.g. conflicting
+    /// OpenAPI `json_path`/`ui_path`).
+    #[error("axum configuration error: {0}")]
+    Config(String),
 }
 
 /// The axum protocol's [`Result`](std::result::Result) alias.

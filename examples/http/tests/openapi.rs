@@ -80,3 +80,53 @@ fn base_path_becomes_a_server_entry() {
 
     assert_eq!(servers[0].url, "/api");
 }
+
+/// Builds the document with the OpenAPI-demo controller linked in.
+fn docs_doc() -> utoipa::openapi::OpenApi {
+    let _ = std::any::type_name::<overseerd_example_http::docs::DocsController>();
+
+    build_openapi("HTTP Example", "1.0.0", "")
+}
+
+#[test]
+fn form_request_body_is_documented_as_url_encoded() {
+    let doc = docs_doc();
+    let op = doc.paths.paths["/docs-demo/login"]
+        .post
+        .as_ref()
+        .expect("POST /docs-demo/login is documented");
+    let body = op.request_body.as_ref().expect("the form route has a body");
+
+    // The `Form<T>` body must advertise the form media type, not utoipa's JSON default.
+    assert!(
+        body.content
+            .contains_key("application/x-www-form-urlencoded"),
+        "form body documents the urlencoded media type, got {:?}",
+        body.content.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !body.content.contains_key("application/json"),
+        "form body must not be documented as JSON"
+    );
+}
+
+#[test]
+fn custom_responses_replace_the_generated_default() {
+    let doc = docs_doc();
+    let op = doc.paths.paths["/docs-demo/teapot"]
+        .get
+        .as_ref()
+        .expect("GET /docs-demo/teapot is documented");
+
+    // The custom `#[openapi(responses(..))]` set is present (that this even builds proves the
+    // generated default was dropped rather than emitted as a second `responses` argument).
+    assert!(
+        op.responses.responses.contains_key("418"),
+        "the custom 418 response is documented, got {:?}",
+        op.responses.responses.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        op.responses.responses.contains_key("200"),
+        "the custom 200 response is documented"
+    );
+}

@@ -138,12 +138,21 @@ pub(crate) fn operation_tokens(
 
     let params = params_arg(path, &arg_types);
     let request_body = request_body_arg(&arg_types);
-    let responses = responses_arg(&method.sig.output);
+    // A user-supplied `#[openapi(responses(..))]` takes over entirely: emitting the generated
+    // default `200` alongside it would hand `utoipa::path` two `responses` arguments, which it
+    // rejects. So the generated default is dropped whenever the extra tokens declare their own.
+    let responses = if extra.as_ref().is_some_and(declares_responses) {
+        quote!()
+    } else {
+        let responses = responses_arg(&method.sig.output);
+
+        quote!(, #responses)
+    };
     let extra = extra.map(|tokens| quote!(, #tokens)).unwrap_or_default();
 
     Some(overseerd_macros_core::gate::native_only(quote! {
         const _: () = {
-            #[#utoipa::path(#verb, path = #path #params #request_body, #responses #extra)]
+            #[#utoipa::path(#verb, path = #path #params #request_body #responses #extra)]
             #(#doc_attrs)*
             #[allow(non_snake_case, dead_code)]
             fn #marker_fn() {}
@@ -187,8 +196,11 @@ fn params_arg(path: &syn::LitStr, arg_types: &[&Type]) -> TokenStream {
     quote!(, params(#(#entries),*))
 }
 
-/// The `, request_body = T` argument for a `Json`/`Form` body, or empty for no body or a
-/// wrapper-typed body (`Bytes`/`RawForm`/`Multipart`, whose schema is not a single `Dto`).
+/// The `, request_body = ..` argument for a `Json`/`Form` body, or empty for no body or a
+/// wrapper-typed body (`Bytes`/`RawForm`/`Multipart`, whose schema is not a single `Dto`). A `Json`
+/// body uses utoipa's default `application/json`; a `Form` body must declare
+/// `application/x-www-form-urlencoded` explicitly, since axum's `Form` extractor reads that media
+/// type and the default would document (and generate clients for) the wrong one.
 fn request_body_arg(arg_types: &[&Type]) -> TokenStream {
     let Some(inputs) = client::classify(arg_types) else {
         return quote!();
@@ -196,9 +208,16 @@ fn request_body_arg(arg_types: &[&Type]) -> TokenStream {
 
     match inputs.body {
         Some(client::Body {
-            kind: BodyKind::Json | BodyKind::Form,
+            kind: BodyKind::Json,
             inner: Some(ty),
         }) => quote!(, request_body = #ty),
+
+        Some(client::Body {
+            kind: BodyKind::Form,
+            inner: Some(ty),
+        }) => {
+            quote!(, request_body(content = #ty, content_type = "application/x-www-form-urlencoded"))
+        }
 
         _ => quote!(),
     }
@@ -236,6 +255,18 @@ fn undocumented_body(ty: &Type) -> bool {
 
         _ => false,
     }
+}
+
+/// Whether a handler's `#[openapi(..)]` tokens declare a top-level `responses(..)` argument. A
+/// top-level `responses` identifier means the user is overriding the generated default response set
+/// (nested `responses` inside a group are a single [`TokenTree::Group`] and never match).
+fn declares_responses(extra: &TokenStream) -> bool {
+    use proc_macro2::TokenTree;
+
+    extra
+        .clone()
+        .into_iter()
+        .any(|tree| matches!(&tree, TokenTree::Ident(ident) if ident == "responses"))
 }
 
 /// Finds and removes a `#[openapi(..)]` attribute from a handler method, returning its inner tokens

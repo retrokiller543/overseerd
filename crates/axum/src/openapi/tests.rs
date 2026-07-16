@@ -2,7 +2,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use super::{build_openapi, join_base, mount, normalize_prefix};
+use super::{build_openapi, join_base, mount, normalize_prefix, spec_url};
 use crate::config::{OpenApiConfig, OpenApiUi};
 
 /// Drives a `GET path` through `router` and returns `(status, body_string)`.
@@ -36,6 +36,16 @@ fn normalize_prefix_trims_and_empties() {
     assert_eq!(normalize_prefix("/"), None);
     assert_eq!(normalize_prefix("/api"), Some(String::from("/api")));
     assert_eq!(normalize_prefix("/api/"), Some(String::from("/api")));
+}
+
+#[test]
+fn spec_url_prefixes_json_path_with_base() {
+    // No prefix: the UI fetches the bare json_path.
+    assert_eq!(spec_url("", "/openapi.json"), "/openapi.json");
+
+    // Under a base prefix, the UI must fetch the nested location, not the root one.
+    assert_eq!(spec_url("/api", "/openapi.json"), "/api/openapi.json");
+    assert_eq!(spec_url("/api/", "/spec.json"), "/api/spec.json");
 }
 
 #[test]
@@ -73,7 +83,7 @@ async fn disabled_config_mounts_nothing() {
     let mut config = json_only_config();
     config.enabled = false;
 
-    let router = mount(axum::Router::new(), &config, "");
+    let router = mount(axum::Router::new(), &config, "").expect("mounts");
     let (status, _) = get(router, "/openapi.json").await;
 
     assert_eq!(
@@ -83,9 +93,38 @@ async fn disabled_config_mounts_nothing() {
     );
 }
 
+#[test]
+fn overlapping_json_and_ui_paths_are_rejected() {
+    let mut config = json_only_config();
+    config.ui = OpenApiUi::Redoc;
+    config.ui_path = String::from("/docs");
+    config.json_path = String::from("/docs");
+
+    let error = mount(axum::Router::new(), &config, "")
+        .expect_err("identical json_path and ui_path must be rejected");
+
+    assert!(matches!(error, crate::Error::Config(_)), "got: {error}");
+
+    // A json_path nested under the UI's wildcard is rejected too.
+    config.json_path = String::from("/docs/openapi.json");
+
+    assert!(
+        mount(axum::Router::new(), &config, "").is_err(),
+        "a json_path under ui_path must be rejected"
+    );
+
+    // Distinct paths are fine.
+    config.json_path = String::from("/openapi.json");
+
+    assert!(
+        mount(axum::Router::new(), &config, "").is_ok(),
+        "distinct paths mount cleanly"
+    );
+}
+
 #[tokio::test]
 async fn enabled_config_serves_json_document() {
-    let router = mount(axum::Router::new(), &json_only_config(), "");
+    let router = mount(axum::Router::new(), &json_only_config(), "").expect("mounts");
     let (status, body) = get(router, "/openapi.json").await;
 
     assert_eq!(status, StatusCode::OK);
@@ -104,7 +143,7 @@ async fn json_served_at_custom_path() {
     let mut config = json_only_config();
     config.json_path = String::from("/spec.json");
 
-    let router = mount(axum::Router::new(), &config, "");
+    let router = mount(axum::Router::new(), &config, "").expect("mounts");
 
     assert_eq!(get(router.clone(), "/spec.json").await.0, StatusCode::OK);
     assert_eq!(get(router, "/openapi.json").await.0, StatusCode::NOT_FOUND);
@@ -117,7 +156,7 @@ async fn swagger_ui_mounts_and_owns_json() {
     config.ui = OpenApiUi::Swagger;
     config.ui_path = String::from("/docs");
 
-    let router = mount(axum::Router::new(), &config, "");
+    let router = mount(axum::Router::new(), &config, "").expect("mounts");
 
     // Swagger serves the spec itself at `json_path`, and the UI shell under `ui_path`.
     assert_eq!(get(router.clone(), "/openapi.json").await.0, StatusCode::OK);

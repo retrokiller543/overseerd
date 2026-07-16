@@ -80,6 +80,17 @@ pub fn build_openapi(title: &str, version: &str, base_path: &str) -> OpenApi {
         .build()
 }
 
+/// The absolute URL a UI must fetch the spec from: the normalized base prefix followed by the
+/// configured `json_path`. Under `base_path = /api` the JSON route nests to `/api{json_path}`, so a
+/// UI handed the bare `json_path` would request the wrong (root) location and fail to load the spec.
+fn spec_url(base_path: &str, json_path: &str) -> String {
+    format!(
+        "{}{}",
+        normalize_prefix(base_path).unwrap_or_default(),
+        json_path
+    )
+}
+
 /// Normalizes a configured base path into an OpenAPI server prefix: `None` for an empty or `"/"`
 /// path (routes at the root), otherwise the path with any trailing slash trimmed.
 fn normalize_prefix(base_path: &str) -> Option<String> {
@@ -97,14 +108,27 @@ fn normalize_prefix(base_path: &str) -> Option<String> {
 /// document is built once here. A UI whose crate feature is not compiled logs a warning and is
 /// skipped, leaving the JSON endpoint intact. Returns `router` unchanged when disabled.
 ///
-/// `base_path` is the global prefix the router will be nested under; it is recorded as the
-/// document's server URL. The routes mounted here are relative — they ride the same nesting.
-pub fn mount(router: axum::Router, config: &OpenApiConfig, base_path: &str) -> axum::Router {
+/// `base_path` is the (already-normalized) global prefix the router will be nested under; it is
+/// recorded as the document's server URL, and prepended to the spec URL handed to a UI so the UI
+/// fetches the document at its real, prefixed location. The routes mounted here are relative — they
+/// ride the same nesting.
+///
+/// Returns [`Error::Config`](crate::Error::Config) when the configured `json_path` and `ui_path`
+/// overlap, since mounting both would register conflicting routes and panic during router
+/// construction.
+pub fn mount(
+    router: axum::Router,
+    config: &OpenApiConfig,
+    base_path: &str,
+) -> crate::Result<axum::Router> {
     if !config.enabled {
-        return router;
+        return Ok(router);
     }
 
+    validate_paths(config)?;
+
     let doc = build_openapi(&config.title, &config.version, base_path);
+    let spec_url = spec_url(base_path, &config.json_path);
 
     // Swagger UI serves its own copy of the spec at `json_path`; every other choice (a UI that
     // inlines the doc, references our endpoint, or no UI at all) needs us to serve the JSON.
@@ -117,7 +141,31 @@ pub fn mount(router: axum::Router, config: &OpenApiConfig, base_path: &str) -> a
         serve_json(router, &config.json_path, doc.clone())
     };
 
-    mount_ui(router, config, doc)
+    Ok(mount_ui(router, config, doc, &spec_url))
+}
+
+/// Rejects a configuration whose JSON and UI routes would collide: identical paths, or a `json_path`
+/// nested under `ui_path` (a UI's wildcard would then also claim it). Only checked when a UI is
+/// selected — JSON-only serving has nothing to collide with.
+fn validate_paths(config: &OpenApiConfig) -> crate::Result<()> {
+    if matches!(config.ui, OpenApiUi::None) {
+        return Ok(());
+    }
+
+    let json = config.json_path.trim_end_matches('/');
+    let ui = config.ui_path.trim_end_matches('/');
+
+    let overlaps = json == ui || (!ui.is_empty() && json.starts_with(&format!("{ui}/")));
+
+    if overlaps {
+        return Err(crate::Error::Config(format!(
+            "OpenAPI json_path (`{}`) overlaps ui_path (`{}`): serving both would register \
+             conflicting routes; configure distinct paths",
+            config.json_path, config.ui_path
+        )));
+    }
+
+    Ok(())
 }
 
 /// Adds a `GET {json_path}` route returning the serialized document.
@@ -133,18 +181,30 @@ fn serve_json(router: axum::Router, json_path: &str, doc: OpenApi) -> axum::Rout
 }
 
 /// Mounts the configured UI onto `router`, if any. Each arm is gated on its crate feature; a UI
-/// selected in config whose feature is absent logs a warning and serves JSON only.
-fn mount_ui(router: axum::Router, config: &OpenApiConfig, doc: OpenApi) -> axum::Router {
+/// selected in config whose feature is absent logs a warning and serves JSON only. `spec_url` is the
+/// prefixed URL a UI that fetches the spec by URL (Swagger, RapiDoc) must request it from — the
+/// UIs that inline the document (Redoc, Scalar) ignore it.
+fn mount_ui(
+    router: axum::Router,
+    config: &OpenApiConfig,
+    doc: OpenApi,
+    spec_url: &str,
+) -> axum::Router {
     match config.ui {
-        OpenApiUi::None => router,
+        OpenApiUi::None => {
+            let _ = spec_url;
+
+            router
+        }
 
         OpenApiUi::Swagger => {
             #[cfg(feature = "openapi-swagger-ui")]
             {
                 // Pass the bare `ui_path`; the axum integration adds its own redirect + `{*rest}`
-                // wildcard. Swagger serves the spec itself at `json_path`.
+                // wildcard. Swagger serves the spec itself, but the UI shell fetches it by absolute
+                // URL — so it must be the prefixed `spec_url`, not the unprefixed `json_path`.
                 let swagger = utoipa_swagger_ui::SwaggerUi::new(config.ui_path.clone())
-                    .url(config.json_path.clone(), doc);
+                    .url(spec_url.to_owned(), doc);
 
                 router.merge(swagger)
             }
@@ -153,7 +213,7 @@ fn mount_ui(router: axum::Router, config: &OpenApiConfig, doc: OpenApi) -> axum:
             {
                 warn_missing_ui("swagger", "openapi-swagger-ui");
 
-                let _ = doc;
+                let _ = (doc, spec_url);
 
                 router
             }
@@ -180,10 +240,11 @@ fn mount_ui(router: axum::Router, config: &OpenApiConfig, doc: OpenApi) -> axum:
         OpenApiUi::Rapidoc => {
             #[cfg(feature = "openapi-rapidoc")]
             {
-                // RapiDoc references the spec by URL (our `json_path` route), so the doc is unused.
+                // RapiDoc references the spec by URL, so it must be the prefixed `spec_url` (the real,
+                // nested location of our JSON route); the inlined doc is unused.
                 let _ = doc;
-                let rapidoc = utoipa_rapidoc::RapiDoc::new(config.json_path.clone())
-                    .path(config.ui_path.clone());
+                let rapidoc =
+                    utoipa_rapidoc::RapiDoc::new(spec_url.to_owned()).path(config.ui_path.clone());
 
                 router.merge(rapidoc)
             }
@@ -192,7 +253,7 @@ fn mount_ui(router: axum::Router, config: &OpenApiConfig, doc: OpenApi) -> axum:
             {
                 warn_missing_ui("rapidoc", "openapi-rapidoc");
 
-                let _ = doc;
+                let _ = (doc, spec_url);
 
                 router
             }
