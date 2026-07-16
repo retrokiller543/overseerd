@@ -12,6 +12,7 @@
 //! sets up its own routing and the app never sees a route. The first bundled protocol is [`JsonWs`].
 
 mod json;
+pub mod pubsub;
 #[cfg(feature = "stomp")]
 pub mod stomp;
 
@@ -230,10 +231,10 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
 /// A [`WebsocketProtocol`] that carries topic pub/sub: it frames a delivered message for one
 /// subscriber. This is the server-side companion to [`MessagingProtocol`](crate::messaging::MessagingProtocol)
 /// (which supplies the wire body and default codec); together they let the neutral
-/// [`SubscriptionRegistry`](crate::ws::stomp::SubscriptionRegistry) and
-/// [`TopicBus`](crate::ws::stomp::TopicBus) fan out for any protocol. STOMP is one implementation;
-/// a new protocol adds its own `frame_message` without touching the registry/bus.
-#[cfg(feature = "stomp")]
+/// [`SubscriptionRegistry`](crate::ws::pubsub::SubscriptionRegistry) and
+/// [`TopicBus`](crate::ws::pubsub::TopicBus) fan out for any protocol. STOMP is one implementation;
+/// a new protocol adds its own `frame_message` without touching the registry/bus. Behind `ws` (not
+/// `stomp`), so a non-STOMP protocol implements it without enabling STOMP.
 pub trait PubSubProtocol: WebsocketProtocol + crate::messaging::MessagingProtocol {
     /// The outbound frame this protocol delivers to a subscriber's writer task.
     type OutFrame: Send + 'static;
@@ -255,7 +256,6 @@ pub trait PubSubProtocol: WebsocketProtocol + crate::messaging::MessagingProtoco
 /// [`reply`](Self::reply) into an outcome the protocol routes to the *requester* (STOMP: via the
 /// inbound frame's `reply-to`/`correlation-id`), never broadcast. A handler returning `()` uses
 /// [`WsRespond`] instead, so a protocol without request/response simply never needs this.
-#[cfg(feature = "stomp")]
 pub trait MessageReply: PubSubProtocol {
     /// Wraps an already-encoded reply `body` into this protocol's outcome.
     fn reply(body: Self::Body) -> Self::Outcome;

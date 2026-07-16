@@ -19,7 +19,6 @@ mod body;
 mod broker;
 mod error;
 mod headers;
-mod publisher;
 #[cfg(test)]
 mod tests;
 mod topic_bus;
@@ -52,12 +51,14 @@ pub use body::{
     JsonCodec, MessagingClientProtocol, MessagingProtocol, Publish, StompBody, StompCodec,
     StompOutcome, Topic, TopicCodec, TopicParam,
 };
-pub use broker::{Broker, ConnectionId, SubscriptionRegistry};
+pub use broker::Broker;
 pub use error::StompError;
 pub use headers::{StompHeaders, StompSession};
-pub use publisher::Publisher;
 pub(crate) use topic_bus::STOMP_TOPIC_BUS_DESCRIPTOR;
-pub use topic_bus::{DEFAULT_PUBLISH_FANOUT, StompTopicBus, TopicBus};
+pub use topic_bus::StompTopicBus;
+// The protocol-generic pub/sub runtime lives in `crate::ws::pubsub`; re-exported here so the STOMP
+// serve loop and the crate's historical `ws::stomp::*` surface keep naming them unchanged.
+pub use crate::ws::pubsub::{ConnectionId, Publisher, SubscriptionRegistry, TopicBus};
 
 use broker::{OutFrame, build_message};
 

@@ -1,5 +1,7 @@
 //! Tests for the [`Broker`](super::Broker) registry and fan-out.
 
+use tokio::sync::mpsc;
+
 use super::*;
 
 fn body(text: &str) -> StompBody {

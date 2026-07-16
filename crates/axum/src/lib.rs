@@ -70,11 +70,19 @@ pub use ws::{
     WsControllerDescriptor, WsDispatchError, WsReply, WsRespond, WsRoute, WsShutdown,
 };
 
-/// The stomp `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements
-/// so the neutral registry/bus fan out for it. [`MessageReply`] is its request/response companion —
-/// a protocol that routes a `#[message]` handler's non-unit return back to the requester.
-#[cfg(all(feature = "stomp", not(target_family = "wasm")))]
+/// The `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements so
+/// the neutral registry/bus fan out for it. [`MessageReply`] is its request/response companion — a
+/// protocol that routes a `#[message]` handler's non-unit return back to the requester. Behind `ws`
+/// so a non-STOMP protocol implements them without enabling `stomp`.
+#[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub use ws::{MessageReply, PubSubProtocol};
+
+/// The protocol-generic pub/sub runtime (server side): the neutral subscription registry, the shared
+/// topic bus, and the injected publisher. Behind `ws` so a non-STOMP protocol reuses them.
+#[cfg(all(feature = "ws", not(target_family = "wasm")))]
+pub use ws::pubsub::{
+    ConnectionId, DEFAULT_PUBLISH_FANOUT, Publisher, SubscriptionRegistry, TopicBus,
+};
 
 /// The protocol-generic messaging wire contract, re-exported at the crate root on every target — the
 /// browser client's generated `#[topics]`/`#[message]` code names it through the plugin path. Behind
@@ -88,14 +96,13 @@ pub use messaging::{MessagingClientProtocol, MessagingProtocol, Topic, TopicCode
 #[cfg(feature = "stomp")]
 pub use stomp::{JsonCodec, Stomp, StompBody, StompCodec};
 
-/// The STOMP pub/sub protocol surface (server side): the broker/registry/session/publish types.
+/// The STOMP pub/sub protocol surface (server side): the broker/session/publish/auth types.
 /// Server-only.
 #[cfg(all(feature = "stomp", not(target_family = "wasm")))]
 pub use ws::stomp::{
-    Broker, Direct, Injected, IntoAuthenticator, Publish, Publisher, ResolvedAuthenticator,
-    StompAuthFuture, StompAuthenticationError, StompAuthenticator, StompConfig, StompConnect,
-    StompError, StompHeaders, StompOutcome, StompPrincipal, StompSession, StompTopicBus,
-    SubscriptionRegistry, TopicBus,
+    Broker, Direct, Injected, IntoAuthenticator, Publish, ResolvedAuthenticator, StompAuthFuture,
+    StompAuthenticationError, StompAuthenticator, StompConfig, StompConnect, StompError,
+    StompHeaders, StompOutcome, StompPrincipal, StompSession, StompTopicBus,
 };
 
 /// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a
