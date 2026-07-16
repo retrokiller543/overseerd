@@ -27,8 +27,9 @@ use tokio::sync::{mpsc, oneshot};
 // on native, the JS `WebSocket` on wasm) is hidden, so this transport is target-agnostic.
 use tokio_tungstenite_wasm::{Error as WsError, Message, WebSocketStream};
 
-use super::{
-    MessageRequest, MessageSend, StompStatus, Subscription, SubscriptionId, TopicSubscribe,
+use super::StompStatus;
+use crate::client::messaging::{
+    MessageRequest, MessageSend, Subscription, SubscriptionId, TopicSubscribe,
 };
 use crate::stomp::{MESSAGE_ERROR_HEADER, REPLY_SUBSCRIPTION_ID, Stomp, StompBody};
 
