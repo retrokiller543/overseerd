@@ -17,6 +17,12 @@
 //! # Middleware (see the library's `auth` module):
 //! curl localhost:3000/me/whoami -H 'authorization: Bearer alice'
 //! # → {"name":"user:alice","same_instance":true}
+//!
+//! # OpenAPI (the crate is built with the `openapi-swagger-ui` feature). It is off by default;
+//! # enable it (and pick a UI) via the config env vars, then browse the spec and Swagger UI:
+//! AXUM_OPENAPI_ENABLED=true AXUM_OPENAPI_UI=swagger cargo run -p overseerd-example-http
+//! curl localhost:3000/openapi.json
+//! # open http://localhost:3000/docs/  (Swagger UI)
 //! ```
 
 // Force the library into the link so its `#[controller]` registrations (link-time `linkme` slices

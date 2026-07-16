@@ -45,3 +45,61 @@ fn configured_listener_overrides_the_defaults() {
     assert_eq!(config.request_timeout_ms, 15_000);
     assert_eq!(config.graceful_shutdown_timeout_ms, 5_000);
 }
+
+#[test]
+fn base_path_defaults_empty_and_is_configurable() {
+    assert_eq!(AxumConfig::default().base_path, "");
+
+    let manager = ConfigManager::<Toml>::from_str(
+        r#"
+            [axum]
+            base_path = "/api"
+        "#,
+    )
+    .expect("parse config")
+    .with_config::<AxumConfig>(AXUM_CONFIG_PATH);
+    let config = manager
+        .get_config::<AxumConfig>(AXUM_CONFIG_PATH)
+        .expect("configured axum base path");
+
+    assert_eq!(config.base_path, "/api");
+}
+
+#[cfg(feature = "openapi")]
+#[test]
+fn openapi_config_defaults_disabled_json_only() {
+    use super::{AXUM_OPENAPI_CONFIG_PATH, OpenApiConfig, OpenApiUi};
+
+    let manager =
+        ConfigManager::<Toml>::empty().with_config::<OpenApiConfig>(AXUM_OPENAPI_CONFIG_PATH);
+    let config = manager
+        .get_config::<OpenApiConfig>(AXUM_OPENAPI_CONFIG_PATH)
+        .expect("default openapi config");
+
+    assert!(!config.enabled, "OpenAPI is off unless explicitly enabled");
+    assert_eq!(config.json_path, "/openapi.json");
+    assert_eq!(config.ui, OpenApiUi::None);
+    assert_eq!(config, OpenApiConfig::default());
+}
+
+#[cfg(feature = "openapi")]
+#[test]
+fn openapi_config_selects_ui() {
+    use super::{AXUM_OPENAPI_CONFIG_PATH, OpenApiConfig, OpenApiUi};
+
+    let manager = ConfigManager::<Toml>::from_str(
+        r#"
+            [axum.openapi]
+            enabled = true
+            ui = "swagger"
+        "#,
+    )
+    .expect("parse config")
+    .with_config::<OpenApiConfig>(AXUM_OPENAPI_CONFIG_PATH);
+    let config = manager
+        .get_config::<OpenApiConfig>(AXUM_OPENAPI_CONFIG_PATH)
+        .expect("configured openapi");
+
+    assert!(config.enabled);
+    assert_eq!(config.ui, OpenApiUi::Swagger);
+}

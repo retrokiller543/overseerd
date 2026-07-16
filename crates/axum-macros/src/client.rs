@@ -28,16 +28,16 @@ use crate::route::RouteAttr;
 
 /// The classified client inputs of a route: an optional `Path` type, an optional query, and an
 /// optional request body. Shared by the unary and streaming method builders.
-struct Inputs {
-    path_ty: Option<Type>,
-    query: Option<QueryInput>,
-    body: Option<Body>,
+pub(crate) struct Inputs {
+    pub(crate) path_ty: Option<Type>,
+    pub(crate) query: Option<QueryInput>,
+    pub(crate) body: Option<Body>,
 }
 
 /// A route's query-string input: a typed `Query<T>` (URL-encoded from the `Dto` `T`) or the untyped
 /// `RawQuery` (the raw query string, passed through as an `Option<String>`).
 #[allow(clippy::large_enum_variant)]
-enum QueryInput {
+pub(crate) enum QueryInput {
     Typed(Type),
     Raw,
 }
@@ -45,9 +45,9 @@ enum QueryInput {
 /// A route's request body: which [`HttpBody`](../overseerd_axum/client/trait.HttpBody.html) wrapper
 /// carries it, and — for the serde-typed bodies — the payload type. The wrapper-typed bodies
 /// (`Bytes`/`RawForm`/`Multipart`) have a fixed client parameter type, so they carry no `inner`.
-struct Body {
-    kind: BodyKind,
-    inner: Option<Type>,
+pub(crate) struct Body {
+    pub(crate) kind: BodyKind,
+    pub(crate) inner: Option<Type>,
 }
 
 /// Classifies a route's handler arguments into client inputs, dropping server-only extractors.
@@ -64,7 +64,7 @@ struct Body {
 /// can't encode. Opting out beats emitting a method that would silently drop data.
 ///
 /// [`FromRequestParts`]: https://docs.rs/axum/latest/axum/extract/trait.FromRequestParts.html
-fn classify(arg_types: &[&Type]) -> Option<Inputs> {
+pub(crate) fn classify(arg_types: &[&Type]) -> Option<Inputs> {
     let mut path_ty: Option<Type> = None;
     let mut query: Option<QueryInput> = None;
     let mut body: Option<Body> = None;
@@ -1085,7 +1085,7 @@ const MAX_NAMED_PATH_PARAMS: usize = 3;
 /// Which [`HttpBody`](../overseerd_axum/client/trait.HttpBody.html) wrapper a route's body uses (the
 /// wrapper owns the content type + wire encoding). `Json`/`Form` wrap a serde payload `T`; `Bytes`
 /// and `RawForm` wrap a raw `Vec<u8>`; `Multipart` is the `Multipart` builder, already an `HttpBody`.
-enum BodyKind {
+pub(crate) enum BodyKind {
     Json,
     Form,
     Bytes,
@@ -1143,7 +1143,7 @@ struct PathPlan {
 /// shapes we can't decompose positionally (a `Path<SomeStruct>`, or a tuple whose arity doesn't
 /// match the holes) — there the client still gets untyped-but-present params rather than being
 /// silently dropped.
-fn hole_param_types(holes: &[String], path_ty: Option<Type>) -> Vec<Type> {
+pub(crate) fn hole_param_types(holes: &[String], path_ty: Option<Type>) -> Vec<Type> {
     let string_per_hole = || -> Vec<Type> {
         holes
             .iter()
@@ -1367,7 +1367,7 @@ fn tuple_elems(ty: &Type) -> Option<Vec<Type>> {
 
 /// A valid parameter identifier for a route hole (stripping a leading `*` wildcard marker),
 /// falling back to `path{i}` when the hole is not a plain identifier.
-fn hole_ident(hole: &str, index: usize) -> Ident {
+pub(crate) fn hole_ident(hole: &str, index: usize) -> Ident {
     let name = hole.trim_start_matches('*');
 
     if !name.is_empty()
@@ -1391,7 +1391,7 @@ fn hole_ident(hole: &str, index: usize) -> Ident {
 /// Each param hole becomes a positional `{}`; an escaped `{{`/`}}` becomes a literal `{{`/`}}`
 /// in the `format!` string (which renders as a single brace). The leading `{}` for `BASE` is
 /// prepended, so the returned string starts with `{}` then the templated remainder.
-fn parse_template(template: &str) -> (String, Vec<String>) {
+pub(crate) fn parse_template(template: &str) -> (String, Vec<String>) {
     let mut out = String::from("{}");
     let mut holes = Vec::new();
     let mut chars = template.chars().peekable();

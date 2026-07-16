@@ -67,19 +67,30 @@ impl Axum {
 
     /// Drives `axum::serve` over `listener` until the shutdown signal fires.
     async fn run(self, listener: TcpListener, mut shutdown: ShutdownSignal) -> crate::Result<()> {
+        // `tower::Layer::layer` (for the normalization wrapper below) and `axum::ServiceExt`.
+        use tower::Layer as _;
+
         let local = listener.local_addr()?;
         let graceful_timeout = self.config.snapshot().graceful_shutdown_timeout_ms;
 
         info!(target: "overseerd::axum", addr = %local, "serve starting");
 
-        let router = self.router;
+        // Trailing-slash normalization: rewrite the request path before route matching so `/users/`
+        // hits the `/users` route. `NormalizePathLayer` must wrap the router from the outside (a
+        // `Router::layer` runs after matching), so the served value is a plain `Service`, driven via
+        // `axum::ServiceExt::into_make_service`. `NormalizePath` erases the concrete body type, so it
+        // is named explicitly for `into_make_service`.
+        let router = tower_http::normalize_path::NormalizePathLayer::trim_trailing_slash()
+            .layer(self.router);
+        let make_service =
+            <_ as axum::ServiceExt<axum::extract::Request>>::into_make_service(router);
 
         #[cfg(feature = "ws")]
         let ws_endpoints = self.ws_endpoints;
 
         let shutdown_started = std::sync::Arc::new(tokio::sync::Notify::new());
         let shutdown_notice = std::sync::Arc::clone(&shutdown_started);
-        let server = axum::serve(listener, router)
+        let server = axum::serve(listener, make_service)
             .with_graceful_shutdown(async move {
                 shutdown.wait().await;
 
