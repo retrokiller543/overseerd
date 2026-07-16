@@ -79,6 +79,19 @@ pub enum WsDispatchError {
     Encode(String),
 }
 
+impl WsDispatchError {
+    /// A stable, client-safe summary for a directed error reply. The detailed [`Display`] — which
+    /// can carry provider names (`Inject`) or decoder/encoder internals (`Decode`/`Encode`) — stays
+    /// in the server logs; an untrusted peer only learns the error category, never internal wiring.
+    pub fn public_message(&self) -> &'static str {
+        match self {
+            Self::NotFound(_) => "no handler for destination",
+            Self::Decode(_) => "invalid request payload",
+            Self::Inject(_) | Self::Encode(_) => "internal error",
+        }
+    }
+}
+
 /// One message route for protocol `P`: a destination string mapped to its handler. A
 /// `#[message("dest")]` method produces one of these (with the controller singleton already
 /// captured).

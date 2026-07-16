@@ -544,9 +544,11 @@ impl Stomp {
             return;
         };
 
+        // Send only the stable public category to the peer; the detailed error was already logged
+        // by the caller (`STOMP handler failed`), so internal wiring never crosses the wire.
         let body = StompBody {
             content_type: Some("text/plain".to_owned()),
-            bytes: bytes::Bytes::from(error.to_string()),
+            bytes: bytes::Bytes::from_static(error.public_message().as_bytes()),
         };
         let extra_headers =
             reply.correlation_headers(&[(MESSAGE_ERROR_HEADER.to_owned(), "1".to_owned())]);

@@ -78,12 +78,15 @@ where
     }
 }
 
-/// Under `di-check`, a `Publisher<T>` resolves from the framework-provided bus, so the
-/// compile-time checker treats it as always provided (for any pub/sub topic set `T`).
+/// Under `di-check`, a `Publisher<T>` resolves from its protocol's shared bus, so it is provided
+/// exactly when that bus is — the guarantee is conditioned on `Wiring: Provide<TopicBus<T::Protocol>>`
+/// (STOMP marks its bus provided). A custom protocol whose bus is never registered therefore fails
+/// the compile-time check instead of passing it and blowing up at injection time.
 #[cfg(feature = "di-check")]
 impl<T> overseerd_di::Provide<Publisher<T>> for overseerd_di::Wiring
 where
     T: Topic,
     T::Protocol: PubSubProtocol,
+    overseerd_di::Wiring: overseerd_di::Provide<TopicBus<T::Protocol>>,
 {
 }

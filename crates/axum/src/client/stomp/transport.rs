@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -118,8 +119,8 @@ pub struct StompConnectOptions {
 
     /// How long a `request` awaits its correlated reply before abandoning the call with
     /// [`ClientError::Timeout`]. `None` waits indefinitely (until the connection closes). Defaults to
-    /// [`DEFAULT_REQUEST_TIMEOUT`]. Applied on native; on wasm the timer is not yet wired, so the call
-    /// awaits until a reply or connection close.
+    /// [`DEFAULT_REQUEST_TIMEOUT`]. Enforced on both native (tokio timer) and wasm (browser
+    /// `setTimeout`), and it bounds the whole call — command enqueueing plus the reply wait.
     request_timeout: Option<Duration>,
 }
 
@@ -221,7 +222,8 @@ impl StompConnectOptions {
         self
     }
 
-    /// Sets the request/response reply timeout (`None` waits indefinitely). Applied on native.
+    /// Sets the request/response reply timeout (`None` waits indefinitely). Enforced on native and
+    /// wasm alike, bounding both command enqueueing and the reply wait.
     pub fn with_request_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.request_timeout = timeout;
         self
@@ -388,56 +390,214 @@ impl MessageRequest<Stomp> for StompClientTransport {
 
         let (reply, reply_rx) = oneshot::channel();
 
-        self.tx()
-            .send(Command::Request {
-                frame,
-                correlation_id: correlation_id.clone(),
-                reply,
-            })
-            .await
-            .map_err(|_| ClientError::ConnectionClosed)?;
+        // Armed for the whole call: if it is abandoned before a reply resolves it — a timeout, or the
+        // request future being dropped by an outer abort — the guard's `Drop` tells the actor to drop
+        // the orphaned correlation slot, so the table never grows across the connection lifetime.
+        let mut guard = RequestGuard::new(self.tx().clone(), correlation_id.clone());
 
-        let outcome = await_reply(reply_rx, self.inner.request_timeout).await;
+        // The deadline covers BOTH enqueueing and the reply wait: a full command channel or an actor
+        // blocked writing to the socket must not let a request outlive `request_timeout` before the
+        // wait even begins.
+        let outcome = await_reply(
+            async {
+                self.tx()
+                    .send(Command::Request {
+                        frame,
+                        correlation_id,
+                        reply,
+                    })
+                    .await
+                    .map_err(|_| ClientError::ConnectionClosed)?;
 
-        // A timed-out call abandons its reply slot; tell the actor to drop it so a late reply is
-        // discarded and the correlation table retains no orphaned entry.
-        if matches!(outcome, Err(ClientError::Timeout)) {
-            let _ = self
-                .tx()
-                .send(Command::CancelRequest { correlation_id })
-                .await;
+                reply_rx.await.map_err(|_| ClientError::ConnectionClosed)?
+            },
+            self.inner.request_timeout,
+        )
+        .await;
+
+        // A resolved reply (or a closed connection) means the actor already dropped the slot; only a
+        // timeout leaves it orphaned, so keep the guard armed there and let its `Drop` send the
+        // cancel. An abandoned outer-drop never reaches this line — the guard fires on the way out.
+        if !matches!(outcome, Err(ClientError::Timeout)) {
+            guard.disarm();
         }
 
         outcome
     }
 }
 
-/// Awaits a request's correlated reply, bounded by `timeout` when set. Native uses
-/// [`tokio::time::timeout`]; on wasm no timer is wired yet, so the reply is awaited unbounded (the
-/// call still resolves on an error reply or connection close).
+/// Drop-guard that asks the actor to drop a request's correlation slot when a call is abandoned
+/// before its reply resolves — a timeout, or the request future being cancelled by an outer abort.
+/// [`disarm`](Self::disarm)ed once a reply resolves the call (the actor removed the entry itself
+/// then), so the common path sends no cancel.
+struct RequestGuard {
+    tx: mpsc::Sender<Command>,
+    correlation_id: String,
+    armed: bool,
+}
+
+impl RequestGuard {
+    fn new(tx: mpsc::Sender<Command>, correlation_id: String) -> Self {
+        Self {
+            tx,
+            correlation_id,
+            armed: true,
+        }
+    }
+
+    /// Cancels the pending cleanup: the reply resolved, so the actor already dropped the slot.
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RequestGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+
+        // `try_send` (not awaited) because `Drop` is synchronous; a full channel just leaves the slot
+        // for a later reply or the connection close to clear, exactly as before this guard existed.
+        let correlation_id = std::mem::take(&mut self.correlation_id);
+        let _ = self.tx.try_send(Command::CancelRequest { correlation_id });
+    }
+}
+
+/// Runs the enqueue-and-await-reply future `fut`, bounded by `timeout` when set (`None` waits
+/// indefinitely). Native uses [`tokio::time::timeout`]; a lapse yields [`ClientError::Timeout`].
 #[cfg(not(target_family = "wasm"))]
-async fn await_reply(
-    rx: oneshot::Receiver<Result<StompBody, ClientError<StompStatus>>>,
+async fn await_reply<F>(
+    fut: F,
     timeout: Option<Duration>,
-) -> Result<StompBody, ClientError<StompStatus>> {
+) -> Result<StompBody, ClientError<StompStatus>>
+where
+    F: Future<Output = Result<StompBody, ClientError<StompStatus>>>,
+{
     let Some(timeout) = timeout else {
-        return rx.await.map_err(|_| ClientError::ConnectionClosed)?;
+        return fut.await;
     };
 
-    match tokio::time::timeout(timeout, rx).await {
-        Ok(received) => received.map_err(|_| ClientError::ConnectionClosed)?,
+    match tokio::time::timeout(timeout, fut).await {
+        Ok(received) => received,
 
         Err(_elapsed) => Err(ClientError::Timeout),
     }
 }
 
-/// See the native variant. On wasm the reply is awaited unbounded until a reply or connection close.
+/// See the native variant. On wasm the deadline is enforced with a browser `setTimeout` timer
+/// ([`wasm_timer::delay`]), so a missing reply resolves [`ClientError::Timeout`] in the browser too
+/// rather than hanging forever.
 #[cfg(target_family = "wasm")]
-async fn await_reply(
-    rx: oneshot::Receiver<Result<StompBody, ClientError<StompStatus>>>,
-    _timeout: Option<Duration>,
-) -> Result<StompBody, ClientError<StompStatus>> {
-    rx.await.map_err(|_| ClientError::ConnectionClosed)?
+async fn await_reply<F>(
+    fut: F,
+    timeout: Option<Duration>,
+) -> Result<StompBody, ClientError<StompStatus>>
+where
+    F: Future<Output = Result<StompBody, ClientError<StompStatus>>>,
+{
+    let Some(timeout) = timeout else {
+        return fut.await;
+    };
+
+    let fut = std::pin::pin!(fut);
+    let timer = std::pin::pin!(wasm_timer::delay(timeout));
+
+    match futures::future::select(fut, timer).await {
+        futures::future::Either::Left((received, _timer)) => received,
+
+        futures::future::Either::Right(((), _fut)) => Err(ClientError::Timeout),
+    }
+}
+
+/// A wasm-only reply deadline built on the browser `setTimeout`/`clearTimeout` — the STOMP transport
+/// compiles for wasm but has no tokio timer there, so this gives `request` the same bounded behavior
+/// as native. The pending timer is cleared once the delay resolves *or* is dropped (the reply won
+/// the race), so a cancelled deadline never fires into a freed closure.
+#[cfg(target_family = "wasm")]
+mod wasm_timer {
+    use std::time::Duration;
+
+    use tokio::sync::oneshot;
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen]
+    extern "C" {
+        #[wasm_bindgen(js_name = setTimeout)]
+        fn set_timeout(handler: &Closure<dyn FnMut()>, timeout_ms: f64) -> f64;
+
+        #[wasm_bindgen(js_name = clearTimeout)]
+        fn clear_timeout(id: f64);
+    }
+
+    /// A scheduled `setTimeout` that clears itself on drop, so a fired or cancelled delay never
+    /// leaves a live browser timer holding a freed closure.
+    struct Scheduled {
+        id: f64,
+        _closure: Closure<dyn FnMut()>,
+    }
+
+    impl Drop for Scheduled {
+        fn drop(&mut self) {
+            clear_timeout(self.id);
+        }
+    }
+
+    /// Signals the timer task to clear its `setTimeout` when the delay future is dropped before it
+    /// fires (the reply won the race).
+    struct CancelOnDrop(Option<oneshot::Sender<()>>);
+
+    impl Drop for CancelOnDrop {
+        fn drop(&mut self) {
+            if let Some(tx) = self.0.take() {
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    /// Resolves after `duration` via the browser `setTimeout`.
+    ///
+    /// The `Closure` is `!Send`, yet `MessageRequest::request` requires a `Send` future even on wasm,
+    /// so the closure and the pending timer live inside a spawned single-threaded task; the future
+    /// this returns holds only `Send` channel endpoints. Dropping it signals that task to clear the
+    /// timer.
+    pub async fn delay(duration: Duration) {
+        let millis = duration.as_millis() as f64;
+
+        let (fired_tx, fired_rx) = oneshot::channel::<()>();
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+
+        wasm_bindgen_futures::spawn_local(async move {
+            let (js_tx, js_rx) = oneshot::channel::<()>();
+            let mut js_tx = Some(js_tx);
+
+            let closure = Closure::wrap(Box::new(move || {
+                if let Some(js_tx) = js_tx.take() {
+                    let _ = js_tx.send(());
+                }
+            }) as Box<dyn FnMut()>);
+
+            let id = set_timeout(&closure, millis);
+            let _scheduled = Scheduled {
+                id,
+                _closure: closure,
+            };
+
+            // Fire when the timer elapses, or bail when the caller abandons the delay; either branch
+            // drops `_scheduled` here, clearing the browser timer.
+            tokio::select! {
+                _ = js_rx => {
+                    let _ = fired_tx.send(());
+                }
+
+                _ = cancel_rx => {}
+            }
+        });
+
+        let _cancel_on_drop = CancelOnDrop(Some(cancel_tx));
+
+        let _ = fired_rx.await;
+    }
 }
 
 impl TopicSubscribe<Stomp> for StompClientTransport {
