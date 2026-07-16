@@ -9,6 +9,8 @@
 
 mod publisher;
 mod registry;
+#[cfg(test)]
+mod tests;
 mod topic_bus;
 
 pub use publisher::Publisher;

@@ -19,9 +19,6 @@ use overseerd_transport::CodecError;
 
 use crate::messaging::{MessagingProtocol, TopicCodec};
 
-#[cfg(all(test, feature = "ws", not(target_family = "wasm")))]
-mod tests;
-
 /// The `subscription` header value the server stamps on a request/response reply `MESSAGE`. It is a
 /// sentinel (never a real client subscription id, which are `sub-*`), so the client consults its
 /// request-correlation table only for frames actually carrying a reply — a broadcast can never be

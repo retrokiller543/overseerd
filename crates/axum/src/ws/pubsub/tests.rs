@@ -1,7 +1,8 @@
-//! Proves the topics seam is genuinely protocol-generic, not accidentally STOMP-shaped: a throwaway
-//! `TestProto` — with its own non-`StompBody` body and codec — drives `Topic`, `TopicCodec`,
-//! `Publisher`, and `TopicBus` end to end. If any of those had been welded to STOMP, this module
-//! would not compile or the round trip would not deliver.
+//! Proves the topics/messages seam is genuinely protocol-generic, not accidentally STOMP-shaped: a
+//! throwaway `TestProto` — with its own non-`StompBody` body and codec — drives `Topic`,
+//! `TopicCodec`, `Publisher`, and `TopicBus` end to end. This module is gated on `ws` (not `stomp`),
+//! so it compiles *without* STOMP: if any of the generic machinery had been welded to STOMP, this
+//! module would fail to build under `--features ws` alone.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -11,8 +12,8 @@ use overseerd_app::AppRuntime;
 use overseerd_di::ScopeContainer;
 use serde::{Deserialize, Serialize};
 
+use super::{Publisher, TopicBus};
 use crate::messaging::{MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec};
-use crate::ws::stomp::{Publisher, TopicBus};
 use crate::ws::{PubSubProtocol, WebsocketProtocol, WsControllerDescriptor, WsShutdown};
 use overseerd_transport::CodecError;
 

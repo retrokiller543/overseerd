@@ -120,8 +120,10 @@ pub use axum::extract::Multipart;
 pub use extract::{Inject, InjectRejection, ScopeHandle};
 #[cfg(not(target_family = "wasm"))]
 pub use middleware::AxumMiddleware;
-/// The STOMP topic-set macro (`#[topics]`).
-#[cfg(feature = "stomp")]
+/// The topic-set macro (`#[topics]`). Behind `ws` so a non-STOMP protocol declares a topic set with
+/// `#[topics(protocol = P)]`; it defaults `protocol` to `Stomp`, so a bare `#[topics]` additionally
+/// needs `stomp`.
+#[cfg(feature = "ws")]
 pub use overseerd_axum_macros::topics;
 /// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
 /// this protocol crate. Their generated code roots plugin types at this crate
