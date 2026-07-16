@@ -72,7 +72,7 @@ multipart = ["axum/multipart"]
 stomp = ["ws", "dep:stomp-parser"]
 # Integration flag: pull in `uuid`. A cross-cutting flag (not tied to a protocol) so the facade can
 # fan it out to every crate that has a `uuid` integration. On its own it only adds the dependency;
-# the actual `TopicParam for Uuid` impl is gated on `all(stomp, uuid)`, so `uuid` without `stomp` is
+# the actual `TopicParam for Uuid` impl is gated on `all(ws, uuid)`, so `uuid` without `ws` is
 # a harmless no-op rather than an error.
 uuid = ["dep:uuid"]
 # Set by the `overseerd` facade: root the macros' generated plugin types at
