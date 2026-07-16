@@ -54,16 +54,13 @@ enum Command {
         ack: Ack,
     },
     /// A request: write the `SEND` and register the reply channel keyed by its `correlation-id`, so
-    /// the inbound `MESSAGE` carrying that id resolves the awaiting call.
+    /// the inbound `MESSAGE` carrying that id resolves the awaiting call. Abandonment cleanup does
+    /// **not** ride this queue — it goes on the separate unbounded cancel lane (see
+    /// [`TransportInner::cancel_tx`]) so it can never be lost to a full command channel.
     Request {
         frame: Vec<u8>,
         correlation_id: String,
         reply: ReplyTx,
-    },
-    /// Drops a pending request's reply slot after its caller gave up (a timeout), so a late reply is
-    /// discarded and the correlation table does not retain an abandoned entry.
-    CancelRequest {
-        correlation_id: String,
     },
     Subscribe {
         id: SubscriptionId,
@@ -86,6 +83,13 @@ enum Command {
 /// when the last client handle is gone — that is when we gracefully `DISCONNECT`.
 struct TransportInner {
     tx: mpsc::Sender<Command>,
+
+    /// The abandoned-request cleanup lane: a request future that gives up (timeout or outer cancel)
+    /// sends its `correlation-id` here for the actor to drop. **Unbounded on purpose** — cleanup
+    /// must not be rejected by the same bounded command channel it is trying to clean up after, or
+    /// an orphaned entry would leak for the connection lifetime under congestion.
+    cancel_tx: mpsc::UnboundedSender<String>,
+
     next_id: AtomicU64,
 
     /// The reply timeout applied to every `request` on this connection (from
@@ -264,12 +268,14 @@ impl StompClientTransport {
         await_connected(&mut read).await?;
 
         let (tx, rx) = mpsc::channel::<Command>(CHANNEL_DEPTH);
+        let (cancel_tx, cancel_rx) = mpsc::unbounded_channel::<String>();
 
-        crate::client::ws_rt::spawn(actor(write, read, rx));
+        crate::client::ws_rt::spawn(actor(write, read, rx, cancel_rx));
 
         Ok(Self {
             inner: Arc::new(TransportInner {
                 tx,
+                cancel_tx,
                 next_id: AtomicU64::new(1),
                 request_timeout,
             }),
@@ -392,8 +398,9 @@ impl MessageRequest<Stomp> for StompClientTransport {
 
         // Armed for the whole call: if it is abandoned before a reply resolves it — a timeout, or the
         // request future being dropped by an outer abort — the guard's `Drop` tells the actor to drop
-        // the orphaned correlation slot, so the table never grows across the connection lifetime.
-        let mut guard = RequestGuard::new(self.tx().clone(), correlation_id.clone());
+        // the orphaned correlation slot, so the table never grows across the connection lifetime. It
+        // uses the unbounded cancel lane, so a full command channel can never lose the cleanup.
+        let mut guard = RequestGuard::new(self.inner.cancel_tx.clone(), correlation_id.clone());
 
         // The deadline covers BOTH enqueueing and the reply wait: a full command channel or an actor
         // blocked writing to the socket must not let a request outlive `request_timeout` before the
@@ -431,15 +438,15 @@ impl MessageRequest<Stomp> for StompClientTransport {
 /// [`disarm`](Self::disarm)ed once a reply resolves the call (the actor removed the entry itself
 /// then), so the common path sends no cancel.
 struct RequestGuard {
-    tx: mpsc::Sender<Command>,
+    cancel_tx: mpsc::UnboundedSender<String>,
     correlation_id: String,
     armed: bool,
 }
 
 impl RequestGuard {
-    fn new(tx: mpsc::Sender<Command>, correlation_id: String) -> Self {
+    fn new(cancel_tx: mpsc::UnboundedSender<String>, correlation_id: String) -> Self {
         Self {
-            tx,
+            cancel_tx,
             correlation_id,
             armed: true,
         }
@@ -457,10 +464,11 @@ impl Drop for RequestGuard {
             return;
         }
 
-        // `try_send` (not awaited) because `Drop` is synchronous; a full channel just leaves the slot
-        // for a later reply or the connection close to clear, exactly as before this guard existed.
+        // The unbounded cancel lane never rejects a send (it only errors once the actor is gone,
+        // when there is nothing left to clean up), so the orphaned slot is always delivered for
+        // removal — unlike the bounded command channel, which a burst of traffic could have full.
         let correlation_id = std::mem::take(&mut self.correlation_id);
-        let _ = self.tx.try_send(Command::CancelRequest { correlation_id });
+        let _ = self.cancel_tx.send(correlation_id);
     }
 }
 
@@ -555,14 +563,22 @@ mod wasm_timer {
         }
     }
 
+    /// The largest delay `setTimeout` honours: it stores the delay as a signed 32-bit millisecond
+    /// value, so anything past `i32::MAX` ms (~24.8 days) overflows and fires almost immediately.
+    const MAX_TIMEOUT_MS: u128 = i32::MAX as u128;
+
     /// Resolves after `duration` via the browser `setTimeout`.
     ///
     /// The `Closure` is `!Send`, yet `MessageRequest::request` requires a `Send` future even on wasm,
     /// so the closure and the pending timer live inside a spawned single-threaded task; the future
     /// this returns holds only `Send` channel endpoints. Dropping it signals that task to clear the
     /// timer.
+    ///
+    /// The delay is clamped to [`MAX_TIMEOUT_MS`]: a longer configured timeout would otherwise
+    /// overflow `setTimeout`'s 32-bit millisecond field and fire near-instantly, so it is capped at
+    /// the largest value the browser honours rather than misbehaving.
     pub async fn delay(duration: Duration) {
-        let millis = duration.as_millis() as f64;
+        let millis = duration.as_millis().min(MAX_TIMEOUT_MS) as f64;
 
         let (fired_tx, fired_rx) = oneshot::channel::<()>();
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
@@ -642,7 +658,12 @@ impl TopicSubscribe<Stomp> for StompClientTransport {
 
 /// The connection actor: writes queued commands and demuxes inbound frames until the socket closes
 /// or an `ERROR` frame arrives.
-async fn actor(mut write: WsWrite, mut read: WsRead, mut rx: mpsc::Receiver<Command>) {
+async fn actor(
+    mut write: WsWrite,
+    mut read: WsRead,
+    mut rx: mpsc::Receiver<Command>,
+    mut cancel_rx: mpsc::UnboundedReceiver<String>,
+) {
     let mut subs: HashMap<SubscriptionId, mpsc::Sender<StompBody>> = HashMap::new();
     let mut receipts: HashMap<String, Ack> = HashMap::new();
     let mut requests: HashMap<String, ReplyTx> = HashMap::new();
@@ -669,10 +690,6 @@ async fn actor(mut write: WsWrite, mut read: WsRead, mut rx: mpsc::Receiver<Comm
                         {
                             let _ = reply.send(Err(error));
                         }
-                    }
-
-                    Command::CancelRequest { correlation_id } => {
-                        requests.remove(&correlation_id);
                     }
 
                     Command::Subscribe { id, frame, items, ack } => {
@@ -705,6 +722,13 @@ async fn actor(mut write: WsWrite, mut read: WsRead, mut rx: mpsc::Receiver<Comm
                         break;
                     }
                 }
+            }
+
+            // The abandoned-request cleanup lane. A refutable `Some(..)` pattern means a closed lane
+            // (all handles gone) simply disables this branch rather than spinning; the command
+            // channel closing at the same moment drives the actual shutdown.
+            Some(correlation_id) = cancel_rx.recv() => {
+                requests.remove(&correlation_id);
             }
 
             message = read.next() => {
