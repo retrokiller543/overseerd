@@ -50,6 +50,11 @@ pub struct AxumHandlers {
     /// wrapper folds the header argument onto the plain method instead.
     header_methods: Vec<ClientMethod>,
 
+    /// Accumulated OpenAPI operation-registration token blocks, one per non-streaming HTTP route
+    /// (during [`ParseMethod`], only with the `openapi` feature). Emitted after the route group in
+    /// [`ToTokens`]; each registers a `utoipa`-generated operation into the runtime slice.
+    openapi_ops: Vec<TokenStream>,
+
     /// Accumulated per `#[message]` ws handler method (during [`ParseMethod`]). A block is either
     /// HTTP (`routes`) or WebSocket (`ws_routes`); mixing the two is a compile error.
     ws_routes: Vec<WsRouteSpec>,
@@ -247,6 +252,16 @@ impl ParseMethod for AxumHandlers {
         let attr = method.attrs.remove(pos);
         let route_attr = route::parse_route_attr(&attr)?;
 
+        // Claim any `#[openapi(..)]` passthrough now (removing it so it never reaches the emitted
+        // method as an unknown attribute), and snapshot the doc comments for the operation summary.
+        let openapi_extra = crate::openapi::take_openapi_attr(method)?;
+        let openapi_docs: Vec<syn::Attribute> = method
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("doc"))
+            .cloned()
+            .collect();
+
         // `parse_item` runs before the method walk, so the context is always present.
         let cx = self
             .context
@@ -342,6 +357,24 @@ impl ParseMethod for AxumHandlers {
 
         let server_wrap = stream_return.as_ref().and_then(|s| s.server_wrap.as_ref());
         let in_result = stream_return.as_ref().is_some_and(|s| s.in_result);
+        // OpenAPI: document the route unless it streams (a streamed body/return is not a single
+        // `Dto` payload, so it has no straightforward schema). Built from the same classified inputs
+        // the client uses; `None` without the `openapi` feature. Built before `build_route` consumes
+        // the borrows so the operation reads the method's original signature.
+        let openapi_op = if stream_param.is_none() && stream_return.is_none() {
+            crate::openapi::operation_tokens(
+                &cx.self_ty,
+                &cx.self_ident,
+                method,
+                &route_attr,
+                &openapi_docs,
+                openapi_extra,
+                &cx.paths,
+            )
+        } else {
+            None
+        };
+
         let spec = build_route(
             &cx.self_ty,
             method,
@@ -352,6 +385,10 @@ impl ParseMethod for AxumHandlers {
             &cx.paths,
         )?;
         self.routes.push(spec);
+
+        if let Some(op) = openapi_op {
+            self.openapi_ops.push(op);
+        }
 
         Ok(hint)
     }
@@ -508,6 +545,13 @@ impl ToTokens for AxumHandlers {
                     fn(::std::sync::Arc<#self_ty>, & #app_runtime) -> #axum::Router =
                     __overseerd_axum_route_group;
             };
+        });
+
+        // OpenAPI operation registrations, one per non-streaming route (empty without the `openapi`
+        // feature). Each is its own `const _` block registering into the runtime operation slice.
+        let openapi_ops = &self.openapi_ops;
+        out.extend(quote! {
+            #(#openapi_ops)*
         });
     }
 }

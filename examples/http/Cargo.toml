@@ -24,9 +24,12 @@ arc-swap = { workspace = true }
 # Native (server): the full protocol stack — ws/stomp controllers, DI middleware, both HTTP client
 # backends. The binary and the server-only modules use these.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-overseerd = { path = "../..", default-features = false, features = ["axum", "ws", "stomp", "multipart", "uuid", "reqwest", "hyper", "tungstenite", "tracing-subscriber"] }
+overseerd = { path = "../..", default-features = false, features = ["axum", "ws", "stomp", "multipart", "uuid", "reqwest", "hyper", "tungstenite", "tracing-subscriber", "openapi-swagger-ui"] }
 tokio = { workspace = true }
 tracing.workspace = true
+# The `openapi` feature makes `#[dto]`/`#[handlers]` emit `utoipa` derives/attributes, whose output
+# references `::utoipa` — so, like `tsify` for the wasm client, utoipa must be a direct dependency.
+utoipa = { workspace = true }
 
 # wasm (browser client): only the HTTP client surface + the fetch backend. `wasm-bindgen` and
 # `tsify` must be *direct* dependencies — the generated `#[wasm_bindgen]` client and `#[dto]` derives

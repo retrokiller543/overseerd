@@ -85,6 +85,13 @@ impl Plugin for AxumPlugin {
             .push(ConfigBinding::of::<AxumConfig>(AXUM_CONFIG_PATH));
         registry.components.push(REQUEST_META_DESCRIPTOR);
 
+        #[cfg(feature = "openapi")]
+        registry
+            .config_bindings
+            .push(ConfigBinding::of::<crate::OpenApiConfig>(
+                crate::AXUM_OPENAPI_CONFIG_PATH,
+            ));
+
         #[cfg(feature = "stomp")]
         {
             registry
@@ -216,12 +223,42 @@ impl ProtocolPlugin for AxumPlugin {
             },
         ));
 
+        // The OpenAPI surface (spec + UI) is mounted *outside* the scope layer: it is static and
+        // needs no per-request DI scope. Built once from the link-time operation/schema slices.
+        #[cfg(feature = "openapi")]
+        let router = {
+            let openapi_config = runtime
+                .root()
+                .config::<crate::OpenApiConfig>(crate::AXUM_OPENAPI_CONFIG_PATH)
+                .expect("OpenApiConfig missing from config store; AxumPlugin should register it")
+                .snapshot();
+
+            crate::openapi::mount(router, &openapi_config, &config_snapshot.base_path)
+        };
+
+        // A configured `base_path` nests the whole application (controllers + OpenAPI) under one
+        // prefix. Nesting preserves the inner router's layers, so the scope layer still applies.
+        let router = nest_base_path(router, &config_snapshot.base_path);
+
         let axum = Axum::new(router, config);
 
         #[cfg(feature = "ws")]
         let axum = axum.with_ws_endpoints(ws_endpoints);
 
         Ok(axum)
+    }
+}
+
+/// Nests `router` under a global path prefix. An empty or `"/"` prefix returns the router
+/// unchanged (mounted at the root); otherwise the whole router is nested under the trailing-slash-
+/// trimmed prefix, so every route is served beneath it.
+fn nest_base_path(router: axum::Router, base_path: &str) -> axum::Router {
+    let prefix = base_path.trim_end_matches('/');
+
+    if prefix.is_empty() {
+        router
+    } else {
+        axum::Router::new().nest(prefix, router)
     }
 }
 

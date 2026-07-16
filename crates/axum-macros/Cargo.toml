@@ -29,6 +29,11 @@ tungstenite = ["client"]
 # path has). Needs the unreleased `tsify` (git master) as a wasm dep. Off by default, which uses the
 # published `tsify` (`into_wasm_abi`/`from_wasm_abi`) so a client builds with no git dependency.
 wasm-ts = []
+# Emit the OpenAPI codegen: `#[dto]` adds a `utoipa::ToSchema` derive + schema registration, and
+# each HTTP route emits a `#[utoipa::path]` operation + slice entry. Pure codegen signal (adds no
+# dependency here); gating is resolved *inside* the macro via `cfg!(feature = "openapi")` so the
+# emitted tokens are concrete — never a `cfg_attr(feature = ..)` that would leak onto the user crate.
+openapi = []
 # Emit the compile-time dependency-injection assertions (forwarded to macros-core).
 di-check = ["overseerd-macros-core/di-check"]
 # Root generated plugin types at the `overseerd` facade (`::overseerd::axum::*`) instead of

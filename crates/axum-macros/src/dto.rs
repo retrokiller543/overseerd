@@ -73,11 +73,20 @@ pub fn expand(args: DtoArgs, item: DeriveInput, paths: &Paths) -> syn::Result<To
         )
     };
 
+    // OpenAPI: a `utoipa::ToSchema` derive (so the type is a component schema) plus a link-time
+    // registration into the schema slice. Gated inside the macro — `openapi_derive` is concrete
+    // tokens or empty, never a `cfg_attr(feature = ..)` that would leak the feature onto the user's
+    // crate (see the `crate::openapi` module docs).
+    let (openapi_derive, openapi_registration) = crate::openapi::dto_tokens(&item, paths);
+
     Ok(quote! {
         #tsify_derive
         #serde_derive
+        #openapi_derive
         #item
 
         impl #impl_generics #dto for #ident #ty_generics #where_clause {}
+
+        #openapi_registration
     })
 }

@@ -46,6 +46,11 @@ pub mod error;
 pub mod extract;
 #[cfg(not(target_family = "wasm"))]
 pub mod middleware;
+/// OpenAPI document assembly: the link-time operation/schema slices the macros lower into, and
+/// [`build_openapi`](openapi::build_openapi) which folds them into a `utoipa::openapi::OpenApi`.
+/// Behind `openapi` (native server surface only); utoipa never reaches a wasm build.
+#[cfg(all(feature = "openapi", not(target_family = "wasm")))]
+pub mod openapi;
 #[cfg(not(target_family = "wasm"))]
 pub mod plugin;
 #[cfg(not(target_family = "wasm"))]
@@ -59,10 +64,26 @@ pub mod ws;
 
 #[cfg(not(target_family = "wasm"))]
 pub use config::{AXUM_CONFIG_PATH, AxumConfig};
+#[cfg(all(feature = "openapi", not(target_family = "wasm")))]
+pub use config::{AXUM_OPENAPI_CONFIG_PATH, OpenApiConfig, OpenApiUi};
+/// The OpenAPI operation/schema slices and document assembler, re-exported at the crate root so
+/// `#[dto]`/`#[handlers]` generated code registers into a stable path and the plugin folds them.
+#[cfg(all(feature = "openapi", not(target_family = "wasm")))]
+pub use openapi::{
+    OPENAPI_OPERATIONS, OPENAPI_SCHEMAS, OperationEntry, SchemaEntry, build_openapi, join_base,
+};
+
 #[cfg(not(target_family = "wasm"))]
 pub use controller::{CONTROLLERS, Controller, ControllerDescriptor};
 #[cfg(not(target_family = "wasm"))]
 pub use error::{Error, Result};
+/// The `utoipa` crate, re-exported so `#[dto]`/`#[handlers]` generated OpenAPI code names its
+/// derive (`ToSchema`), attribute (`path`), and traits through a stable plugin path
+/// (`::overseerd_axum::utoipa` / `::overseerd::axum::utoipa`) without the user crate depending on
+/// `utoipa` directly. Native + `openapi` only.
+#[cfg(all(feature = "openapi", not(target_family = "wasm")))]
+#[doc(hidden)]
+pub use utoipa;
 
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub use ws::{
