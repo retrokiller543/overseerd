@@ -160,3 +160,6 @@ wasm-bindgen-futures = { workspace = true, optional = true }
 js-sys = { version = "0.3", optional = true }
 # `File`/`Blob` bindings for the reqwest wasm client's `Multipart` upload builder.
 web-sys = { workspace = true, optional = true, features = ["Blob", "File"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

@@ -30,8 +30,25 @@ fn error_result_renders_an_error_frame() {
 
     assert_eq!(value["dest"], "nope");
     assert_eq!(value["id"], 1);
-    assert!(value["error"].as_str().unwrap().contains("nope"));
+    assert_eq!(value["error"], "no handler for destination");
     assert!(value.get("ok").is_none());
+}
+
+#[test]
+fn internal_dispatch_details_are_redacted_from_error_frames() {
+    let reply = render_reply(
+        "secure",
+        Some(2),
+        Err(WsDispatchError::Inject(
+            "SecretProvider<DatabasePassword> failed".to_owned(),
+        )),
+    )
+    .expect("a reply frame");
+    let value: WsValue = serde_json::from_str(&reply).expect("valid json reply");
+
+    assert_eq!(value["error"], "internal error");
+    assert!(!reply.contains("SecretProvider"));
+    assert!(!reply.contains("DatabasePassword"));
 }
 
 #[test]
