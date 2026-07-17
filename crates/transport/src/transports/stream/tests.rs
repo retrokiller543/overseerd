@@ -4,12 +4,12 @@ use std::sync::{
 };
 use std::task::{Context, Poll};
 use std::time::Duration;
-use std::{io, pin::Pin};
+use std::{future::Future, io, pin::Pin};
 
 use tokio::io::{AsyncWrite, AsyncWriteExt, duplex, split};
 use tokio::time::timeout;
 
-use super::{CallSlot, StreamConfig, StreamConnection};
+use super::{CallSlot, INBOUND_END_RECONCILE_INTERVAL, StreamConfig, StreamConnection};
 use crate::error::Error;
 use crate::frame::PeerInfo;
 use crate::protocol::codec::{FrameConfig, read_message, write_message};
@@ -482,6 +482,81 @@ async fn stream_end_reconciles_before_an_already_ready_request() {
             .await
             .is_none()
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn periodic_stream_end_reconciliation_does_not_extend_frame_idle_deadline() {
+    let (server, client) = duplex(4096);
+    let (server_read, server_write) = split(server);
+    let (_client_read, mut client_write) = split(client);
+    let idle_timeout = Duration::from_millis(50);
+    let config = StreamConfig::new(
+        FrameConfig::new(1024, idle_timeout),
+        3,
+        Duration::from_secs(1),
+    );
+    let mut connection =
+        StreamConnection::with_config(server_read, server_write, PeerInfo { addr: None }, config);
+
+    write_message(&mut client_write, &request(1, true))
+        .await
+        .expect("open stream");
+    let (_first, _responder) = connection
+        .recv()
+        .await
+        .expect("receive stream")
+        .expect("stream present");
+    write_message(
+        &mut client_write,
+        &WireMessage::StreamItem {
+            id: 1,
+            payload: vec![1],
+        },
+    )
+    .await
+    .expect("buffer item");
+    write_message(&mut client_write, &WireMessage::StreamEnd { id: 1 })
+        .await
+        .expect("end stream");
+    write_message(&mut client_write, &request(2, false))
+        .await
+        .expect("drive stream end");
+    connection
+        .recv()
+        .await
+        .expect("connection healthy")
+        .expect("second call present");
+    assert!(connection.calls.get(&1).unwrap().inbound_ending);
+
+    // Begin another frame but leave its prefix incomplete. Poll once so both the frame idle
+    // deadline and the periodic reconciliation timer are armed at the current paused instant.
+    client_write
+        .write_all(&[1])
+        .await
+        .expect("write partial prefix");
+    let mut recv = Box::pin(connection.recv());
+    std::future::poll_fn(|cx| {
+        assert!(recv.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+
+    // Advancing past both timers makes the biased maintenance branch run first. The resumed frame
+    // read must retain its original deadline and fail immediately instead of receiving a fresh
+    // timeout on every 10 ms reconciliation wakeup.
+    tokio::time::advance(idle_timeout + INBOUND_END_RECONCILE_INTERVAL).await;
+    let result = std::future::poll_fn(|cx| match recv.as_mut().poll(cx) {
+        Poll::Ready(result) => Poll::Ready(result),
+        Poll::Pending => panic!("periodic maintenance extended the partial frame idle deadline"),
+    })
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(Error::ReadTimeout {
+            idle_timeout: actual
+        }) if actual == idle_timeout
+    ));
 }
 
 #[tokio::test]

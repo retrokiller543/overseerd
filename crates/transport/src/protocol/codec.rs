@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    time::timeout,
+    time::{Instant, timeout_at},
 };
 
 use crate::error::{Error, Result};
@@ -74,6 +74,9 @@ pub struct MessageReader<R> {
     prefix_read: usize,
     expected_len: Option<usize>,
     payload: Vec<u8>,
+    /// Absolute idle deadline for the frame currently being read. Keeping it in the reader makes
+    /// the deadline survive cancellation by connection-level maintenance branches.
+    idle_deadline: Option<Instant>,
 }
 
 impl<R> MessageReader<R> {
@@ -89,6 +92,7 @@ impl<R> MessageReader<R> {
             prefix_read: 0,
             expected_len: None,
             payload: Vec::new(),
+            idle_deadline: None,
         }
     }
 
@@ -113,14 +117,20 @@ where
                 // A connection may be idle indefinitely between frames. Read only
                 // the first byte without a deadline; once it arrives, the peer has
                 // committed to a frame and every subsequent read is idle-timed.
-                read_once(&mut self.reader, &mut self.prefix[..1]).await?
+                let read = read_once(&mut self.reader, &mut self.prefix[..1]).await?;
+                self.idle_deadline = Some(Instant::now() + self.config.read_idle_timeout);
+                read
             } else {
-                read_with_idle_timeout(
+                let read = read_with_idle_deadline(
                     &mut self.reader,
                     &mut self.prefix[self.prefix_read..],
+                    self.idle_deadline
+                        .expect("a partial frame always has an idle deadline"),
                     self.config.read_idle_timeout,
                 )
-                .await?
+                .await?;
+                self.idle_deadline = Some(Instant::now() + self.config.read_idle_timeout);
+                read
             };
 
             self.prefix_read += read;
@@ -148,12 +158,15 @@ where
         while self.payload.len() < expected_len {
             let remaining = expected_len - self.payload.len();
             let chunk_len = remaining.min(chunk.len());
-            let read = read_with_idle_timeout(
+            let read = read_with_idle_deadline(
                 &mut self.reader,
                 &mut chunk[..chunk_len],
+                self.idle_deadline
+                    .expect("a partial frame always has an idle deadline"),
                 self.config.read_idle_timeout,
             )
             .await?;
+            self.idle_deadline = Some(Instant::now() + self.config.read_idle_timeout);
 
             self.payload
                 .try_reserve(read)
@@ -167,6 +180,7 @@ where
         self.prefix = [0; 4];
         self.prefix_read = 0;
         self.expected_len = None;
+        self.idle_deadline = None;
         if self.payload.capacity() > RETAINED_PAYLOAD_CAPACITY {
             self.payload = Vec::new();
         } else {
@@ -185,12 +199,13 @@ async fn read_once<R: AsyncRead + Unpin>(reader: &mut R, buf: &mut [u8]) -> Resu
     }
 }
 
-async fn read_with_idle_timeout<R: AsyncRead + Unpin>(
+async fn read_with_idle_deadline<R: AsyncRead + Unpin>(
     reader: &mut R,
     buf: &mut [u8],
+    deadline: Instant,
     idle_timeout: Duration,
 ) -> Result<usize> {
-    match timeout(idle_timeout, reader.read(buf)).await {
+    match timeout_at(deadline, reader.read(buf)).await {
         Ok(Ok(0)) => Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into()),
         Ok(Ok(read)) => Ok(read),
         Ok(Err(error)) => Err(error.into()),

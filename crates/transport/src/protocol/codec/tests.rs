@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{future::Future, task::Poll, time::Duration};
 
 use tokio::io::{AsyncWriteExt, duplex};
 use tokio::time::timeout;
@@ -51,6 +51,48 @@ async fn retains_partial_frame_across_cancellation() {
         }
         _ => panic!("expected request"),
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancellation_does_not_refresh_an_in_progress_frame_idle_deadline() {
+    let frame = request_frame(43, Vec::new());
+    let (mut writer, read) = duplex(frame.len());
+    let idle_timeout = Duration::from_millis(50);
+    let mut reader = MessageReader::with_config(read, FrameConfig::new(1024, idle_timeout));
+
+    writer
+        .write_all(&frame[..1])
+        .await
+        .expect("write first prefix byte");
+    let mut initial_read = Box::pin(reader.read_message());
+    std::future::poll_fn(|cx| {
+        assert!(initial_read.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    drop(initial_read);
+
+    tokio::time::advance(Duration::from_millis(40)).await;
+    let mut resumed_read = Box::pin(reader.read_message());
+    std::future::poll_fn(|cx| {
+        assert!(resumed_read.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+
+    tokio::time::advance(Duration::from_millis(11)).await;
+    let result = std::future::poll_fn(|cx| match resumed_read.as_mut().poll(cx) {
+        Poll::Ready(result) => Poll::Ready(result),
+        Poll::Pending => panic!("cancellation refreshed the partial frame idle deadline"),
+    })
+    .await;
+
+    assert!(matches!(
+        result,
+        Err(Error::ReadTimeout {
+            idle_timeout: actual
+        }) if actual == idle_timeout
+    ));
 }
 
 #[tokio::test]

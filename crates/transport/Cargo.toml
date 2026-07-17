@@ -39,3 +39,6 @@ libc = { workspace = true }
 [target.'cfg(target_family = "wasm")'.dependencies]
 tokio = { version = "1", default-features = false, features = ["sync"] }
 tokio-util = { version = "0.7", default-features = false }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
