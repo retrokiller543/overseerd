@@ -444,6 +444,13 @@ where
     #[instrument(level = "trace", skip_all, fields(id = tracing::field::Empty, path = tracing::field::Empty))]
     async fn recv(&mut self) -> Result<Option<(IncomingCall, StreamResponder<W>)>> {
         loop {
+            // A ready network message can otherwise repeatedly win before the reconciliation
+            // timer is old enough to fire, indefinitely retaining an ended stream's sender and
+            // byte accounting while the peer keeps this connection busy.
+            if self.calls.values().any(|slot| slot.inbound_ending) {
+                self.finalize_consumed_inbound_ends();
+            }
+
             tokio::select! {
                 biased;
 

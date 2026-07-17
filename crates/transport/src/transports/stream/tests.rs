@@ -414,6 +414,77 @@ async fn stream_end_releases_budget_as_the_handler_consumes_buffered_items() {
 }
 
 #[tokio::test]
+async fn stream_end_reconciles_before_an_already_ready_request() {
+    let (server, client) = duplex(4096);
+    let (server_read, server_write) = split(server);
+    let (_client_read, mut client_write) = split(client);
+    let config = StreamConfig::new(FrameConfig::default(), 3, Duration::from_secs(1))
+        .with_inbound_byte_limits(4, 6);
+    let mut connection =
+        StreamConnection::with_config(server_read, server_write, PeerInfo { addr: None }, config);
+
+    write_message(&mut client_write, &request(1, true))
+        .await
+        .expect("open stream");
+    let (mut first, _responder) = connection
+        .recv()
+        .await
+        .expect("receive stream")
+        .expect("stream present");
+    write_message(
+        &mut client_write,
+        &WireMessage::StreamItem {
+            id: 1,
+            payload: vec![1; 4],
+        },
+    )
+    .await
+    .expect("buffer item");
+    write_message(&mut client_write, &WireMessage::StreamEnd { id: 1 })
+        .await
+        .expect("end stream");
+    write_message(&mut client_write, &request(2, false))
+        .await
+        .expect("drive stream end");
+    connection
+        .recv()
+        .await
+        .expect("connection healthy")
+        .expect("second call present");
+
+    assert_eq!(
+        first
+            .requests
+            .as_mut()
+            .expect("request receiver")
+            .recv()
+            .await,
+        Some(vec![1; 4])
+    );
+    write_message(&mut client_write, &request(3, false))
+        .await
+        .expect("queue unrelated request");
+
+    connection
+        .recv()
+        .await
+        .expect("connection healthy")
+        .expect("third call present");
+
+    assert_eq!(connection.inbound_bytes, 0);
+    assert!(connection.calls.get(&1).unwrap().inbound.is_none());
+    assert!(
+        first
+            .requests
+            .as_mut()
+            .expect("request receiver")
+            .recv()
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn enforces_per_connection_call_limit() {
     let (server, client) = duplex(4096);
     let (server_read, server_write) = split(server);
