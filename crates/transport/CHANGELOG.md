@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/retrokiller543/overseerd/compare/overseerd-transport-v0.16.0...overseerd-transport-v0.17.0) - 2026-07-17
+
+### Fixed
+
+- *(transport)* preserve frame idle deadlines
+- *(transport)* reconcile ended streams under load
+- *(transport)* preserve stream terminal invariants
+- *(rpc)* close cancellation and write-failure gaps
+- harden RPC transport resource handling
+
 ## [0.16.0](https://github.com/retrokiller543/overseerd/compare/overseerd-transport-v0.15.0...overseerd-transport-v0.16.0) - 2026-07-17
 
 ### Fixed
