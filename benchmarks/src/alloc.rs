@@ -30,15 +30,23 @@ pub struct TrackingAllocator;
 
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        record_alloc(layout.size());
+        let ptr = unsafe { System.alloc(layout) };
 
-        unsafe { System.alloc(layout) }
+        if !ptr.is_null() {
+            record_alloc(layout.size());
+        }
+
+        ptr
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        record_alloc(layout.size());
+        let ptr = unsafe { System.alloc_zeroed(layout) };
 
-        unsafe { System.alloc_zeroed(layout) }
+        if !ptr.is_null() {
+            record_alloc(layout.size());
+        }
+
+        ptr
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -48,13 +56,20 @@ unsafe impl GlobalAlloc for TrackingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let old_size = layout.size();
+        let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
 
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        BYTES_ALLOCATED.fetch_add(new_size.saturating_sub(old_size) as u64, Ordering::Relaxed);
-        LIVE_BYTES.fetch_add(new_size as i64 - old_size as i64, Ordering::Relaxed);
+        // A successful realloc hands out a fresh `new_size`-byte buffer, so it is `new_size` bytes of
+        // traffic (the old buffer was counted at its own allocation and is now freed). Live bytes
+        // move by the net delta. A failed realloc (`null`) leaves the original allocation intact, so
+        // nothing changes. Counting only the delta here would hide buffer-growth churn — exactly the
+        // traffic this metric exists to surface.
+        if !new_ptr.is_null() {
+            ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+            BYTES_ALLOCATED.fetch_add(new_size as u64, Ordering::Relaxed);
+            LIVE_BYTES.fetch_add(new_size as i64 - layout.size() as i64, Ordering::Relaxed);
+        }
 
-        unsafe { System.realloc(ptr, layout, new_size) }
+        new_ptr
     }
 }
 

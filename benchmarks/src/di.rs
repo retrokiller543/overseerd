@@ -255,15 +255,19 @@ pub async fn build_graph(entries: &[Entry], width: usize, layers: usize) -> Arc<
 
 /// Builds a single root scope seeding `count` components, each registered as a `dyn Svc` provider,
 /// so a `Vec<Arc<dyn Svc>>` collection resolves all of them.
+///
+/// The components are seeded as *instances only* (an empty descriptor slice): `build_root` aliases a
+/// provider once when its seed is inserted and again when a matching descriptor is processed, so
+/// passing both would register — and later collect — every provider twice. Seeding through the
+/// instance path alone registers each provider exactly once.
 pub async fn build_with_providers(entries: &[Entry], count: usize) -> Arc<ScopeContainer> {
     let slice = &entries[0..count];
     let providers: Vec<ProviderDescriptor> = slice.iter().map(|entry| entry.provider).collect();
     let registry = Arc::new(ScopeRegistry::new(HashMap::new(), providers));
 
-    let descs: Vec<ComponentDescriptor> = slice.iter().map(|entry| entry.desc).collect();
     let seeds: Vec<BoxedComponent> = slice.iter().map(|entry| (entry.make)()).collect();
 
-    ScopeContainer::build_root(&descs, seeds, ResolverSet::new(), registry)
+    ScopeContainer::build_root(&[], seeds, ResolverSet::new(), registry)
         .await
         .expect("provider root builds")
 }

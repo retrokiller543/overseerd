@@ -123,6 +123,18 @@ fn extract_shapes(c: &mut Criterion) {
     let layered = runtime.block_on(di::build_graph(&roster, WIDTH, LAYERS));
     let with_providers = runtime.block_on(di::build_with_providers(&roster, PROVIDERS));
 
+    // Verify the fixtures actually resolve what the benches assume before timing them: a broken
+    // fixture would otherwise silently benchmark a no-op resolution.
+    assert!(
+        runtime.block_on(di::extract_single(&layered)),
+        "single-component fixture does not resolve"
+    );
+    assert_eq!(
+        runtime.block_on(di::extract_collection(&with_providers)),
+        PROVIDERS,
+        "collection fixture resolved an unexpected provider count"
+    );
+
     let mut group = c.benchmark_group("di_extract");
 
     group.bench_function("single_arc", |bencher| {
