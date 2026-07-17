@@ -25,6 +25,16 @@ const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
 const LOCAL_SYSTEM_SID: &str = "S-1-5-18";
 
 pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "private application directory must not contain '..'",
+        ));
+    }
+
     let mut current = PathBuf::new();
     let mut target_created = false;
 
@@ -37,16 +47,16 @@ pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
                 continue;
             }
             Component::CurDir => continue,
-            Component::ParentDir => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "private application directory must not contain '..'",
-                ));
-            }
+            Component::ParentDir => unreachable!("parent components rejected before walking"),
             Component::Normal(_) => current.push(component.as_os_str()),
         }
 
-        let target = current.components().eq(path.components());
+        let target = current
+            .components()
+            .filter(|component| !matches!(component, Component::CurDir))
+            .eq(path
+                .components()
+                .filter(|component| !matches!(component, Component::CurDir)));
         let (metadata, created) = match std::fs::symlink_metadata(&current) {
             Ok(metadata) => (metadata, false),
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
