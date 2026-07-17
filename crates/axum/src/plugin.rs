@@ -56,7 +56,7 @@ type WsMount = Box<
     dyn FnOnce(
         Vec<crate::ws::WsControllerDescriptor>,
         &AppRuntime,
-    ) -> (axum::Router, crate::ws::WebsocketHandler),
+    ) -> crate::Result<(axum::Router, crate::ws::WebsocketHandler)>,
 >;
 
 /// One opt-in ws endpoint: a protocol type (by [`TypeId`](std::any::TypeId)) bound to a path, with a
@@ -141,7 +141,7 @@ impl ProtocolPlugin for AxumPlugin {
                     .collect();
 
                 // The mount closure already holds the path and the protocol's options.
-                let (ws_router, handler) = (registration.mount)(controllers, runtime);
+                let (ws_router, handler) = (registration.mount)(controllers, runtime)?;
 
                 router = router.merge(ws_router);
                 endpoints.push(handler);

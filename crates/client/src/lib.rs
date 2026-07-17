@@ -121,6 +121,31 @@ impl<S, T> ErrorBody<S, T> {
         self.body
     }
 
+    /// Decodes the error body with the protocol transport that produced the call.
+    ///
+    /// Error bodies deliberately remain raw until the caller asks for `T`: the status is useful
+    /// even when a server returned a fallback body or a body encoded by a different handler. Pass
+    /// the same transport/backend used for the request so decoding follows that protocol's codec
+    /// (postcard for RPC, JSON for the bundled HTTP clients, or a custom codec).
+    ///
+    /// A decoding failure does not modify this value; [`code`](Self::code) and
+    /// [`raw`](Self::raw) remain available for fallback handling.
+    pub fn deserialize<D>(&self, decoder: &D) -> Result<T, CodecError>
+    where
+        D: Decodes<T>,
+    {
+        decoder.decode(self.body.clone())
+    }
+
+    /// Consumes this error body and decodes it with the protocol transport that produced the call.
+    /// Unlike [`deserialize`](Self::deserialize), this avoids cloning the raw bytes.
+    pub fn into_deserialized<D>(self, decoder: &D) -> Result<T, CodecError>
+    where
+        D: Decodes<T>,
+    {
+        decoder.decode(self.body)
+    }
+
     /// Re-types the body marker without touching the bytes (or the status), e.g. to attach a known
     /// body type to an otherwise [`Raw`] error.
     pub fn cast<U>(self) -> ErrorBody<S, U> {
@@ -380,3 +405,7 @@ pub trait BidiStreaming: Transport {
         Resp: Send,
         I: Into<StreamArg<Req>> + Send;
 }
+
+#[cfg(test)]
+#[path = "lib/tests.rs"]
+mod tests;

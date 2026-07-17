@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use axum::body::Bytes;
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
 use overseerd_app::AppRuntime;
 #[cfg(feature = "client")]
@@ -23,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
 use super::{
-    WebsocketProtocol, WsCodec, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsRespond,
-    WsShutdown, WsValue,
+    SOCKET_SEND_TIMEOUT, WebsocketProtocol, WsCodec, WsControllerDescriptor, WsDispatchError,
+    WsHandlerFn, WsIdle, WsRespond, WsShutdown, WsValue,
 };
 #[cfg(feature = "client")]
 use crate::client::{WebsocketClientProtocol, WebsocketDecodes, WebsocketEncodes, WsStatus};
@@ -90,13 +91,7 @@ impl WebsocketProtocol for JsonWs {
 
         for descriptor in controllers {
             for route in descriptor.routes_for::<Self>(runtime) {
-                if routes.insert(route.destination, route.handler).is_some() {
-                    warn!(
-                        target: "overseerd::axum",
-                        dest = route.destination,
-                        "duplicate ws destination registered; last registration wins"
-                    );
-                }
+                routes.insert(route.destination, route.handler);
             }
         }
 
@@ -112,21 +107,51 @@ impl WebsocketProtocol for JsonWs {
         connection: Arc<ScopeContainer>,
         mut shutdown: WsShutdown,
     ) {
+        let mut idle = WsIdle::from_connection(&connection);
+
         loop {
             tokio::select! {
                 _ = shutdown.wait() => {
-                    let _ = socket.send(Message::Close(None)).await;
+                    let _ = tokio::time::timeout(
+                        SOCKET_SEND_TIMEOUT,
+                        socket.send(Message::Close(None)),
+                    ).await;
 
                     break;
+                }
+
+                _ = idle.wait() => {
+                    if idle.on_timeout() {
+                        debug!(target: "overseerd::axum", "ws peer did not answer idle probe");
+
+                        break;
+                    }
+
+                    if !matches!(
+                        tokio::time::timeout(
+                            SOCKET_SEND_TIMEOUT,
+                            socket.send(Message::Ping(Bytes::new())),
+                        ).await,
+                        Ok(Ok(()))
+                    ) {
+                        break;
+                    }
                 }
 
                 inbound = socket.recv() => {
                     match inbound {
                         Some(Ok(Message::Text(text))) => {
+                            idle.on_activity();
                             let reply = self.handle_text(text.as_str(), &connection).await;
 
                             if let Some(reply) = reply
-                                && socket.send(Message::Text(Utf8Bytes::from(reply))).await.is_err()
+                                && !matches!(
+                                    tokio::time::timeout(
+                                        SOCKET_SEND_TIMEOUT,
+                                        socket.send(Message::Text(Utf8Bytes::from(reply))),
+                                    ).await,
+                                    Ok(Ok(()))
+                                )
                             {
                                 break;
                             }
@@ -134,8 +159,9 @@ impl WebsocketProtocol for JsonWs {
 
                         Some(Ok(Message::Close(_))) | None => break,
 
-                        // Binary/ping/pong are out of scope for the JSON protocol; ignore.
-                        Some(Ok(_)) => {}
+                        // Binary/ping/pong aren't application messages, but they prove the peer is
+                        // still consuming the connection and reset its idle probe.
+                        Some(Ok(_)) => idle.on_activity(),
 
                         Some(Err(error)) => {
                             debug!(target: "overseerd::axum", %error, "ws connection read error");
@@ -293,12 +319,21 @@ fn render_reply(
             error: None,
         },
 
-        Err(error) => Outbound {
-            dest,
-            id,
-            ok: None,
-            error: Some(error.to_string()),
-        },
+        Err(error) => {
+            warn!(
+                target: "overseerd::axum",
+                %error,
+                dest,
+                "ws message dispatch failed"
+            );
+
+            Outbound {
+                dest,
+                id,
+                ok: None,
+                error: Some(error.public_message().to_owned()),
+            }
+        }
     };
 
     serde_json::to_string(&outbound).ok()

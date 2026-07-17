@@ -26,6 +26,13 @@ fn configured_listener_overrides_the_defaults() {
             bind = "0.0.0.0"
             port = 8080
             max_request_body_bytes = 1048576
+            max_stream_request_bytes = 8388608
+            max_stream_request_items = 50000
+            stream_request_timeout_ms = 7000
+            max_websocket_message_bytes = 131072
+            max_websocket_frame_bytes = 32768
+            max_websocket_connections = 128
+            websocket_idle_timeout_ms = 20000
             request_timeout_ms = 15000
             graceful_shutdown_timeout_ms = 5000
         "#,
@@ -42,6 +49,13 @@ fn configured_listener_overrides_the_defaults() {
         SocketAddr::new(IpAddr::from([0, 0, 0, 0]), 8080)
     );
     assert_eq!(config.max_request_body_bytes, 1_048_576);
+    assert_eq!(config.max_stream_request_bytes, 8_388_608);
+    assert_eq!(config.max_stream_request_items, 50_000);
+    assert_eq!(config.stream_request_timeout_ms, 7_000);
+    assert_eq!(config.max_websocket_message_bytes, 131_072);
+    assert_eq!(config.max_websocket_frame_bytes, 32_768);
+    assert_eq!(config.max_websocket_connections, 128);
+    assert_eq!(config.websocket_idle_timeout_ms, 20_000);
     assert_eq!(config.request_timeout_ms, 15_000);
     assert_eq!(config.graceful_shutdown_timeout_ms, 5_000);
 }
