@@ -93,6 +93,9 @@ async fn disabled_config_mounts_nothing() {
     );
 }
 
+// Redoc must be compiled for the overlap to actually materialize; validation now no-ops for an
+// uncompiled UI (JSON-only fallback), so the rejection is only asserted when the UI is present.
+#[cfg(feature = "openapi-redoc")]
 #[test]
 fn overlapping_json_and_ui_paths_are_rejected() {
     let mut config = json_only_config();
@@ -119,6 +122,22 @@ fn overlapping_json_and_ui_paths_are_rejected() {
     assert!(
         mount(axum::Router::new(), &config, "").is_ok(),
         "distinct paths mount cleanly"
+    );
+}
+
+// When the selected UI's feature is absent, the UI is not mounted (JSON-only fallback), so
+// overlapping paths must NOT be rejected. Runs only in a build without `openapi-scalar`.
+#[cfg(not(feature = "openapi-scalar"))]
+#[test]
+fn overlap_is_ignored_when_the_selected_ui_is_not_compiled() {
+    let mut config = json_only_config();
+    config.ui = OpenApiUi::Scalar;
+    config.ui_path = String::from("/docs");
+    config.json_path = String::from("/docs");
+
+    assert!(
+        mount(axum::Router::new(), &config, "").is_ok(),
+        "an uncompiled UI falls back to JSON only, so its path cannot collide"
     );
 }
 
@@ -167,5 +186,38 @@ async fn swagger_ui_mounts_and_owns_json() {
     assert!(
         body.to_lowercase().contains("swagger"),
         "serves the Swagger UI shell"
+    );
+}
+
+#[cfg(feature = "openapi-swagger-ui")]
+#[tokio::test]
+async fn swagger_under_base_path_serves_and_fetches_the_prefixed_spec() {
+    let mut config = json_only_config();
+    config.ui = OpenApiUi::Swagger;
+    config.ui_path = String::from("/docs");
+
+    // Mount with the normalized base prefix, then nest the whole router under it exactly as the
+    // plugin does — so the test sees the real, browser-facing paths.
+    let mounted = mount(axum::Router::new(), &config, "/api").expect("mounts");
+    let router = axum::Router::new().nest("/api", mounted);
+
+    // The spec route rode the nesting to `/api/openapi.json` — not double-prefixed to `/api/api/..`.
+    assert_eq!(
+        get(router.clone(), "/api/openapi.json").await.0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        get(router.clone(), "/api/api/openapi.json").await.0,
+        StatusCode::NOT_FOUND,
+        "the spec must not be double-prefixed"
+    );
+
+    // The Swagger UI is told to fetch the prefixed URL, so it hits the served route.
+    let (status, body) = get(router, "/api/docs/swagger-initializer.js").await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.contains("/api/openapi.json"),
+        "the initializer fetches the base-prefixed spec URL, got: {body}"
     );
 }

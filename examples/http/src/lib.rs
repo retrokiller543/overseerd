@@ -28,11 +28,6 @@ pub mod greet;
 // `ChatHandlerClient` (SEND) bound to the shared `Connection`, alongside the `ChatHistory` REST client.
 pub mod stomp;
 
-// Server-only: an OpenAPI documentation demo (a `Form` body + a custom-`responses` route). Not
-// served — it only feeds the OpenAPI link-time slices for the spec-generation tests.
-#[cfg(not(target_family = "wasm"))]
-pub mod docs;
-
 // Server-only for now: the JsonWs request/reply controller (no wasm ws transport yet) and the
 // DI-backed auth middleware.
 #[cfg(not(target_family = "wasm"))]

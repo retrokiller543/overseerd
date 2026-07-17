@@ -4,14 +4,16 @@
 
 #![cfg(not(target_family = "wasm"))]
 
+// Anchor the example library so the classic (macOS) linker actually processes its object files, and
+// with them the `#[linkme]` OpenAPI/controller registrations the greeter contributes. A plain path
+// reference can be dropped as dead code; `extern crate` forces the crate to be linked in.
+extern crate overseerd_example_http;
+
 use overseerd::axum::build_openapi;
 use overseerd::axum::utoipa;
 
 /// Builds the document once with the example's controllers linked in.
 fn doc() -> utoipa::openapi::OpenApi {
-    // Reference a controller type so the linker keeps this crate's `CONTROLLERS`/OpenAPI slices.
-    let _ = std::any::type_name::<overseerd_example_http::greet::GreetController>();
-
     build_openapi("HTTP Example", "1.0.0", "")
 }
 
@@ -73,18 +75,70 @@ fn response_and_request_bodies_reference_dto_schemas() {
 
 #[test]
 fn base_path_becomes_a_server_entry() {
-    let _ = std::any::type_name::<overseerd_example_http::greet::GreetController>();
-
     let doc = build_openapi("HTTP Example", "1.0.0", "/api");
     let servers = doc.servers.expect("a base path yields a server entry");
 
     assert_eq!(servers[0].url, "/api");
 }
 
-/// Builds the document with the OpenAPI-demo controller linked in.
-fn docs_doc() -> utoipa::openapi::OpenApi {
-    let _ = std::any::type_name::<overseerd_example_http::docs::DocsController>();
+// An OpenAPI fixture controller defined **in the test binary**, not the example library — so the
+// example app never links or serves it. It exercises two spec behaviours the plain greeter does not:
+// a `Form` body (documented as `application/x-www-form-urlencoded`) and a handler that overrides the
+// generated responses via `#[openapi(responses(..))]`.
+mod fixture {
+    use overseerd::axum::axum::extract::Form;
+    use overseerd::axum::dto;
+    use overseerd::axum::prelude::*;
 
+    /// A form-encoded login submission.
+    #[dto]
+    pub struct LoginForm {
+        pub user: String,
+        pub password: String,
+    }
+
+    /// The login acknowledgement body.
+    #[dto]
+    pub struct LoginAck {
+        pub user: String,
+        pub ok: bool,
+    }
+
+    /// Documents OpenAPI-specific request/response shapes. Fieldless — it needs no state to feed the
+    /// spec slices.
+    #[controller(path = "/docs-demo")]
+    pub struct DocsController;
+
+    #[handlers]
+    impl DocsController {
+        /// `POST /docs-demo/login` — a form body, documented as `application/x-www-form-urlencoded`.
+        #[post("/login")]
+        async fn login(&self, Form(form): Form<LoginForm>) -> Json<LoginAck> {
+            Json(LoginAck {
+                user: form.user,
+                ok: !form.password.is_empty(),
+            })
+        }
+
+        /// `GET /docs-demo/teapot` — overrides the generated responses; the generated default `200`
+        /// is dropped, so `utoipa::path` sees exactly one `responses` argument.
+        #[get("/teapot")]
+        #[openapi(responses(
+            (status = 200, body = LoginAck, description = "brewed"),
+            (status = 418, description = "I'm a teapot"),
+        ))]
+        async fn teapot(&self) -> Json<LoginAck> {
+            Json(LoginAck {
+                user: String::from("teapot"),
+                ok: false,
+            })
+        }
+    }
+}
+
+/// Builds the document with the in-test fixture controller linked in. The fixture lives in this test
+/// binary, so its `#[linkme]` registrations are always part of the link — no anchor needed.
+fn docs_doc() -> utoipa::openapi::OpenApi {
     build_openapi("HTTP Example", "1.0.0", "")
 }
 

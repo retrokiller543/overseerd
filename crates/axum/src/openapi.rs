@@ -80,6 +80,19 @@ pub fn build_openapi(title: &str, version: &str, base_path: &str) -> OpenApi {
         .build()
 }
 
+/// Whether the crate feature backing `ui` is compiled into this build. A selected UI whose feature
+/// is absent is not mounted (JSON-only fallback), so callers that only care about *actually mounted*
+/// routes gate on this rather than on the configured choice alone.
+fn ui_is_compiled(ui: OpenApiUi) -> bool {
+    match ui {
+        OpenApiUi::None => false,
+        OpenApiUi::Swagger => cfg!(feature = "openapi-swagger-ui"),
+        OpenApiUi::Redoc => cfg!(feature = "openapi-redoc"),
+        OpenApiUi::Rapidoc => cfg!(feature = "openapi-rapidoc"),
+        OpenApiUi::Scalar => cfg!(feature = "openapi-scalar"),
+    }
+}
+
 /// The absolute URL a UI must fetch the spec from: the normalized base prefix followed by the
 /// configured `json_path`. Under `base_path = /api` the JSON route nests to `/api{json_path}`, so a
 /// UI handed the bare `json_path` would request the wrong (root) location and fail to load the spec.
@@ -145,10 +158,11 @@ pub fn mount(
 }
 
 /// Rejects a configuration whose JSON and UI routes would collide: identical paths, or a `json_path`
-/// nested under `ui_path` (a UI's wildcard would then also claim it). Only checked when a UI is
-/// selected — JSON-only serving has nothing to collide with.
+/// nested under `ui_path` (a UI's wildcard would then also claim it). Only checked when the selected
+/// UI is **actually compiled** — a UI whose crate feature is absent falls back to serving JSON only
+/// (see [`mount_ui`]), which has nothing to collide with, so overlapping paths are then harmless.
 fn validate_paths(config: &OpenApiConfig) -> crate::Result<()> {
-    if matches!(config.ui, OpenApiUi::None) {
+    if !ui_is_compiled(config.ui) {
         return Ok(());
     }
 
@@ -200,11 +214,13 @@ fn mount_ui(
         OpenApiUi::Swagger => {
             #[cfg(feature = "openapi-swagger-ui")]
             {
-                // Pass the bare `ui_path`; the axum integration adds its own redirect + `{*rest}`
-                // wildcard. Swagger serves the spec itself, but the UI shell fetches it by absolute
-                // URL — so it must be the prefixed `spec_url`, not the unprefixed `json_path`.
+                // `.url` sets the route the spec is *served* at (relative, so nesting under
+                // `base_path` places it correctly); `.config` sets the URL the UI *fetches* — the
+                // base-prefixed `spec_url`. Passing the prefix to `.url` instead would nest twice
+                // (`/api/api/openapi.json`), so the two are configured separately.
                 let swagger = utoipa_swagger_ui::SwaggerUi::new(config.ui_path.clone())
-                    .url(spec_url.to_owned(), doc);
+                    .url(config.json_path.clone(), doc)
+                    .config(utoipa_swagger_ui::Config::new([spec_url.to_owned()]));
 
                 router.merge(swagger)
             }
