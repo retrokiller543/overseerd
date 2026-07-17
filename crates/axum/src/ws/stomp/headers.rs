@@ -11,7 +11,8 @@ use std::sync::Arc;
 use overseerd_di::Injectable;
 
 use super::body::StompBody;
-use super::broker::{Broker, ConnectionId};
+use super::broker::Broker;
+use crate::ws::pubsub::ConnectionId;
 
 /// The headers of the STOMP frame that triggered the current message, in wire order (first value
 /// wins per the spec). A cheap, `Arc`-backed clone so seeding it per message is nearly free.

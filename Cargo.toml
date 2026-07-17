@@ -87,6 +87,9 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tokio-util = "0.7"
 tower = { version = "0.5", features = ["util"] }
+# Trailing-slash path normalization for the axum server (applied outside the router so it rewrites
+# the path before route matching). Pure tower/http deps — no openssl/rsa.
+tower-http = { version = "0.6", features = ["normalize-path"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
@@ -100,6 +103,16 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi",
 # directly (see the http example). Clean dep tree (serde + wasm-bindgen + gloo-utils) — no
 # openssl/rsa. Listed here only to pin the version the docs/examples reference.
 tsify = "0.5"
+# OpenAPI: utoipa owns the spec model. `#[dto]`/`#[handlers]` emit its `ToSchema`/`#[utoipa::path]`
+# tokens (gated inside our macros); the plugin folds per-route operations + schemas into a
+# `utoipa::openapi::OpenApi`. Pure serde dep tree — no openssl/rsa. `macros` pulls the derive/attr.
+utoipa = { version = "5", features = ["macros"] }
+# OpenAPI UIs, each behind its own axum feature. Swagger-UI bundles a dist; Redoc/RapiDoc/Scalar
+# are lightweight HTML shells. `axum` feature on each gives an axum-mountable router/service.
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa-redoc = { version = "6", features = ["axum"] }
+utoipa-rapidoc = { version = "6", features = ["axum"] }
+utoipa-scalar = { version = "0.3", features = ["axum"] }
 syn = { version = "2", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
@@ -148,6 +161,17 @@ stomp = ["ws", "overseerd-axum/stomp"]
 # Off by default (mirrors axum); implies `axum`. The client-side `Multipart` body builder is always
 # available under `client`.
 multipart = ["axum", "overseerd-axum/multipart"]
+
+# OpenAPI 3.1 generation for the HTTP protocol (utoipa-backed): schemas from `#[dto]`, operations
+# from routes, a served `/openapi.json`. Implies `axum`. Enabling `openapi` requires `utoipa` as a
+# direct dependency of your crate (the `#[dto]` `ToSchema` derive resolves `::utoipa`) — mirroring
+# how the wasm client needs `tsify`. Pick a UI feature below, or serve JSON only.
+openapi = ["axum", "overseerd-axum/openapi"]
+# OpenAPI UIs — each implies `openapi` and is also gated at runtime by `AxumConfig.openapi.ui`.
+openapi-swagger-ui = ["openapi", "overseerd-axum?/openapi-swagger-ui"]
+openapi-redoc = ["openapi", "overseerd-axum?/openapi-redoc"]
+openapi-rapidoc = ["openapi", "overseerd-axum?/openapi-rapidoc"]
+openapi-scalar = ["openapi", "overseerd-axum?/openapi-scalar"]
 
 # Cross-cutting `uuid` integration: light up `uuid` support in whatever crates are enabled, without
 # forcing any of them on. The `?/` activations fire only for a crate that is already present — so
@@ -228,3 +252,8 @@ postcard = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+# The facade's axum integration tests use `#[controller]`/`#[handlers]`/`#[dto]`, which emit
+# `::utoipa` references when the `openapi` feature is on (as under `--all-features`). Like the http
+# example, a crate using those macros with `openapi` needs `utoipa` as a direct dependency; a
+# dev-dependency covers the tests without affecting downstream users.
+utoipa = { workspace = true }

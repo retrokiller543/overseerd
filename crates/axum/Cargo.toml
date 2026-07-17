@@ -61,6 +61,16 @@ di-check = [
 yaml = ["overseerd-app/yaml", "overseerd-config/yaml"]
 watch = ["overseerd-app/watch", "overseerd-config/watch"]
 tracing-subscriber = ["overseerd-app/tracing-subscriber"]
+# OpenAPI 3.1 spec generation via utoipa. Turns on the `ToSchema` derive on `#[dto]`, the
+# `#[utoipa::path]` emission on routes, the operation/schema linkme slices, and the served
+# `/openapi.json` route. Off by default; a plain build pulls no utoipa. Native server surface only.
+openapi = ["dep:utoipa", "overseerd-axum-macros/openapi"]
+# OpenAPI UIs — each pulls only its own utoipa-* crate and is additionally gated at runtime by
+# `AxumConfig.openapi.ui`, so compiling one still lets a deployment serve JSON only.
+openapi-swagger-ui = ["openapi", "dep:utoipa-swagger-ui"]
+openapi-redoc = ["openapi", "dep:utoipa-redoc"]
+openapi-rapidoc = ["openapi", "dep:utoipa-rapidoc"]
+openapi-scalar = ["openapi", "dep:utoipa-scalar"]
 # WebSocket streaming (client/bidi). Scaffolded; not served yet.
 ws = ["axum/ws"]
 # The `multipart/form-data` request extractor (`axum::extract::Multipart`, re-exported here). Off by
@@ -72,7 +82,7 @@ multipart = ["axum/multipart"]
 stomp = ["ws", "dep:stomp-parser"]
 # Integration flag: pull in `uuid`. A cross-cutting flag (not tied to a protocol) so the facade can
 # fan it out to every crate that has a `uuid` integration. On its own it only adds the dependency;
-# the actual `TopicParam for Uuid` impl is gated on `all(stomp, uuid)`, so `uuid` without `stomp` is
+# the actual `TopicParam for Uuid` impl is gated on `all(ws, uuid)`, so `uuid` without `ws` is
 # a harmless no-op rather than an error.
 uuid = ["dep:uuid"]
 # Set by the `overseerd` facade: root the macros' generated plugin types at
@@ -117,6 +127,7 @@ overseerd-config = { workspace = true }
 overseerd-hooks = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
+tower-http = { workspace = true }
 tokio = { workspace = true }
 linkme = { workspace = true }
 cookie = { workspace = true }
@@ -128,6 +139,13 @@ hyper-util = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 # The JsonWs request/reply backend (native-only for now — it uses a tokio timer for heart-beats).
 tokio-tungstenite = { workspace = true, optional = true }
+# OpenAPI (native server surface only): the doc model + the served UIs. The `ToSchema` derive that
+# `#[dto]` emits is itself gated `not(target_family = "wasm")`, so utoipa never reaches a wasm build.
+utoipa = { workspace = true, optional = true }
+utoipa-swagger-ui = { workspace = true, optional = true }
+utoipa-redoc = { workspace = true, optional = true }
+utoipa-rapidoc = { workspace = true, optional = true }
+utoipa-scalar = { workspace = true, optional = true }
 
 # wasm: reqwest's browser `fetch` backend (json only) — plus `tokio` (sync + `select!` macro; no
 # runtime/net) and `wasm-bindgen-futures` (for `spawn_local`) that the STOMP transport actor needs.

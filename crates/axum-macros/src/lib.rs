@@ -18,6 +18,7 @@ extern crate proc_macro;
 mod client;
 mod dto;
 mod handlers;
+mod openapi;
 mod route;
 mod router;
 mod topics;
@@ -169,6 +170,12 @@ pub fn route(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Marks a WebSocket message handler inside a `#[handlers]` impl of a `#[controller(ws = ..)]`:
 /// `#[message("destination")]`. A marker consumed and stripped by `#[handlers]`; used on its own it
 /// emits a `compile_error!`.
+///
+/// The generated client method is shaped by the handler's return type: a handler returning `()` is a
+/// fire-and-forget SEND; one returning a value is a request/response whose return is routed back to
+/// the caller. Override with `#[message("dest", send)]` / `#[message("dest", request)]` — notably,
+/// force `send` on a handler that returns a value only to broadcast it (e.g. a `Publish`), since
+/// inference would otherwise treat it as a request.
 #[proc_macro_attribute]
 pub fn message(_attr: TokenStream, item: TokenStream) -> TokenStream {
     run::<ItemFn, _>(item.into(), route::expand_standalone).into()

@@ -17,8 +17,15 @@ pub mod client;
 /// server both assert it), so it lives outside the server gate.
 pub mod dto;
 
-/// The wasm-safe STOMP wire types (`StompBody`, `StompCodec`, `Topic`, `TopicParam`) shared by the
-/// server broker and the browser client. Available on every target so the wasm client names them.
+/// The wasm-safe, protocol-generic messaging wire contract (`MessagingProtocol`, `TopicCodec`,
+/// `Topic`, `TopicParam`, …) shared by every WebSocket pub/sub protocol. Behind `ws` (not `stomp`)
+/// and available on every target, so a non-STOMP protocol reuses the machinery and the wasm client
+/// names it.
+#[cfg(feature = "ws")]
+pub mod messaging;
+
+/// STOMP's implementation of the [`messaging`] wire contract (`StompBody`, `StompCodec`, the `Stomp`
+/// tag). Available on every target so the wasm client names them.
 #[cfg(feature = "stomp")]
 pub mod stomp;
 
@@ -39,6 +46,11 @@ pub mod error;
 pub mod extract;
 #[cfg(not(target_family = "wasm"))]
 pub mod middleware;
+/// OpenAPI document assembly: the link-time operation/schema slices the macros lower into, and
+/// [`build_openapi`](openapi::build_openapi) which folds them into a `utoipa::openapi::OpenApi`.
+/// Behind `openapi` (native server surface only); utoipa never reaches a wasm build.
+#[cfg(all(feature = "openapi", not(target_family = "wasm")))]
+pub mod openapi;
 #[cfg(not(target_family = "wasm"))]
 pub mod plugin;
 #[cfg(not(target_family = "wasm"))]
@@ -52,10 +64,26 @@ pub mod ws;
 
 #[cfg(not(target_family = "wasm"))]
 pub use config::{AXUM_CONFIG_PATH, AxumConfig};
+#[cfg(all(feature = "openapi", not(target_family = "wasm")))]
+pub use config::{AXUM_OPENAPI_CONFIG_PATH, OpenApiConfig, OpenApiUi};
+/// The OpenAPI operation/schema slices and document assembler, re-exported at the crate root so
+/// `#[dto]`/`#[handlers]` generated code registers into a stable path and the plugin folds them.
+#[cfg(all(feature = "openapi", not(target_family = "wasm")))]
+pub use openapi::{
+    OPENAPI_OPERATIONS, OPENAPI_SCHEMAS, OperationEntry, SchemaEntry, build_openapi, join_base,
+};
+
 #[cfg(not(target_family = "wasm"))]
 pub use controller::{CONTROLLERS, Controller, ControllerDescriptor};
 #[cfg(not(target_family = "wasm"))]
 pub use error::{Error, Result};
+/// The `utoipa` crate, re-exported so `#[dto]`/`#[handlers]` generated OpenAPI code names its
+/// derive (`ToSchema`), attribute (`path`), and traits through a stable plugin path
+/// (`::overseerd_axum::utoipa` / `::overseerd::axum::utoipa`) without the user crate depending on
+/// `utoipa` directly. Native + `openapi` only.
+#[cfg(all(feature = "openapi", not(target_family = "wasm")))]
+#[doc(hidden)]
+pub use utoipa;
 
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub use ws::{
@@ -63,23 +91,45 @@ pub use ws::{
     WsControllerDescriptor, WsDispatchError, WsReply, WsRespond, WsRoute, WsShutdown,
 };
 
-/// The wasm-safe STOMP wire types, re-exported at the crate root on every target — the browser
-/// client's generated `#[topics]`/`#[message]` code names them through the plugin path.
-#[cfg(feature = "stomp")]
-pub use stomp::{JsonCodec, StompBody, StompCodec, Topic, TopicParam};
+/// The `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements so
+/// the neutral registry/bus fan out for it. [`MessageReply`] is its request/response companion — a
+/// protocol that routes a `#[message]` handler's non-unit return back to the requester. Behind `ws`
+/// so a non-STOMP protocol implements them without enabling `stomp`.
+#[cfg(all(feature = "ws", not(target_family = "wasm")))]
+pub use ws::{MessageReply, PubSubProtocol};
 
-/// The STOMP pub/sub protocol surface (server side): the [`Stomp`](ws::stomp::Stomp) protocol and
-/// its broker/session/publish types. Server-only.
+/// The protocol-generic pub/sub runtime (server side): the neutral subscription registry, the shared
+/// topic bus, and the injected publisher. Behind `ws` so a non-STOMP protocol reuses them.
+#[cfg(all(feature = "ws", not(target_family = "wasm")))]
+pub use ws::pubsub::{
+    ConnectionId, DEFAULT_PUBLISH_FANOUT, Publisher, SubscriptionRegistry, TopicBus,
+};
+
+/// The protocol-generic messaging wire contract, re-exported at the crate root on every target — the
+/// browser client's generated `#[topics]`/`#[message]` code names it through the plugin path. Behind
+/// `ws` so a non-STOMP protocol reuses it without enabling `stomp`.
+#[cfg(feature = "ws")]
+pub use messaging::{MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec, TopicParam};
+
+/// STOMP's wire types, re-exported at the crate root on every target. Includes the [`Stomp`]
+/// protocol tag (its server-only state is `cfg`-gated) so a `#[topics(protocol = Stomp)]` set and
+/// its client compile on wasm.
+#[cfg(feature = "stomp")]
+pub use stomp::{JsonCodec, Stomp, StompBody, StompCodec};
+
+/// The STOMP pub/sub protocol surface (server side): the broker/session/publish/auth types.
+/// Server-only.
 #[cfg(all(feature = "stomp", not(target_family = "wasm")))]
 pub use ws::stomp::{
-    Broker, Publish, Publisher, Stomp, StompAuthFuture, StompAuthenticationError,
-    StompAuthenticator, StompConfig, StompConnect, StompError, StompHeaders, StompOutcome,
-    StompPrincipal, StompSession, StompTopicBus,
+    Broker, Direct, Injected, IntoAuthenticator, Publish, ResolvedAuthenticator, StompAuthFuture,
+    StompAuthenticationError, StompAuthenticator, StompConfig, StompConnect, StompError,
+    StompHeaders, StompOutcome, StompPrincipal, StompSession, StompTopicBus,
 };
 
 /// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a
-/// separate `overseerd-transport` dependency.
-#[cfg(feature = "stomp")]
+/// separate `overseerd-transport` dependency. Behind `ws` so a non-STOMP protocol's generated code
+/// names it too.
+#[cfg(feature = "ws")]
 pub use overseerd_transport::CodecError;
 
 /// The `multipart/form-data` request extractor, re-exported from axum under the `multipart` feature
@@ -91,8 +141,10 @@ pub use axum::extract::Multipart;
 pub use extract::{Inject, InjectRejection, ScopeHandle};
 #[cfg(not(target_family = "wasm"))]
 pub use middleware::AxumMiddleware;
-/// The STOMP topic-set macro (`#[topics]`).
-#[cfg(feature = "stomp")]
+/// The topic-set macro (`#[topics]`). Behind `ws` so a non-STOMP protocol declares a topic set with
+/// `#[topics(protocol = P)]`; it defaults `protocol` to `Stomp`, so a bare `#[topics]` additionally
+/// needs `stomp`.
+#[cfg(feature = "ws")]
 pub use overseerd_axum_macros::topics;
 /// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
 /// this protocol crate. Their generated code roots plugin types at this crate

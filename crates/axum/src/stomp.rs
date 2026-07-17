@@ -1,12 +1,49 @@
-//! The STOMP wire types shared by the server broker and the client transport — the body, the
-//! pluggable codec, and the [`Topic`] contract. They are pure (bytes + serde, no tokio/axum), so
-//! they compile on every target: the server broker (native) and the browser client (wasm) both name
-//! them. The server-only fan-out types ([`Publish`](crate::ws::stomp::Publish) /
-//! [`StompOutcome`](crate::ws::stomp::StompOutcome)) stay in the `ws` broker module.
+//! STOMP's implementation of the protocol-generic messaging wire contract (defined in
+//! [`crate::messaging`]).
+//!
+//! The generic capability traits ([`MessagingProtocol`](crate::messaging::MessagingProtocol),
+//! [`TopicCodec`](crate::messaging::TopicCodec), …) live in [`crate::messaging`] so they compile
+//! behind `feature = "ws"` alone. This module holds the STOMP-specific wire pieces — the
+//! [`StompBody`], the [`StompCodec`]/[`JsonCodec`], and STOMP's impls of the generic traits — behind
+//! `feature = "stomp"`.
+//!
+//! The [`Stomp`] type itself lives here (not the server-only `ws` module) so a `#[topics(protocol =
+//! Stomp)]` set and its generated client can name it on wasm; its server-only state is behind a
+//! `cfg`, so on wasm it is a fieldless protocol tag. The stateful server behavior
+//! (`WebsocketProtocol`, the broker serve loop) is implemented in [`crate::ws::stomp`]. The
+//! server-only fan-out types ([`Publish`](crate::ws::stomp::Publish) /
+//! [`StompOutcome`](crate::ws::stomp::StompOutcome)) also stay in that module.
 
 use bytes::Bytes;
 use overseerd_transport::CodecError;
-use std::borrow::Cow;
+
+use crate::messaging::{MessagingProtocol, TopicCodec};
+
+/// The `subscription` header value the server stamps on a request/response reply `MESSAGE`. It is a
+/// sentinel (never a real client subscription id, which are `sub-*`), so the client consults its
+/// request-correlation table only for frames actually carrying a reply — a broadcast can never be
+/// mistaken for one. Named on both sides (server framing, client demux), so it lives in this
+/// target-agnostic module.
+pub(crate) const REPLY_SUBSCRIPTION_ID: &str = "reply";
+
+/// The custom header the server sets on a request/response reply `MESSAGE` to mark it an *error*
+/// reply (the handler failed). Its presence flips the client's awaiting call from `Ok(body)` to
+/// `Err`, so a failing request handler resolves the caller instead of hanging it. Shared by the
+/// server (framing) and the client (demux).
+pub(crate) const MESSAGE_ERROR_HEADER: &str = "overseerd-error";
+
+#[cfg(not(target_family = "wasm"))]
+use std::collections::HashMap;
+#[cfg(not(target_family = "wasm"))]
+use std::sync::Arc;
+
+#[cfg(not(target_family = "wasm"))]
+use overseerd_app::AppRuntime;
+
+#[cfg(not(target_family = "wasm"))]
+use crate::ws::WsHandlerFn;
+#[cfg(not(target_family = "wasm"))]
+use crate::ws::stomp::{Broker, StompConfig};
 
 /// A STOMP frame body: opaque bytes with an optional `content-type`. Handlers usually receive a
 /// decoded type (via [`WsCodec`](crate::ws::WsCodec) JSON decoding) rather than this directly.
@@ -28,7 +65,8 @@ impl StompBody {
         }
     }
 
-    /// Serializes `value` to a JSON body. Used by `#[topics]`-generated [`Topic::encode`] impls.
+    /// Serializes `value` to a JSON body. Used by `#[topics]`-generated
+    /// [`Topic::encode`](crate::messaging::Topic::encode) impls.
     pub fn from_serialize<T: serde::Serialize>(value: &T) -> Result<Self, CodecError> {
         let bytes = serde_json::to_vec(value).map_err(|e| CodecError::internal(e.to_string()))?;
 
@@ -36,96 +74,62 @@ impl StompBody {
     }
 }
 
-/// A set of broadcast topics declared once and shared by client and server — the guardrail against
-/// client/server drift. Each implementor (an enum via `#[topics]`) maps a value to its destination
-/// and serializes its payload; because a value can only be built with the right payload type, the
-/// wrong type can never reach a topic.
-pub trait Topic {
-    /// This value's destination. A static `#[topic("/topic/x")]` borrows the literal; a templated
-    /// `#[topic("/topic/{room}")]` substitutes the variant's typed fields into an owned string —
-    /// hence [`Cow`](std::borrow::Cow), so a static topic still allocates nothing.
-    fn destination(&self) -> std::borrow::Cow<'static, str>;
-
-    /// Serializes this value's payload into a [`StompBody`] (using the topic set's [`StompCodec`]).
-    fn encode(&self) -> Result<StompBody, CodecError>;
-}
-
-/// A typed value that fills one `{name}` hole in a templated [`Topic`] destination — on the server
-/// when building the destination to publish to, and on the client as a `subscribe_*` argument. The
-/// same rendering runs on both sides, so a param round-trips: whatever `render` produces is what a
-/// subscriber must pass.
+/// The STOMP protocol tag and (on the server) its stateful pub/sub state.
 ///
-/// Implemented for the common std/core path-segment types (strings, integers, `bool`). It is
-/// **not** a blanket `Display` impl — that would seal the trait and forbid a user newtype (e.g. a
-/// `RoomId`) from implementing it. For a custom id type, add a one-line impl (usually delegating to
-/// `Display`): `impl TopicParam for RoomId { fn render(&self) -> String { self.to_string() } }`.
-pub trait TopicParam {
-    /// Renders this value into its path segment.
-    fn render(&self) -> String;
+/// On wasm this is a fieldless tag: it names the protocol for a `#[topics(protocol = Stomp)]` set
+/// and the generated client's `MessageSend<Stomp>`/`TopicSubscribe<Stomp>` bounds. On the server its
+/// `cfg`-gated fields hold the `/app/**` handler table, the shared [`Broker`], the runtime, and the
+/// endpoint config; the [`WebsocketProtocol`](crate::ws::WebsocketProtocol) impl and serve loop live
+/// in [`crate::ws::stomp`].
+pub struct Stomp {
+    /// The `/app/**` destination → `#[message]` handler table.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) app_routes: HashMap<&'static str, WsHandlerFn<Stomp>>,
+
+    /// The shared broker for `/topic/**` fan-out (one per endpoint, cloned from the DI bus).
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) broker: Arc<Broker>,
+
+    /// The runtime, kept to open per-message [`Request`](crate::scope::Request) scopes while serving.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) runtime: AppRuntime,
+
+    /// Heart-beat/version/authenticator policy for this endpoint.
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) config: StompConfig,
 }
 
-/// Implements [`TopicParam`] for a list of types by delegating to their [`Display`](std::fmt::Display).
-macro_rules! topic_param_via_display {
-    ($($ty:ty),* $(,)?) => {
-        $(
-            impl TopicParam for $ty {
-                fn render(&self) -> String {
-                    ::std::string::ToString::to_string(self)
-                }
-            }
-        )*
-    };
+impl MessagingProtocol for Stomp {
+    type Body = StompBody;
+    type DefaultCodec = JsonCodec;
 }
 
-topic_param_via_display! {
-    String, &str, bool, char,
-    u8, u16, u32, u64, u128, usize,
-    i8, i16, i32, i64, i128, isize,
-}
-
-impl<T: Topic> Topic for &T {
-    fn destination(&self) -> Cow<'static, str> {
-        T::destination(self)
-    }
-
-    fn encode(&self) -> Result<StompBody, CodecError> {
-        T::encode(self)
-    }
-}
-
-impl<'a, T: TopicParam + Clone> TopicParam for Cow<'a, T> {
-    fn render(&self) -> String {
-        self.as_ref().render()
-    }
-}
-
-impl<'a> TopicParam for Cow<'a, str> {
-    fn render(&self) -> String {
-        self.to_string()
-    }
-}
-
-/// A [`Uuid`](uuid::Uuid) renders as its hyphenated string. A common id type for templated topics
-/// (`/topic/room/{id}`). Gated on the cross-cutting `uuid` integration flag, so enabling `uuid`
-/// without `stomp` is a harmless no-op.
-#[cfg(feature = "uuid")]
-impl TopicParam for uuid::Uuid {
-    fn render(&self) -> String {
-        self.to_string()
-    }
-}
-
-/// The wire codec for a topic set's message bodies — how a payload is serialized on the server's
-/// publish and deserialized on the client's subscribe. Selected per topic set with
+/// The wire codec for a STOMP topic set's message bodies — how a payload is serialized on the
+/// server's publish and deserialized on the client's subscribe. Selected per topic set with
 /// `#[topics(codec = ..)]`; defaults to [`JsonCodec`]. Provide your own for a more compact wire
 /// format (e.g. a postcard-backed codec) and both directions follow it, since the same codec type
-/// is named on both sides.
+/// is named on both sides. A blanket impl makes every `StompCodec` a
+/// [`TopicCodec<Stomp>`](crate::messaging::TopicCodec), so it slots into the protocol-generic topics
+/// machinery.
 pub trait StompCodec: Send + Sync + 'static {
     /// Serializes a payload into a body.
     fn encode<T: serde::Serialize>(value: &T) -> Result<StompBody, CodecError>;
 
     /// Deserializes a payload from a body.
     fn decode<T: serde::de::DeserializeOwned>(body: StompBody) -> Result<T, CodecError>;
+}
+
+impl<C> TopicCodec<Stomp> for C
+where
+    C: StompCodec,
+{
+    fn encode<T: serde::Serialize>(value: &T) -> Result<StompBody, CodecError> {
+        <C as StompCodec>::encode(value)
+    }
+
+    fn decode<T: serde::de::DeserializeOwned>(body: StompBody) -> Result<T, CodecError> {
+        <C as StompCodec>::decode(body)
+    }
 }
 
 /// The default [`StompCodec`]: JSON bodies (`application/json`).

@@ -31,8 +31,73 @@ pub fn is_message_attr(attr: &Attribute) -> bool {
     attr.path().is_ident(MESSAGE_ATTR)
 }
 
-/// Parses `#[message("destination")]` into its destination literal.
-pub fn parse_message_attr(attr: &Attribute) -> syn::Result<LitStr> {
+/// How a `#[message]` handler's client method is shaped. Inferred from the handler's return type
+/// (unit → [`Send`](MessageMode::Send), non-unit → [`Request`](MessageMode::Request)) unless the
+/// attribute names it explicitly — mirroring how `#[rpc(stream)]` overrides RPC capability inference.
+///
+/// Because inference keys purely on unit-vs-non-unit, a handler that returns a value for a reason
+/// *other* than replying to the caller — e.g. returning a `Publish`/`Vec<Publish>` to imperatively
+/// broadcast — is inferred as a request and will not compile (a broadcast value is not the reply
+/// type the client decodes). Annotate such a handler `#[message(send)]` to force the fire-and-forget
+/// path. (The idiomatic imperative-broadcast route is an injected `Publisher`, which returns `()`.)
+///
+/// The request reply type is the return with a `Result` then a `Json<T>` wrapper peeled off, keyed
+/// on the literal `Result`/`Json` path segments. A type alias (`type MyResult<T> = Result<T, E>`) is
+/// **not** seen through — return a bare `Result`/`Json` (or annotate `#[message(send|request)]`) so
+/// the peel is unambiguous. This matches the RPC macro's alias limitation.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MessageMode {
+    /// Infer from the return type: `()` is a fire-and-forget SEND, anything else a request/response.
+    Infer,
+
+    /// Force a fire-and-forget SEND. The return is routed through the protocol's SEND path (for
+    /// STOMP: `()`, a `Publish`/`Vec<Publish>` to broadcast, a `StompOutcome`, or a `Result` of
+    /// those) — never sent back to the caller. Forcing `send` on a handler returning an arbitrary
+    /// reply DTO is therefore a compile error; use the inferred/`request` mode for that.
+    Send,
+
+    /// Force a request/response: the handler's return is routed back to the requester.
+    Request,
+}
+
+/// A parsed `#[message("destination"[, send|request])]`: the destination literal and the mode.
+pub struct MessageArgs {
+    /// The message destination (e.g. `"/app/chat"`).
+    pub destination: LitStr,
+
+    /// The explicit or inferred SEND-vs-request mode.
+    pub mode: MessageMode,
+}
+
+impl Parse for MessageArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let destination: LitStr = input.parse()?;
+
+        let mode = if input.is_empty() {
+            MessageMode::Infer
+        } else {
+            input.parse::<Token![,]>()?;
+            let keyword: Ident = input.parse()?;
+
+            match keyword.to_string().as_str() {
+                "send" => MessageMode::Send,
+                "request" => MessageMode::Request,
+
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        &keyword,
+                        "unknown #[message] flag; expected `send` or `request`",
+                    ));
+                }
+            }
+        };
+
+        Ok(MessageArgs { destination, mode })
+    }
+}
+
+/// Parses `#[message("destination"[, send|request])]` into its destination and mode.
+pub fn parse_message_attr(attr: &Attribute) -> syn::Result<MessageArgs> {
     attr.parse_args()
 }
 

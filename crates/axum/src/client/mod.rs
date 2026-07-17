@@ -13,6 +13,10 @@ mod body;
 mod connection;
 mod headers;
 mod interceptor;
+// The protocol-generic pub/sub client capabilities (message send/request, topic subscribe). Behind
+// `ws` (not `stomp`), so a non-STOMP protocol's client reuses them.
+#[cfg(all(feature = "ws", feature = "client"))]
+mod messaging;
 mod response;
 // The STOMP client transport is cross-target (native + wasm) via `tokio-tungstenite-wasm`.
 #[cfg(all(feature = "stomp", feature = "client"))]
@@ -37,6 +41,8 @@ pub use headers::RequestHeaders;
 #[cfg(all(target_family = "wasm", feature = "reqwest"))]
 pub use interceptor::WasmClientInterceptor;
 pub use interceptor::{ClientInterceptor, DefaultClientInterceptor};
+#[cfg(all(feature = "ws", feature = "client"))]
+pub use messaging::*;
 pub use response::HttpResponse;
 #[cfg(all(feature = "stomp", feature = "client"))]
 pub use stomp::*;

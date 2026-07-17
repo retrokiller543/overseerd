@@ -19,7 +19,6 @@ mod body;
 mod broker;
 mod error;
 mod headers;
-mod publisher;
 #[cfg(test)]
 mod tests;
 mod topic_bus;
@@ -39,22 +38,29 @@ use stomp_parser::server::{ConnectedFrameBuilder, ErrorFrame, ReceiptFrameBuilde
 use tokio::sync::mpsc;
 
 use super::{
-    WebsocketProtocol, WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsRespond, WsShutdown,
+    MessageReply, PubSubProtocol, WebsocketProtocol, WsControllerDescriptor, WsDispatchError,
+    WsHandlerFn, WsRespond, WsShutdown,
 };
 use crate::scope::Request as RequestScope;
 
 pub use auth::{
-    StompAuthFuture, StompAuthenticationError, StompAuthenticator, StompConnect, StompPrincipal,
+    Direct, Injected, IntoAuthenticator, ResolvedAuthenticator, StompAuthFuture,
+    StompAuthenticationError, StompAuthenticator, StompConnect, StompPrincipal,
 };
-pub use body::{JsonCodec, Publish, StompBody, StompCodec, StompOutcome, Topic, TopicParam};
-pub use broker::{Broker, ConnectionId};
+pub use body::{
+    JsonCodec, MessagingClientProtocol, MessagingProtocol, Publish, StompBody, StompCodec,
+    StompOutcome, Topic, TopicCodec, TopicParam,
+};
+pub use broker::Broker;
 pub use error::StompError;
 pub use headers::{StompHeaders, StompSession};
-pub use publisher::Publisher;
 pub(crate) use topic_bus::STOMP_TOPIC_BUS_DESCRIPTOR;
 pub use topic_bus::StompTopicBus;
+// The protocol-generic pub/sub runtime lives in `crate::ws::pubsub`; re-exported here so the STOMP
+// serve loop and the crate's historical `ws::stomp::*` surface keep naming them unchanged.
+pub use crate::ws::pubsub::{ConnectionId, Publisher, SubscriptionRegistry, TopicBus};
 
-use broker::OutFrame;
+use broker::{OutFrame, build_message};
 
 /// The outbound-frame channel depth per connection before publishes to a slow consumer are dropped.
 const OUTBOUND_BUFFER: usize = 64;
@@ -86,23 +92,43 @@ impl Default for StompConfig {
 
 impl StompConfig {
     /// Requires successful authentication for this endpoint using `authenticator`.
-    pub fn with_authenticator<A>(mut self, authenticator: A) -> Self
+    ///
+    /// Accepts either an async function whose arguments after [`StompConnect`] are injected from the
+    /// connection's DI scope, a value that implements [`StompAuthenticator`] directly, or an
+    /// [`Injected<T>`] adapter that resolves a component authenticator from the container.
+    pub fn with_authenticator<A, M>(mut self, authenticator: A) -> Self
     where
-        A: StompAuthenticator,
+        A: IntoAuthenticator<M>,
     {
-        self.authenticator = Some(Arc::new(authenticator));
+        self.authenticator = Some(authenticator.into_authenticator());
 
         self
     }
 }
 
-/// The STOMP protocol: a destination → `#[message]` handler table for `/app/**` plus a shared
-/// [`Broker`] for `/topic/**` fan-out.
-pub struct Stomp {
-    app_routes: HashMap<&'static str, WsHandlerFn<Stomp>>,
-    broker: Arc<Broker>,
-    runtime: AppRuntime,
-    config: StompConfig,
+// The `Stomp` struct is defined in the wasm-safe `crate::stomp` module (so a `#[topics(protocol =
+// Stomp)]` set and its client can name it on wasm), with its server-only fields behind a `cfg`. The
+// stateful protocol behavior — the `WebsocketProtocol` impl and serve loop — lives here.
+use crate::stomp::{MESSAGE_ERROR_HEADER, REPLY_SUBSCRIPTION_ID, Stomp};
+
+impl PubSubProtocol for Stomp {
+    type OutFrame = OutFrame;
+
+    fn frame_message(
+        message_id: u64,
+        destination: &str,
+        sub_id: &str,
+        body: &StompBody,
+        headers: &[(String, String)],
+    ) -> OutFrame {
+        build_message(message_id, destination, sub_id, body, headers)
+    }
+}
+
+impl MessageReply for Stomp {
+    fn reply(body: StompBody) -> StompOutcome {
+        StompOutcome::Reply(body)
+    }
 }
 
 impl WebsocketProtocol for Stomp {
@@ -156,7 +182,7 @@ impl WebsocketProtocol for Stomp {
         // The handshake must come first: read one frame and expect CONNECT/STOMP. A non-CONNECT
         // opener (or a parse failure) is a protocol violation — reply ERROR and abandon the socket.
         let (negotiated, principal) = match receiver.next().await {
-            Some(Ok(message)) => match self.negotiate(message).await {
+            Some(Ok(message)) => match self.negotiate(message, &connection).await {
                 Ok(handshake) => handshake,
 
                 Err(error) => {
@@ -243,6 +269,7 @@ impl Stomp {
     async fn negotiate(
         &self,
         message: Message,
+        connection: &Arc<ScopeContainer>,
     ) -> Result<(StompVersion, StompPrincipal), StompError> {
         let bytes = match message {
             Message::Text(text) => text.as_bytes().to_vec(),
@@ -280,7 +307,12 @@ impl Stomp {
 
         let connect = connect_metadata(&connect);
         let principal = match &self.config.authenticator {
-            Some(authenticator) => authenticator.authenticate(connect).await?,
+            Some(authenticator) => {
+                Arc::clone(authenticator)
+                    .authenticate(connect, Arc::clone(connection))
+                    .await?
+            }
+
             None => StompPrincipal::anonymous(),
         };
 
@@ -359,10 +391,22 @@ impl Stomp {
                         .map(bytes::Bytes::copy_from_slice)
                         .unwrap_or_default(),
                 };
+                // A request carries a `reply-to` destination (and usually a `correlation-id`); the
+                // handler's non-unit return is routed back there rather than broadcast.
+                let reply = ReplyContext {
+                    tx,
+                    reply_to: header_value(&custom_headers, "reply-to"),
+                    correlation_id: header_value(&custom_headers, "correlation-id"),
+                };
                 let headers =
                     StompHeaders::new(send_header_seed(&destination, content_type, custom_headers));
+                let message = InboundMessage {
+                    destination,
+                    body,
+                    headers,
+                };
 
-                self.route_send(&destination, body, headers, conn_id, connection, principal)
+                self.route_send(message, conn_id, connection, principal, reply)
                     .await;
                 self.send_receipt(tx, receipt).await;
 
@@ -393,15 +437,20 @@ impl Stomp {
     /// the frame headers and a session handle); any other destination is a direct broker publish.
     async fn route_send(
         &self,
-        destination: &str,
-        body: StompBody,
-        headers: StompHeaders,
+        message: InboundMessage,
         conn_id: ConnectionId,
         connection: &Arc<ScopeContainer>,
         principal: &StompPrincipal,
+        reply: ReplyContext<'_>,
     ) {
-        let Some(handler) = self.app_routes.get(destination) else {
-            self.broker.publish(destination, &body, &[]);
+        let InboundMessage {
+            destination,
+            body,
+            headers,
+        } = message;
+
+        let Some(handler) = self.app_routes.get(destination.as_str()) else {
+            self.broker.publish(&destination, &body, &[]);
 
             return;
         };
@@ -443,12 +492,77 @@ impl Stomp {
                 }
             }
 
+            Ok(StompOutcome::Reply(reply_body)) => {
+                self.deliver_reply(&destination, reply_body, &reply).await;
+            }
+
             Ok(StompOutcome::Nothing) => {}
 
             Err(error) => {
-                tracing::warn!(target: "overseerd::axum", %error, dest = destination, "STOMP handler failed");
+                tracing::warn!(target: "overseerd::axum", %error, dest = %destination, "STOMP handler failed");
+                self.deliver_error_reply(&error, &reply).await;
             }
         }
+    }
+
+    /// Routes a request handler's reply back to the requester on its own connection: a directed
+    /// `MESSAGE` to the frame's `reply-to`, carrying the `correlation-id` so the client demuxes it to
+    /// the awaiting call. A request handler that ran without a `reply-to` is a client bug — the reply
+    /// has nowhere to go, so it is logged and dropped.
+    async fn deliver_reply(&self, destination: &str, body: StompBody, reply: &ReplyContext<'_>) {
+        let Some(reply_to) = &reply.reply_to else {
+            tracing::warn!(
+                target: "overseerd::axum",
+                dest = destination,
+                "STOMP request handler returned a reply but the frame carried no `reply-to`; dropping"
+            );
+
+            return;
+        };
+
+        let extra_headers = reply.correlation_headers(&[]);
+
+        let message_id = self.broker.next_message_id();
+        let frame = build_message(
+            message_id,
+            reply_to,
+            REPLY_SUBSCRIPTION_ID,
+            &body,
+            &extra_headers,
+        );
+
+        let _ = reply.tx.send(frame).await;
+    }
+
+    /// Routes a request handler's *error* back to the requester as a directed `MESSAGE` marked with
+    /// the error header (and the `correlation-id`), so the client's awaiting call resolves `Err`
+    /// rather than hanging on a reply that will never come. A plain fire-and-forget `SEND` (no
+    /// `reply-to`) has no awaiting caller, so the error is only logged (by the caller) and nothing is
+    /// sent here.
+    async fn deliver_error_reply(&self, error: &WsDispatchError, reply: &ReplyContext<'_>) {
+        let Some(reply_to) = &reply.reply_to else {
+            return;
+        };
+
+        // Send only the stable public category to the peer; the detailed error was already logged
+        // by the caller (`STOMP handler failed`), so internal wiring never crosses the wire.
+        let body = StompBody {
+            content_type: Some("text/plain".to_owned()),
+            bytes: bytes::Bytes::from_static(error.public_message().as_bytes()),
+        };
+        let extra_headers =
+            reply.correlation_headers(&[(MESSAGE_ERROR_HEADER.to_owned(), "1".to_owned())]);
+
+        let message_id = self.broker.next_message_id();
+        let frame = build_message(
+            message_id,
+            reply_to,
+            REPLY_SUBSCRIPTION_ID,
+            &body,
+            &extra_headers,
+        );
+
+        let _ = reply.tx.send(frame).await;
     }
 
     /// Sends a `RECEIPT` for `receipt_id`, if the client requested one.
@@ -619,6 +733,45 @@ fn connected_frame(version: StompVersion, _config: &StompConfig) -> Vec<u8> {
 /// Serializes an `ERROR` frame carrying the error's message.
 fn error_frame(error: &StompError) -> Vec<u8> {
     ErrorFrame::from_message(&error.to_string()).into()
+}
+
+/// A decoded inbound `SEND`: the destination it targets, its body, and the header set seeded into
+/// the message scope for a handler. Groups the three frame-derived inputs `route_send` consumes.
+struct InboundMessage {
+    destination: String,
+    body: StompBody,
+    headers: StompHeaders,
+}
+
+/// Where a request handler's outcome (a reply or an error) is routed: the requester's own writer
+/// `tx`, plus the `reply-to` destination and `correlation-id` it supplied. A plain fire-and-forget
+/// `SEND` leaves `reply_to`/`correlation_id` `None`, so nothing is routed back.
+struct ReplyContext<'a> {
+    tx: &'a mpsc::Sender<OutFrame>,
+    reply_to: Option<String>,
+    correlation_id: Option<String>,
+}
+
+impl ReplyContext<'_> {
+    /// The reply's extra headers: `extra` (e.g. the error marker) plus the `correlation-id`, when
+    /// the request carried one, so the client demuxes the reply to the awaiting call.
+    fn correlation_headers(&self, extra: &[(String, String)]) -> Vec<(String, String)> {
+        let mut headers = extra.to_vec();
+
+        if let Some(id) = &self.correlation_id {
+            headers.push(("correlation-id".to_owned(), id.clone()));
+        }
+
+        headers
+    }
+}
+
+/// The first value of a custom header by (case-sensitive) name, cloned out of the parsed list.
+fn header_value(headers: &[(String, String)], name: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|(header_name, _)| header_name == name)
+        .map(|(_, value)| value.clone())
 }
 
 /// Builds the `StompHeaders` seed for an app `SEND`: `destination`, then `content-type` if

@@ -12,6 +12,7 @@
 //! sets up its own routing and the app never sees a route. The first bundled protocol is [`JsonWs`].
 
 mod json;
+pub mod pubsub;
 #[cfg(feature = "stomp")]
 pub mod stomp;
 
@@ -76,6 +77,19 @@ pub enum WsDispatchError {
     /// The handler's response could not be encoded.
     #[error("encoding ws response: {0}")]
     Encode(String),
+}
+
+impl WsDispatchError {
+    /// A stable, client-safe summary for a directed error reply. The detailed [`Display`] — which
+    /// can carry provider names (`Inject`) or decoder/encoder internals (`Decode`/`Encode`) — stays
+    /// in the server logs; an untrusted peer only learns the error category, never internal wiring.
+    pub fn public_message(&self) -> &'static str {
+        match self {
+            Self::NotFound(_) => "no handler for destination",
+            Self::Decode(_) => "invalid request payload",
+            Self::Inject(_) | Self::Encode(_) => "internal error",
+        }
+    }
 }
 
 /// One message route for protocol `P`: a destination string mapped to its handler. A
@@ -225,6 +239,39 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
         connection: Arc<ScopeContainer>,
         shutdown: WsShutdown,
     ) -> impl Future<Output = ()> + Send;
+}
+
+/// A [`WebsocketProtocol`] that carries topic pub/sub: it frames a delivered message for one
+/// subscriber. This is the server-side companion to [`MessagingProtocol`](crate::messaging::MessagingProtocol)
+/// (which supplies the wire body and default codec); together they let the neutral
+/// [`SubscriptionRegistry`](crate::ws::pubsub::SubscriptionRegistry) and
+/// [`TopicBus`](crate::ws::pubsub::TopicBus) fan out for any protocol. STOMP is one implementation;
+/// a new protocol adds its own `frame_message` without touching the registry/bus. Behind `ws` (not
+/// `stomp`), so a non-STOMP protocol implements it without enabling STOMP.
+pub trait PubSubProtocol: WebsocketProtocol + crate::messaging::MessagingProtocol {
+    /// The outbound frame this protocol delivers to a subscriber's writer task.
+    type OutFrame: Send + 'static;
+
+    /// Frames one delivery: the registry supplies a fresh `message_id` and the target's `sub_id`;
+    /// the protocol renders its wire frame from the encoded `body` and any extra `headers`.
+    fn frame_message(
+        message_id: u64,
+        destination: &str,
+        sub_id: &str,
+        body: &Self::Body,
+        headers: &[(String, String)],
+    ) -> Self::OutFrame;
+}
+
+/// A [`PubSubProtocol`] that can direct a point-to-point reply back to a requester — the server-side
+/// companion to the client's [`MessageRequest`](crate::client::MessageRequest). A `#[message]`
+/// handler that returns a non-unit value has its (codec-encoded) return wrapped by
+/// [`reply`](Self::reply) into an outcome the protocol routes to the *requester* (STOMP: via the
+/// inbound frame's `reply-to`/`correlation-id`), never broadcast. A handler returning `()` uses
+/// [`WsRespond`] instead, so a protocol without request/response simply never needs this.
+pub trait MessageReply: PubSubProtocol {
+    /// Wraps an already-encoded reply `body` into this protocol's outcome.
+    fn reply(body: Self::Body) -> Self::Outcome;
 }
 
 /// A connection-side graceful-shutdown signal. A protocol's [`serve`](WebsocketProtocol::serve) loop

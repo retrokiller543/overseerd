@@ -6,10 +6,14 @@
 //! protocol's [`Outcome`](crate::ws::WebsocketProtocol::Outcome): what a `#[message]` handler
 //! returns, either nothing or a set of fan-out [`Publish`]es.
 
-// The wire types (`StompBody`, `StompCodec`/`JsonCodec`, `Topic`, `TopicParam`) live in the
-// wasm-safe `crate::stomp` module so the browser client can name them too; re-exported here so the
-// broker's internal `crate::ws::stomp::*` paths and the crate's public surface are unchanged.
-pub use crate::stomp::{JsonCodec, StompBody, StompCodec, Topic, TopicParam};
+// The wire contract (the protocol capability traits, the pluggable codec, the `Topic` contract, and
+// STOMP's `StompBody`/`StompCodec`/`JsonCodec`) lives in the wasm-safe `crate::stomp` module so the
+// browser client can name it too; re-exported here so the broker's internal `crate::ws::stomp::*`
+// paths and the crate's public surface are unchanged.
+pub use crate::messaging::{
+    MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec, TopicParam,
+};
+pub use crate::stomp::{JsonCodec, StompBody, StompCodec};
 
 /// One outbound fan-out: a destination, its body, and any extra headers to attach to the `MESSAGE`.
 pub struct Publish {
@@ -44,4 +48,9 @@ pub enum StompOutcome {
 
     /// The handler asks the broker to fan these out.
     Publish(Vec<Publish>),
+
+    /// A point-to-point reply body, routed back to the requester (via the inbound frame's
+    /// `reply-to`/`correlation-id`) rather than broadcast. Produced by
+    /// [`MessageReply`](crate::ws::MessageReply) for a non-unit-returning `#[message]` handler.
+    Reply(StompBody),
 }

@@ -344,14 +344,17 @@ impl<T: ComponentExt> AxumRouter<T> {
             ident.to_string().to_uppercase()
         );
         let client_struct = client_struct(ident, docs);
-        // A `#[controller(ws = Stomp)]` gets a wasm SEND client over the shared STOMP socket. A
+        // A `#[controller(ws = <pub/sub protocol>)]` gets a wasm message client over the shared
+        // socket, resolved generically through `TopicWasmClient` for whatever protocol `P` is. A
         // JsonWs controller has no wasm ws transport yet, so it emits no wasm binding struct.
         let wasm_client_struct =
-            if cfg!(feature = "client") && crate::handlers::is_stomp_protocol(Some(protocol)) {
+            if cfg!(feature = "client") && crate::handlers::is_pubsub_protocol(Some(protocol)) {
                 crate::client::wasm_client_struct(
                     &format_ident!("{}Client", ident),
                     docs,
-                    crate::client::WasmBackend::Stomp,
+                    crate::client::WasmBackend::PubSub {
+                        protocol: protocol.clone(),
+                    },
                     paths,
                 )
             } else {

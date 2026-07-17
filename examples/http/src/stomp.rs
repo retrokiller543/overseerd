@@ -29,6 +29,14 @@ pub struct ChatMessage {
     pub text: String,
 }
 
+/// The reply to a request `#[message]`: a room and its message count after recording.
+#[dto]
+#[derive(Clone)]
+pub struct RoomCount {
+    pub room: String,
+    pub count: usize,
+}
+
 /// The chat broadcast topics — one static, one templated, in the same set.
 ///
 /// `Chat` is a global firehose: `/topic/chat` carries every room's messages (a subscriber filters
@@ -169,6 +177,35 @@ impl ChatHandler {
             })
             .await
     }
+
+    /// A **request/response** `#[message]` on the same pub/sub controller: it returns a value (not
+    /// `()`), so the generated client method awaits a correlated reply instead of being
+    /// fire-and-forget — and the reply goes only to the caller, never broadcast. Here it records the
+    /// message (like `on_chat`) and echoes back the room's new message count so the caller learns its
+    /// own position without subscribing.
+    #[message("/app/count")]
+    async fn count(&self, message: ChatMessage) -> Result<RoomCount, CodecError> {
+        self.state.record(&message);
+
+        let count = self
+            .state
+            .room(&message.room)
+            .map_or(0, |room| room.with_messages(<[ChatMessage]>::len));
+
+        Ok(RoomCount {
+            room: message.room,
+            count,
+        })
+    }
+
+    /// A **request** `#[message]` that always fails: it proves the error path routes back to the
+    /// caller. A request handler returning `Err` sends a directed *error* reply (not a broadcast, not
+    /// silence), so the client's awaiting call resolves `Err` on a live connection instead of hanging
+    /// forever waiting for a reply that never comes.
+    #[message("/app/reject")]
+    async fn reject(&self, _message: ChatMessage) -> Result<RoomCount, CodecError> {
+        Err(CodecError::internal("rejected by the handler".to_owned()))
+    }
 }
 
 /// The chat history REST surface (mounted under `/chat`), sharing the same [`ChatState`] the
@@ -213,124 +250,4 @@ impl ChatHistory {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use futures::StreamExt;
-    use overseerd::axum::client::StompClientTransport;
-    use overseerd::prelude::*;
-    use tokio::net::TcpListener;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn chat_message_is_recorded_and_broadcast() {
-        let app = app! {
-            name: "chat-test",
-            protocol: overseerd::axum::AxumPlugin,
-        }
-        .register_ws::<Stomp>("/ws/stomp")
-        .build()
-        .await
-        .expect("app builds");
-
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        let shutdown = app.shutdown_handle();
-        let server = tokio::spawn(async move { app.serve(listener).await });
-
-        let url = format!("ws://{addr}/ws/stomp");
-
-        // One connection, two typed facades: subscribe to the chat topic, then send to /app/chat.
-        let connection = StompClientTransport::connect(&url).await.expect("connects");
-
-        let mut chat = ChatTopicClient::new(connection.clone())
-            .subscribe_chat()
-            .await
-            .expect("subscribe_chat");
-
-        ChatHandlerClient::new(connection.clone())
-            .on_chat(ChatMessage {
-                room: "general".into(),
-                sender: "alice".into(),
-                text: "hello, room".into(),
-            })
-            .await
-            .expect("send chat");
-
-        let received = tokio::time::timeout(Duration::from_secs(5), chat.next())
-            .await
-            .expect("a broadcast before timeout")
-            .expect("the stream is live")
-            .expect("a decoded ChatMessage");
-
-        assert_eq!(received.room, "general");
-        assert_eq!(received.sender, "alice");
-        assert_eq!(received.text, "hello, room");
-
-        shutdown.shutdown();
-        let _ = server.await;
-    }
-
-    #[tokio::test]
-    async fn a_templated_room_subscription_gets_only_its_room() {
-        let app = app! {
-            name: "chat-room-test",
-            protocol: overseerd::axum::AxumPlugin,
-        }
-        .register_ws::<Stomp>("/ws/stomp")
-        .build()
-        .await
-        .expect("app builds");
-
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        let shutdown = app.shutdown_handle();
-        let server = tokio::spawn(async move { app.serve(listener).await });
-
-        let url = format!("ws://{addr}/ws/stomp");
-        let connection = StompClientTransport::connect(&url).await.expect("connects");
-
-        // The templated subscribe takes the room as a typed argument; it resolves to
-        // `/topic/room/general`, so only messages for that room arrive.
-        let mut general = ChatTopicClient::new(connection.clone())
-            .subscribe_room("general".into())
-            .await
-            .expect("subscribe_room");
-
-        let sender = ChatHandlerClient::new(connection.clone());
-
-        // A message to another room must NOT reach the `general` subscription.
-        sender
-            .on_chat(ChatMessage {
-                room: "random".into(),
-                sender: "bob".into(),
-                text: "elsewhere".into(),
-            })
-            .await
-            .expect("send to random");
-
-        sender
-            .on_chat(ChatMessage {
-                room: "general".into(),
-                sender: "alice".into(),
-                text: "for general".into(),
-            })
-            .await
-            .expect("send to general");
-
-        let received = tokio::time::timeout(Duration::from_secs(5), general.next())
-            .await
-            .expect("a broadcast before timeout")
-            .expect("the stream is live")
-            .expect("a decoded ChatMessage");
-
-        // The first message the `general` stream yields is the general one — the random-room message
-        // went to `/topic/room/random`, a different destination this subscription never saw.
-        assert_eq!(received.room, "general");
-        assert_eq!(received.text, "for general");
-
-        shutdown.shutdown();
-        let _ = server.await;
-    }
-}
+mod tests;

@@ -16,6 +16,7 @@ use syn::{
     ReturnType, Type, TypeParamBound, parse_quote,
 };
 
+use overseerd_macros_core::attr::first_type_arg;
 use overseerd_macros_core::client::ClientMethod;
 use overseerd_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
 use overseerd_macros_core::methods::self_ty_ident;
@@ -49,18 +50,25 @@ pub struct AxumHandlers {
     /// wrapper folds the header argument onto the plain method instead.
     header_methods: Vec<ClientMethod>,
 
+    /// Accumulated OpenAPI operation-registration token blocks, one per non-streaming HTTP route
+    /// (during [`ParseMethod`], only with the `openapi` feature). Emitted after the route group in
+    /// [`ToTokens`]; each registers a `utoipa`-generated operation into the runtime slice.
+    openapi_ops: Vec<TokenStream>,
+
     /// Accumulated per `#[message]` ws handler method (during [`ParseMethod`]). A block is either
     /// HTTP (`routes`) or WebSocket (`ws_routes`); mixing the two is a compile error.
     ws_routes: Vec<WsRouteSpec>,
 
     /// `ws = P` — the WebSocket protocol this handlers block speaks, mirroring
     /// `#[controller(ws = P)]`. It selects how `#[message]` *client* methods are generated: the
-    /// default (`None`) / `JsonWs` emits request/reply methods; `Stomp` emits typed `SEND` methods.
+    /// default (`None`) / `JsonWs` emits request/reply methods; a pub/sub protocol (`Stomp`, …) emits
+    /// per-message SEND or request methods (chosen by each handler's return type).
     ws_protocol: Option<syn::Path>,
 
-    /// `codec = C` — the STOMP body codec for this block's `#[message]` SENDs (default `JsonCodec`).
-    /// Encodes the payload on the generated client method and decodes it in the server handler, so
-    /// the SEND path is codec-agnostic and symmetric. Ignored for a `JsonWs` block.
+    /// `codec = C` — the pub/sub body codec for this block's `#[message]`s (default: the protocol's
+    /// [`MessagingProtocol::DefaultCodec`]). Encodes the payload on the generated client method and
+    /// decodes it in the server handler (and encodes/decodes a request reply), so the message path is
+    /// codec-agnostic and symmetric. Ignored for a `JsonWs` block.
     ws_codec: Option<syn::Path>,
 }
 
@@ -158,38 +166,69 @@ impl ParseMethod for AxumHandlers {
         // contributes no HTTP `ClientMethod` hint (the ws client comes from the ws transport).
         if let Some(pos) = method.attrs.iter().position(route::is_message_attr) {
             let attr = method.attrs.remove(pos);
-            let destination = route::parse_message_attr(&attr)?;
+            let args = route::parse_message_attr(&attr)?;
+            let destination = &args.destination;
 
             let cx = self
                 .context
                 .as_ref()
                 .expect("AxumHandlers::parse_item runs before parse_method");
-            let is_stomp = is_stomp_protocol(self.ws_protocol.as_ref());
+            let is_pubsub = is_pubsub_protocol(self.ws_protocol.as_ref());
 
-            // The STOMP payload codec (block `codec = ..`, default `JsonCodec`) drives both the
-            // server decode and the client SEND encode, so they stay symmetric. A JsonWs block has
-            // no codec seam (its `WsCodec` is JSON), so pass `None` there.
-            let stomp_codec = is_stomp.then(|| self.resolve_stomp_codec(&cx.paths));
+            // A pub/sub message is a fire-and-forget SEND when its handler returns `()`, or a
+            // request/response when it returns a value — inferred from the return type (like RPC
+            // capability inference), overridable with `#[message(.., send|request)]`. A JsonWs block
+            // is always request/reply, so the mode does not apply.
+            let is_request = is_pubsub && resolve_message_reply(args.mode, &method.sig.output)?;
+
+            // A pub/sub protocol's payload codec (block `codec = ..`, default the protocol's
+            // `DefaultCodec`) drives both the server decode and the client SEND/request encode, so
+            // they stay symmetric. A JsonWs block has no codec seam (its `WsCodec` is JSON), so `None`.
+            let pubsub_codec = is_pubsub.then(|| self.resolve_pubsub_codec(&cx.paths));
             let spec = build_ws_route(
                 &cx.self_ty,
                 method,
-                &destination,
-                stomp_codec.as_ref(),
+                destination,
+                pubsub_codec.as_ref(),
+                is_request,
                 &cx.paths,
             )?;
 
-            // The client method's shape depends on the protocol: STOMP emits a fire-and-forget
-            // typed SEND (payload encoded via the codec); JsonWs emits a request/reply call.
-            let hint = if is_stomp {
-                let codec = stomp_codec.expect("STOMP block resolves a codec");
+            // The client method's shape depends on the protocol and mode: a pub/sub SEND is
+            // fire-and-forget; a pub/sub request awaits a decoded reply; JsonWs emits a request/reply
+            // call. Both pub/sub shapes encode the payload via the block's codec.
+            let hint = if is_pubsub {
+                let codec = pubsub_codec.expect("pub/sub block resolves a codec");
+                let protocol = self
+                    .ws_protocol
+                    .as_ref()
+                    .expect("pub/sub block has a protocol");
 
-                build_stomp_send_method(&method.sig.ident, method, &destination, &codec, &cx.paths)?
+                if is_request {
+                    build_message_request_method(
+                        &method.sig.ident,
+                        method,
+                        destination,
+                        protocol,
+                        &codec,
+                        &cx.paths,
+                    )?
+                } else {
+                    build_message_send_method(
+                        &method.sig.ident,
+                        method,
+                        destination,
+                        protocol,
+                        &codec,
+                        &cx.paths,
+                    )?
+                }
             } else {
                 build_ws_client_method(
                     &cx.self_ident,
                     &method.sig.ident,
                     method,
-                    &destination,
+                    destination,
                     &cx.paths,
                 )?
             };
@@ -212,6 +251,16 @@ impl ParseMethod for AxumHandlers {
 
         let attr = method.attrs.remove(pos);
         let route_attr = route::parse_route_attr(&attr)?;
+
+        // Claim any `#[openapi(..)]` passthrough now (removing it so it never reaches the emitted
+        // method as an unknown attribute), and snapshot the doc comments for the operation summary.
+        let openapi_extra = crate::openapi::take_openapi_attr(method)?;
+        let openapi_docs: Vec<syn::Attribute> = method
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("doc"))
+            .cloned()
+            .collect();
 
         // `parse_item` runs before the method walk, so the context is always present.
         let cx = self
@@ -308,6 +357,24 @@ impl ParseMethod for AxumHandlers {
 
         let server_wrap = stream_return.as_ref().and_then(|s| s.server_wrap.as_ref());
         let in_result = stream_return.as_ref().is_some_and(|s| s.in_result);
+        // OpenAPI: document the route unless it streams (a streamed body/return is not a single
+        // `Dto` payload, so it has no straightforward schema). Built from the same classified inputs
+        // the client uses; `None` without the `openapi` feature. Built before `build_route` consumes
+        // the borrows so the operation reads the method's original signature.
+        let openapi_op = if stream_param.is_none() && stream_return.is_none() {
+            crate::openapi::operation_tokens(
+                &cx.self_ty,
+                &cx.self_ident,
+                method,
+                &route_attr,
+                &openapi_docs,
+                openapi_extra,
+                &cx.paths,
+            )
+        } else {
+            None
+        };
+
         let spec = build_route(
             &cx.self_ty,
             method,
@@ -319,14 +386,19 @@ impl ParseMethod for AxumHandlers {
         )?;
         self.routes.push(spec);
 
+        if let Some(op) = openapi_op {
+            self.openapi_ops.push(op);
+        }
+
         Ok(hint)
     }
 
     /// The axum extension's client-side extras: the `Dto` wire-type assertions and the wasm
     /// `#[wasm_bindgen]` binding methods. The wasm backend is chosen by the block's protocol — a
-    /// STOMP block's `SEND` methods bind over the STOMP socket, an HTTP block over the fetch client,
-    /// and a JsonWs request/reply block has no wasm transport yet (`None`). The extension owns this
-    /// target gating, so the framework core never learns about wasm.
+    /// pub/sub block's message methods bind over the protocol's socket (generically, via
+    /// `TopicWasmClient`), an HTTP block over the fetch client, and a JsonWs request/reply block has
+    /// no wasm transport yet (`None`). The extension owns this target gating, so the framework core
+    /// never learns about wasm.
     fn extra_client_tokens(
         &self,
         client_ident: &Ident,
@@ -334,7 +406,11 @@ impl ParseMethod for AxumHandlers {
         paths: &Paths,
     ) -> TokenStream {
         let backend = match &self.ws_protocol {
-            Some(protocol) if is_stomp_protocol(Some(protocol)) => Some(client::WasmBackend::Stomp),
+            Some(protocol) if is_pubsub_protocol(Some(protocol)) => {
+                Some(client::WasmBackend::PubSub {
+                    protocol: protocol.clone(),
+                })
+            }
             // A JsonWs request/reply block: no wasm ws transport yet.
             Some(_) => None,
             None => Some(client::WasmBackend::Http),
@@ -469,6 +545,13 @@ impl ToTokens for AxumHandlers {
                     fn(::std::sync::Arc<#self_ty>, & #app_runtime) -> #axum::Router =
                     __overseerd_axum_route_group;
             };
+        });
+
+        // OpenAPI operation registrations, one per non-streaming route (empty without the `openapi`
+        // feature). Each is its own `const _` block registering into the runtime operation slice.
+        let openapi_ops = &self.openapi_ops;
+        out.extend(quote! {
+            #(#openapi_ops)*
         });
     }
 }
@@ -662,7 +745,8 @@ fn build_ws_route(
     self_ty: &Type,
     method: &ImplItemFn,
     destination: &LitStr,
-    stomp_codec: Option<&TokenStream>,
+    pubsub_codec: Option<&TokenStream>,
+    is_request: bool,
     paths: &Paths,
 ) -> syn::Result<WsRouteSpec> {
     let takes_self = matches!(method.sig.inputs.first(), Some(FnArg::Receiver(_)));
@@ -728,14 +812,15 @@ fn build_ws_route(
 
                 payload_seen = true;
 
-                // STOMP decodes the body via the block's codec (symmetric with the client SEND
-                // encode); every other protocol uses its `WsCodec` (JsonWs = JSON).
-                let decode = match stomp_codec {
+                // A pub/sub protocol decodes the body via the block's codec (symmetric with the
+                // client SEND encode) through the protocol-generic `TopicCodec<P>`; every other
+                // protocol uses its `WsCodec` (JsonWs = JSON).
+                let decode = match pubsub_codec {
                     Some(codec) => {
-                        let stomp_codec_trait = paths.plugin("StompCodec");
+                        let topic_codec_trait = paths.plugin("TopicCodec");
 
                         quote!(
-                            <#codec as #stomp_codec_trait>::decode::<#ty>(__payload)
+                            <#codec as #topic_codec_trait<#proto>>::decode::<#ty>(__payload)
                                 .map_err(|__e| #dispatch_error::Decode(::std::string::ToString::to_string(&__e)))?
                         )
                     }
@@ -768,13 +853,36 @@ fn build_ws_route(
         quote!(<#self_ty>::#method_ident(#(#call_args),*)#dotawait)
     };
 
-    // The handler's raw return type — the whole value the method yields, turned into the protocol's
-    // outcome by `WsRespond`. Not `client::response_type` (which peels `Result`/`Json`): a ws
-    // handler returns a plain serializable value, and `respond` receives it whole.
-    let response_ty = match &method.sig.output {
-        ReturnType::Type(_, ty) => (**ty).clone(),
+    // Turn the handler's return into the protocol outcome. A request/response `#[message]` (pub/sub,
+    // non-unit return) encodes the return via the block codec and routes it back to the caller
+    // through `MessageReply`; every other case hands the whole return to `WsRespond` (a SEND yields
+    // `Nothing`, a JsonWs reply yields its correlated frame).
+    let outcome_expr = if is_request {
+        let codec = pubsub_codec.expect("a request message is pub/sub, so a codec is resolved");
+        let topic_codec = paths.plugin("TopicCodec");
+        let message_reply = paths.plugin("MessageReply");
 
-        ReturnType::Default => parse_quote!(()),
+        // The reply body is the handler's success value, peeled the same way the client decodes it
+        // (`client::response_type` peels `Result` then `Json`) so the two stay in lock-step.
+        let ok_value = message_reply_ok_value(&method.sig.output, &dispatch_error);
+
+        quote! {
+            let __ok = #ok_value;
+            let __body = <#codec as #topic_codec<#proto>>::encode(&__ok)
+                .map_err(|__e| #dispatch_error::Encode(::std::string::ToString::to_string(&__e)))?;
+
+            ::core::result::Result::Ok(<#proto as #message_reply>::reply(__body))
+        }
+    } else {
+        // The whole value the method yields, handed to `WsRespond` unchanged. Not
+        // `client::response_type` (which peels `Result`/`Json`): `respond` receives it whole.
+        let response_ty = match &method.sig.output {
+            ReturnType::Type(_, ty) => (**ty).clone(),
+
+            ReturnType::Default => parse_quote!(()),
+        };
+
+        quote!(<#proto as #ws_respond<#response_ty>>::respond(__resp))
     };
 
     let builder = quote! {{
@@ -791,7 +899,7 @@ fn build_ws_route(
                         #(#bindings)*
                         let __resp = #invoke;
 
-                        <#proto as #ws_respond<#response_ty>>::respond(__resp)
+                        #outcome_expr
                     })
                 },
             ),
@@ -829,60 +937,85 @@ fn ws_payload_type(method: &ImplItemFn) -> syn::Result<Option<Type>> {
     Ok(payload)
 }
 
-/// Whether a `ws = P` names the STOMP protocol, by the path's last segment. Shared with the
-/// controller macro (`router.rs`) to pick the wasm SEND-client backend.
-pub(crate) fn is_stomp_protocol(protocol: Option<&syn::Path>) -> bool {
-    protocol
-        .and_then(|path| path.segments.last())
-        .is_some_and(|segment| segment.ident == "Stomp")
+/// The built-in **request/reply** WebSocket protocols, by the last segment of their path. This is
+/// only the "does this protocol have a topic/message codec seam" signal (pub/sub vs request/reply):
+/// the SEND-vs-request decision is per-`#[message]`, from the handler's return type, not per
+/// protocol. The macro can't run trait resolution to know a protocol's shape, so it treats these as
+/// request/reply and **every other** `ws = P` (STOMP, WAMP, a user's own protocol) as pub/sub — so a
+/// user-defined pub/sub protocol gets topic codegen with no macro change. `JsonWs` is the
+/// framework's built-in request/reply protocol; a user request/reply protocol adds one entry here.
+pub(crate) fn request_reply_protocols() -> &'static [&'static str] {
+    &["JsonWs"]
+}
+
+/// Whether a `ws = P` block is pub/sub (topic-bearing): true for any protocol that is not a known
+/// request/reply one. A `#[message]` block always names a protocol, so `None` (not a ws block) is
+/// not pub/sub.
+pub(crate) fn is_pubsub_protocol(protocol: Option<&syn::Path>) -> bool {
+    match protocol.and_then(|path| path.segments.last()) {
+        Some(segment) => !request_reply_protocols()
+            .iter()
+            .any(|name| segment.ident == name),
+
+        None => false,
+    }
 }
 
 impl AxumHandlers {
-    /// The STOMP body codec for this block as a token stream: the `codec = ..` path, or `JsonCodec`.
-    fn resolve_stomp_codec(&self, paths: &Paths) -> TokenStream {
+    /// The pub/sub body codec for this block as a token stream: the block's `codec = ..` path, or —
+    /// when unset — the protocol's own [`MessagingProtocol::DefaultCodec`], matching `#[topics]`. Keying
+    /// the default off the protocol (not a hardcoded `JsonCodec`) keeps a non-STOMP protocol's SEND
+    /// and subscribe codecs aligned.
+    fn resolve_pubsub_codec(&self, paths: &Paths) -> TokenStream {
         match &self.ws_codec {
             Some(path) => quote!(#path),
 
             None => {
-                let json_codec = paths.plugin("JsonCodec");
+                let topic_protocol = paths.plugin("MessagingProtocol");
+                let protocol = self
+                    .ws_protocol
+                    .as_ref()
+                    .expect("pub/sub block has a protocol");
 
-                quote!(#json_codec)
+                quote!(<#protocol as #topic_protocol>::DefaultCodec)
             }
         }
     }
 }
 
-/// Builds the generated typed STOMP `SEND` client method for a `#[message("dest")]` handler: a
-/// fire-and-forget `fn(&self, payload) -> Result<(), ClientError<StompStatus>>` bound on
-/// `C: StompSend`, with the destination baked in. The payload is encoded to a `StompBody` by the
+/// Builds the generated typed pub/sub `SEND` client method for a `#[message("dest")]` handler: a
+/// fire-and-forget `fn(&self, payload) -> Result<(), ClientError<P::Status>>` bound on
+/// `C: MessageSend<P>`, with the destination baked in. The payload is encoded to `P::Body` by the
 /// block's `codec` (so the SEND path is codec-agnostic, matching the server decode); a no-payload
-/// method sends an empty body. Mirrors the JsonWs precedent ([`build_ws_client_method`]).
-fn build_stomp_send_method(
+/// method sends the protocol body's default. Mirrors the JsonWs precedent ([`build_ws_client_method`]).
+fn build_message_send_method(
     method_ident: &Ident,
     method: &ImplItemFn,
     destination: &LitStr,
+    protocol: &syn::Path,
     codec: &TokenStream,
     paths: &Paths,
 ) -> syn::Result<Option<ClientMethod>> {
     let payload = ws_payload_type(method)?;
     let client_error = paths.client("ClientError");
-    let stomp_send = paths.plugin("client::StompSend");
-    let stomp_status = paths.plugin("client::StompStatus");
-    let stomp_codec = paths.plugin("StompCodec");
-    let stomp_body = paths.plugin("StompBody");
+    let message_send = paths.plugin("client::MessageSend");
+    let topic_client_protocol = paths.plugin("MessagingClientProtocol");
+    let topic_protocol = paths.plugin("MessagingProtocol");
+    let topic_codec = paths.plugin("TopicCodec");
 
-    // Encode the payload to a body via the codec, or send an empty body for a no-payload method.
+    // Encode the payload to the protocol body via the codec, or send the body's default for a
+    // no-payload method.
     let (request, encode_body) = match payload {
         Some(ty) => (
             Some(ty),
             quote!(
-                <#codec as #stomp_codec>::encode(&request)
+                <#codec as #topic_codec<#protocol>>::encode(&request)
                     .map_err(|__e| #client_error::Encode(::std::string::ToString::to_string(&__e)))?
             ),
         ),
         None => (
             None,
-            quote!(<#stomp_body as ::core::default::Default>::default()),
+            quote!(<<#protocol as #topic_protocol>::Body as ::core::default::Default>::default()),
         ),
     };
 
@@ -903,16 +1036,145 @@ fn build_stomp_send_method(
         response_mapper: None,
         trailing_args: ::std::vec::Vec::new(),
         attrs: ::std::vec::Vec::new(),
-        override_bounds: Some(quote!( C: #stomp_send )),
+        override_bounds: Some(quote!( C: #message_send<#protocol> )),
         override_ret: Some(quote!(
-            ::core::result::Result<(), #client_error<#stomp_status>>
+            ::core::result::Result<(), #client_error<<#protocol as #topic_client_protocol>::Status>>
         )),
         override_body: Some(quote!({
             let __body = #encode_body;
 
-            <C as #stomp_send>::stomp_send(&self.0, #destination, __body).await
+            <C as #message_send<#protocol>>::send(&self.0, #destination, __body).await
         })),
     }))
+}
+
+/// Builds the generated typed pub/sub **request/response** client method for a non-unit-returning
+/// `#[message("dest")]` handler: `fn(&self, payload) -> Result<R, ClientError<P::Status>>` bound on
+/// `C: MessageRequest<P>`. The payload is encoded and the reply decoded with the block's `codec`
+/// (symmetric with the server), so the transport stays codec-agnostic. The request/response
+/// companion to [`build_message_send_method`].
+fn build_message_request_method(
+    method_ident: &Ident,
+    method: &ImplItemFn,
+    destination: &LitStr,
+    protocol: &syn::Path,
+    codec: &TokenStream,
+    paths: &Paths,
+) -> syn::Result<Option<ClientMethod>> {
+    let payload = ws_payload_type(method)?;
+    let response = client::response_type(&method.sig.output);
+    let client_error = paths.client("ClientError");
+    let message_request = paths.plugin("client::MessageRequest");
+    let topic_client_protocol = paths.plugin("MessagingClientProtocol");
+    let topic_protocol = paths.plugin("MessagingProtocol");
+    let topic_codec = paths.plugin("TopicCodec");
+
+    // Encode the payload to the protocol body via the codec, or send the body's default for a
+    // no-payload request.
+    let (request, encode_body) = match payload {
+        Some(ty) => (
+            Some(ty),
+            quote!(
+                <#codec as #topic_codec<#protocol>>::encode(&request)
+                    .map_err(|__e| #client_error::Encode(::std::string::ToString::to_string(&__e)))?
+            ),
+        ),
+        None => (
+            None,
+            quote!(<<#protocol as #topic_protocol>::Body as ::core::default::Default>::default()),
+        ),
+    };
+
+    Ok(Some(ClientMethod {
+        ident: method_ident.clone(),
+        path: String::new(),
+        capability: overseerd_macros_core::client::Capability::Unary,
+        request,
+        encode_as: None,
+        req_item: None,
+        resp_item: None,
+        response: response.clone(),
+        error_ty: None,
+        extra_args: Vec::new(),
+        request_envelope: None,
+        request_builder: None,
+        response_envelope: None,
+        response_mapper: None,
+        trailing_args: ::std::vec::Vec::new(),
+        attrs: ::std::vec::Vec::new(),
+        override_bounds: Some(quote!( C: #message_request<#protocol> )),
+        override_ret: Some(quote!(
+            ::core::result::Result<#response, #client_error<<#protocol as #topic_client_protocol>::Status>>
+        )),
+        override_body: Some(quote!({
+            let __body = #encode_body;
+            let __reply =
+                <C as #message_request<#protocol>>::request(&self.0, #destination, __body).await?;
+
+            <#codec as #topic_codec<#protocol>>::decode::<#response>(__reply)
+                .map_err(|__e| #client_error::Decode(::std::string::ToString::to_string(&__e)))
+        })),
+    }))
+}
+
+/// Whether a `#[message]` handler is request/response — its return is routed back to the caller.
+/// An explicit `#[message(.., request|send)]` wins; otherwise a non-unit return type infers a
+/// request (mirroring RPC capability inference). `#[message(request)]` on a unit return is an error.
+fn resolve_message_reply(mode: route::MessageMode, output: &ReturnType) -> syn::Result<bool> {
+    let returns_value = !is_unit_type(&client::response_type(output));
+
+    match mode {
+        route::MessageMode::Send => Ok(false),
+
+        route::MessageMode::Request => {
+            if !returns_value {
+                return Err(syn::Error::new_spanned(
+                    output,
+                    "#[message(request)] needs a non-unit return type to reply with",
+                ));
+            }
+
+            Ok(true)
+        }
+
+        route::MessageMode::Infer => Ok(returns_value),
+    }
+}
+
+/// Whether `ty` is the unit tuple `()`.
+fn is_unit_type(ty: &Type) -> bool {
+    matches!(ty, Type::Tuple(tuple) if tuple.elems.is_empty())
+}
+
+/// The expression that turns a request handler's return (`__resp`) into the success value the
+/// client decodes, peeling exactly what [`client::response_type`] peels: a `Result` (its error
+/// becomes an encode failure) then a `Json<T>` wrapper (unwrapped to its inner `T`). Keeping the two
+/// peels in lock-step keeps the server's reply encoding symmetric with the client's decode.
+///
+/// Detection keys on the literal `Result`/`Json` path segments, so a type alias
+/// (`type MyResult<T> = Result<T, E>`) is not seen through — the handler must return a bare
+/// `Result`/`Json` (or annotate `#[message(send|request)]`); this matches the RPC macro's behavior.
+fn message_reply_ok_value(output: &ReturnType, dispatch_error: &syn::Path) -> TokenStream {
+    let ty = match output {
+        ReturnType::Type(_, ty) => (**ty).clone(),
+
+        ReturnType::Default => return quote!(__resp),
+    };
+
+    let mut expr = quote!(__resp);
+    let inner = if let Some(ok) = first_type_arg(&ty, "Result") {
+        expr = quote!((#expr).map_err(|__e| #dispatch_error::Encode(::std::string::ToString::to_string(&__e)))?);
+
+        ok
+    } else {
+        ty
+    };
+
+    if first_type_arg(&inner, "Json").is_some() {
+        expr = quote!((#expr).0);
+    }
+
+    expr
 }
 
 /// Builds the generated typed websocket client method for one `#[message("dest")]` handler.

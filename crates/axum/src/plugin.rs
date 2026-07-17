@@ -85,6 +85,13 @@ impl Plugin for AxumPlugin {
             .push(ConfigBinding::of::<AxumConfig>(AXUM_CONFIG_PATH));
         registry.components.push(REQUEST_META_DESCRIPTOR);
 
+        #[cfg(feature = "openapi")]
+        registry
+            .config_bindings
+            .push(ConfigBinding::of::<crate::OpenApiConfig>(
+                crate::AXUM_OPENAPI_CONFIG_PATH,
+            ));
+
         #[cfg(feature = "stomp")]
         {
             registry
@@ -216,12 +223,59 @@ impl ProtocolPlugin for AxumPlugin {
             },
         ));
 
+        // One canonical prefix drives both the OpenAPI server/UI URLs and the router nesting, so the
+        // documented server, the spec URL a UI fetches, and the actual route all agree.
+        let base_prefix = normalize_base_path(&config_snapshot.base_path);
+
+        // The OpenAPI surface (spec + UI) is mounted *outside* the scope layer: it is static and
+        // needs no per-request DI scope. Built once from the link-time operation/schema slices.
+        #[cfg(feature = "openapi")]
+        let router = {
+            let openapi_config = runtime
+                .root()
+                .config::<crate::OpenApiConfig>(crate::AXUM_OPENAPI_CONFIG_PATH)
+                .expect("OpenApiConfig missing from config store; AxumPlugin should register it")
+                .snapshot();
+
+            crate::openapi::mount(router, &openapi_config, &base_prefix)?
+        };
+
+        // A configured `base_path` nests the whole application (controllers + OpenAPI) under one
+        // prefix. Nesting preserves the inner router's layers, so the scope layer still applies.
+        let router = nest_base_path(router, &base_prefix);
+
         let axum = Axum::new(router, config);
 
         #[cfg(feature = "ws")]
         let axum = axum.with_ws_endpoints(ws_endpoints);
 
         Ok(axum)
+    }
+}
+
+/// Nests `router` under an already-[normalized](normalize_base_path) global prefix. An empty prefix
+/// returns the router unchanged (mounted at the root); otherwise the whole router is nested beneath
+/// it, so every route is served under it.
+fn nest_base_path(router: axum::Router, prefix: &str) -> axum::Router {
+    if prefix.is_empty() {
+        router
+    } else {
+        axum::Router::new().nest(prefix, router)
+    }
+}
+
+/// Canonicalizes a configured `base_path` into a mount prefix: surrounding slashes trimmed and a
+/// single leading `/` ensured, so `api`, `/api`, and `api/` all become `/api`. An empty or `"/"`
+/// path yields an empty string (mounted at the root). This guarantees the prefix is a valid
+/// [`axum::Router::nest`] path — an unnormalized value like `api` would otherwise panic at
+/// construction rather than serving under `/api`.
+fn normalize_base_path(base_path: &str) -> String {
+    let trimmed = base_path.trim_matches('/');
+
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("/{trimmed}")
     }
 }
 

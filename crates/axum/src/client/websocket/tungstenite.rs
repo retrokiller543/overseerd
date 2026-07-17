@@ -183,6 +183,7 @@ fn clone_client_error(error: &ClientError<WsStatus>) -> ClientError<WsStatus> {
             ClientError::Remote(ErrorBody::new(body.code(), body.raw().to_vec()))
         }
         ClientError::ConnectionClosed => ClientError::ConnectionClosed,
+        ClientError::Timeout => ClientError::Timeout,
     }
 }
 
