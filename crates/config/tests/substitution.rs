@@ -261,6 +261,85 @@ fn long_linear_chain_fails_with_depth_error_not_overflow() {
 }
 
 #[test]
+fn exponential_fan_out_stops_at_a_deterministic_resource_budget() {
+    #[derive(Debug, Deserialize)]
+    struct Cfg {
+        value: String,
+    }
+
+    let mut entries = vec![("l0".to_string(), s(&"A".repeat(1024)))];
+
+    for level in 1..=8 {
+        let previous = format!("l{}", level - 1);
+        let expansion = format!("${{{previous}}}").repeat(16);
+        entries.push((format!("l{level}"), s(&expansion)));
+    }
+
+    entries.push(("value".to_string(), s("${l8}")));
+
+    let tree = ConfigValue::Table(entries);
+    let error = from_value::<Cfg>(&tree, &resolvers(&[])).unwrap_err();
+
+    assert!(matches!(
+        kind(&error),
+        TemplateErrorKind::ResolutionBudgetExceeded { .. }
+            | TemplateErrorKind::RenderedOutputTooLarge { .. }
+    ));
+}
+
+#[test]
+fn rendered_output_budget_is_aggregate_across_one_typed_binding() {
+    #[derive(Debug, Deserialize)]
+    struct Cfg {
+        first: String,
+        second: String,
+    }
+
+    let large = "x".repeat(600_000);
+    let tree = table(vec![
+        ("first", s(&large)),
+        ("second", s(&format!("${{VALUE:{large}}}"))),
+    ]);
+    let error = from_value::<Cfg>(&tree, &resolvers(&[])).unwrap_err();
+
+    assert!(matches!(
+        kind(&error),
+        TemplateErrorKind::RenderedOutputTooLarge { .. }
+    ));
+}
+
+#[test]
+fn rejected_resolver_values_are_redacted_from_errors() {
+    #[derive(Debug, Deserialize)]
+    struct Cfg {
+        count: u8,
+    }
+
+    let secret = "postgres://user:hunter2@db/internal";
+    let tree = table(vec![("count", s("${SECRET}"))]);
+    let error = from_value::<Cfg>(&tree, &resolvers(&[("SECRET", secret)])).unwrap_err();
+    let rendered = error.to_string();
+
+    assert!(!rendered.contains(secret));
+    assert!(!rendered.contains("hunter2"));
+    assert!(rendered.contains("cannot parse resolved value as u8"));
+}
+
+#[test]
+fn out_of_range_resolver_values_are_also_redacted() {
+    #[derive(Debug, Deserialize)]
+    struct Cfg {
+        count: u8,
+    }
+
+    let secret = "123456789012345678";
+    let tree = table(vec![("count", s("${SECRET}"))]);
+    let error = from_value::<Cfg>(&tree, &resolvers(&[("SECRET", secret)])).unwrap_err();
+
+    assert!(!error.to_string().contains(secret));
+}
+
+#[test]
 fn absolute_path_resolves_against_full_root_from_subtree() {
     // Deserializing the `app.server` subtree must still resolve the absolute path
     // `${app.server.port}` against the whole tree, not the subtree.

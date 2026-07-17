@@ -9,6 +9,16 @@ use crate::value::{ConfigStr, ConfigValue, Placeholder, Segment, lookup_path};
 /// fails with a clear error instead of overflowing the stack.
 const MAX_RESOLUTION_DEPTH: usize = 64;
 
+/// Caps aggregate placeholder lookups across one complete configuration
+/// deserialization. This bounds breadth as well as depth, preventing acyclic fan-out
+/// across multiple fields from consuming unbounded CPU.
+const MAX_DESERIALIZATION_RESOLUTION_STEPS: usize = 4_096;
+
+/// Caps aggregate bytes appended across every template rendered by one complete
+/// configuration deserialization. Accounting deliberately includes nested expansions
+/// and separate fields, bounding total allocation work for the binding.
+const MAX_DESERIALIZATION_RENDERED_BYTES: usize = 1_048_576;
+
 /// Resolves a placeholder key to a raw string from one source (environment, an
 /// in-memory overlay, ...).
 ///
@@ -52,8 +62,16 @@ impl ResolverChain {
     }
 }
 
-/// Per-run resolution context: the root tree (for property-path references), the
-/// resolver chain, and an in-flight key stack for cycle detection.
+/// One placeholder result observed by the exact typed deserialization pass that
+/// produced a config value.
+#[derive(Clone, PartialEq)]
+pub(crate) struct ResolvedDependency {
+    pub(crate) placeholder: Placeholder,
+    pub(crate) value: String,
+}
+
+/// Per-deserialization resolution context: the root tree (for property-path
+/// references), resolver chain, aggregate work counters, and an in-flight key stack.
 ///
 /// Holds only borrows plus a small stack, so constructing one per deserialization
 /// (including per hot-reload) is cheap and side-effect-free.
@@ -61,6 +79,9 @@ pub struct ResolveCtx<'cfg, 'r> {
     root: &'cfg ConfigValue,
     resolvers: &'r ResolverChain,
     in_flight: Vec<String>,
+    resolution_steps: usize,
+    rendered_bytes: usize,
+    resolved_dependencies: Vec<ResolvedDependency>,
 }
 
 impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
@@ -70,14 +91,56 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
             root,
             resolvers,
             in_flight: Vec::new(),
+            resolution_steps: 0,
+            rendered_bytes: 0,
+            resolved_dependencies: Vec::new(),
         }
+    }
+
+    pub(crate) fn into_resolved_dependencies(self) -> Vec<ResolvedDependency> {
+        self.resolved_dependencies
+    }
+
+    fn record_resolved(&mut self, placeholder: &Placeholder, value: &str) {
+        self.resolved_dependencies.push(ResolvedDependency {
+            placeholder: placeholder.clone(),
+            value: value.to_string(),
+        });
+    }
+
+    fn consume_step(&mut self) -> Result<(), TemplateError> {
+        self.resolution_steps = self.resolution_steps.saturating_add(1);
+
+        if self.resolution_steps > MAX_DESERIALIZATION_RESOLUTION_STEPS {
+            return Err(TemplateErrorKind::ResolutionBudgetExceeded {
+                limit: MAX_DESERIALIZATION_RESOLUTION_STEPS,
+            }
+            .into());
+        }
+
+        Ok(())
+    }
+
+    fn consume_bytes(&mut self, bytes: usize) -> Result<(), TemplateError> {
+        self.rendered_bytes = self.rendered_bytes.saturating_add(bytes);
+
+        if self.rendered_bytes > MAX_DESERIALIZATION_RENDERED_BYTES {
+            return Err(TemplateErrorKind::RenderedOutputTooLarge {
+                limit: MAX_DESERIALIZATION_RENDERED_BYTES,
+            }
+            .into());
+        }
+
+        Ok(())
     }
 
     /// Resolves one placeholder to its raw string, applying cycle detection, the
     /// namespace (`@`) / dotted-path / uppercase-heuristic precedence, the inline
     /// default, and finally a missing-value error.
-    #[tracing::instrument(target = "overseerd::config", level = "trace", skip(self), fields(key = %p.key))]
+    #[tracing::instrument(target = "overseerd::config", level = "trace", skip_all, fields(key = %p.key))]
     pub(crate) fn resolve_placeholder(&mut self, p: &Placeholder) -> Result<String, TemplateError> {
+        self.consume_step()?;
+
         if self.in_flight.len() >= MAX_RESOLUTION_DEPTH {
             tracing::trace!(target: "overseerd::config", limit = MAX_RESOLUTION_DEPTH, "resolution depth exceeded");
 
@@ -110,13 +173,15 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
         };
 
         if let Some(value) = resolved {
-            tracing::trace!(target: "overseerd::config", value = %value, "placeholder resolved");
+            tracing::trace!(target: "overseerd::config", "placeholder resolved");
+            self.record_resolved(p, &value);
 
             return Ok(value);
         }
 
         if let Some(default) = &p.default {
-            tracing::trace!(target: "overseerd::config", default = %default, "placeholder fell back to inline default");
+            tracing::trace!(target: "overseerd::config", "placeholder fell back to inline default");
+            self.record_resolved(p, default);
 
             return Ok(default.clone());
         }
@@ -189,11 +254,15 @@ pub(crate) fn render_str(
 
     for segment in &s.segments {
         match segment {
-            Segment::Literal(text) => out.push_str(text),
+            Segment::Literal(text) => {
+                ctx.consume_bytes(text.len())?;
+                out.push_str(text);
+            }
 
             Segment::Placeholder(p) => {
                 let value = ctx.resolve_placeholder(p)?;
 
+                ctx.consume_bytes(value.len())?;
                 out.push_str(&value);
             }
         }

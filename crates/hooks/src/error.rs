@@ -14,6 +14,21 @@ pub enum Error {
     #[error("hook parameter not available: {0}")]
     MissingParam(&'static str),
 
+    /// A hook panicked. The payload is intentionally omitted because panic strings
+    /// can contain application secrets and hook runners are operational boundaries.
+    #[error("hook '{hook}' on '{component}' panicked")]
+    Panicked {
+        hook: &'static str,
+        component: &'static str,
+    },
+
+    /// Generated hook metadata returned a value for the wrong hook kind.
+    #[error("hook '{hook}' on '{component}' returned an invalid output type")]
+    InvalidOutput {
+        hook: &'static str,
+        component: &'static str,
+    },
+
     /// An application-defined error raised while extracting a hook parameter or running
     /// the hook body.
     #[error(transparent)]

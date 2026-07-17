@@ -36,6 +36,10 @@ pub enum Error {
         paths: String,
     },
 
+    /// No safe platform directory layout was available for the application.
+    #[error("failed to resolve safe application directories: {0}")]
+    Directories(#[source] std::io::Error),
+
     /// A component-graph failure from the DI engine (cycle, missing dependency, ambiguous
     /// provider, scope violation, duplicate/ambiguous factory, …).
     #[error(transparent)]
