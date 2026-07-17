@@ -412,16 +412,16 @@ impl MessageRequest<Stomp> for StompClientTransport {
         // miss its channel and there is no cross-channel ordering to get wrong.
         lock_requests(&self.inner.requests).insert(correlation_id.clone(), reply);
 
-        // Armed for the whole call: if it is abandoned before a reply resolves it — a timeout, or the
-        // request future being dropped by an outer abort — the guard's `Drop` removes its own slot
-        // from the shared table directly (under the lock), so the table never grows across the
-        // connection lifetime, independent of the actor's write progress or the command channel.
-        let mut guard = RequestGuard::new(self.inner.requests.clone(), correlation_id.clone());
+        // The guard removes this slot from the shared table when the call ends, however it ends — a
+        // reply, a timeout, an outer abort, or a failed enqueue onto a dead connection. Removal is
+        // idempotent (a no-op if a reply or the close-drain already took the slot), so it is always
+        // correct to run and there is no state to arm/disarm: the table can never leak an entry.
+        let _guard = RequestGuard::new(self.inner.requests.clone(), correlation_id.clone());
 
         // The deadline covers BOTH enqueueing and the reply wait: a full command channel or an actor
         // blocked writing to the socket must not let a request outlive `request_timeout` before the
         // wait even begins.
-        let outcome = await_reply(
+        await_reply(
             async {
                 self.tx()
                     .send(Command::Request {
@@ -435,27 +435,17 @@ impl MessageRequest<Stomp> for StompClientTransport {
             },
             self.inner.request_timeout,
         )
-        .await;
-
-        // A resolved reply (or a closed connection) already removed the slot; only a timeout leaves
-        // it in the table, so keep the guard armed there and let its `Drop` remove it. An abandoned
-        // outer-drop never reaches this line — the guard fires on the way out.
-        if !matches!(outcome, Err(ClientError::Timeout)) {
-            guard.disarm();
-        }
-
-        outcome
+        .await
     }
 }
 
-/// Drop-guard that removes a request's correlation slot from the shared table when a call is
-/// abandoned before its reply resolves — a timeout, or the request future being cancelled by an
-/// outer abort. [`disarm`](Self::disarm)ed once a reply resolves the call (that path removed the
-/// entry already), so the common path touches nothing.
+/// Drop-guard that removes a request's correlation slot from the shared table when the call ends,
+/// however it ends. Removal under the lock is idempotent, so it needs no arm/disarm state: a slot a
+/// reply or the connection-close drain already took is simply not there, and one abandoned by a
+/// timeout, an outer abort, or a failed enqueue is reclaimed here — the table can never leak.
 struct RequestGuard {
     requests: Requests,
     correlation_id: String,
-    armed: bool,
 }
 
 impl RequestGuard {
@@ -463,24 +453,14 @@ impl RequestGuard {
         Self {
             requests,
             correlation_id,
-            armed: true,
         }
-    }
-
-    /// Cancels the pending cleanup: the reply resolved, so the slot was already removed.
-    fn disarm(&mut self) {
-        self.armed = false;
     }
 }
 
 impl Drop for RequestGuard {
     fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-
         // Direct, synchronous removal under the lock — it cannot be rejected or delayed by a full
-        // command channel or a stalled actor, so an abandoned slot is always reclaimed promptly.
+        // command channel or a stalled actor, so the slot is always reclaimed promptly.
         let correlation_id = std::mem::take(&mut self.correlation_id);
         lock_requests(&self.requests).remove(&correlation_id);
     }
