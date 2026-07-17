@@ -239,10 +239,17 @@ fn responses_arg(output: &ReturnType) -> TokenStream {
 }
 
 /// Whether a response type has no documentable schema and must yield a bodyless response: the unit
-/// type, a borrowed `&T` (plaintext responses), or `http::StatusCode` (a status-only response).
-/// These are exactly the `Dto` blanket-impl escape hatches that are not `utoipa::ToSchema`; keyed
-/// syntactically (like the `Json`/`Result` peeling), since the macro cannot resolve trait impls.
+/// type, a borrowed `&T` (plaintext), `http::StatusCode` (status-only), or an
+/// [opaque response](client::is_opaque_response) — a raw `Response` or an `impl Trait`
+/// (`impl IntoResponse`) return the macro cannot turn into a schema. These are the return shapes that
+/// are not `utoipa::ToSchema`; keyed syntactically (like the `Json`/`Result` peeling), since the
+/// macro cannot resolve trait impls. Without this the macro would emit `body = Response`, which fails
+/// to compile (`Response: !ToSchema`).
 fn undocumented_body(ty: &Type) -> bool {
+    if client::is_opaque_response(ty) {
+        return true;
+    }
+
     match ty {
         Type::Tuple(tuple) => tuple.elems.is_empty(),
         Type::Reference(_) => true,
