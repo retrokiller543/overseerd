@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -30,6 +30,9 @@ use crate::{
 /// Inbound items buffered per streaming call before backpressure kicks in.
 const INBOUND_BUFFER: usize = 32;
 
+/// Default aggregate bytes buffered across request streams on one connection.
+pub const DEFAULT_MAX_INBOUND_BYTES_PER_CONNECTION: usize = 64 * 1024 * 1024;
+
 /// Default upper bound on calls concurrently tracked by one stream connection.
 pub const DEFAULT_MAX_IN_FLIGHT_CALLS: usize = 256;
 
@@ -42,6 +45,8 @@ pub struct StreamConfig {
     frame: FrameConfig,
     max_in_flight_calls: usize,
     control_write_timeout: Duration,
+    max_inbound_bytes_per_call: usize,
+    max_inbound_bytes_per_connection: usize,
 }
 
 impl StreamConfig {
@@ -63,7 +68,22 @@ impl StreamConfig {
             frame,
             max_in_flight_calls,
             control_write_timeout,
+            max_inbound_bytes_per_call: frame.max_frame_len(),
+            max_inbound_bytes_per_connection: DEFAULT_MAX_INBOUND_BYTES_PER_CONNECTION
+                .max(frame.max_frame_len()),
         }
+    }
+
+    /// Configures aggregate byte budgets in addition to the fixed item-count channel bound.
+    pub fn with_inbound_byte_limits(mut self, per_call: usize, per_connection: usize) -> Self {
+        assert!(per_call > 0, "per-call inbound byte limit must be non-zero");
+        assert!(
+            per_connection >= per_call,
+            "connection inbound byte limit must cover at least one call budget"
+        );
+        self.max_inbound_bytes_per_call = per_call;
+        self.max_inbound_bytes_per_connection = per_connection;
+        self
     }
 
     pub fn frame(self) -> FrameConfig {
@@ -76,6 +96,14 @@ impl StreamConfig {
 
     pub fn control_write_timeout(self) -> Duration {
         self.control_write_timeout
+    }
+
+    pub fn max_inbound_bytes_per_call(self) -> usize {
+        self.max_inbound_bytes_per_call
+    }
+
+    pub fn max_inbound_bytes_per_connection(self) -> usize {
+        self.max_inbound_bytes_per_connection
     }
 }
 
@@ -93,6 +121,10 @@ impl Default for StreamConfig {
 struct CallSlot {
     /// `Some` while the call accepts inbound items (client/bidi streaming).
     inbound: Option<mpsc::Sender<Vec<u8>>>,
+    /// Payload sizes in FIFO order, reconciled against the sender's available capacity whenever
+    /// the connection handles another frame for this call.
+    inbound_sizes: VecDeque<usize>,
+    inbound_bytes: usize,
     /// Fired on `StreamCancel` for this call or when the connection drops.
     cancel: CancellationToken,
     /// Ensures exactly one terminal frame wins between the handler and transport.
@@ -104,6 +136,37 @@ struct CallSlot {
 struct ControlCompletion {
     id: CallId,
     result: Result<()>,
+}
+
+struct CallCompletion {
+    id: CallId,
+    active: Arc<AtomicBool>,
+}
+
+/// Shared logical connection health. Any failed or cancelled frame write poisons the byte
+/// stream: waiting writers stop before acquiring/reusing it and the read loop wakes promptly.
+struct ConnectionHealth {
+    closed: AtomicBool,
+    shutdown: CancellationToken,
+}
+
+impl ConnectionHealth {
+    fn new() -> Self {
+        Self {
+            closed: AtomicBool::new(false),
+            shutdown: CancellationToken::new(),
+        }
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    fn close(&self) {
+        if !self.closed.swap(true, Ordering::AcqRel) {
+            self.shutdown.cancel();
+        }
+    }
 }
 
 /// A connection over any reliable, ordered byte stream (TCP, Unix sockets).
@@ -120,9 +183,11 @@ pub struct StreamConnection<R, W> {
     peer: PeerInfo,
     config: StreamConfig,
     calls: HashMap<CallId, CallSlot>,
-    completions_tx: mpsc::UnboundedSender<CallId>,
-    completions_rx: mpsc::UnboundedReceiver<CallId>,
+    completions_tx: mpsc::UnboundedSender<CallCompletion>,
+    completions_rx: mpsc::UnboundedReceiver<CallCompletion>,
     control_tasks: JoinSet<ControlCompletion>,
+    health: Arc<ConnectionHealth>,
+    inbound_bytes: usize,
 }
 
 /// Responds to one inbound call on a stream connection. Owns the call's wire
@@ -131,8 +196,9 @@ pub struct StreamConnection<R, W> {
 pub struct StreamResponder<W> {
     write: Arc<Mutex<W>>,
     id: CallId,
-    completions_tx: mpsc::UnboundedSender<CallId>,
+    completions_tx: mpsc::UnboundedSender<CallCompletion>,
     active: Arc<AtomicBool>,
+    health: Arc<ConnectionHealth>,
 }
 
 /// The outbound sink for a streaming call, writing `StreamItem`/`StreamEnd`/
@@ -140,8 +206,9 @@ pub struct StreamResponder<W> {
 pub struct StreamSink<W> {
     write: Arc<Mutex<W>>,
     id: CallId,
-    completions_tx: mpsc::UnboundedSender<CallId>,
+    completions_tx: mpsc::UnboundedSender<CallCompletion>,
     active: Arc<AtomicBool>,
+    health: Arc<ConnectionHealth>,
 }
 
 impl<R, W> StreamConnection<R, W> {
@@ -161,6 +228,8 @@ impl<R, W> StreamConnection<R, W> {
             completions_tx,
             completions_rx,
             control_tasks: JoinSet::new(),
+            health: Arc::new(ConnectionHealth::new()),
+            inbound_bytes: 0,
         }
     }
 
@@ -176,6 +245,75 @@ impl<R, W> StreamConnection<R, W> {
             slot.active.store(false, Ordering::Release);
         }
     }
+
+    fn close(&self) {
+        self.health.close();
+        self.cancel_all();
+    }
+
+    fn reconcile_inbound_bytes(&mut self, id: CallId) {
+        let released = {
+            let Some(slot) = self.calls.get_mut(&id) else {
+                return;
+            };
+            let Some(inbound) = &slot.inbound else {
+                return;
+            };
+            let queued_items = INBOUND_BUFFER.saturating_sub(inbound.capacity());
+            let mut released = 0;
+
+            while slot.inbound_sizes.len() > queued_items {
+                if let Some(len) = slot.inbound_sizes.pop_front() {
+                    released += len;
+                }
+            }
+            slot.inbound_bytes = slot.inbound_bytes.saturating_sub(released);
+
+            released
+        };
+
+        self.inbound_bytes = self.inbound_bytes.saturating_sub(released);
+    }
+
+    fn reconcile_all_inbound_bytes(&mut self) {
+        let mut released = 0;
+
+        for slot in self.calls.values_mut() {
+            let Some(inbound) = &slot.inbound else {
+                continue;
+            };
+            let queued_items = INBOUND_BUFFER.saturating_sub(inbound.capacity());
+
+            while slot.inbound_sizes.len() > queued_items {
+                if let Some(len) = slot.inbound_sizes.pop_front() {
+                    released += len;
+                    slot.inbound_bytes = slot.inbound_bytes.saturating_sub(len);
+                }
+            }
+        }
+
+        self.inbound_bytes = self.inbound_bytes.saturating_sub(released);
+    }
+
+    fn remove_call(&mut self, id: CallId) -> Option<CallSlot> {
+        let slot = self.calls.remove(&id)?;
+        self.inbound_bytes = self.inbound_bytes.saturating_sub(slot.inbound_bytes);
+
+        Some(slot)
+    }
+
+    fn discard_closed_inbound(&mut self, id: CallId) {
+        let released = {
+            let Some(slot) = self.calls.get_mut(&id) else {
+                return;
+            };
+
+            slot.inbound = None;
+            slot.inbound_sizes.clear();
+            std::mem::take(&mut slot.inbound_bytes)
+        };
+        self.inbound_bytes = self.inbound_bytes.saturating_sub(released);
+    }
 }
 
 impl<R, W> StreamConnection<R, W>
@@ -183,24 +321,35 @@ where
     W: AsyncWrite + Unpin + Send + 'static,
 {
     fn reject_inbound_overflow(&mut self, id: CallId) -> Result<()> {
-        let Some(slot) = self.calls.get_mut(&id) else {
-            return Ok(());
+        self.reconcile_inbound_bytes(id);
+        let released = {
+            let Some(slot) = self.calls.get_mut(&id) else {
+                return Ok(());
+            };
+
+            slot.cancel.cancel();
+            slot.inbound = None;
+            slot.inbound_sizes.clear();
+            let released = std::mem::take(&mut slot.inbound_bytes);
+
+            let won_terminal = slot.active.swap(false, Ordering::AcqRel);
+            if won_terminal {
+                slot.tombstone = true;
+            }
+
+            (released, won_terminal)
         };
-
-        slot.cancel.cancel();
-        slot.inbound = None;
-
-        if !slot.active.swap(false, Ordering::AcqRel) {
+        self.inbound_bytes = self.inbound_bytes.saturating_sub(released.0);
+        if !released.1 {
             return Ok(());
         }
-        slot.tombstone = true;
 
         while let Some(result) = self.control_tasks.try_join_next() {
             self.finish_control_task(result)?;
         }
 
         if self.control_tasks.len() >= self.config.max_in_flight_calls {
-            self.cancel_all();
+            self.close();
 
             return Err(Error::ControlTasksSaturated {
                 max: self.config.max_in_flight_calls,
@@ -208,6 +357,7 @@ where
         }
 
         let write = Arc::clone(&self.write);
+        let health = Arc::clone(&self.health);
         let write_timeout = self.config.control_write_timeout;
         let body = postcard::to_allocvec("inbound request stream buffer exceeded")
             .unwrap_or_else(|_| Vec::new());
@@ -218,11 +368,21 @@ where
                 code: StatusCode::from(PredefinedCode::BadInput),
                 body,
             };
-            let result = match timeout(write_timeout, write.lock()).await {
-                Ok(mut write) => write_message(&mut *write, &message).await,
-                Err(_) => Err(Error::ControlWriteLockTimeout {
-                    timeout: write_timeout,
-                }),
+            let result = match timeout(
+                write_timeout,
+                write_connection_frame(&write, &health, &message),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    // The timed future may have written a prefix or part of its body. Poison the
+                    // stream immediately; no subsequent writer may reuse those bytes.
+                    health.close();
+                    Err(Error::ControlWriteTimeout {
+                        timeout: write_timeout,
+                    })
+                }
             };
 
             ControlCompletion { id, result }
@@ -244,7 +404,7 @@ where
             .get(&completion.id)
             .is_some_and(|slot| slot.tombstone)
         {
-            self.calls.remove(&completion.id);
+            self.remove_call(completion.id);
         }
 
         Ok(())
@@ -270,17 +430,25 @@ where
 
                 // Reap finished calls first so the table stays bounded.
                 Some(done) = self.completions_rx.recv() => {
-                    if self.calls.get(&done).is_some_and(|slot| !slot.tombstone) {
-                        self.calls.remove(&done);
+                    if self.calls.get(&done.id).is_some_and(|slot| {
+                        !slot.tombstone && Arc::ptr_eq(&slot.active, &done.active)
+                    }) {
+                        self.remove_call(done.id);
                     }
                 }
 
                 Some(result) = self.control_tasks.join_next(), if !self.control_tasks.is_empty() => {
                     if let Err(error) = self.finish_control_task(result) {
-                        self.cancel_all();
+                        self.close();
 
                         return Err(error);
                     }
+                }
+
+                _ = self.health.shutdown.cancelled() => {
+                    self.close();
+
+                    return Err(Error::Closed);
                 }
 
                 msg = self.reader.read_message() => {
@@ -289,13 +457,13 @@ where
                             let id = req.id;
 
                             if self.calls.contains_key(&id) {
-                                self.cancel_all();
+                                self.close();
 
                                 return Err(Error::DuplicateCallId { id });
                             }
 
                             if self.calls.len() >= self.config.max_in_flight_calls {
-                                self.cancel_all();
+                                self.close();
 
                                 return Err(Error::TooManyCalls {
                                     max: self.config.max_in_flight_calls,
@@ -315,6 +483,8 @@ where
 
                                 self.calls.insert(id, CallSlot {
                                     inbound: Some(tx),
+                                    inbound_sizes: VecDeque::new(),
+                                    inbound_bytes: 0,
                                     cancel: cancel.clone(),
                                     active: Arc::clone(&active),
                                     tombstone: false,
@@ -324,6 +494,8 @@ where
                             } else {
                                 self.calls.insert(id, CallSlot {
                                     inbound: None,
+                                    inbound_sizes: VecDeque::new(),
+                                    inbound_bytes: 0,
                                     cancel: cancel.clone(),
                                     active: Arc::clone(&active),
                                     tombstone: false,
@@ -343,49 +515,84 @@ where
                                 id,
                                 completions_tx: self.completions_tx.clone(),
                                 active,
+                                health: Arc::clone(&self.health),
                             };
 
                             return Ok(Some((call, responder)));
                         }
 
                         Ok(WireMessage::StreamItem { id, payload }) => {
-                            let sender = self.calls.get(&id).and_then(|s| s.inbound.clone());
+                            // A quiet call may have been consumed since its last frame. Reconcile
+                            // every bounded sender before enforcing the connection-wide budget.
+                            self.reconcile_all_inbound_bytes();
+                            let payload_len = payload.len();
+                            let route = self.calls.get(&id).and_then(|slot| {
+                                let call_bytes = slot.inbound_bytes.checked_add(payload_len)?;
+                                let connection_bytes = self.inbound_bytes.checked_add(payload_len)?;
 
-                            if let Some(tx) = sender {
+                                if call_bytes > self.config.max_inbound_bytes_per_call
+                                    || connection_bytes
+                                        > self.config.max_inbound_bytes_per_connection
+                                {
+                                    return None;
+                                }
+
+                                Some((slot.inbound.as_ref()?.clone(), call_bytes, connection_bytes))
+                            });
+
+                            if let Some((tx, call_bytes, connection_bytes)) = route {
                                 match tx.try_send(payload) {
-                                    Ok(()) => {}
+                                    Ok(()) => {
+                                        if let Some(slot) = self.calls.get_mut(&id) {
+                                            slot.inbound_sizes.push_back(payload_len);
+                                            slot.inbound_bytes = call_bytes;
+                                            self.inbound_bytes = connection_bytes;
+                                        }
+                                    }
                                     Err(mpsc::error::TrySendError::Full(_)) => {
                                         warn!(%id, "inbound stream buffer exceeded; terminating call");
                                         if let Err(error) = self.reject_inbound_overflow(id) {
-                                            self.cancel_all();
+                                            self.close();
 
                                             return Err(error);
                                         }
                                     }
                                     Err(mpsc::error::TrySendError::Closed(_)) => {
-                                        if let Some(slot) = self.calls.get_mut(&id) {
-                                            slot.inbound = None;
-                                        }
+                                        self.discard_closed_inbound(id);
                                     }
+                                }
+                            } else if self
+                                .calls
+                                .get(&id)
+                                .is_some_and(|slot| slot.inbound.is_some())
+                            {
+                                warn!(%id, "inbound stream byte budget exceeded; terminating call");
+                                if let Err(error) = self.reject_inbound_overflow(id) {
+                                    self.close();
+
+                                    return Err(error);
                                 }
                             }
                         }
 
                         Ok(WireMessage::StreamEnd { id }) => {
+                            self.reconcile_inbound_bytes(id);
                             if let Some(slot) = self.calls.get_mut(&id) {
                                 slot.inbound = None;
                             }
                         }
 
                         Ok(WireMessage::StreamCancel { id }) => {
-                            if let Some(slot) = self.calls.get(&id) {
+                            if let Some(mut slot) = self.remove_call(id) {
                                 slot.cancel.cancel();
+                                slot.inbound = None;
+                                slot.active.store(false, Ordering::Release);
                             }
                         }
 
                         Err(Error::Io(e)) if is_disconnect(&e) => {
                             debug!(error = %e, "peer disconnected");
-                            self.cancel_all();
+                            self.close();
 
                             return Ok(None);
                         }
@@ -393,14 +600,14 @@ where
                         Ok(WireMessage::Response(_))
                         | Ok(WireMessage::StreamError { .. }) => {
                             warn!("unexpected server-bound message from peer");
-                            self.cancel_all();
+                            self.close();
 
                             return Err(Error::UnexpectedMessage);
                         }
 
                         Err(e) => {
                             warn!(error = %e, "frame read error");
-                            self.cancel_all();
+                            self.close();
 
                             return Err(e);
                         }
@@ -413,7 +620,7 @@ where
 
 impl<R, W> Drop for StreamConnection<R, W> {
     fn drop(&mut self) {
-        self.cancel_all();
+        self.close();
         self.control_tasks.abort_all();
     }
 }
@@ -432,13 +639,12 @@ where
 
         let msg = WireMessage::Response(WireResponse::new(self.id, outcome));
 
-        let result = {
-            let mut write = self.write.lock().await;
+        let result = write_connection_frame(&self.write, &self.health, &msg).await;
 
-            write_message(&mut *write, &msg).await
-        };
-
-        let _ = self.completions_tx.send(self.id);
+        let _ = self.completions_tx.send(CallCompletion {
+            id: self.id,
+            active: Arc::clone(&self.active),
+        });
 
         result?;
 
@@ -460,6 +666,7 @@ where
             id: self.id,
             completions_tx: self.completions_tx,
             active: self.active,
+            health: self.health,
         }
     }
 }
@@ -470,9 +677,7 @@ where
 {
     /// Writes one frame under the shared write lock, held only for the write.
     async fn write_frame(&self, msg: &WireMessage) -> Result<()> {
-        let mut write = self.write.lock().await;
-
-        write_message(&mut *write, msg).await
+        write_connection_frame(&self.write, &self.health, msg).await
     }
 }
 
@@ -484,20 +689,30 @@ where
     async fn send(&mut self, item: Vec<u8>) -> Result<()> {
         trace!("writing stream item");
 
-        let mut write = self.write.lock().await;
-
         if !self.active.load(Ordering::Acquire) {
             return Err(Error::Closed);
         }
 
-        write_message(
-            &mut *write,
+        let result = write_active_connection_frame(
+            &self.write,
+            &self.health,
+            &self.active,
             &WireMessage::StreamItem {
                 id: self.id,
                 payload: item,
             },
         )
-        .await
+        .await;
+
+        if result.is_err() {
+            self.active.store(false, Ordering::Release);
+            let _ = self.completions_tx.send(CallCompletion {
+                id: self.id,
+                active: Arc::clone(&self.active),
+            });
+        }
+
+        result
     }
 
     #[instrument(level = "trace", skip_all, fields(id = self.id))]
@@ -516,7 +731,10 @@ where
             })
             .await;
 
-        let _ = self.completions_tx.send(self.id);
+        let _ = self.completions_tx.send(CallCompletion {
+            id: self.id,
+            active: Arc::clone(&self.active),
+        });
 
         result
     }
@@ -533,10 +751,93 @@ where
             .write_frame(&WireMessage::StreamEnd { id: self.id })
             .await;
 
-        let _ = self.completions_tx.send(self.id);
+        let _ = self.completions_tx.send(CallCompletion {
+            id: self.id,
+            active: Arc::clone(&self.active),
+        });
 
         result
     }
+}
+
+/// Writes exactly one frame while enforcing the connection poison invariant. A writer checks
+/// health both before and after acquiring the mutex, and an already-running write is cancelled
+/// when another path closes the connection. Any I/O error makes the poison permanent.
+async fn write_connection_frame<W>(
+    write: &Arc<Mutex<W>>,
+    health: &ConnectionHealth,
+    message: &WireMessage,
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    if health.is_closed() {
+        return Err(Error::Closed);
+    }
+
+    let mut write = tokio::select! {
+        biased;
+
+        _ = health.shutdown.cancelled() => return Err(Error::Closed),
+        write = write.lock() => write,
+    };
+
+    if health.is_closed() {
+        return Err(Error::Closed);
+    }
+
+    let result = tokio::select! {
+        biased;
+
+        _ = health.shutdown.cancelled() => Err(Error::Closed),
+        result = write_message(&mut *write, message) => result,
+    };
+
+    if result.is_err() {
+        health.close();
+    }
+
+    result
+}
+
+/// Stream items additionally re-check their call's terminal state after acquiring the shared
+/// writer. A cancel processed while this sink waits therefore wins without producing output.
+async fn write_active_connection_frame<W>(
+    write: &Arc<Mutex<W>>,
+    health: &ConnectionHealth,
+    active: &AtomicBool,
+    message: &WireMessage,
+) -> Result<()>
+where
+    W: AsyncWrite + Unpin,
+{
+    if health.is_closed() || !active.load(Ordering::Acquire) {
+        return Err(Error::Closed);
+    }
+
+    let mut write = tokio::select! {
+        biased;
+
+        _ = health.shutdown.cancelled() => return Err(Error::Closed),
+        write = write.lock() => write,
+    };
+
+    if health.is_closed() || !active.load(Ordering::Acquire) {
+        return Err(Error::Closed);
+    }
+
+    let result = tokio::select! {
+        biased;
+
+        _ = health.shutdown.cancelled() => Err(Error::Closed),
+        result = write_message(&mut *write, message) => result,
+    };
+
+    if result.is_err() {
+        health.close();
+    }
+
+    result
 }
 
 /// Distinguishes an orderly peer disconnect from a genuine I/O failure.

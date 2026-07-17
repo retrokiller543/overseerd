@@ -25,11 +25,25 @@ fn request(id: u64, streaming_input: bool) -> WireMessage {
     })
 }
 
+#[test]
+fn default_inbound_budget_accepts_one_configured_maximum_frame() {
+    let frame = FrameConfig::new(128 * 1024 * 1024, Duration::from_secs(1));
+    let config = StreamConfig::new(frame, 1, Duration::from_secs(1));
+
+    assert_eq!(config.max_inbound_bytes_per_call(), frame.max_frame_len());
+    assert_eq!(
+        config.max_inbound_bytes_per_connection(),
+        frame.max_frame_len()
+    );
+}
+
 fn insert_test_slot<R, W>(connection: &mut StreamConnection<R, W>, id: u64) {
     connection.calls.insert(
         id,
         CallSlot {
             inbound: None,
+            inbound_sizes: std::collections::VecDeque::new(),
+            inbound_bytes: 0,
             cancel: tokio_util::sync::CancellationToken::new(),
             active: Arc::new(AtomicBool::new(true)),
             tombstone: false,
@@ -78,6 +92,38 @@ impl AsyncWrite for FailingWriter {
             io::ErrorKind::BrokenPipe,
             "test writer failed",
         )))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+struct PartialThenFailWriter {
+    bytes_written: Arc<AtomicUsize>,
+}
+
+impl AsyncWrite for PartialThenFailWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        if self.bytes_written.load(Ordering::Acquire) == 0 {
+            let written = buf.len().min(2);
+            self.bytes_written.store(written, Ordering::Release);
+
+            Poll::Ready(Ok(written))
+        } else {
+            Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "test writer failed after prefix bytes",
+            )))
+        }
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -138,6 +184,161 @@ async fn overflowing_input_terminates_only_that_call() {
         WireMessage::StreamError { id: 1, .. } => {}
         _ => panic!("expected stream error for overflowing call"),
     }
+}
+
+#[tokio::test]
+async fn inbound_byte_budget_reconciles_other_calls_and_rejects_only_offender() {
+    let (server, client) = duplex(64 * 1024);
+    let (server_read, server_write) = split(server);
+    let (_client_read, mut client_write) = split(client);
+    let config = StreamConfig::new(FrameConfig::default(), 4, Duration::from_secs(1))
+        .with_inbound_byte_limits(4, 6);
+    let mut connection =
+        StreamConnection::with_config(server_read, server_write, PeerInfo { addr: None }, config);
+
+    write_message(&mut client_write, &request(1, true))
+        .await
+        .expect("open first stream");
+    let (mut first, _first_responder) = connection
+        .recv()
+        .await
+        .expect("receive first stream")
+        .expect("first stream present");
+    write_message(
+        &mut client_write,
+        &WireMessage::StreamItem {
+            id: 1,
+            payload: vec![1; 4],
+        },
+    )
+    .await
+    .expect("buffer first item");
+    write_message(&mut client_write, &request(2, true))
+        .await
+        .expect("open second stream");
+    let (second, _second_responder) = connection
+        .recv()
+        .await
+        .expect("receive second stream")
+        .expect("second stream present");
+    assert_eq!(connection.inbound_bytes, 4);
+
+    assert_eq!(
+        first
+            .requests
+            .as_mut()
+            .expect("first request receiver")
+            .recv()
+            .await,
+        Some(vec![1; 4])
+    );
+
+    // Although call 1 has sent no new frame, admitting call 2 reconciles its consumed sender
+    // capacity and releases the connection-wide byte charge.
+    write_message(
+        &mut client_write,
+        &WireMessage::StreamItem {
+            id: 2,
+            payload: vec![2; 4],
+        },
+    )
+    .await
+    .expect("buffer second item");
+    write_message(&mut client_write, &request(3, false))
+        .await
+        .expect("open third call");
+    connection
+        .recv()
+        .await
+        .expect("connection remains healthy")
+        .expect("third call present");
+    assert_eq!(connection.inbound_bytes, 4);
+    assert!(!second.cancel.is_cancelled());
+
+    // A new four-byte item would exceed the six-byte aggregate budget. Only its call is
+    // terminated; the independent call and connection continue.
+    write_message(
+        &mut client_write,
+        &WireMessage::StreamItem {
+            id: 1,
+            payload: vec![3; 4],
+        },
+    )
+    .await
+    .expect("write aggregate overflow");
+    write_message(&mut client_write, &request(4, false))
+        .await
+        .expect("open independent call");
+    let (fourth, _responder) = connection
+        .recv()
+        .await
+        .expect("connection survives aggregate overflow")
+        .expect("fourth call present");
+
+    assert_eq!(fourth.path, "svc.call_4");
+    assert!(first.cancel.is_cancelled());
+    assert!(!second.cancel.is_cancelled());
+    assert_eq!(connection.inbound_bytes, 4);
+}
+
+#[tokio::test]
+async fn dropped_inbound_receiver_releases_connection_byte_budget() {
+    let (server, client) = duplex(4096);
+    let (server_read, server_write) = split(server);
+    let (_client_read, mut client_write) = split(client);
+    let config = StreamConfig::new(FrameConfig::default(), 4, Duration::from_secs(1))
+        .with_inbound_byte_limits(4, 6);
+    let mut connection =
+        StreamConnection::with_config(server_read, server_write, PeerInfo { addr: None }, config);
+
+    write_message(&mut client_write, &request(1, true))
+        .await
+        .expect("open stream");
+    let (mut first, _responder) = connection
+        .recv()
+        .await
+        .expect("receive stream")
+        .expect("stream present");
+    write_message(
+        &mut client_write,
+        &WireMessage::StreamItem {
+            id: 1,
+            payload: vec![1; 4],
+        },
+    )
+    .await
+    .expect("buffer item");
+    write_message(&mut client_write, &request(2, false))
+        .await
+        .expect("drive buffered item");
+    connection
+        .recv()
+        .await
+        .expect("connection healthy")
+        .expect("second call present");
+    assert_eq!(connection.inbound_bytes, 4);
+
+    drop(first.requests.take());
+    write_message(
+        &mut client_write,
+        &WireMessage::StreamItem {
+            id: 1,
+            payload: vec![2],
+        },
+    )
+    .await
+    .expect("write after receiver drop");
+    write_message(&mut client_write, &request(3, false))
+        .await
+        .expect("drive closed receiver");
+    connection
+        .recv()
+        .await
+        .expect("connection survives closed receiver")
+        .expect("third call present");
+
+    assert_eq!(connection.inbound_bytes, 0);
+    assert!(connection.calls.get(&1).unwrap().inbound.is_none());
 }
 
 #[tokio::test]
@@ -216,6 +417,8 @@ async fn control_response_tasks_are_bounded_by_connection_limit() {
             id,
             CallSlot {
                 inbound: None,
+                inbound_sizes: std::collections::VecDeque::new(),
+                inbound_bytes: 0,
                 cancel: cancel.clone(),
                 active: Arc::clone(&active),
                 tombstone: false,
@@ -251,25 +454,87 @@ async fn control_response_tasks_are_bounded_by_connection_limit() {
 }
 
 #[tokio::test]
-async fn control_timeout_never_cancels_a_partially_written_frame() {
+async fn control_timeout_after_a_partial_write_poison_connection() {
     let bytes_written = Arc::new(AtomicUsize::new(0));
     let writer = PartialThenPendingWriter {
         bytes_written: Arc::clone(&bytes_written),
     };
+    let (server_read, client) = duplex(1);
     let config = StreamConfig::new(FrameConfig::default(), 1, Duration::from_millis(10));
     let mut connection =
-        StreamConnection::with_config(tokio::io::empty(), writer, PeerInfo { addr: None }, config);
+        StreamConnection::with_config(server_read, writer, PeerInfo { addr: None }, config);
 
     insert_test_slot(&mut connection, 1);
     connection
         .reject_inbound_overflow(1)
         .expect("control task admitted");
-    tokio::time::sleep(Duration::from_millis(30)).await;
-
+    let result = timeout(Duration::from_secs(2), connection.recv())
+        .await
+        .expect("control write deadline");
+    match result {
+        Err(Error::ControlWriteTimeout { timeout: actual }) => {
+            assert_eq!(actual, Duration::from_millis(10));
+        }
+        Err(Error::Closed) => {}
+        Err(error) => panic!("unexpected poisoned connection error: {error}"),
+        Ok(None) => panic!("poisoned connection ended without an error"),
+        Ok(Some(_)) => panic!("poisoned connection admitted a request"),
+    }
     assert_eq!(bytes_written.load(Ordering::Acquire), 2);
-    assert_eq!(connection.control_tasks.len(), 1);
-    assert!(connection.control_tasks.try_join_next().is_none());
-    assert!(connection.calls.get(&1).unwrap().tombstone);
+    assert!(connection.health.is_closed());
+    drop(client);
+}
+
+#[tokio::test]
+async fn partially_failed_normal_response_poison_connection_and_reaps_call() {
+    let bytes_written = Arc::new(AtomicUsize::new(0));
+    let (server_read, mut client_write) = duplex(4096);
+    let mut connection = StreamConnection::new(
+        server_read,
+        PartialThenFailWriter {
+            bytes_written: Arc::clone(&bytes_written),
+        },
+        PeerInfo { addr: None },
+    );
+    write_message(&mut client_write, &request(1, false))
+        .await
+        .expect("write request");
+    let (_call, responder) = connection
+        .recv()
+        .await
+        .expect("receive request")
+        .expect("request present");
+
+    assert!(matches!(
+        crate::transport::Respond::respond(responder, crate::frame::CallResult::Ok(Vec::new()))
+            .await,
+        Err(Error::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe
+    ));
+    assert_eq!(bytes_written.load(Ordering::Acquire), 2);
+    assert!(matches!(connection.recv().await, Err(Error::Closed)));
+    assert!(connection.calls.is_empty());
+}
+
+#[tokio::test]
+async fn failed_stream_item_poison_connection_and_reaps_call() {
+    let (server_read, mut client_write) = duplex(4096);
+    let mut connection = StreamConnection::new(server_read, FailingWriter, PeerInfo { addr: None });
+    write_message(&mut client_write, &request(1, false))
+        .await
+        .expect("write request");
+    let (_call, responder) = connection
+        .recv()
+        .await
+        .expect("receive request")
+        .expect("request present");
+    let mut sink = crate::transport::RespondStream::into_sink(responder);
+
+    assert!(matches!(
+        crate::transport::ResponseSink::send(&mut sink, vec![1]).await,
+        Err(Error::Io(error)) if error.kind() == io::ErrorKind::BrokenPipe
+    ));
+    assert!(matches!(connection.recv().await, Err(Error::Closed)));
+    assert!(connection.calls.is_empty());
 }
 
 #[tokio::test]
@@ -311,12 +576,86 @@ async fn terminal_write_lock_timeout_poison_connection() {
         timeout(Duration::from_secs(2), connection.recv())
             .await
             .expect("lock timeout deadline"),
-        Err(Error::ControlWriteLockTimeout { timeout: actual })
+        Err(Error::ControlWriteTimeout { timeout: actual })
             if actual == Duration::from_millis(10)
     ));
 
     drop(write_guard);
     drop(client);
+}
+
+#[tokio::test]
+async fn stream_cancel_is_terminal_and_stale_items_cannot_reactivate_call() {
+    let (server, client) = duplex(4096);
+    let (server_read, server_write) = split(server);
+    let (_client_read, mut client_write) = split(client);
+    let mut connection = StreamConnection::new(server_read, server_write, PeerInfo { addr: None });
+
+    write_message(&mut client_write, &request(1, true))
+        .await
+        .expect("write streaming request");
+    let (mut first, first_responder) = connection
+        .recv()
+        .await
+        .expect("receive first request")
+        .expect("first request present");
+    let mut first_sink = crate::transport::RespondStream::into_sink(first_responder);
+
+    write_message(&mut client_write, &WireMessage::StreamCancel { id: 1 })
+        .await
+        .expect("cancel first request");
+    write_message(
+        &mut client_write,
+        &WireMessage::StreamItem {
+            id: 1,
+            payload: vec![99],
+        },
+    )
+    .await
+    .expect("write stale item");
+    write_message(&mut client_write, &WireMessage::StreamEnd { id: 1 })
+        .await
+        .expect("write stale end");
+    write_message(&mut client_write, &request(1, false))
+        .await
+        .expect("reuse terminal call id");
+
+    let (second, _second_responder) = timeout(Duration::from_secs(2), connection.recv())
+        .await
+        .expect("replacement request deadline")
+        .expect("connection remains healthy")
+        .expect("replacement request present");
+
+    assert_eq!(second.path, "svc.call_1");
+    assert!(first.cancel.is_cancelled());
+    assert!(
+        first
+            .requests
+            .take()
+            .expect("stream receiver")
+            .recv()
+            .await
+            .is_none()
+    );
+    assert!(matches!(
+        crate::transport::ResponseSink::send(&mut first_sink, vec![1]).await,
+        Err(Error::Closed)
+    ));
+    assert!(connection.calls.contains_key(&1));
+
+    write_message(&mut client_write, &request(2, false))
+        .await
+        .expect("write call after stale completion");
+    let (after_completion, _responder) = connection
+        .recv()
+        .await
+        .expect("stale completion keeps connection healthy")
+        .expect("new call present");
+    assert_eq!(after_completion.path, "svc.call_2");
+    assert!(
+        connection.calls.contains_key(&1),
+        "old completion must not remove replacement generation"
+    );
 }
 
 #[tokio::test]

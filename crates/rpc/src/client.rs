@@ -15,6 +15,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 use serde::Serialize;
@@ -38,11 +39,13 @@ use overseerd_transport::{CallId, CodecError, Decodes, Encodes, Error, StatusCod
 /// Outbound frames buffered per call before the read loop backpressures.
 const REPLY_BUFFER: usize = 32;
 
-/// Outbound data frames queued for the single-owner writer task.
+/// Outbound frames queued for the single-owner writer task. Data and cancellation share one FIFO
+/// so a terminal cancellation can never overtake an already accepted request/item frame.
 const WRITE_BUFFER: usize = 32;
 
-/// Out-of-band cancellation frames buffered independently of ordinary writes.
-const CONTROL_BUFFER: usize = 32;
+/// Maximum time the final transport drop gives accepted frames to drain before aborting the
+/// writer and dropping its socket.
+const CLIENT_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
 
 /// The stable local error returned when a peer outruns a streaming response consumer.
 const REPLY_OVERFLOW_ERROR: &str = "local RPC reply buffer exceeded";
@@ -68,19 +71,21 @@ struct CallRoute {
 /// (demuxing); a synchronous mutex so it can also be cleared from `Drop`.
 type CallTable = Arc<StdMutex<HashMap<CallId, CallRoute>>>;
 
-/// A pre-serialized data frame and completion signal for the writer task.
-struct WriteCommand {
-    frame: Vec<u8>,
-    written: oneshot::Sender<Result<(), Error>>,
+/// One pre-serialized FIFO writer command. Ordinary callers await an acknowledgement; Drop paths
+/// submit terminal frames with `try_send` and poison the connection if the bounded queue is full.
+enum WriteCommand {
+    Data {
+        frame: Vec<u8>,
+        written: oneshot::Sender<Result<(), Error>>,
+    },
+    Control(Vec<u8>),
 }
-
-/// Out-of-band commands that must not depend on the bounded data queue having capacity.
-struct WriteControl(Vec<u8>);
 
 /// Shared connection liveness. Either actor may poison the connection and wake the other.
 struct ConnectionState {
     closed: AtomicBool,
     shutdown: CancellationToken,
+    drain: CancellationToken,
 }
 
 impl ConnectionState {
@@ -88,6 +93,7 @@ impl ConnectionState {
         Self {
             closed: AtomicBool::new(false),
             shutdown: CancellationToken::new(),
+            drain: CancellationToken::new(),
         }
     }
 
@@ -96,17 +102,20 @@ impl ConnectionState {
     }
 
     fn close(&self) {
-        if !self.closed.swap(true, Ordering::AcqRel) {
-            self.shutdown.cancel();
-        }
+        self.closed.store(true, Ordering::Release);
+        self.shutdown.cancel();
+    }
+
+    fn start_drain(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.drain.cancel();
     }
 }
 
 /// Cloneable handle to the task that exclusively owns the byte-stream writer.
 #[derive(Clone)]
 struct Writer {
-    data: mpsc::Sender<WriteCommand>,
-    control: mpsc::Sender<WriteControl>,
+    queue: mpsc::Sender<WriteCommand>,
     state: Arc<ConnectionState>,
 }
 
@@ -123,8 +132,8 @@ impl Writer {
         }
 
         let (written, wait_written) = oneshot::channel();
-        self.data
-            .send(WriteCommand { frame, written })
+        self.queue
+            .send(WriteCommand::Data { frame, written })
             .await
             .map_err(|_| ClientError::ConnectionClosed)?;
 
@@ -142,7 +151,7 @@ impl Writer {
             return;
         }
 
-        if self.control.try_send(WriteControl(frame)).is_err() {
+        if self.queue.try_send(WriteCommand::Control(frame)).is_err() {
             self.state.close();
         }
     }
@@ -152,24 +161,95 @@ impl Writer {
     }
 }
 
+/// Owns a newly registered route across the cancellation points in `open`. Until ownership is
+/// transferred to `RpcCall`, dropping the future removes the route and submits a terminal cancel.
+struct OpenGuard {
+    id: CallId,
+    writer: Writer,
+    calls: CallTable,
+    active: Arc<AtomicBool>,
+    cancel: Option<Vec<u8>>,
+    armed: bool,
+}
+
+impl OpenGuard {
+    fn into_call<W>(
+        mut self,
+        items: mpsc::Receiver<Vec<u8>>,
+        terminal: oneshot::Receiver<Reply>,
+    ) -> RpcCall<W> {
+        self.armed = false;
+
+        RpcCall {
+            id: self.id,
+            writer: self.writer.clone(),
+            calls: Arc::clone(&self.calls),
+            items,
+            terminal: Some(terminal),
+            active: Arc::clone(&self.active),
+            cancel: self.cancel.take(),
+            _write: PhantomData,
+        }
+    }
+}
+
+impl Drop for OpenGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+
+        if let Ok(mut calls) = self.calls.lock() {
+            calls.remove(&self.id);
+        }
+
+        if self.active.swap(false, Ordering::AcqRel)
+            && let Some(cancel) = self.cancel.take()
+        {
+            self.writer.cancel(cancel);
+        }
+    }
+}
+
 /// Owns both connection actors while at least one transport handle remains.
 struct ClientTasks {
     read: JoinHandle<()>,
-    _write: JoinHandle<()>,
+    write: Option<JoinHandle<()>>,
     _writer: Writer,
     calls: CallTable,
 }
 
 impl Drop for ClientTasks {
     fn drop(&mut self) {
-        // Stop the reader immediately, but detach the writer so it can drain already accepted
-        // frames (especially a cancellation enqueued by `RpcSource::drop`) before its now-closed
-        // channels make it exit. Aborting it here could strand remote work when a response stream
-        // owned the final transport handle.
+        // `RpcResponses` drops its source before its transport, so a last-handle cancellation is
+        // already queued. Stop admission, ask the writer to drain accepted data/control frames,
+        // then enforce a hard deadline so a stalled socket can never leave a detached task alive.
         self.read.abort();
+        self._writer.state.start_drain();
 
         if let Ok(mut calls) = self.calls.lock() {
             calls.clear();
+        }
+
+        let Some(mut write) = self.write.take() else {
+            return;
+        };
+        let state = Arc::clone(&self._writer.state);
+
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                if tokio::time::timeout(CLIENT_DRAIN_TIMEOUT, &mut write)
+                    .await
+                    .is_err()
+                {
+                    state.close();
+                    write.abort();
+                    let _ = write.await;
+                }
+            });
+        } else {
+            state.close();
+            write.abort();
         }
     }
 }
@@ -222,19 +302,17 @@ where
     {
         let calls: CallTable = Arc::new(StdMutex::new(HashMap::new()));
         let state = Arc::new(ConnectionState::new());
-        let (data_tx, data_rx) = mpsc::channel(WRITE_BUFFER);
-        let (control_tx, control_rx) = mpsc::channel(CONTROL_BUFFER);
+        let (queue_tx, queue_rx) = mpsc::channel(WRITE_BUFFER);
         let writer = Writer {
-            data: data_tx,
-            control: control_tx,
+            queue: queue_tx,
             state: Arc::clone(&state),
         };
         let reader = MessageReader::with_config(read, frame_config);
         let read_task = tokio::spawn(read_loop(reader, Arc::clone(&calls), writer.clone()));
-        let write_task = tokio::spawn(write_loop(write, data_rx, control_rx, Arc::clone(&state)));
+        let write_task = tokio::spawn(write_loop(write, queue_rx, Arc::clone(&state)));
         let tasks = Arc::new(ClientTasks {
             read: read_task,
-            _write: write_task,
+            write: Some(write_task),
             _writer: writer.clone(),
             calls: Arc::clone(&calls),
         });
@@ -282,29 +360,22 @@ where
                 active: Arc::clone(&active),
             },
         );
-
-        if self.writer.state.is_closed() {
-            self.calls.lock().unwrap().remove(&id);
-
-            return Err(ClientError::ConnectionClosed);
-        }
-
-        if let Err(error) = self.writer.write_frame(request).await {
-            self.calls.lock().unwrap().remove(&id);
-
-            return Err(error);
-        }
-
-        Ok(RpcCall {
+        let guard = OpenGuard {
             id,
             writer: self.writer.clone(),
             calls: Arc::clone(&self.calls),
-            items: items_rx,
-            terminal: Some(terminal_rx),
             active,
             cancel: Some(cancel),
-            _write: PhantomData,
-        })
+            armed: true,
+        };
+
+        if self.writer.state.is_closed() {
+            return Err(ClientError::ConnectionClosed);
+        }
+
+        self.writer.write_frame(request).await?;
+
+        Ok(guard.into_call(items_rx, terminal_rx))
     }
 }
 
@@ -833,8 +904,7 @@ fn serialize_frame(message: &WireMessage) -> Result<Vec<u8>, Error> {
 /// caller waiting for its acknowledgement cannot cancel the underlying frame write.
 async fn write_loop<W>(
     mut write: W,
-    mut data: mpsc::Receiver<WriteCommand>,
-    mut control: mpsc::Receiver<WriteControl>,
+    mut queue: mpsc::Receiver<WriteCommand>,
     state: Arc<ConnectionState>,
 ) where
     W: AsyncWrite + Unpin,
@@ -845,27 +915,17 @@ async fn write_loop<W>(
 
             _ = state.shutdown.cancelled() => break,
 
-            Some(WriteControl(frame)) = control.recv() => {
-                if let Err(error) = write_serialized(&mut write, &frame, &state).await {
-                    warn!(%error, "client control-frame write error");
+            _ = state.drain.cancelled() => {
+                drain_write_queue(&mut write, &mut queue, &state).await;
+
+                break;
+            }
+
+            Some(command) = queue.recv() => {
+                if execute_write_command(&mut write, command, &state).await.is_err() {
                     state.close();
 
                     break;
-                }
-            }
-
-            Some(command) = data.recv() => {
-                match write_serialized(&mut write, &command.frame, &state).await {
-                    Ok(()) => {
-                        let _ = command.written.send(Ok(()));
-                    }
-                    Err(error) => {
-                        warn!(%error, "client frame write error");
-                        let _ = command.written.send(Err(error));
-                        state.close();
-
-                        break;
-                    }
                 }
             }
 
@@ -874,6 +934,68 @@ async fn write_loop<W>(
     }
 
     state.close();
+}
+
+/// Stops sender admission and drains only commands accepted before the final transport handle
+/// was dropped. The owning `ClientTasks` watchdog forces `shutdown` if any frame stalls.
+async fn drain_write_queue<W>(
+    write: &mut W,
+    queue: &mut mpsc::Receiver<WriteCommand>,
+    state: &ConnectionState,
+) where
+    W: AsyncWrite + Unpin,
+{
+    queue.close();
+
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = state.shutdown.cancelled() => break,
+
+            Some(command) = queue.recv() => {
+                if execute_write_command(write, command, state).await.is_err() {
+                    break;
+                }
+            }
+
+            else => break,
+        }
+    }
+}
+
+async fn execute_write_command<W>(
+    write: &mut W,
+    command: WriteCommand,
+    state: &ConnectionState,
+) -> Result<(), Error>
+where
+    W: AsyncWrite + Unpin,
+{
+    match command {
+        WriteCommand::Data { frame, written } => {
+            let result = write_serialized(write, &frame, state).await;
+            let failed = result.is_err();
+            let _ = written.send(result);
+
+            if failed {
+                warn!("client data-frame write failed");
+
+                Err(Error::Closed)
+            } else {
+                Ok(())
+            }
+        }
+        WriteCommand::Control(frame) => {
+            let result = write_serialized(write, &frame, state).await;
+
+            if let Err(error) = &result {
+                warn!(%error, "client control-frame write error");
+            }
+
+            result
+        }
+    }
 }
 
 async fn write_serialized<W>(

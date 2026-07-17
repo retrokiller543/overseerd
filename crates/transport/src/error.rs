@@ -27,8 +27,8 @@ pub enum Error {
     #[error("peer reused active call id {id}")]
     DuplicateCallId { id: crate::frame::CallId },
 
-    #[error("timed out after {timeout:?} waiting to write a control frame")]
-    ControlWriteLockTimeout { timeout: std::time::Duration },
+    #[error("timed out after {timeout:?} writing a control frame; connection is poisoned")]
+    ControlWriteTimeout { timeout: std::time::Duration },
 
     #[error("connection exceeded its limit of {max} control response tasks")]
     ControlTasksSaturated { max: usize },

@@ -65,6 +65,18 @@ impl ErrorHandler for PanickingErrorHandler {
     }
 }
 
+struct SynchronouslyPanickingErrorHandler;
+
+impl ErrorHandler for SynchronouslyPanickingErrorHandler {
+    fn handle<'a>(
+        &'a self,
+        _path: &'a str,
+        _error: ErrorResponse,
+    ) -> Pin<Box<dyn Future<Output = ErrorResponse> + Send + 'a>> {
+        panic!("synchronous global error handler panic")
+    }
+}
+
 fn encode<T: serde::Serialize>(value: &T) -> Vec<u8> {
     postcard::to_allocvec(value).expect("encode request")
 }
@@ -124,6 +136,44 @@ async fn panicking_global_error_handler_falls_back_to_internal_response() {
     let app = App::builder("hardening-test")
         .auto_discover()
         .error_handler(PanickingErrorHandler)
+        .build()
+        .await
+        .expect("build app");
+    let connection = client.connect().await.expect("connect memory transport");
+    let server = tokio::spawn(app.serve(transport));
+
+    let result = timeout(
+        Duration::from_secs(2),
+        connection.call("Hardening.panics", encode(&())),
+    )
+    .await
+    .expect("fallback response deadline")
+    .expect("transport response");
+
+    match result {
+        CallResult::Err { code, body } => {
+            assert_eq!(code.predefined(), PredefinedCode::Internal);
+            let message: String = postcard::from_bytes(&body).expect("decode error body");
+            assert_eq!(message, "internal server error");
+        }
+        CallResult::Ok(_) => panic!("panicking handler unexpectedly succeeded"),
+    }
+
+    drop(connection);
+    drop(client);
+    timeout(Duration::from_secs(2), server)
+        .await
+        .expect("server shutdown deadline")
+        .expect("server task")
+        .expect("clean server shutdown");
+}
+
+#[tokio::test]
+async fn synchronously_panicking_global_error_handler_falls_back_to_internal_response() {
+    let (client, transport) = MemoryClient::pair();
+    let app = App::builder("hardening-test")
+        .auto_discover()
+        .error_handler(SynchronouslyPanickingErrorHandler)
         .build()
         .await
         .expect("build app");

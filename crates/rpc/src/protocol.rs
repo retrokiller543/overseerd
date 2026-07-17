@@ -625,7 +625,7 @@ async fn apply_error_handler(
     error: ErrorResponse,
 ) -> ErrorResponse {
     match handler {
-        Some(handler) => match AssertUnwindSafe(handler.handle(path, error))
+        Some(handler) => match AssertUnwindSafe(async { handler.handle(path, error).await })
             .catch_unwind()
             .await
         {
