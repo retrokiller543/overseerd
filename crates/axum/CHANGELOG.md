@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-v0.14.2...overseerd-axum-v0.15.0) - 2026-07-17
+
+### Fixed
+
+- *(axum)* harden websocket and streaming clients
+
 ## [0.14.1](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-v0.14.0...overseerd-axum-v0.14.1) - 2026-07-17
 
 ### Added
