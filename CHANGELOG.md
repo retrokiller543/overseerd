@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.1](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.17.0...overseerd-v0.17.1) - 2026-07-17
+
+### Other
+
+- *(benchmarks)* report retained footprint and pure-DI (empty) graphs
+- *(benchmarks)* expand suite across DI, config, RPC, serde, and WS
+
 ## [0.17.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.16.0...overseerd-v0.17.0) - 2026-07-17
 
 ### Fixed

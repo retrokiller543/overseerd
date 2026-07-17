@@ -10,7 +10,7 @@ exclude = ["benchmarks"]
 resolver = "3"
 
 [workspace.package]
-version = "0.17.0"
+version = "0.17.1"
 edition = "2024"
 license = "MIT"
 authors = ["Emil Schütt <emil.schutt@gmail.com>"]
@@ -22,22 +22,22 @@ categories = ["network-programming", "asynchronous"]
 [workspace.dependencies]
 # Workspace member crates. The `version` is required for publishing: crates.io
 # strips the `path` and resolves the dependency by version instead.
-overseerd-config = { path = "crates/config", version = "0.17.0" }
-overseerd-core = { path = "crates/core", version = "0.17.0" }
-overseerd-di = { path = "crates/di", version = "0.17.0" }
-overseerd-dirs = { path = "crates/dirs", version = "0.17.0" }
-overseerd-hooks = { path = "crates/hooks", version = "0.17.0" }
-overseerd-jobs = { path = "crates/jobs", version = "0.17.0" }
-overseerd-jobs-macros = { path = "crates/jobs-macros", version = "0.17.0" }
-overseerd-app = { path = "crates/app", version = "0.17.0" }
-overseerd-client = { path = "crates/client", version = "0.17.0" }
-overseerd-rpc = { path = "crates/rpc", version = "0.17.0" }
-overseerd-macros = { path = "crates/macros", version = "0.17.0" }
-overseerd-macros-core = { path = "crates/macros-core", version = "0.17.0" }
-overseerd-rpc-macros = { path = "crates/rpc-macros", version = "0.17.0" }
-overseerd-transport = { path = "crates/transport", version = "0.17.0" }
-overseerd-axum = { path = "crates/axum", version = "0.17.0" }
-overseerd-axum-macros = { path = "crates/axum-macros", version = "0.17.0" }
+overseerd-config = { path = "crates/config", version = "0.17.1" }
+overseerd-core = { path = "crates/core", version = "0.17.1" }
+overseerd-di = { path = "crates/di", version = "0.17.1" }
+overseerd-dirs = { path = "crates/dirs", version = "0.17.1" }
+overseerd-hooks = { path = "crates/hooks", version = "0.17.1" }
+overseerd-jobs = { path = "crates/jobs", version = "0.17.1" }
+overseerd-jobs-macros = { path = "crates/jobs-macros", version = "0.17.1" }
+overseerd-app = { path = "crates/app", version = "0.17.1" }
+overseerd-client = { path = "crates/client", version = "0.17.1" }
+overseerd-rpc = { path = "crates/rpc", version = "0.17.1" }
+overseerd-macros = { path = "crates/macros", version = "0.17.1" }
+overseerd-macros-core = { path = "crates/macros-core", version = "0.17.1" }
+overseerd-rpc-macros = { path = "crates/rpc-macros", version = "0.17.1" }
+overseerd-transport = { path = "crates/transport", version = "0.17.1" }
+overseerd-axum = { path = "crates/axum", version = "0.17.1" }
+overseerd-axum-macros = { path = "crates/axum-macros", version = "0.17.1" }
 
 # Common dependencies
 arc-swap = "1.9.1"
