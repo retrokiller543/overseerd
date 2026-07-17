@@ -13,7 +13,6 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::HashMap;
-use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
@@ -230,31 +229,60 @@ fn di_memory_contracts() {
     let arc_container = Arc::clone(&container);
 
     // Warm up the one-time, lazily-initialized thread-locals (arc_swap's debt slot, the futures
-    // block_on parker) so the measured regions see only steady-state allocation behaviour.
-    black_box(container.get::<C<0>>());
-    block_on(async { black_box(arc_container.extract::<Arc<C<0>>>().await.is_ok()) });
+    // block_on parker) so the measured regions see only steady-state allocation behaviour. These
+    // also assert the fixture resolves — an allocation/leak contract over a failing resolution would
+    // pass vacuously.
+    assert!(
+        container.get::<C<0>>().is_some(),
+        "fixture does not resolve C<0>; the allocation contract would be vacuous"
+    );
+    assert!(
+        block_on(async { arc_container.extract::<Arc<C<0>>>().await.is_ok() }),
+        "fixture does not extract C<0>; the leak contract would be vacuous"
+    );
 
-    // Resolving a component allocates nothing: it is a map walk plus an `Arc` snapshot.
-    let (_, resolve_delta) = measure(|| {
+    // Resolving a component allocates nothing: it is a map walk plus an `Arc` snapshot. The counter
+    // also proves every call in the measured region actually resolved.
+    let (resolved, resolve_delta) = measure(|| {
+        let mut resolved = 0usize;
+
         for _ in 0..10_000 {
-            black_box(container.get::<C<0>>());
+            if container.get::<C<0>>().is_some() {
+                resolved += 1;
+            }
         }
+
+        resolved
     });
 
+    assert_eq!(
+        resolved, 10_000,
+        "resolution regressed during the measurement"
+    );
     assert_eq!(
         resolve_delta.allocations, 0,
         "ScopeContainer::get allocated on the resolution hot path"
     );
 
-    // Request-time extraction leaks nothing across many calls.
-    let (_, extract_delta) = measure(|| {
+    // Request-time extraction leaks nothing across many calls, and every call succeeds.
+    let (extracted, extract_delta) = measure(|| {
         block_on(async {
+            let mut extracted = 0usize;
+
             for _ in 0..10_000 {
-                black_box(arc_container.extract::<Arc<C<0>>>().await.is_ok());
+                if arc_container.extract::<Arc<C<0>>>().await.is_ok() {
+                    extracted += 1;
+                }
             }
+
+            extracted
         })
     });
 
+    assert_eq!(
+        extracted, 10_000,
+        "extraction regressed during the measurement"
+    );
     assert_eq!(
         extract_delta.net_live, 0,
         "ScopeContainer::extract leaked {} live bytes over 10k calls",
