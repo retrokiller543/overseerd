@@ -38,8 +38,8 @@ use stomp_parser::server::{ConnectedFrameBuilder, ErrorFrame, ReceiptFrameBuilde
 use tokio::sync::mpsc;
 
 use super::{
-    MessageReply, PubSubProtocol, WebsocketProtocol, WsControllerDescriptor, WsDispatchError,
-    WsHandlerFn, WsRespond, WsShutdown,
+    MessageReply, PubSubProtocol, SOCKET_SEND_TIMEOUT, WebsocketProtocol, WsControllerDescriptor,
+    WsDispatchError, WsHandlerFn, WsIdle, WsRespond, WsShutdown,
 };
 use crate::scope::Request as RequestScope;
 
@@ -145,16 +145,7 @@ impl WebsocketProtocol for Stomp {
 
         for descriptor in controllers {
             for route in descriptor.routes_for::<Stomp>(runtime) {
-                if app_routes
-                    .insert(route.destination, route.handler)
-                    .is_some()
-                {
-                    tracing::warn!(
-                        target: "overseerd::axum",
-                        dest = route.destination,
-                        "duplicate STOMP destination registered; last registration wins"
-                    );
-                }
+                app_routes.insert(route.destination, route.handler);
             }
         }
 
@@ -179,14 +170,45 @@ impl WebsocketProtocol for Stomp {
         mut shutdown: WsShutdown,
     ) {
         let (mut sender, mut receiver) = socket.split();
+        let mut idle = WsIdle::from_connection(&connection);
         // The handshake must come first: read one frame and expect CONNECT/STOMP. A non-CONNECT
         // opener (or a parse failure) is a protocol violation — reply ERROR and abandon the socket.
-        let (negotiated, principal) = match receiver.next().await {
+        let opener = loop {
+            tokio::select! {
+                _ = shutdown.wait() => return,
+
+                _ = idle.wait() => {
+                    if idle.on_timeout()
+                        || !matches!(
+                            tokio::time::timeout(
+                                SOCKET_SEND_TIMEOUT,
+                                sender.send(Message::Ping(bytes::Bytes::new())),
+                            ).await,
+                            Ok(Ok(()))
+                        )
+                    {
+                        return;
+                    }
+                }
+
+                inbound = receiver.next() => {
+                    idle.on_activity();
+
+                    break inbound;
+                }
+            }
+        };
+
+        let (negotiated, principal) = match opener {
             Some(Ok(message)) => match self.negotiate(message, &connection).await {
                 Ok(handshake) => handshake,
 
                 Err(error) => {
-                    let _ = sender.send(to_message(error_frame(&error))).await;
+                    let _ = tokio::time::timeout(
+                        SOCKET_SEND_TIMEOUT,
+                        sender.send(to_message(error_frame(&error))),
+                    )
+                    .await;
 
                     return;
                 }
@@ -199,7 +221,7 @@ impl WebsocketProtocol for Stomp {
         let conn_id = self.broker.register();
 
         let (tx, rx) = mpsc::channel::<OutFrame>(OUTBOUND_BUFFER);
-        let writer = tokio::spawn(writer_task(sender, rx, self.config.server_heartbeat));
+        let mut writer = tokio::spawn(writer_task(sender, rx, self.config.server_heartbeat));
 
         // CONNECTED confirms the negotiated version (and advertises the server heart-beat).
         let _ = tx
@@ -209,14 +231,28 @@ impl WebsocketProtocol for Stomp {
         loop {
             tokio::select! {
                 _ = shutdown.wait() => {
-                    let _ = tx.send(OutFrame::Frame(error_frame(&StompError::Frame(
+                    let _ = tx.try_send(OutFrame::Frame(error_frame(&StompError::Frame(
                         "server shutting down".to_owned(),
-                    )))).await;
+                    ))));
 
                     break;
                 }
 
+                _ = idle.wait() => {
+                    if idle.on_timeout() {
+                        tracing::debug!(target: "overseerd::axum", "STOMP peer did not answer idle probe");
+
+                        break;
+                    }
+
+                    if tx.try_send(OutFrame::Ping).is_err() {
+                        break;
+                    }
+                }
+
                 inbound = receiver.next() => {
+                    idle.on_activity();
+
                     match inbound {
                         // A bare newline (or empty frame) is a client heart-beat, not a STOMP frame;
                         // consume it silently rather than failing to parse it (real clients such as
@@ -254,7 +290,14 @@ impl WebsocketProtocol for Stomp {
 
         self.broker.unregister(conn_id);
         drop(tx);
-        let _ = writer.await;
+
+        if tokio::time::timeout(SOCKET_SEND_TIMEOUT, &mut writer)
+            .await
+            .is_err()
+        {
+            writer.abort();
+            let _ = writer.await;
+        }
     }
 }
 
@@ -651,6 +694,12 @@ async fn writer_task(
 
                 Some(OutFrame::Heartbeat) => {
                     if sender.send(Message::text("\n")).await.is_err() {
+                        break;
+                    }
+                }
+
+                Some(OutFrame::Ping) => {
+                    if sender.send(Message::Ping(bytes::Bytes::new())).await.is_err() {
                         break;
                     }
                 }

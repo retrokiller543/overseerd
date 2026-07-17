@@ -149,7 +149,7 @@ async fn ws_controller_dispatches_and_injects() {
     let reply = next_json(&mut socket).await;
     assert_eq!(reply["dest"], "nope");
     assert_eq!(reply["id"], 3);
-    assert!(reply["error"].as_str().unwrap().contains("nope"));
+    assert_eq!(reply["error"], "no handler for destination");
 
     let ws = TokioTungsteniteWs::<JsonWs>::connect(format!("ws://{addr}/ws"))
         .await
@@ -178,7 +178,10 @@ async fn ws_controller_dispatches_and_injects() {
     match error {
         ClientError::Remote(body) => {
             assert_eq!(body.code(), overseerd::axum::client::WsStatus::Error);
-            assert!(String::from_utf8(body.into_raw()).unwrap().contains("nope"));
+            assert_eq!(
+                String::from_utf8(body.into_raw()).unwrap(),
+                "no handler for destination"
+            );
         }
 
         other => panic!("expected remote ws error, got {other:?}"),

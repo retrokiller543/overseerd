@@ -12,13 +12,17 @@ use crate::ws::pubsub::SubscriptionRegistry;
 use super::body::StompBody;
 
 /// A frame queued to a connection's writer task. `Heartbeat` is an empty server heart-beat
-/// (a bare newline); `Frame` is a fully serialized STOMP frame.
+/// (a bare newline), `Ping` probes an idle websocket peer, and `Frame` is a fully serialized STOMP
+/// frame.
 pub enum OutFrame {
     /// A serialized STOMP frame to write verbatim.
     Frame(Vec<u8>),
 
     /// A server heart-beat (`\n`), emitted when the connection is otherwise idle.
     Heartbeat,
+
+    /// A WebSocket ping used by the framework-wide idle timeout.
+    Ping,
 }
 
 /// STOMP's subscription registry: fans a `MESSAGE` frame out from a [`StompBody`].

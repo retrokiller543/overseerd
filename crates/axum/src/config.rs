@@ -35,6 +35,35 @@ pub struct AxumConfig {
     /// Maximum request body accepted by Axum's buffered body extractors, in bytes.
     pub max_request_body_bytes: usize,
 
+    /// Maximum total bytes accepted by a streamed NDJSON request body. A value of `0` disables
+    /// this limit; the per-line limit remains enforced.
+    pub max_stream_request_bytes: usize,
+
+    /// Maximum number of decoded items accepted from one streamed NDJSON request. A value of `0`
+    /// disables this limit.
+    pub max_stream_request_items: usize,
+
+    /// Maximum lifetime of a streamed NDJSON request body, in milliseconds. A value of `0`
+    /// disables this stream-specific deadline (the global request timeout can still apply).
+    pub stream_request_timeout_ms: u64,
+
+    /// Maximum WebSocket message size, in bytes. This is applied during the upgrade before any
+    /// protocol attempts to decode the message.
+    pub max_websocket_message_bytes: usize,
+
+    /// Maximum individual WebSocket frame size, in bytes. Fragmented messages remain subject to
+    /// [`max_websocket_message_bytes`](Self::max_websocket_message_bytes).
+    pub max_websocket_frame_bytes: usize,
+
+    /// Maximum number of live WebSocket connections across each mounted endpoint. A value of `0`
+    /// disables admission limiting for deployments that enforce it upstream.
+    pub max_websocket_connections: usize,
+
+    /// How long a WebSocket may remain silent before the server probes it, in milliseconds. The
+    /// peer then has one more interval to answer the ping before the connection is dropped. A value
+    /// of `0` disables idle probing.
+    pub websocket_idle_timeout_ms: u64,
+
     /// Maximum time allowed for routing, middleware, and handler execution, in milliseconds.
     /// A value of `0` disables the request deadline.
     pub request_timeout_ms: u64,
@@ -58,6 +87,13 @@ impl Default for AxumConfig {
             port: 3000,
             base_path: String::new(),
             max_request_body_bytes: 2 * 1024 * 1024,
+            max_stream_request_bytes: 16 * 1024 * 1024,
+            max_stream_request_items: 100_000,
+            stream_request_timeout_ms: 30_000,
+            max_websocket_message_bytes: 256 * 1024,
+            max_websocket_frame_bytes: 64 * 1024,
+            max_websocket_connections: 1_024,
+            websocket_idle_timeout_ms: 60_000,
             request_timeout_ms: 30_000,
             graceful_shutdown_timeout_ms: 30_000,
         }
@@ -73,6 +109,34 @@ impl ConfigProperties for AxumConfig {
         (
             "max_request_body_bytes",
             "${AXUM_MAX_REQUEST_BODY_BYTES:2097152}",
+        ),
+        (
+            "max_stream_request_bytes",
+            "${AXUM_MAX_STREAM_REQUEST_BYTES:16777216}",
+        ),
+        (
+            "max_stream_request_items",
+            "${AXUM_MAX_STREAM_REQUEST_ITEMS:100000}",
+        ),
+        (
+            "stream_request_timeout_ms",
+            "${AXUM_STREAM_REQUEST_TIMEOUT_MS:30000}",
+        ),
+        (
+            "max_websocket_message_bytes",
+            "${AXUM_MAX_WEBSOCKET_MESSAGE_BYTES:262144}",
+        ),
+        (
+            "max_websocket_frame_bytes",
+            "${AXUM_MAX_WEBSOCKET_FRAME_BYTES:65536}",
+        ),
+        (
+            "max_websocket_connections",
+            "${AXUM_MAX_WEBSOCKET_CONNECTIONS:1024}",
+        ),
+        (
+            "websocket_idle_timeout_ms",
+            "${AXUM_WEBSOCKET_IDLE_TIMEOUT_MS:60000}",
         ),
         ("request_timeout_ms", "${AXUM_REQUEST_TIMEOUT_MS:30000}"),
         (
