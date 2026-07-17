@@ -10,12 +10,13 @@ use crate::{
     error::{Error, Result},
     frame::PeerInfo,
     transport::Transport,
-    transports::stream::{StreamConnection, StreamResponder},
+    transports::stream::{StreamConfig, StreamConnection, StreamResponder},
 };
 
-/// TCP transport. Each accepted connection handles calls sequentially.
+/// TCP transport.
 pub struct TcpTransport {
     listener: TcpListener,
+    config: StreamConfig,
 }
 
 /// An accepted TCP connection.
@@ -26,6 +27,10 @@ pub type TcpResponder = StreamResponder<OwnedWriteHalf>;
 
 impl TcpTransport {
     pub async fn bind(addr: impl ToSocketAddrs) -> Result<Self> {
+        Self::bind_with_config(addr, StreamConfig::default()).await
+    }
+
+    pub async fn bind_with_config(addr: impl ToSocketAddrs, config: StreamConfig) -> Result<Self> {
         let addr = addr
             .to_socket_addrs()
             .map_err(Error::Io)?
@@ -36,7 +41,7 @@ impl TcpTransport {
 
         debug!(%addr, "TCP transport bound");
 
-        Ok(Self { listener })
+        Ok(Self { listener, config })
     }
 
     pub fn local_addr(&self) -> Result<std::net::SocketAddr> {
@@ -61,6 +66,11 @@ impl Transport for TcpTransport {
             addr: Some(peer_addr),
         };
 
-        Ok(StreamConnection::new(read, write, peer))
+        Ok(StreamConnection::with_config(
+            read,
+            write,
+            peer,
+            self.config,
+        ))
     }
 }

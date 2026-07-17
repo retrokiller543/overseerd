@@ -25,6 +25,10 @@ pub mod transports;
 pub use codec::{CodecError, Decodes, Encodes};
 pub use error::{Error, Result};
 pub use frame::{CallId, CallResult, IncomingCall, PeerInfo};
+#[cfg(not(target_family = "wasm"))]
+pub use protocol::codec::{
+    DEFAULT_MAX_FRAME_LEN, DEFAULT_READ_IDLE_TIMEOUT, FrameConfig, MessageReader,
+};
 pub use protocol::{WireMessage, WireOutcome, WireRequest, WireResponse};
 pub use status::{Flags, PredefinedCode, StatusCode};
 pub use stream_codec::{StreamDecode, StreamDecodeError, StreamEncode, StreamEncodeError};
@@ -32,8 +36,8 @@ pub use transport::{Connection, Respond, RespondStream, ResponseSink, Transport}
 #[cfg(not(target_family = "wasm"))]
 pub use transports::{
     MemoryCall, MemoryClient, MemoryConnection, MemoryConnectionHandle, MemoryResponder,
-    MemorySink, MemoryTransport, ServerEvent, StreamConnection, StreamResponder, StreamSink,
-    TcpConnection, TcpResponder, TcpTransport,
+    MemorySink, MemoryTransport, ServerEvent, StreamConfig, StreamConnection, StreamResponder,
+    StreamSink, TcpConnection, TcpResponder, TcpTransport,
 };
 
 #[cfg(unix)]

@@ -7,15 +7,15 @@
 //! ctrl-c) is run by `App::serve`, so this loop only watches its transport and the
 //! shutdown signal.
 
-use std::sync::Arc;
+use std::{panic::AssertUnwindSafe, sync::Arc, time::Duration};
 
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use overseerd_app::{AppRuntime, Protocol, Serve, ShutdownSignal};
 use overseerd_core::TypeDescriptor;
 use overseerd_di::{BoxedComponent, ScopeContainer};
 use overseerd_transport::{
-    CallResult, Connection, Error as TransportError, PeerInfo, Respond, RespondStream,
-    ResponseSink, Transport,
+    CallResult, Connection, Error as TransportError, PeerInfo, PredefinedCode, Respond,
+    RespondStream, ResponseSink, StatusCode, Transport,
 };
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::sync::CancellationToken;
@@ -28,6 +28,69 @@ use crate::middleware::{ErrorHandler, RpcRequest, RpcService};
 use crate::router::RpcRouter;
 use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
 
+/// Default number of concurrently served RPC connections.
+pub const DEFAULT_MAX_CONNECTIONS: usize = 1024;
+
+/// Default number of handler tasks allowed on one RPC connection.
+pub const DEFAULT_MAX_CALLS_PER_CONNECTION: usize = 256;
+
+const DEFAULT_ACCEPT_RETRY_INITIAL: Duration = Duration::from_millis(25);
+const DEFAULT_ACCEPT_RETRY_MAX: Duration = Duration::from_secs(1);
+
+/// Admission and transient-accept limits for the RPC server.
+#[derive(Clone, Copy, Debug)]
+pub struct RpcLimits {
+    max_connections: usize,
+    max_calls_per_connection: usize,
+    accept_retry_initial: Duration,
+    accept_retry_max: Duration,
+}
+
+impl RpcLimits {
+    pub fn new(max_connections: usize, max_calls_per_connection: usize) -> Self {
+        assert!(max_connections > 0, "maximum connections must be non-zero");
+        assert!(
+            max_calls_per_connection > 0,
+            "maximum calls per connection must be non-zero"
+        );
+
+        Self {
+            max_connections,
+            max_calls_per_connection,
+            accept_retry_initial: DEFAULT_ACCEPT_RETRY_INITIAL,
+            accept_retry_max: DEFAULT_ACCEPT_RETRY_MAX,
+        }
+    }
+
+    pub fn with_accept_backoff(mut self, initial: Duration, maximum: Duration) -> Self {
+        assert!(
+            !initial.is_zero(),
+            "initial accept backoff must be non-zero"
+        );
+        assert!(
+            maximum >= initial,
+            "maximum accept backoff is below initial"
+        );
+        self.accept_retry_initial = initial;
+        self.accept_retry_max = maximum;
+        self
+    }
+
+    pub fn max_connections(self) -> usize {
+        self.max_connections
+    }
+
+    pub fn max_calls_per_connection(self) -> usize {
+        self.max_calls_per_connection
+    }
+}
+
+impl Default for RpcLimits {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_CONNECTIONS, DEFAULT_MAX_CALLS_PER_CONNECTION)
+    }
+}
+
 /// The native RPC protocol: a router wrapped by the middleware stack, plus the global
 /// error handler. Built by [`RpcPlugin`](crate::RpcPlugin) and served over a
 /// [`Transport`].
@@ -36,6 +99,7 @@ pub struct Rpc {
     service: RpcService,
     error_handler: Option<Arc<dyn ErrorHandler>>,
     needs_peer: bool,
+    limits: RpcLimits,
 }
 
 impl Rpc {
@@ -44,18 +108,24 @@ impl Rpc {
         service: RpcService,
         error_handler: Option<Arc<dyn ErrorHandler>>,
         needs_peer: bool,
+        limits: RpcLimits,
     ) -> Self {
         Self {
             router,
             service,
             error_handler,
             needs_peer,
+            limits,
         }
     }
 
     /// The number of routes the dispatcher resolves.
     pub fn route_count(&self) -> usize {
         self.router.route_count()
+    }
+
+    pub fn limits(&self) -> RpcLimits {
+        self.limits
     }
 }
 
@@ -81,12 +151,14 @@ where
         let connection_cancel = CancellationToken::new();
         let mut connections = JoinSet::new();
         let mut serve_error = None;
+        let mut accept_retry = self.limits.accept_retry_initial;
 
-        loop {
+        'serve: loop {
             tokio::select! {
-                result = transport.accept() => {
+                result = transport.accept(), if connections.len() < self.limits.max_connections => {
                     match result {
                         Ok(conn) => {
+                            accept_retry = self.limits.accept_retry_initial;
                             debug!(target: "overseerd::daemon", peer = ?conn.peer().addr, "connection accepted, spawning task");
 
                             let service = self.service.clone();
@@ -94,19 +166,34 @@ where
                             let needs_peer = self.needs_peer;
                             let runtime = runtime.clone();
                             let cancel = connection_cancel.clone();
+                            let max_calls = self.limits.max_calls_per_connection;
                             connections.spawn(async move {
-                                serve_connection(conn, service, error_handler, needs_peer, runtime, cancel)
+                                serve_connection(conn, service, error_handler, needs_peer, runtime, cancel, max_calls)
                                     .await;
                             });
                         }
 
-                        Err(e) => {
-                            error!(target: "overseerd::daemon", error = %e, "transport accept failed");
+                        Err(TransportError::Io(e)) if is_transient_accept_error(&e) => {
+                            warn!(target: "overseerd::daemon", error = %e, retry_in = ?accept_retry, "transient transport accept failure");
 
-                            if matches!(e, TransportError::Closed) {
-                                break;
+                            tokio::select! {
+                                _ = tokio::time::sleep(accept_retry) => {}
+                                _ = shutdown.wait() => {
+                                    info!(target: "overseerd::daemon", "shutdown signal received during accept backoff");
+                                    connection_cancel.cancel();
+                                    break 'serve;
+                                }
                             }
 
+                            accept_retry = accept_retry
+                                .saturating_mul(2)
+                                .min(self.limits.accept_retry_max);
+                        }
+
+                        Err(TransportError::Closed) => break,
+
+                        Err(e) => {
+                            error!(target: "overseerd::daemon", error = %e, "terminal transport accept failure");
                             connection_cancel.cancel();
                             serve_error = Some(e.into());
                             break;
@@ -128,6 +215,21 @@ where
             }
         }
 
+        while !connections.is_empty() {
+            tokio::select! {
+                result = connections.join_next() => {
+                    if let Some(Err(e)) = result {
+                        warn!(target: "overseerd::daemon", error = %e, "connection task failed during shutdown");
+                    }
+                }
+
+                _ = shutdown.wait() => {
+                    connection_cancel.cancel();
+                    break;
+                }
+            }
+        }
+
         while let Some(result) = connections.join_next().await {
             if let Err(e) = result {
                 warn!(target: "overseerd::daemon", error = %e, "connection task failed during shutdown");
@@ -141,6 +243,77 @@ where
             None => Ok(()),
         }
     }
+}
+
+fn is_transient_accept_error(error: &std::io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::TimedOut
+    ) {
+        return true;
+    }
+
+    // Resource exhaustion reported by accept(2) / Winsock is generally exposed only as a
+    // platform raw code. Keep the tables target-specific: small Windows system-error values
+    // overlap unrelated Unix errno values (and vice versa).
+    is_transient_accept_os_error(error.raw_os_error())
+}
+
+#[cfg(windows)]
+fn is_transient_accept_os_error(raw: Option<i32>) -> bool {
+    matches!(
+        raw,
+        Some(
+            4      // ERROR_TOO_MANY_OPEN_FILES
+            | 8    // ERROR_NOT_ENOUGH_MEMORY
+            | 14   // ERROR_OUTOFMEMORY
+            | 10024 // WSAEMFILE
+            | 10055 // WSAENOBUFS
+        )
+    )
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn is_transient_accept_os_error(raw: Option<i32>) -> bool {
+    matches!(raw, Some(12 | 23 | 24 | 105)) // ENOMEM, ENFILE, EMFILE, ENOBUFS
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "netbsd",
+    target_os = "dragonfly"
+))]
+fn is_transient_accept_os_error(raw: Option<i32>) -> bool {
+    matches!(raw, Some(12 | 23 | 24 | 55)) // ENOMEM, ENFILE, EMFILE, ENOBUFS
+}
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    ))
+))]
+fn is_transient_accept_os_error(raw: Option<i32>) -> bool {
+    matches!(raw, Some(12 | 23 | 24)) // ENOMEM, ENFILE, EMFILE
+}
+
+#[cfg(not(any(unix, windows)))]
+fn is_transient_accept_os_error(_raw: Option<i32>) -> bool {
+    false
 }
 
 /// Serves one connection: builds the connection scope (seeding the peer when a
@@ -161,6 +334,7 @@ async fn serve_connection<C: Connection>(
     needs_peer: bool,
     runtime: AppRuntime,
     shutdown: CancellationToken,
+    max_calls: usize,
 ) {
     debug!(target: "overseerd::daemon", "connection established");
 
@@ -195,47 +369,65 @@ async fn serve_connection<C: Connection>(
     debug!(target: "overseerd::daemon", "connection ready");
 
     loop {
-        let recv = tokio::select! {
-            result = conn.recv() => result,
+        tokio::select! {
+            recv = conn.recv() => match recv {
+                Ok(Some((call, responder))) => {
+                    while let Some(result) = tasks.try_join_next() {
+                        observe_call_task(result);
+                    }
+
+                    if tasks.len() >= max_calls {
+                        warn!(
+                            target: "overseerd::daemon",
+                            max_calls,
+                            "connection exceeded its in-flight call limit; closing"
+                        );
+                        call.cancel.cancel();
+                        break;
+                    }
+
+                    let path = call.path;
+                    let service = service.clone();
+                    let error_handler = error_handler.clone();
+                    let connection_scope = Arc::clone(&connection_scope);
+                    let runtime = runtime.clone();
+                    let peer = peer.clone();
+
+                    debug!(target: "overseerd::daemon", %path, "dispatching call");
+
+                    tasks.spawn(drive_call(
+                        path,
+                        call.payload,
+                        call.requests,
+                        call.cancel,
+                        peer,
+                        connection_scope,
+                        runtime,
+                        responder,
+                        service,
+                        error_handler,
+                    ));
+                }
+
+                Ok(None) => {
+                    debug!(target: "overseerd::daemon", "connection closed by peer");
+                    break;
+                }
+
+                Err(e) => {
+                    warn!(target: "overseerd::daemon", error = %e, "connection error");
+                    break;
+                }
+            },
+
+            result = tasks.join_next(), if !tasks.is_empty() => {
+                if let Some(result) = result {
+                    observe_call_task(result);
+                }
+            }
 
             _ = shutdown.cancelled() => {
                 debug!(target: "overseerd::daemon", "connection shutdown requested");
-                break;
-            }
-        };
-
-        match recv {
-            Ok(Some((call, responder))) => {
-                let path = call.path;
-                let service = service.clone();
-                let error_handler = error_handler.clone();
-                let connection_scope = Arc::clone(&connection_scope);
-                let runtime = runtime.clone();
-                let peer = peer.clone();
-
-                debug!(target: "overseerd::daemon", %path, "dispatching call");
-
-                tasks.spawn(drive_call(
-                    path,
-                    call.payload,
-                    call.requests,
-                    call.cancel,
-                    peer,
-                    connection_scope,
-                    runtime,
-                    responder,
-                    service,
-                    error_handler,
-                ));
-            }
-
-            Ok(None) => {
-                debug!(target: "overseerd::daemon", "connection closed by peer");
-                break;
-            }
-
-            Err(e) => {
-                warn!(target: "overseerd::daemon", error = %e, "connection error");
                 break;
             }
         }
@@ -243,9 +435,15 @@ async fn serve_connection<C: Connection>(
 
     // The connection (and its call table) is dropped here, cancelling in-flight
     // calls via their tokens; abort any handler tasks still winding down.
-    tasks.abort_all();
+    tasks.shutdown().await;
 
     debug!(target: "overseerd::daemon", "connection ended");
+}
+
+fn observe_call_task(result: Result<(), tokio::task::JoinError>) {
+    if let Err(error) = result {
+        warn!(target: "overseerd::daemon", %error, "call task failed");
+    }
 }
 
 /// Drives one call to completion on its own task: build its request scope, dispatch,
@@ -266,13 +464,17 @@ async fn drive_call<R>(
 ) where
     R: Respond + RespondStream + Send + 'static,
 {
-    let request_scope = match runtime
-        .open_scope(&RequestScope, connection_scope, Vec::new())
-        .await
+    let request_scope = match AssertUnwindSafe(runtime.open_scope(
+        &RequestScope,
+        connection_scope,
+        Vec::new(),
+    ))
+    .catch_unwind()
+    .await
     {
-        Ok(scope) => scope,
+        Ok(Ok(scope)) => scope,
 
-        Err(e) => {
+        Ok(Err(e)) => {
             error!(target: "overseerd::daemon", %path, error = %e, "request scope build failed");
             let response = apply_error_handler(
                 &error_handler,
@@ -289,6 +491,20 @@ async fn drive_call<R>(
 
             return;
         }
+
+        Err(_) => {
+            error!(target: "overseerd::daemon", %path, "request scope build panicked");
+            let response =
+                apply_error_handler(&error_handler, &path, internal_error_response()).await;
+            let _ = responder
+                .respond(CallResult::Err {
+                    code: response.code,
+                    body: response.body,
+                })
+                .await;
+
+            return;
+        }
     };
 
     let ctx = RpcCallContext::new(payload, peer, request_scope, requests, cancel);
@@ -296,10 +512,34 @@ async fn drive_call<R>(
 
     // Drive the request through the middleware stack; its terminal service is the
     // router. `ready` honours the tower contract for layers that exert backpressure.
-    let outcome = match service.ready().await {
-        Ok(svc) => svc.call(request).await,
+    let outcome = match AssertUnwindSafe(async {
+        match service.ready().await {
+            Ok(svc) => svc.call(request).await,
 
-        Err(e) => Err(e),
+            Err(e) => Err(e),
+        }
+    })
+    .catch_unwind()
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            error!(target: "overseerd::daemon", %path, "call handler panicked");
+            let response =
+                apply_error_handler(&error_handler, &path, internal_error_response()).await;
+
+            if let Err(error) = responder
+                .respond(CallResult::Err {
+                    code: response.code,
+                    body: response.body,
+                })
+                .await
+            {
+                warn!(target: "overseerd::daemon", %path, %error, "failed to send panic response");
+            }
+
+            return;
+        }
     };
 
     match outcome {
@@ -317,8 +557,8 @@ async fn drive_call<R>(
             let mut sink = responder.into_sink();
 
             loop {
-                match stream.next().await {
-                    Some(Ok(item)) => {
+                match AssertUnwindSafe(stream.next()).catch_unwind().await {
+                    Ok(Some(Ok(item))) => {
                         if let Err(e) = sink.send(item).await {
                             warn!(target: "overseerd::daemon", %path, error = %e, "failed to send stream item");
 
@@ -326,7 +566,7 @@ async fn drive_call<R>(
                         }
                     }
 
-                    Some(Err(e)) => {
+                    Ok(Some(Err(e))) => {
                         warn!(target: "overseerd::daemon", %path, code = ?e.code, "stream handler errored");
                         let e = apply_error_handler(&error_handler, &path, e).await;
                         let _ = sink.error(e.code, e.body).await;
@@ -334,7 +574,17 @@ async fn drive_call<R>(
                         return;
                     }
 
-                    None => break,
+                    Ok(None) => break,
+
+                    Err(_) => {
+                        error!(target: "overseerd::daemon", %path, "response stream panicked");
+                        let response =
+                            apply_error_handler(&error_handler, &path, internal_error_response())
+                                .await;
+                        let _ = sink.error(response.code, response.body).await;
+
+                        return;
+                    }
                 }
             }
 
@@ -360,6 +610,13 @@ async fn drive_call<R>(
     }
 }
 
+fn internal_error_response() -> ErrorResponse {
+    ErrorResponse::with_serialized_body(
+        StatusCode::from(PredefinedCode::Internal),
+        "internal server error",
+    )
+}
+
 /// Applies the global [`ErrorHandler`] to an outgoing error, or passes it through
 /// unchanged when none is registered.
 async fn apply_error_handler(
@@ -368,8 +625,21 @@ async fn apply_error_handler(
     error: ErrorResponse,
 ) -> ErrorResponse {
     match handler {
-        Some(handler) => handler.handle(path, error).await,
+        Some(handler) => match AssertUnwindSafe(handler.handle(path, error))
+            .catch_unwind()
+            .await
+        {
+            Ok(response) => response,
+            Err(_) => {
+                error!(target: "overseerd::daemon", %path, "global error handler panicked");
+
+                internal_error_response()
+            }
+        },
 
         None => error,
     }
 }
+
+#[cfg(test)]
+mod tests;
