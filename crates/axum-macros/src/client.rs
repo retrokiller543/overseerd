@@ -655,6 +655,7 @@ fn query_parts(
 fn request_builder(
     route: &RouteAttr,
     fmt: &str,
+    holes: &[String],
     subst: &[TokenStream],
     query_suffix: &TokenStream,
     encode_ty: &TokenStream,
@@ -665,13 +666,22 @@ fn request_builder(
     let http = paths.plugin("http");
     let http_body = paths.plugin("client::HttpBody");
     let encode_path_segment = paths.plugin("client::encode_path_segment");
+    let encode_path_segments = paths.plugin("client::encode_path_segments");
     let verb = format_ident!("{}", route.verb.to_string().to_uppercase());
     // The route base lives on the client struct (`impl {Controller}Client { const BASE }`), so the
     // URI is built from `Self::BASE` without depending on the server-only `Controller` trait.
     let base = quote!(Self::BASE);
-    let subst = subst
+    let subst: Vec<TokenStream> = subst
         .iter()
-        .map(|subst| quote!(#encode_path_segment(&#subst)));
+        .zip(holes)
+        .map(|(subst, hole)| {
+            if hole.starts_with('*') {
+                quote!(#encode_path_segments(&#subst))
+            } else {
+                quote!(#encode_path_segment(&#subst))
+            }
+        })
+        .collect();
     // The path template (holes filled) then the query suffix (`"?…"` or `""`).
     let uri =
         quote!(::std::format!("{}{}", ::std::format!(#fmt, #base #(, #subst)*), #query_suffix));
@@ -750,6 +760,7 @@ pub fn build_stream_client_method(
     let request = request_builder(
         route,
         &fmt,
+        &holes,
         &path_plan.subst,
         &query_suffix,
         &encode_ty,
@@ -849,6 +860,7 @@ pub fn build_client_stream_method(
     let http_client_streaming = paths.plugin("client::HttpClientStreaming");
     let http_response = paths.plugin("client::HttpResponse");
     let encode_path_segment = paths.plugin("client::encode_path_segment");
+    let encode_path_segments = paths.plugin("client::encode_path_segments");
     let client_error = paths.client("ClientError");
     let decodes = paths.client("Decodes");
     let stream_arg = paths.client("StreamArg");
@@ -870,9 +882,17 @@ pub fn build_client_stream_method(
     // Built from the client struct's `Self::BASE` (see `request_builder`).
     let base = quote!(Self::BASE);
     let subst = &path_plan.subst;
-    let subst = subst
+    let subst: Vec<TokenStream> = subst
         .iter()
-        .map(|subst| quote!(#encode_path_segment(&#subst)));
+        .zip(&holes)
+        .map(|(subst, hole)| {
+            if hole.starts_with('*') {
+                quote!(#encode_path_segments(&#subst))
+            } else {
+                quote!(#encode_path_segment(&#subst))
+            }
+        })
+        .collect();
     // The path template (holes filled) then the query suffix (`"?…"` or `""`).
     let uri =
         quote!(::std::format!("{}{}", ::std::format!(#fmt, #base #(, #subst)*), #query_suffix));
@@ -1123,6 +1143,7 @@ pub fn build_client_method(
         method_ident,
         route,
         fmt,
+        holes,
         path_plan,
         inputs.query,
         inputs.body,
@@ -1231,6 +1252,7 @@ fn assemble(
     method_ident: &Ident,
     route: &RouteAttr,
     fmt: String,
+    holes: Vec<String>,
     path_plan: PathPlan,
     query: Option<QueryInput>,
     body: Option<Body>,
@@ -1276,6 +1298,7 @@ fn assemble(
     let header_builder = request_builder(
         route,
         &fmt,
+        &holes,
         &path_plan.subst,
         &query_suffix,
         &encode_ty,

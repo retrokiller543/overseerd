@@ -74,6 +74,18 @@ pub fn encode_path_segment(value: impl std::fmt::Display) -> String {
     out
 }
 
+/// Percent-encodes a catch-all URI path value one segment at a time, preserving `/` separators.
+/// Generated clients use this only for `{*path}` holes; ordinary `{id}` holes continue to use
+/// [`encode_path_segment`] so a slash can never escape a single route segment.
+pub fn encode_path_segments(value: impl std::fmt::Display) -> String {
+    value
+        .to_string()
+        .split('/')
+        .map(encode_path_segment)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// URL-encodes a typed `Query<T>` value into a query string (without the leading `?`). Generated
 /// clients call this for a route's `Query<T>` param when building the request URI. Like path
 /// substitution, it is a "valid by construction" step in the infallible URI builder: a `Dto` query
@@ -101,3 +113,6 @@ pub(crate) fn remote_error(
 pub use hyper_backend::HyperClient;
 #[cfg(feature = "reqwest")]
 pub use reqwest_backend::ReqwestClient;
+
+#[cfg(test)]
+mod tests;
