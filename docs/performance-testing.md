@@ -36,7 +36,7 @@ The suite covers the framework's hot paths:
 | Bench                | What it measures |
 | -------------------- | ---------------- |
 | `di_hot_paths`       | Resolver-set clone; `get` across scope depth; `extract` for single/optional/collection shapes |
-| `di_graph_memory`    | **Bytes allocated** to build small/moderate/large graphs across 1–8 scopes (custom allocation measurement, not wall-clock) |
+| `di_graph_memory`    | **Bytes** to build small/moderate/large graphs across 1–8 scopes (custom allocation measurement, not wall-clock): build *traffic* and *retained* footprint, for `empty` (zero-sized, pure DI overhead) and `payload64` component families |
 | `config_resolution`  | `from_value` templating across tree sizes; `get_config` (defaults + clones) vs plain `get` |
 | `serde_abstraction`  | Each generic-over-serde seam (`Responder`, `StreamEncode`/`StreamDecode`, `Json`/`Form`, `StompCodec`) against its raw serde baseline |
 | `rpc_dispatch`       | `WireMessage` envelope encode/decode; `RpcRouter::dispatch` across routing-table sizes |
