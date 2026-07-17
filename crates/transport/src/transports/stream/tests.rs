@@ -44,6 +44,7 @@ fn insert_test_slot<R, W>(connection: &mut StreamConnection<R, W>, id: u64) {
             inbound: None,
             inbound_sizes: std::collections::VecDeque::new(),
             inbound_bytes: 0,
+            inbound_ending: false,
             cancel: tokio_util::sync::CancellationToken::new(),
             active: Arc::new(AtomicBool::new(true)),
             tombstone: false,
@@ -342,6 +343,77 @@ async fn dropped_inbound_receiver_releases_connection_byte_budget() {
 }
 
 #[tokio::test]
+async fn stream_end_releases_budget_as_the_handler_consumes_buffered_items() {
+    let (server, client) = duplex(4096);
+    let (server_read, server_write) = split(server);
+    let (_client_read, mut client_write) = split(client);
+    let config = StreamConfig::new(FrameConfig::default(), 3, Duration::from_secs(1))
+        .with_inbound_byte_limits(4, 6);
+    let mut connection =
+        StreamConnection::with_config(server_read, server_write, PeerInfo { addr: None }, config);
+
+    write_message(&mut client_write, &request(1, true))
+        .await
+        .expect("open stream");
+    let (mut first, _responder) = connection
+        .recv()
+        .await
+        .expect("receive stream")
+        .expect("stream present");
+    write_message(
+        &mut client_write,
+        &WireMessage::StreamItem {
+            id: 1,
+            payload: vec![1; 4],
+        },
+    )
+    .await
+    .expect("buffer item");
+    write_message(&mut client_write, &WireMessage::StreamEnd { id: 1 })
+        .await
+        .expect("end stream");
+    write_message(&mut client_write, &request(2, false))
+        .await
+        .expect("drive stream end");
+    connection
+        .recv()
+        .await
+        .expect("connection healthy")
+        .expect("second call present");
+    assert_eq!(connection.inbound_bytes, 4);
+    assert!(connection.calls.get(&1).unwrap().inbound_ending);
+
+    assert_eq!(
+        first
+            .requests
+            .as_mut()
+            .expect("request receiver")
+            .recv()
+            .await,
+        Some(vec![1; 4])
+    );
+
+    // Drive the connection loop long enough for its bounded end-of-stream reconciler to observe
+    // the released channel capacity. No network frame is expected, so the outer timeout wins.
+    assert!(
+        timeout(Duration::from_millis(30), connection.recv())
+            .await
+            .is_err()
+    );
+    assert_eq!(connection.inbound_bytes, 0);
+    assert!(connection.calls.get(&1).unwrap().inbound.is_none());
+    assert!(
+        first
+            .requests
+            .as_mut()
+            .expect("request receiver")
+            .recv()
+            .await
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn enforces_per_connection_call_limit() {
     let (server, client) = duplex(4096);
     let (server_read, server_write) = split(server);
@@ -419,6 +491,7 @@ async fn control_response_tasks_are_bounded_by_connection_limit() {
                 inbound: None,
                 inbound_sizes: std::collections::VecDeque::new(),
                 inbound_bytes: 0,
+                inbound_ending: false,
                 cancel: cancel.clone(),
                 active: Arc::clone(&active),
                 tombstone: false,
@@ -513,6 +586,49 @@ async fn partially_failed_normal_response_poison_connection_and_reaps_call() {
     assert_eq!(bytes_written.load(Ordering::Acquire), 2);
     assert!(matches!(connection.recv().await, Err(Error::Closed)));
     assert!(connection.calls.is_empty());
+}
+
+#[tokio::test]
+async fn cancelling_a_partially_written_response_poison_connection() {
+    let bytes_written = Arc::new(AtomicUsize::new(0));
+    let (server_read, mut client_write) = duplex(4096);
+    let mut connection = StreamConnection::new(
+        server_read,
+        PartialThenPendingWriter {
+            bytes_written: Arc::clone(&bytes_written),
+        },
+        PeerInfo { addr: None },
+    );
+    write_message(&mut client_write, &request(1, false))
+        .await
+        .expect("write request");
+    let (_call, responder) = connection
+        .recv()
+        .await
+        .expect("receive request")
+        .expect("request present");
+    let response = tokio::spawn(crate::transport::Respond::respond(
+        responder,
+        crate::frame::CallResult::Ok(Vec::new()),
+    ));
+
+    timeout(Duration::from_secs(2), async {
+        while bytes_written.load(Ordering::Acquire) < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("response never reached partial write");
+    response.abort();
+    assert!(matches!(response.await, Err(error) if error.is_cancelled()));
+
+    assert!(matches!(
+        timeout(Duration::from_secs(2), connection.recv())
+            .await
+            .expect("poisoned connection deadline"),
+        Err(Error::Closed)
+    ));
+    assert_eq!(bytes_written.load(Ordering::Acquire), 2);
 }
 
 #[tokio::test]
@@ -687,6 +803,9 @@ async fn overflow_tombstone_prevents_id_reuse_before_terminal_write() {
         .await
         .expect("write stream item");
     }
+    write_message(&mut client_write, &WireMessage::StreamCancel { id: 1 })
+        .await
+        .expect("cancel overflow tombstone");
     write_message(&mut client_write, &request(1, false))
         .await
         .expect("attempt duplicate id");

@@ -30,6 +30,11 @@ use crate::{
 /// Inbound items buffered per streaming call before backpressure kicks in.
 const INBOUND_BUFFER: usize = 32;
 
+/// Poll interval used only while a half-closed inbound stream still has buffered items. Retaining
+/// its sender until capacity returns lets byte accounting observe consumption before delivering
+/// end-of-stream through the public `Receiver<Vec<u8>>` API.
+const INBOUND_END_RECONCILE_INTERVAL: Duration = Duration::from_millis(10);
+
 /// Default aggregate bytes buffered across request streams on one connection.
 pub const DEFAULT_MAX_INBOUND_BYTES_PER_CONNECTION: usize = 64 * 1024 * 1024;
 
@@ -125,6 +130,7 @@ struct CallSlot {
     /// the connection handles another frame for this call.
     inbound_sizes: VecDeque<usize>,
     inbound_bytes: usize,
+    inbound_ending: bool,
     /// Fired on `StreamCancel` for this call or when the connection drops.
     cancel: CancellationToken,
     /// Ensures exactly one terminal frame wins between the handler and transport.
@@ -309,10 +315,22 @@ impl<R, W> StreamConnection<R, W> {
             };
 
             slot.inbound = None;
+            slot.inbound_ending = false;
             slot.inbound_sizes.clear();
             std::mem::take(&mut slot.inbound_bytes)
         };
         self.inbound_bytes = self.inbound_bytes.saturating_sub(released);
+    }
+
+    fn finalize_consumed_inbound_ends(&mut self) {
+        self.reconcile_all_inbound_bytes();
+
+        for slot in self.calls.values_mut() {
+            if slot.inbound_ending && slot.inbound_sizes.is_empty() {
+                slot.inbound = None;
+                slot.inbound_ending = false;
+            }
+        }
     }
 }
 
@@ -329,6 +347,7 @@ where
 
             slot.cancel.cancel();
             slot.inbound = None;
+            slot.inbound_ending = false;
             slot.inbound_sizes.clear();
             let released = std::mem::take(&mut slot.inbound_bytes);
 
@@ -451,6 +470,12 @@ where
                     return Err(Error::Closed);
                 }
 
+                _ = tokio::time::sleep(INBOUND_END_RECONCILE_INTERVAL),
+                    if self.calls.values().any(|slot| slot.inbound_ending) =>
+                {
+                    self.finalize_consumed_inbound_ends();
+                }
+
                 msg = self.reader.read_message() => {
                     match msg {
                         Ok(WireMessage::Request(req)) => {
@@ -485,6 +510,7 @@ where
                                     inbound: Some(tx),
                                     inbound_sizes: VecDeque::new(),
                                     inbound_bytes: 0,
+                                    inbound_ending: false,
                                     cancel: cancel.clone(),
                                     active: Arc::clone(&active),
                                     tombstone: false,
@@ -496,6 +522,7 @@ where
                                     inbound: None,
                                     inbound_sizes: VecDeque::new(),
                                     inbound_bytes: 0,
+                                    inbound_ending: false,
                                     cancel: cancel.clone(),
                                     active: Arc::clone(&active),
                                     tombstone: false,
@@ -527,6 +554,9 @@ where
                             self.reconcile_all_inbound_bytes();
                             let payload_len = payload.len();
                             let route = self.calls.get(&id).and_then(|slot| {
+                                if slot.inbound_ending {
+                                    return None;
+                                }
                                 let call_bytes = slot.inbound_bytes.checked_add(payload_len)?;
                                 let connection_bytes = self.inbound_bytes.checked_add(payload_len)?;
 
@@ -564,7 +594,7 @@ where
                             } else if self
                                 .calls
                                 .get(&id)
-                                .is_some_and(|slot| slot.inbound.is_some())
+                                .is_some_and(|slot| slot.inbound.is_some() && !slot.inbound_ending)
                             {
                                 warn!(%id, "inbound stream byte budget exceeded; terminating call");
                                 if let Err(error) = self.reject_inbound_overflow(id) {
@@ -578,11 +608,18 @@ where
                         Ok(WireMessage::StreamEnd { id }) => {
                             self.reconcile_inbound_bytes(id);
                             if let Some(slot) = self.calls.get_mut(&id) {
-                                slot.inbound = None;
+                                if slot.inbound_sizes.is_empty() {
+                                    slot.inbound = None;
+                                } else {
+                                    slot.inbound_ending = true;
+                                }
                             }
                         }
 
                         Ok(WireMessage::StreamCancel { id }) => {
+                            if self.calls.get(&id).is_some_and(|slot| slot.tombstone) {
+                                continue;
+                            }
                             if let Some(mut slot) = self.remove_call(id) {
                                 slot.cancel.cancel();
                                 slot.inbound = None;
@@ -760,6 +797,35 @@ where
     }
 }
 
+/// Poisons a connection if a frame-write future is dropped after acquiring the writer but before
+/// the frame operation returns. Cancellation can otherwise leave a prefix/body fragment that a
+/// later writer would incorrectly append to.
+struct FrameWriteGuard<'a> {
+    health: &'a ConnectionHealth,
+    completed: bool,
+}
+
+impl<'a> FrameWriteGuard<'a> {
+    fn new(health: &'a ConnectionHealth) -> Self {
+        Self {
+            health,
+            completed: false,
+        }
+    }
+
+    fn complete(&mut self) {
+        self.completed = true;
+    }
+}
+
+impl Drop for FrameWriteGuard<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.health.close();
+        }
+    }
+}
+
 /// Writes exactly one frame while enforcing the connection poison invariant. A writer checks
 /// health both before and after acquiring the mutex, and an already-running write is cancelled
 /// when another path closes the connection. Any I/O error makes the poison permanent.
@@ -786,12 +852,14 @@ where
         return Err(Error::Closed);
     }
 
+    let mut attempt = FrameWriteGuard::new(health);
     let result = tokio::select! {
         biased;
 
         _ = health.shutdown.cancelled() => Err(Error::Closed),
         result = write_message(&mut *write, message) => result,
     };
+    attempt.complete();
 
     if result.is_err() {
         health.close();
@@ -826,12 +894,14 @@ where
         return Err(Error::Closed);
     }
 
+    let mut attempt = FrameWriteGuard::new(health);
     let result = tokio::select! {
         biased;
 
         _ = health.shutdown.cancelled() => Err(Error::Closed),
         result = write_message(&mut *write, message) => result,
     };
+    attempt.complete();
 
     if result.is_err() {
         health.close();
