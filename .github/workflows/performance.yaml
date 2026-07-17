@@ -40,7 +40,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Run ${{ matrix.bench }} benchmark
-        run: cargo bench --manifest-path benchmarks/Cargo.toml --bench ${{ matrix.bench }} --locked
+        run: cargo bench --manifest-path benchmarks/Cargo.toml --bench ${{ matrix.bench }}
       - name: Store Criterion reports
         uses: actions/upload-artifact@v4
         with:
