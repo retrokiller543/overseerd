@@ -9,12 +9,13 @@
 //! - request-time extraction (`extract`) leaks nothing — everything it allocates is freed;
 //! - a built graph's retained footprint is bounded per component and is fully reclaimed on drop.
 //!
-//! All checks run inside a single `#[test]` so only one thread touches the global counters.
+//! Allocation tracking is scoped to the measured test thread, so concurrent test-runner activity
+//! cannot contaminate the results.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 use futures::executor::block_on;
 use overseerd_core::{ResolverSet, Scope, Singleton, TypeDescriptor};
@@ -24,35 +25,57 @@ use overseerd_di::{
 
 // --- allocation tracking -------------------------------------------------------------------------
 
-static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
-static LIVE_BYTES: AtomicI64 = AtomicI64::new(0);
+/// The allocation traffic and net live-byte change across a measured operation.
+#[derive(Clone, Copy, Default)]
+struct Delta {
+    allocations: u64,
+    net_live: i64,
+}
+
+thread_local! {
+    /// Allocator activity in the current thread's active measurement, if any.
+    ///
+    /// The test harness runs bookkeeping on other threads while the test body executes. Keeping
+    /// this state thread-local prevents those unrelated allocations from making the contracts
+    /// flaky while still observing every allocation made by the code under measurement.
+    static MEASUREMENT: Cell<Option<Delta>> = const { Cell::new(None) };
+}
+
+fn record_allocation(allocations: u64, net_live: i64) {
+    // Allocation can occur while a thread's TLS is being destroyed, when `with` would panic. Such
+    // activity is outside a measurement, so it is safe to ignore an unavailable tracker.
+    let _ = MEASUREMENT.try_with(|measurement| {
+        if let Some(mut delta) = measurement.get() {
+            delta.allocations += allocations;
+            delta.net_live += net_live;
+            measurement.set(Some(delta));
+        }
+    });
+}
 
 struct TrackingAllocator;
 
 unsafe impl GlobalAlloc for TrackingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        LIVE_BYTES.fetch_add(layout.size() as i64, Ordering::Relaxed);
+        record_allocation(1, layout.size() as i64);
 
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        LIVE_BYTES.fetch_add(layout.size() as i64, Ordering::Relaxed);
+        record_allocation(1, layout.size() as i64);
 
         unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        LIVE_BYTES.fetch_sub(layout.size() as i64, Ordering::Relaxed);
+        record_allocation(0, -(layout.size() as i64));
 
         unsafe { System.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        LIVE_BYTES.fetch_add(new_size as i64 - layout.size() as i64, Ordering::Relaxed);
+        record_allocation(1, new_size as i64 - layout.size() as i64);
 
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -61,24 +84,63 @@ unsafe impl GlobalAlloc for TrackingAllocator {
 #[global_allocator]
 static ALLOCATOR: TrackingAllocator = TrackingAllocator;
 
-/// The allocation traffic and net live-byte change across `f`.
-struct Delta {
-    allocations: u64,
-    net_live: i64,
-}
-
 fn measure<R>(f: impl FnOnce() -> R) -> (R, Delta) {
-    let allocations_before = ALLOCATIONS.load(Ordering::SeqCst);
-    let live_before = LIVE_BYTES.load(Ordering::SeqCst);
+    MEASUREMENT.with(|measurement| {
+        assert!(
+            measurement.replace(Some(Delta::default())).is_none(),
+            "memory measurements must not be nested"
+        );
+    });
 
     let value = f();
-
-    let delta = Delta {
-        allocations: ALLOCATIONS.load(Ordering::SeqCst) - allocations_before,
-        net_live: LIVE_BYTES.load(Ordering::SeqCst) - live_before,
-    };
+    let delta = MEASUREMENT.with(|measurement| {
+        measurement
+            .replace(None)
+            .expect("memory measurement was active")
+    });
 
     (value, delta)
+}
+
+#[test]
+fn measurement_ignores_allocations_from_other_threads() {
+    use std::hint::{black_box, spin_loop};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let start = AtomicBool::new(false);
+    let allocated = AtomicBool::new(false);
+
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(|| {
+            while !start.load(Ordering::Acquire) {
+                spin_loop();
+            }
+
+            let allocation = Box::new([0u8; 64]);
+            black_box(&allocation);
+            allocated.store(true, Ordering::Release);
+
+            allocation
+        });
+
+        let (_, delta) = measure(|| {
+            start.store(true, Ordering::Release);
+            while !allocated.load(Ordering::Acquire) {
+                spin_loop();
+            }
+        });
+
+        let allocation = worker.join().expect("allocation thread succeeds");
+        assert_eq!(allocation.len(), 64, "background allocation was performed");
+        assert_eq!(
+            delta.allocations, 0,
+            "another thread's allocation contaminated the measurement"
+        );
+        assert_eq!(
+            delta.net_live, 0,
+            "another thread's live bytes contaminated the measurement"
+        );
+    });
 }
 
 // --- a small graph fixture -----------------------------------------------------------------------
