@@ -1,0 +1,15 @@
+//! Shared support for the Overseerd benchmark suite.
+//!
+//! Three concerns the individual benches reuse:
+//!
+//! - [`alloc`] — a tracking global allocator recording allocation *count*, cumulative *bytes*, and
+//!   *live* bytes, so a bench can measure heap traffic and a test can prove a hot path leaks
+//!   nothing.
+//! - [`measure`] — a custom Criterion measurement that reports allocated **bytes** instead of
+//!   wall-clock time, turning "how much memory does this cost" into a first-class, trended metric.
+//! - [`di`] — builders that stand up small/moderate/large DI graphs layered across several scopes,
+//!   using only the public `overseerd-di` API.
+
+pub mod alloc;
+pub mod di;
+pub mod measure;

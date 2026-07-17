@@ -7,10 +7,47 @@ publish = false
 [workspace]
 resolver = "3"
 
+[lib]
+# Shared benchmark support: the allocation-tracking allocator, the custom Criterion
+# allocation measurement, and the DI graph builders every bench reuses.
+path = "src/lib.rs"
+
 [dependencies]
-criterion = "0.8.2"
+criterion = { version = "0.8.2", features = ["async_tokio"] }
 overseerd-core = { path = "../crates/core" }
+overseerd-di = { path = "../crates/di" }
+overseerd-config = { path = "../crates/config" }
+overseerd-transport = { path = "../crates/transport" }
+overseerd-rpc = { path = "../crates/rpc" }
+overseerd-axum = { path = "../crates/axum", features = ["ws", "client", "stomp"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_urlencoded = "0.7"
+postcard = { version = "1", features = ["use-std"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
+tokio-util = "0.7"
+futures = "0.3"
 
 [[bench]]
 name = "di_hot_paths"
+harness = false
+
+[[bench]]
+name = "di_graph_memory"
+harness = false
+
+[[bench]]
+name = "config_resolution"
+harness = false
+
+[[bench]]
+name = "serde_abstraction"
+harness = false
+
+[[bench]]
+name = "rpc_dispatch"
+harness = false
+
+[[bench]]
+name = "ws_pubsub_fanout"
 harness = false

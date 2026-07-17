@@ -16,8 +16,20 @@ env:
 
 jobs:
   criterion:
-    name: Criterion benchmarks
+    name: ${{ matrix.bench }}
     runs-on: ubuntu-latest
+    # One job per bench: they run in parallel, a slow or failing bench is isolated, and each
+    # uploads its own report artifact. Add a new bench to this list when you add one.
+    strategy:
+      fail-fast: false
+      matrix:
+        bench:
+          - di_hot_paths
+          - di_graph_memory
+          - config_resolution
+          - serde_abstraction
+          - rpc_dispatch
+          - ws_pubsub_fanout
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -27,11 +39,11 @@ jobs:
           workspaces: "benchmarks -> target"
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: Run DI hot-path benchmarks
-        run: cargo bench --manifest-path benchmarks/Cargo.toml --bench di_hot_paths --locked
+      - name: Run ${{ matrix.bench }} benchmark
+        run: cargo bench --manifest-path benchmarks/Cargo.toml --bench ${{ matrix.bench }} --locked
       - name: Store Criterion reports
         uses: actions/upload-artifact@v4
         with:
-          name: criterion-reports-${{ github.run_id }}
+          name: criterion-reports-${{ matrix.bench }}-${{ github.run_id }}
           path: benchmarks/target/criterion
           retention-days: 90
