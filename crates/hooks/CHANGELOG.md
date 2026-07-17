@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.16.0](https://github.com/retrokiller543/overseerd/compare/overseerd-hooks-v0.15.0...overseerd-hooks-v0.16.0) - 2026-07-17
+
+### Fixed
+
+- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/retrokiller543/overseerd/pull/85))
+
 ## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-hooks-v0.11.2...overseerd-hooks-v0.12.0) - 2026-07-08
 
 ### Fixed
