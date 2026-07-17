@@ -3,7 +3,7 @@ use thiserror::Error;
 /// An error from config parsing, placeholder resolution, or typed deserialization.
 ///
 /// Most failures carry the dotted path of the offending node (`At`) so a message
-/// reads like `at 'server.port': cannot parse "abc" as u16`. Failures that occur
+/// reads like `at 'server.port': cannot parse resolved value as u16`. Failures that occur
 /// before a node path is known (template parsing) surface the bare [`TemplateErrorKind`].
 #[derive(Debug, Error)]
 pub enum TemplateError {
@@ -62,14 +62,22 @@ pub enum TemplateErrorKind {
     )]
     ResolutionDepthExceeded { limit: usize },
 
+    #[error("placeholder resolution exceeded the maximum work budget of {limit} steps")]
+    ResolutionBudgetExceeded { limit: usize },
+
+    #[error("rendered template exceeds the maximum size of {limit} bytes")]
+    RenderedOutputTooLarge { limit: usize },
+
     #[error("a templated placeholder can only produce a string, but a {target} was expected here")]
     PartialInNonString { target: &'static str },
 
-    #[error("cannot parse {value:?} as {target}")]
-    ParseAs { target: &'static str, value: String },
+    // Placeholder results commonly contain credentials. Never retain the rejected
+    // value in an error: reload errors are logged by default.
+    #[error("cannot parse resolved value as {target}")]
+    ParseAs { target: &'static str },
 
-    #[error("value {value} is out of range for {target}")]
-    OutOfRange { target: &'static str, value: i128 },
+    #[error("resolved value is out of range for {target}")]
+    OutOfRange { target: &'static str },
 
     #[error("expected {expected}, found {found}")]
     TypeMismatch {

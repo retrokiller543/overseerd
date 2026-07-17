@@ -30,6 +30,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
+use futures::FutureExt;
 use overseerd_core::{DependencyDescriptor, ResolverCtx, TypeDescriptor};
 
 /// A kind of hook: the event a `#[hook(Kind)]` method reacts to.
@@ -187,19 +188,97 @@ impl HookManager {
             let component = hook.component_ty;
 
             async move {
-                let outcome = (hook.call)(ctx.as_ref(), cx as &(dyn Any + Send + Sync))
-                    .await
-                    .map(|boxed| {
-                        *boxed
-                            .downcast::<K::Output>()
-                            .expect("hook output type matches its kind")
-                    });
+                let outcome = std::panic::AssertUnwindSafe((hook.call)(
+                    ctx.as_ref(),
+                    cx as &(dyn Any + Send + Sync),
+                ))
+                .catch_unwind()
+                .await
+                .map_err(|_| Error::Panicked {
+                    hook: K::NAME,
+                    component: component.name,
+                })
+                .and_then(|result| result)
+                .and_then(|boxed| {
+                    boxed
+                        .downcast::<K::Output>()
+                        .map(|boxed| *boxed)
+                        .map_err(|_| Error::InvalidOutput {
+                            hook: K::NAME,
+                            component: component.name,
+                        })
+                });
 
                 (component, outcome)
             }
         });
 
         futures::future::join_all(calls).await
+    }
+
+    /// Runs matching hooks sequentially in registration order and stops after the
+    /// first failure. Lifecycle startup uses this to guarantee that components after
+    /// a failed startup hook never begin side effects.
+    pub async fn run_until_error<K: HookKind>(
+        &self,
+        cx: &K::Cx,
+        filter: impl Fn(&HookDescriptor) -> bool,
+    ) -> Vec<(TypeDescriptor, Result<K::Output>)> {
+        let Some(bucket) = self.inner.by_kind.get(&TypeId::of::<K>()) else {
+            return Vec::new();
+        };
+
+        let ctx = self
+            .inner
+            .ctx
+            .get()
+            .expect("hook manager resolver context attached before hooks run");
+        let mut outcomes = Vec::new();
+
+        for hook in bucket.iter().filter(|hook| filter(hook)) {
+            let component = hook.component_ty;
+            let outcome = std::panic::AssertUnwindSafe((hook.call)(
+                ctx.as_ref(),
+                cx as &(dyn Any + Send + Sync),
+            ))
+            .catch_unwind()
+            .await
+            .map_err(|_| Error::Panicked {
+                hook: K::NAME,
+                component: component.name,
+            })
+            .and_then(|result| result)
+            .and_then(|boxed| {
+                boxed
+                    .downcast::<K::Output>()
+                    .map(|boxed| *boxed)
+                    .map_err(|_| Error::InvalidOutput {
+                        hook: K::NAME,
+                        component: component.name,
+                    })
+            });
+            let failed = outcome.is_err();
+
+            outcomes.push((component, outcome));
+
+            if failed {
+                break;
+            }
+        }
+
+        outcomes
+    }
+
+    /// Whether `component` declares a hook of kind `K`.
+    pub fn component_has<K: HookKind>(&self, component: TypeId) -> bool {
+        self.inner
+            .by_kind
+            .get(&TypeId::of::<K>())
+            .is_some_and(|hooks| {
+                hooks
+                    .iter()
+                    .any(|hook| (hook.component_ty.type_id)() == component)
+            })
     }
 }
 
@@ -208,3 +287,6 @@ pub const HOOK_MANAGER_ID: &str = "overseerd:hook-manager";
 
 /// The display name of the seeded [`HookManager`] singleton.
 pub const HOOK_MANAGER_NAME: &str = "HookManager";
+
+#[cfg(test)]
+mod tests;

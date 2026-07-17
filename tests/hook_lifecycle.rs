@@ -5,9 +5,13 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use futures::FutureExt;
 use overseerd::config::Toml;
 use overseerd::daemon::App;
 use overseerd::{ConfigManager, Shutdown, Startup, component, methods};
+use overseerd_app::{
+    AppRegistry, AppRuntime, Plugin, Protocol, ProtocolPlugin, Serve, ShutdownSignal,
+};
 
 /// Records that its startup and shutdown hooks ran.
 #[component]
@@ -27,6 +31,24 @@ struct FailingStartupComponent {
     stopped: AtomicUsize,
 }
 
+/// Must never start because it is registered after the failing component.
+#[component]
+struct NeverStartedComponent {
+    #[default]
+    started: AtomicUsize,
+    #[default]
+    stopped: AtomicUsize,
+}
+
+/// Has more than one startup hook: cleanup is still required when a later hook fails.
+#[component]
+struct PartiallyStartedComponent {
+    #[default]
+    startups: AtomicUsize,
+    #[default]
+    stopped: AtomicUsize,
+}
+
 impl FailingStartupComponent {
     fn started(&self) -> usize {
         self.started.load(Ordering::SeqCst)
@@ -40,6 +62,26 @@ impl FailingStartupComponent {
 impl LifecycleComponent {
     fn started(&self) -> usize {
         self.started.load(Ordering::SeqCst)
+    }
+
+    fn stopped(&self) -> usize {
+        self.stopped.load(Ordering::SeqCst)
+    }
+}
+
+impl NeverStartedComponent {
+    fn started(&self) -> usize {
+        self.started.load(Ordering::SeqCst)
+    }
+
+    fn stopped(&self) -> usize {
+        self.stopped.load(Ordering::SeqCst)
+    }
+}
+
+impl PartiallyStartedComponent {
+    fn startups(&self) -> usize {
+        self.startups.load(Ordering::SeqCst)
     }
 
     fn stopped(&self) -> usize {
@@ -72,6 +114,49 @@ impl FailingStartupComponent {
 
         Err(overseerd::daemon::Error::MissingComponent(
             "startup rejected",
+        ))
+    }
+
+    #[hook(Shutdown)]
+    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+        self.stopped.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+}
+
+#[methods]
+impl NeverStartedComponent {
+    #[hook(Startup)]
+    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+        self.started.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+
+    #[hook(Shutdown)]
+    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+        self.stopped.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+}
+
+#[methods]
+impl PartiallyStartedComponent {
+    #[hook(Startup)]
+    async fn first_startup(&self) -> overseerd::daemon::Result<()> {
+        self.startups.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+
+    #[hook(Startup)]
+    async fn second_startup_fails(&self) -> overseerd::daemon::Result<()> {
+        self.startups.fetch_add(1, Ordering::SeqCst);
+
+        Err(overseerd::daemon::Error::MissingComponent(
+            "second startup rejected",
         ))
     }
 
@@ -130,10 +215,12 @@ async fn startup_and_shutdown_hooks_fire() {
 }
 
 #[tokio::test]
-async fn startup_failure_runs_shutdown_hooks_before_returning() {
+async fn startup_failure_stops_later_hooks_and_only_shuts_down_started_components() {
     let daemon = App::builder("startup-failure-cleanup-test")
         .config_source(ConfigManager::<Toml>::empty())
+        .component::<LifecycleComponent>()
         .component::<FailingStartupComponent>()
+        .component::<NeverStartedComponent>()
         .build()
         .await
         .expect("daemon builds");
@@ -142,10 +229,109 @@ async fn startup_failure_runs_shutdown_hooks_before_returning() {
         .container()
         .get::<FailingStartupComponent>()
         .expect("component built");
+    let started = daemon
+        .container()
+        .get::<LifecycleComponent>()
+        .expect("started component built");
+    let never = daemon
+        .container()
+        .get::<NeverStartedComponent>()
+        .expect("later component built");
 
     let result = daemon.run().await;
 
     assert!(result.is_err(), "startup failure is returned");
     assert_eq!(component.started(), 1, "startup hook ran once");
-    assert_eq!(component.stopped(), 1, "shutdown hook cleaned up");
+    assert_eq!(component.stopped(), 0, "failed startup was not shut down");
+    assert_eq!(
+        started.stopped(),
+        started.started(),
+        "successful startup and shutdown remain paired regardless of registry ordering"
+    );
+    assert_eq!(
+        never.stopped(),
+        never.started(),
+        "components skipped after the failure are not shut down"
+    );
+}
+
+#[tokio::test]
+async fn later_startup_failure_preserves_cleanup_for_an_already_started_component() {
+    let app = App::builder("partial-startup-cleanup-test")
+        .config_source(ConfigManager::<Toml>::empty())
+        .component::<PartiallyStartedComponent>()
+        .build()
+        .await
+        .expect("app builds");
+    let component = app
+        .container()
+        .get::<PartiallyStartedComponent>()
+        .expect("component built");
+
+    let result = app.run().await;
+
+    assert!(result.is_err());
+    assert_eq!(component.startups(), 2, "both startup hooks ran in order");
+    assert_eq!(
+        component.stopped(),
+        1,
+        "the earlier successful startup kept the component eligible for cleanup"
+    );
+}
+
+#[derive(Default)]
+struct PanickingPlugin;
+
+struct PanickingProtocol;
+
+impl Plugin for PanickingPlugin {
+    fn register(&self, _registry: &mut AppRegistry) {}
+}
+
+impl ProtocolPlugin for PanickingPlugin {
+    type Protocol = PanickingProtocol;
+    type Error = overseerd_app::Error;
+
+    const SCOPES: &'static [&'static dyn overseerd::Scope] = &[];
+
+    fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
+        Ok(PanickingProtocol)
+    }
+}
+
+impl Protocol for PanickingProtocol {
+    type Error = overseerd_app::Error;
+}
+
+impl Serve<()> for PanickingProtocol {
+    async fn serve(
+        self,
+        _runtime: AppRuntime,
+        _shutdown: ShutdownSignal,
+        _endpoint: (),
+    ) -> Result<(), Self::Error> {
+        panic!("protocol panic")
+    }
+}
+
+#[tokio::test]
+async fn protocol_panic_still_runs_shutdown_hooks() {
+    let app = overseerd_app::App::<PanickingPlugin>::builder("panic-cleanup-test")
+        .config_source(ConfigManager::<Toml>::empty())
+        .component::<LifecycleComponent>()
+        .build()
+        .await
+        .expect("app builds");
+    let component = app
+        .container()
+        .get::<LifecycleComponent>()
+        .expect("component built");
+
+    let result = std::panic::AssertUnwindSafe(app.serve(()))
+        .catch_unwind()
+        .await;
+
+    assert!(result.is_err(), "protocol panic is resumed after cleanup");
+    assert_eq!(component.started(), 1);
+    assert_eq!(component.stopped(), 1, "shutdown ran before panic resumed");
 }

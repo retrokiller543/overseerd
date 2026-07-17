@@ -6,6 +6,8 @@ use overseerd_dirs::DirectoriesManager;
 use serde::de::DeserializeOwned;
 use tracing::{debug, info, instrument, trace};
 
+use crate::resolve::ResolveCtx;
+use crate::value::Segment;
 use crate::{ConfigValue, Resolver, ResolverChain, from_value_in};
 
 use super::{CONFIG_BINDINGS, ConfigBinding, ConfigError, ConfigProperties, DirectoriesResolver};
@@ -451,11 +453,24 @@ impl<F> ConfigManager<F> {
         seed_defaults_into(&mut self.root, &self.bindings);
     }
 
-    /// The merged subtree at `path` in the current tree (pre-substitution), or `None`
-    /// if absent. Reload compares this against the freshly re-read tree to swap only
-    /// the bindings whose source actually changed.
-    pub(crate) fn subtree(&self, path: &str) -> Option<&ConfigValue> {
-        self.root.get_path(path)
+    /// Captures a binding's committed source and placeholder dependencies.
+    pub(crate) fn snapshot(&self, path: &str) -> ConfigSnapshot {
+        self.snapshot_in(&self.root, path)
+    }
+
+    /// Captures a binding against an explicit candidate root. In addition to the
+    /// binding's raw subtree, the snapshot records every resolved placeholder value,
+    /// so changes in environment variables and referenced config paths invalidate it.
+    pub(crate) fn snapshot_in(&self, base: &ConfigValue, path: &str) -> ConfigSnapshot {
+        let raw = base.get_path(path).cloned();
+        let mut resolved = Vec::new();
+        let mut ctx = ResolveCtx::new(base, &self.resolvers);
+
+        if let Some(value) = raw.as_ref() {
+            collect_resolved_placeholders(value, &mut ctx, &mut resolved);
+        }
+
+        ConfigSnapshot { raw, resolved }
     }
 
     /// Re-reads every retained source from disk and rebuilds a fresh merged tree
@@ -480,6 +495,40 @@ impl<F> ConfigManager<F> {
     /// reload has committed.
     pub(crate) fn adopt(&mut self, root: ConfigValue) {
         self.root = root;
+    }
+}
+
+/// The dependency-aware view of one config binding at its last successful commit.
+#[derive(Clone, PartialEq)]
+pub(crate) struct ConfigSnapshot {
+    raw: Option<ConfigValue>,
+    resolved: Vec<Option<String>>,
+}
+
+fn collect_resolved_placeholders(
+    value: &ConfigValue,
+    ctx: &mut ResolveCtx<'_, '_>,
+    resolved: &mut Vec<Option<String>>,
+) {
+    match value {
+        ConfigValue::Str(value) => {
+            for segment in &value.segments {
+                if let Segment::Placeholder(placeholder) = segment {
+                    resolved.push(ctx.resolve_placeholder(placeholder).ok());
+                }
+            }
+        }
+        ConfigValue::Array(values) => {
+            for value in values {
+                collect_resolved_placeholders(value, ctx, resolved);
+            }
+        }
+        ConfigValue::Table(entries) => {
+            for (_, value) in entries {
+                collect_resolved_placeholders(value, ctx, resolved);
+            }
+        }
+        ConfigValue::Null | ConfigValue::Bool(_) | ConfigValue::Int(_) | ConfigValue::Float(_) => {}
     }
 }
 

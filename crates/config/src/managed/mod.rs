@@ -28,7 +28,7 @@ pub use reload::{
     ReloadableConfig,
 };
 pub use store::{ConfigStore, ContainerConfigExt};
-pub use trigger::spawn_reload_triggers;
+pub use trigger::{spawn_reload_triggers, stop_reload_triggers};
 
 use crate::DefaultSpec;
 
@@ -229,8 +229,12 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
 
     /// Recovers a [`ReloadableConfig`] slot from a [`bind`](Self::bind) seed, sharing
     /// its live cell so a reload can re-publish the value in place.
-    fn slot(seed: &BoxedComponent, path: &str) -> Option<Box<dyn ReloadableConfig>> {
-        ConfigSlot::<Self>::from_seed(seed, path)
+    fn slot(
+        tree: &ConfigManager,
+        seed: &BoxedComponent,
+        path: &str,
+    ) -> Option<Box<dyn ReloadableConfig>> {
+        ConfigSlot::<Self>::from_seed(tree, seed, path)
     }
 }
 
@@ -241,7 +245,7 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
 /// seed every bound type's defaults into the tree (enabling cross-path `${a.b.c}` references).
 /// Monomorphized-per-type recovery of a [`ReloadableConfig`] from a bind seed, so the
 /// type-erased manager can build reload slots without naming the config type.
-pub type SlotThunk = fn(&BoxedComponent, &str) -> Option<Box<dyn ReloadableConfig>>;
+pub type SlotThunk = fn(&ConfigManager, &BoxedComponent, &str) -> Option<Box<dyn ReloadableConfig>>;
 
 #[derive(Clone)]
 pub struct ConfigBinding {

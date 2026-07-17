@@ -108,7 +108,7 @@ impl<'cfg, 'ctx, 'r> ValueDeserializer<'cfg, 'ctx, 'r> {
                 }
 
                 raw.parse::<i128>()
-                    .map_err(|_| self.err(TemplateErrorKind::ParseAs { target, value: raw }))
+                    .map_err(|_| self.err(TemplateErrorKind::ParseAs { target }))
             }
 
             _ => Err(self.mismatch(target)),
@@ -129,7 +129,7 @@ impl<'cfg, 'ctx, 'r> ValueDeserializer<'cfg, 'ctx, 'r> {
                 }
 
                 raw.parse::<f64>()
-                    .map_err(|_| self.err(TemplateErrorKind::ParseAs { target, value: raw }))
+                    .map_err(|_| self.err(TemplateErrorKind::ParseAs { target }))
             }
 
             _ => Err(self.mismatch(target)),
@@ -156,7 +156,6 @@ macro_rules! deserialize_int {
             let narrowed = <$ty>::try_from(n).map_err(|_| {
                 self.err(TemplateErrorKind::OutOfRange {
                     target: stringify!($ty),
-                    value: n,
                 })
             })?;
 
@@ -179,12 +178,9 @@ impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx
                     return Err(self.err(TemplateErrorKind::PartialInNonString { target: "bool" }));
                 }
 
-                let parsed = raw.parse::<bool>().map_err(|_| {
-                    self.err(TemplateErrorKind::ParseAs {
-                        target: "bool",
-                        value: raw,
-                    })
-                })?;
+                let parsed = raw
+                    .parse::<bool>()
+                    .map_err(|_| self.err(TemplateErrorKind::ParseAs { target: "bool" }))?;
 
                 visitor.visit_bool(parsed)
             }
@@ -211,12 +207,8 @@ impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx
     fn deserialize_u128<V: Visitor<'de>>(mut self, visitor: V) -> Result<V::Value, Self::Error> {
         let n = self.int_value("u128")?;
 
-        let narrowed = u128::try_from(n).map_err(|_| {
-            self.err(TemplateErrorKind::OutOfRange {
-                target: "u128",
-                value: n,
-            })
-        })?;
+        let narrowed = u128::try_from(n)
+            .map_err(|_| self.err(TemplateErrorKind::OutOfRange { target: "u128" }))?;
 
         visitor.visit_u128(narrowed)
     }
@@ -244,10 +236,7 @@ impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx
 
         match (first, chars.next()) {
             (Some(c), None) => visitor.visit_char(c),
-            _ => Err(self.err(TemplateErrorKind::ParseAs {
-                target: "char",
-                value: rendered,
-            })),
+            _ => Err(self.err(TemplateErrorKind::ParseAs { target: "char" })),
         }
     }
 

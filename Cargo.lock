@@ -1441,6 +1441,7 @@ name = "overseerd-dirs"
 version = "0.14.1"
 dependencies = [
  "directories",
+ "libc",
  "overseerd-core",
  "overseerd-di",
  "tracing",
@@ -1588,6 +1589,7 @@ version = "0.14.1"
 dependencies = [
  "bitflags 2.13.0",
  "futures",
+ "libc",
  "overseerd-di",
  "postcard",
  "serde",

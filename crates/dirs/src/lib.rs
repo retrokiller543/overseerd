@@ -21,7 +21,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use overseerd_di::{Component, Injectable};
 
@@ -39,6 +39,9 @@ pub trait DirKind: Send + Sync + 'static {
     /// Unique dependency-injection id (namespaced to avoid colliding with user
     /// component ids).
     const COMPONENT_ID: &'static str;
+    /// Whether this directory can contain application-private state and must be
+    /// created with restrictive permissions.
+    const PRIVATE: bool;
 
     /// Resolves this kind's path from the platform project dirs.
     fn project_path(dirs: &ProjectDirs) -> PathBuf;
@@ -52,7 +55,7 @@ pub trait DirKind: Send + Sync + 'static {
 
 /// Generates the directory marker types and their [`DirKind`] impls.
 macro_rules! dir_kinds {
-    ($($(#[$meta:meta])* $name:ident => $label:literal, $project:expr;)*) => {
+    ($($(#[$meta:meta])* $name:ident => $label:literal, private = $private:literal, $project:expr;)*) => {
         $(
             $(#[$meta])*
             pub struct $name;
@@ -61,6 +64,7 @@ macro_rules! dir_kinds {
                 const NAME: &'static str = concat!(stringify!($name), "Dir");
                 const LABEL: &'static str = $label;
                 const COMPONENT_ID: &'static str = concat!("overseerd:dir:", $label);
+                const PRIVATE: bool = $private;
 
                 fn project_path(dirs: &ProjectDirs) -> PathBuf {
                     let resolve: fn(&ProjectDirs) -> PathBuf = $project;
@@ -74,19 +78,29 @@ macro_rules! dir_kinds {
 
 dir_kinds! {
     /// Configuration files (`application.toml`, …).
-    Config => "config", |d| d.config_dir().to_path_buf();
+    Config => "config", private = true, |d| d.config_dir().to_path_buf();
     /// Persistent application data.
-    Data => "data", |d| d.data_dir().to_path_buf();
+    Data => "data", private = true, |d| d.data_dir().to_path_buf();
     /// Discardable cached data.
-    Cache => "cache", |d| d.cache_dir().to_path_buf();
+    Cache => "cache", private = true, |d| d.cache_dir().to_path_buf();
     /// State that should persist but is not user data (logs, history).
-    State => "state",
+    State => "state", private = true,
         |d| d.state_dir().unwrap_or_else(|| d.data_dir()).to_path_buf();
-    /// Runtime files (sockets, pid files); falls back to the cache dir.
-    Runtime => "runtime",
-        |d| d.runtime_dir().map(Path::to_path_buf).unwrap_or_else(|| d.cache_dir().to_path_buf());
+    /// Runtime files (sockets, pid files). Platforms without a runtime directory
+    /// fall back to cache with an explicit warning.
+    Runtime => "runtime", private = true, |d| {
+        d.runtime_dir().map(Path::to_path_buf).unwrap_or_else(|| {
+            let fallback = d.cache_dir().to_path_buf();
+            warn!(
+                target: "overseerd::dirs",
+                path = %fallback.display(),
+                "platform runtime directory unavailable; using persistent cache directory"
+            );
+            fallback
+        })
+    };
     /// The system temporary directory (shared, not app-scoped).
-    Tmp => "tmp", |_| std::env::temp_dir();
+    Tmp => "tmp", private = false, |_| std::env::temp_dir();
 }
 
 /// A resolved application directory of kind `K`, injectable by value.
@@ -96,14 +110,16 @@ dir_kinds! {
 /// performs I/O.
 pub struct Dir<K> {
     path: PathBuf,
+    secure_root: Option<PathBuf>,
     _marker: PhantomData<K>,
 }
 
 impl<K> Dir<K> {
     /// Wraps an already-resolved path.
-    fn new(path: PathBuf) -> Self {
+    fn new(path: PathBuf, secure_root: Option<PathBuf>) -> Self {
         Self {
             path,
+            secure_root,
             _marker: PhantomData,
         }
     }
@@ -119,16 +135,27 @@ impl<K> Dir<K> {
     }
 
     /// Creates the directory (and parents) on disk if absent.
-    pub fn ensure(&self) -> std::io::Result<()> {
+    pub fn ensure(&self) -> std::io::Result<()>
+    where
+        K: DirKind,
+    {
         debug!(target: "overseerd::dirs", path = %self.path.display(), "ensuring directory exists");
 
-        std::fs::create_dir_all(&self.path)
+        if !K::PRIVATE {
+            return std::fs::create_dir_all(&self.path);
+        }
+
+        if let Some(root) = &self.secure_root {
+            ensure_private_directory(root)?;
+        }
+
+        ensure_private_directory(&self.path)
     }
 }
 
 impl<K> Clone for Dir<K> {
     fn clone(&self) -> Self {
-        Self::new(self.path.clone())
+        Self::new(self.path.clone(), self.secure_root.clone())
     }
 }
 
@@ -138,6 +165,181 @@ impl<K> Deref for Dir<K> {
     fn deref(&self) -> &Path {
         &self.path
     }
+}
+
+#[cfg(unix)]
+fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
+    use std::fs::{DirBuilder, Permissions};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+
+    const PRIVATE_MODE: u32 = 0o700;
+    const WORLD_WRITE: u32 = 0o002;
+    const STICKY: u32 = 0o1000;
+
+    let effective_uid = unsafe { libc::geteuid() };
+    let mut current = PathBuf::new();
+
+    for component in path.components() {
+        current.push(component);
+
+        let metadata = match std::fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match DirBuilder::new()
+                    .recursive(false)
+                    .mode(PRIVATE_MODE)
+                    .create(&current)
+                {
+                    Ok(()) => std::fs::symlink_metadata(&current)?,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        std::fs::symlink_metadata(&current)?
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+
+        let target = current == path;
+
+        if metadata.file_type().is_symlink() {
+            // Root-owned platform aliases (for example macOS `/tmp`) are trusted
+            // ancestors. The application directory itself is never allowed to be a
+            // symlink, and neither are aliases planted by another local user.
+            if target || metadata.uid() != 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "refusing symlinked application directory: {}",
+                        current.display()
+                    ),
+                ));
+            }
+        }
+
+        let followed = std::fs::metadata(&current)?;
+
+        if !followed.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotADirectory,
+                format!(
+                    "application directory path is not a directory: {}",
+                    current.display()
+                ),
+            ));
+        }
+
+        if target && followed.uid() != effective_uid {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "application directory is not owned by this user: {}",
+                    current.display()
+                ),
+            ));
+        }
+
+        if !target && followed.mode() & WORLD_WRITE != 0 && followed.mode() & STICKY == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "application directory has an unsafe writable ancestor: {}",
+                    current.display()
+                ),
+            ));
+        }
+    }
+
+    std::fs::set_permissions(path, Permissions::from_mode(PRIVATE_MODE))
+}
+
+#[cfg(windows)]
+fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+
+    // Windows has no Unix mode bits. Newly created directories inherit the ACL of
+    // the application/user profile directory. Reject every reparse point (symlink,
+    // junction, mount point) while walking so creation cannot be redirected.
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+    let mut current = PathBuf::new();
+
+    for component in path.components() {
+        current.push(component);
+
+        let metadata = match std::fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match std::fs::create_dir(&current) {
+                    Ok(()) => std::fs::symlink_metadata(&current)?,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        std::fs::symlink_metadata(&current)?
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(error) => return Err(error),
+        };
+
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "refusing reparse point in application directory: {}",
+                    current.display()
+                ),
+            ));
+        }
+
+        if !metadata.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotADirectory,
+                format!(
+                    "application directory path is not a directory: {}",
+                    current.display()
+                ),
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
+    let mut current = PathBuf::new();
+
+    for component in path.components() {
+        current.push(component);
+
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!(
+                        "refusing symlinked application directory: {}",
+                        current.display()
+                    ),
+                ));
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotADirectory,
+                    format!(
+                        "application directory path is not a directory: {}",
+                        current.display()
+                    ),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::create_dir(&current)?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Ok(())
 }
 
 impl<K: DirKind> Component for Dir<K> {
@@ -218,30 +420,38 @@ impl DirectoriesManager {
         }
     }
 
-    /// A best-effort manager for `application`: platform project dirs when available,
-    /// otherwise a layout rooted under the system temp directory. Never fails.
+    /// A fail-closed manager for `application` using platform project directories.
+    ///
+    /// Panics when the platform cannot resolve a home directory. Framework builders
+    /// use [`try_for_app`](Self::try_for_app) and return an error instead; applications
+    /// that intentionally need another layout should pass [`from_path`](Self::from_path).
     pub fn for_app(application: &str) -> Self {
-        if let Some(manager) = Self::from_project("", "", application) {
-            return manager;
-        }
+        Self::try_for_app(application).expect(
+            "no safe application directories are available; supply an explicit DirectoriesManager::from_path",
+        )
+    }
 
-        let root = std::env::temp_dir().join(application);
-
-        debug!(target: "overseerd::dirs", application, root = %root.display(), "falling back to temp-rooted directories");
-
-        Self::from_path(root)
+    /// Resolves safe platform project directories, refusing to fall back to a
+    /// predictable path in the shared system temporary directory.
+    pub fn try_for_app(application: &str) -> std::io::Result<Self> {
+        Self::from_project("", "", application).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no home directory is available for safe application directories",
+            )
+        })
     }
 
     /// Resolves the directory of kind `K`.
     pub fn dir<K: DirKind>(&self) -> Dir<K> {
-        let path = match &self.backing {
-            Backing::Project(project) => K::project_path(project),
-            Backing::Rooted(root) => K::rooted_path(root),
+        let (path, secure_root) = match &self.backing {
+            Backing::Project(project) => (K::project_path(project), None),
+            Backing::Rooted(root) => (K::rooted_path(root), Some(root.clone())),
         };
 
         trace!(target: "overseerd::dirs", kind = K::LABEL, path = %path.display(), "resolved directory");
 
-        Dir::new(path)
+        Dir::new(path, secure_root)
     }
 
     /// The platform's config directory path — where `application.<ext>` files live. A
@@ -298,3 +508,6 @@ impl Injectable for DirectoriesManager {
 /// Under `di-check`, the manager is framework-seeded, so it is always provided.
 #[cfg(feature = "di-check")]
 impl overseerd_di::Provide<DirectoriesManager> for overseerd_di::Wiring {}
+
+#[cfg(test)]
+mod tests;

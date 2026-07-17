@@ -78,7 +78,7 @@ pub use overseerd_config::{
     ConfigBindingDescriptor, ConfigDefaults, ConfigError, ConfigManager, ConfigProperties,
     ConfigReload, ConfigReloadError, ConfigReloadReport, ConfigReloader, ConfigStore,
     ContainerConfigExt, DefaultSpec, DirectoriesResolver, EnumTag, HookOutcome, ReloadProposal,
-    ReloadTriggers, ReloadableConfig, spawn_reload_triggers,
+    ReloadTriggers, ReloadableConfig, spawn_reload_triggers, stop_reload_triggers,
 };
 
 // ---------------------------------------------------------------------------

@@ -7,14 +7,19 @@
 //!
 //! [`ConfigManager`]: super::ConfigManager
 
+#[cfg(any(unix, feature = "watch"))]
+use futures::FutureExt;
 use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tracing::error;
+#[cfg(any(unix, feature = "watch"))]
+use tracing::{info, warn};
 
 use super::{ConfigReloader, ReloadTriggers};
 
 /// Spawns the background tasks for the requested triggers, returning their handles so the
 /// caller can abort them on shutdown. Unsupported requests (SIGHUP off-Unix, watching
 /// without the `watch` feature) are logged and skipped.
+#[allow(unused_mut, unused_variables)]
 pub fn spawn_reload_triggers(
     reloader: ConfigReloader,
     triggers: ReloadTriggers,
@@ -45,10 +50,30 @@ pub fn spawn_reload_triggers(
     handles
 }
 
+/// Cancels every reload trigger and waits until each task has actually exited.
+/// Awaiting aborted tasks gives callers a deterministic no-lingering-task boundary.
+pub async fn stop_reload_triggers(handles: Vec<JoinHandle<()>>) {
+    for handle in &handles {
+        handle.abort();
+    }
+
+    for handle in handles {
+        match handle.await {
+            Ok(()) => {}
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => error!(target: "overseerd::config", %error, "reload trigger task failed"),
+        }
+    }
+}
+
 /// Runs one reload and logs its outcome.
+#[cfg(any(unix, feature = "watch"))]
 async fn run_reload(reloader: &ConfigReloader, cause: &'static str) {
-    match reloader.reload().await {
-        Ok(report) => info!(
+    match std::panic::AssertUnwindSafe(reloader.reload())
+        .catch_unwind()
+        .await
+    {
+        Ok(Ok(report)) => info!(
             target: "overseerd::config",
             cause,
             generation = report.generation,
@@ -56,11 +81,17 @@ async fn run_reload(reloader: &ConfigReloader, cause: &'static str) {
             "configuration reloaded"
         ),
 
-        Err(error) => error!(
+        Ok(Err(error)) => error!(
             target: "overseerd::config",
             cause,
             %error,
             "configuration reload failed"
+        ),
+
+        Err(_) => error!(
+            target: "overseerd::config",
+            cause,
+            "configuration reload panicked; trigger remains active"
         ),
     }
 }
@@ -86,6 +117,8 @@ fn spawn_sighup(reloader: ConfigReloader) -> JoinHandle<()> {
         while hangup.recv().await.is_some() {
             run_reload(&reloader, "sighup").await;
         }
+
+        warn!(target: "overseerd::config", "SIGHUP reload trigger stopped unexpectedly");
     })
 }
 
@@ -158,5 +191,10 @@ fn spawn_watch(reloader: ConfigReloader, debounce: std::time::Duration) -> Optio
 
             run_reload(&reloader, "file-change").await;
         }
+
+        warn!(target: "overseerd::config", "config file reload trigger stopped unexpectedly");
     }))
 }
+
+#[cfg(test)]
+mod tests;
