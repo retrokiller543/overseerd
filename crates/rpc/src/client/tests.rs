@@ -1,12 +1,16 @@
+use std::pin::Pin;
+use std::sync::{Arc, atomic::AtomicBool};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures::StreamExt;
 use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf, duplex, split};
+use tokio::sync::Notify;
 use tokio::time::timeout;
 
 use super::{
-    CONTROL_BUFFER, ConnectionState, REPLY_BUFFER, REPLY_OVERFLOW_ERROR, RpcResponses,
-    StreamClientTransport, WriteControl, Writer, serialize_frame,
+    ConnectionState, REPLY_BUFFER, REPLY_OVERFLOW_ERROR, RpcResponses, StreamClientTransport,
+    WRITE_BUFFER, WriteCommand, Writer, serialize_frame,
 };
 use overseerd_client::ClientError;
 use overseerd_transport::protocol::codec::{MessageReader, write_message};
@@ -17,6 +21,38 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 type TestIo = tokio::io::DuplexStream;
 type TestClient = StreamClientTransport<WriteHalf<TestIo>>;
+
+struct StalledWriter {
+    started: Arc<Notify>,
+    dropped: Arc<AtomicBool>,
+}
+
+impl AsyncWrite for StalledWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        _buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        self.started.notify_one();
+
+        Poll::Pending
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl Drop for StalledWriter {
+    fn drop(&mut self) {
+        self.dropped
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+}
 
 fn client_pair(capacity: usize) -> (TestClient, ReadHalf<TestIo>, WriteHalf<TestIo>) {
     let (client, server) = duplex(capacity);
@@ -100,6 +136,78 @@ async fn writer_finishes_an_accepted_frame_after_waiter_cancellation() {
 }
 
 #[tokio::test]
+async fn cancelling_open_after_request_acceptance_removes_route_and_writes_fifo_cancel() {
+    let (client_io, server_io) = duplex(8);
+    let (client_read, client_write) = split(client_io);
+    let (server_read, _server_write) = split(server_io);
+    let client = StreamClientTransport::new(client_read, client_write);
+    let opener = client.clone();
+    let opening =
+        tokio::spawn(async move { opener.open("svc.large", false, vec![42; 1024]).await });
+
+    timeout(TEST_TIMEOUT, async {
+        loop {
+            if client.calls.lock().unwrap().len() == 1
+                && client.writer.queue.capacity() == WRITE_BUFFER
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("writer did not accept opening request");
+
+    opening.abort();
+    assert!(matches!(opening.await, Err(error) if error.is_cancelled()));
+    assert!(client.calls.lock().unwrap().is_empty());
+
+    let mut server = MessageReader::new(server_read);
+    let id = match read_message(&mut server).await {
+        WireMessage::Request(request) => request.id,
+        _ => panic!("expected opening request"),
+    };
+    assert!(matches!(
+        read_message(&mut server).await,
+        WireMessage::StreamCancel { id: actual } if actual == id
+    ));
+}
+
+#[tokio::test]
+async fn final_transport_drop_forces_a_stalled_accepted_write_to_release_its_socket() {
+    let started = Arc::new(Notify::new());
+    let dropped = Arc::new(AtomicBool::new(false));
+    let (client_read, _keep_read_open) = duplex(1);
+    let transport = StreamClientTransport::new(
+        client_read,
+        StalledWriter {
+            started: Arc::clone(&started),
+            dropped: Arc::clone(&dropped),
+        },
+    );
+    let writer = transport.writer.clone();
+    let pending = tokio::spawn(async move { writer.write_frame(vec![1; 64]).await });
+
+    timeout(TEST_TIMEOUT, started.notified())
+        .await
+        .expect("writer never accepted the frame");
+    drop(transport);
+
+    timeout(TEST_TIMEOUT, async {
+        while !dropped.load(std::sync::atomic::Ordering::Acquire) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("stalled writer socket outlived the bounded drain");
+    assert!(matches!(
+        pending.await.expect("write waiter task"),
+        Err(ClientError::Transport(overseerd_transport::Error::Closed))
+            | Err(ClientError::ConnectionClosed)
+    ));
+}
+
+#[tokio::test]
 async fn read_loop_death_closes_future_opens() {
     let (client, server_read, server_write) = client_pair(4096);
     drop(server_read);
@@ -122,19 +230,17 @@ async fn read_loop_death_closes_future_opens() {
 
 #[test]
 fn saturated_control_lane_poison_connection_instead_of_allocating() {
-    let (data, _data_rx) = tokio::sync::mpsc::channel(1);
-    let (control, _control_rx) = tokio::sync::mpsc::channel(CONTROL_BUFFER);
+    let (queue, _queue_rx) = tokio::sync::mpsc::channel(WRITE_BUFFER);
     let state = std::sync::Arc::new(ConnectionState::new());
     let writer = Writer {
-        data,
-        control: control.clone(),
+        queue: queue.clone(),
         state: std::sync::Arc::clone(&state),
     };
 
-    for _ in 0..CONTROL_BUFFER {
-        control
-            .try_send(WriteControl(Vec::new()))
-            .expect("fill bounded control lane");
+    for _ in 0..WRITE_BUFFER {
+        queue
+            .try_send(WriteCommand::Control(Vec::new()))
+            .expect("fill bounded writer queue");
     }
 
     writer.cancel(Vec::new());
