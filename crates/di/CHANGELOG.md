@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.2](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.14.1...overseerd-di-v0.14.2) - 2026-07-17
+
+### Other
+
+- *(di)* harden hot paths and add controlled benchmarks
+
 ## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.11.2...overseerd-di-v0.12.0) - 2026-07-08
 
 ### Added
