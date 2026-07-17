@@ -1,8 +1,9 @@
 use std::{any::TypeId, collections::HashSet, fmt, sync::Arc};
 
+use futures::FutureExt;
 use overseerd_config::{
     CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, ConfigBinding, ConfigManager, ConfigProperties,
-    ConfigReloader, ConfigStore, ReloadTriggers, spawn_reload_triggers,
+    ConfigReloader, ConfigStore, ReloadTriggers, spawn_reload_triggers, stop_reload_triggers,
 };
 use overseerd_core::{
     Descriptor, ResolverCtx, ResolverSet, Scope, Singleton as SingletonScope, TypeDescriptor,
@@ -189,9 +190,10 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
         plugin.register(&mut registry);
 
         // Directories are framework-provided singletons: a manager plus one `Dir<K>` per kind.
-        let dirs = self
-            .dirs
-            .unwrap_or_else(|| DirectoriesManager::for_app(&self.name));
+        let dirs = match self.dirs {
+            Some(dirs) => dirs,
+            None => DirectoriesManager::try_for_app(&self.name).map_err(Error::Directories)?,
+        };
         seed_directories(&dirs, &mut registry, &mut instances);
 
         // Other framework singletons (the shutdown handle, the root resolver).
@@ -526,7 +528,14 @@ impl<P: ProtocolPlugin> App<P> {
             ..
         } = self;
 
-        run_startup(runtime.hooks()).await?;
+        let started = match run_startup(runtime.hooks()).await {
+            Ok(started) => started,
+            Err((error, started)) => {
+                run_shutdown(runtime.hooks(), &started).await;
+
+                return Err(error.into());
+            }
+        };
 
         let trigger_tasks = spawn_reload_triggers(reloader, reload_triggers);
 
@@ -539,17 +548,22 @@ impl<P: ProtocolPlugin> App<P> {
             }
         });
 
-        let result = protocol.serve(runtime.clone(), shutdown, endpoint).await;
+        let result =
+            std::panic::AssertUnwindSafe(protocol.serve(runtime.clone(), shutdown, endpoint))
+                .catch_unwind()
+                .await;
 
         ctrlc.abort();
+        let _ = ctrlc.await;
 
-        for task in trigger_tasks {
-            task.abort();
+        stop_reload_triggers(trigger_tasks).await;
+
+        run_shutdown(runtime.hooks(), &started).await;
+
+        match result {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
         }
-
-        run_lifecycle::<Shutdown>(runtime.hooks(), false).await.ok();
-
-        result
     }
 
     /// Waits for ctrl-c or a shutdown signal without serving any endpoint.
@@ -562,7 +576,14 @@ impl<P: ProtocolPlugin> App<P> {
             ..
         } = self;
 
-        run_startup(runtime.hooks()).await?;
+        let started = match run_startup(runtime.hooks()).await {
+            Ok(started) => started,
+            Err((error, started)) => {
+                run_shutdown(runtime.hooks(), &started).await;
+
+                return Err(error);
+            }
+        };
 
         let trigger_tasks = spawn_reload_triggers(reloader, reload_triggers);
 
@@ -571,48 +592,65 @@ impl<P: ProtocolPlugin> App<P> {
             _ = shutdown.wait() => {},
         }
 
-        for task in trigger_tasks {
-            task.abort();
-        }
+        stop_reload_triggers(trigger_tasks).await;
 
-        run_lifecycle::<Shutdown>(runtime.hooks(), false).await.ok();
+        run_shutdown(runtime.hooks(), &started).await;
 
         Ok(())
     }
 }
 
-async fn run_startup(hooks: &HookManager) -> crate::Result<()> {
-    match run_lifecycle::<Startup>(hooks, true).await {
-        Ok(()) => Ok(()),
+/// Runs startup hooks sequentially, returning the components whose startup fully
+/// succeeded. On failure the list lets the caller pair shutdown only with work that
+/// actually started.
+async fn run_startup(
+    hooks: &HookManager,
+) -> Result<HashSet<TypeId>, (crate::Error, HashSet<TypeId>)> {
+    let mut started = HashSet::new();
 
-        Err(error) => {
-            run_lifecycle::<Shutdown>(hooks, false).await.ok();
+    for (component, result) in hooks.run_until_error::<Startup>(&(), |_| true).await {
+        let component_ty = (component.type_id)();
 
-            Err(error)
-        }
-    }
-}
+        match result {
+            Ok(()) => {
+                started.insert(component_ty);
+            }
+            Err(error) => {
+                error!(
+                    target: "overseerd::app",
+                    hook = Startup::NAME,
+                    component = %component.name,
+                    %error,
+                    "lifecycle hook failed"
+                );
 
-/// Runs a process-lifecycle hook kind (`Startup`/`Shutdown`) over the registered hooks.
-async fn run_lifecycle<K>(hooks: &HookManager, abort_on_error: bool) -> crate::Result<()>
-where
-    K: HookKind<Cx = (), Output = ()>,
-{
-    for (component, result) in hooks.run::<K>(&(), |_| true).await {
-        if let Err(error) = result {
-            error!(
-                target: "overseerd::app",
-                hook = K::NAME,
-                component = %component.name,
-                %error,
-                "lifecycle hook failed"
-            );
-
-            if abort_on_error {
-                return Err(error.into());
+                return Err((error.into(), started));
             }
         }
     }
 
-    Ok(())
+    Ok(started)
+}
+
+/// Runs shutdown hooks for components with no startup hook and for components whose
+/// startup hook completed successfully. Errors are logged and cleanup continues.
+async fn run_shutdown(hooks: &HookManager, started: &HashSet<TypeId>) {
+    for (component, result) in hooks
+        .run::<Shutdown>(&(), |hook| {
+            let component_ty = (hook.component_ty.type_id)();
+
+            !hooks.component_has::<Startup>(component_ty) || started.contains(&component_ty)
+        })
+        .await
+    {
+        if let Err(error) = result {
+            error!(
+                target: "overseerd::app",
+                hook = Shutdown::NAME,
+                component = %component.name,
+                %error,
+                "lifecycle hook failed"
+            );
+        }
+    }
 }

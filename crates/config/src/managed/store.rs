@@ -42,7 +42,7 @@ impl ConfigStore {
         for binding in manager.bindings() {
             let seed = (binding.bind)(manager, &binding.path)?;
 
-            if let Some(slot) = (binding.slot)(&seed, &binding.path) {
+            if let Some(slot) = (binding.slot)(manager, &seed, &binding.path) {
                 slots.push(slot);
             }
 

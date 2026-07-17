@@ -6,6 +6,7 @@ use overseerd_dirs::DirectoriesManager;
 use serde::de::DeserializeOwned;
 use tracing::{debug, info, instrument, trace};
 
+use crate::resolve::{ResolveCtx, ResolvedDependency};
 use crate::{ConfigValue, Resolver, ResolverChain, from_value_in};
 
 use super::{CONFIG_BINDINGS, ConfigBinding, ConfigError, ConfigProperties, DirectoriesResolver};
@@ -256,6 +257,13 @@ impl<F> ConfigManager<F> {
         self.get_config_in::<T>(&self.root, path)
     }
 
+    pub(crate) fn get_config_with_snapshot<T: ConfigProperties>(
+        &self,
+        path: &str,
+    ) -> Result<(T, ConfigSnapshot), ConfigError> {
+        self.get_config_in_with_snapshot::<T>(&self.root, path)
+    }
+
     /// [`get_config`](Self::get_config) against an explicit base tree rather than the
     /// manager's current `root`. The reload path uses this to deserialize a binding
     /// from a freshly re-read tree without first adopting it.
@@ -264,6 +272,18 @@ impl<F> ConfigManager<F> {
         base: &ConfigValue,
         path: &str,
     ) -> Result<T, ConfigError> {
+        self.get_config_in_with_snapshot::<T>(base, path)
+            .map(|(value, _)| value)
+    }
+
+    /// Deserializes a binding and captures the placeholder values observed by that
+    /// exact pass. A second resolution pass could observe different values from a
+    /// mutable resolver, so the value and its dependency fingerprint stay together.
+    pub(crate) fn get_config_in_with_snapshot<T: ConfigProperties>(
+        &self,
+        base: &ConfigValue,
+        path: &str,
+    ) -> Result<(T, ConfigSnapshot), ConfigError> {
         let defaults = T::DEFAULTS;
 
         let mut subtree = match base.get_path(path) {
@@ -298,16 +318,23 @@ impl<F> ConfigManager<F> {
             *node = subtree.clone();
         }
 
-        let value = from_value_in(&root, &subtree, &self.resolvers).map_err(|source| {
-            ConfigError::Substitution {
-                path: path.to_string(),
-                source,
-            }
-        })?;
+        let (value, resolved) =
+            crate::de::from_value_in_with_dependencies(&root, &subtree, &self.resolvers).map_err(
+                |source| ConfigError::Substitution {
+                    path: path.to_string(),
+                    source,
+                },
+            )?;
 
         trace!(target: "overseerd::config", "config subtree deserialized with defaults");
 
-        Ok(value)
+        Ok((
+            value,
+            ConfigSnapshot {
+                raw: base.get_path(path).cloned(),
+                resolved,
+            },
+        ))
     }
 
     /// Appends a [`Resolver`] to the chain consulted during placeholder substitution. Later
@@ -394,7 +421,14 @@ impl<F> ConfigManager<F> {
     /// every type's defaults, which is what lets one type's default reference another type's
     /// path (`${a.b.c}` from a default at `x.y.z`).
     pub fn auto_discover(mut self) -> Self {
-        for descriptor in CONFIG_BINDINGS {
+        let mut descriptors: Vec<_> = CONFIG_BINDINGS.iter().collect();
+        descriptors.sort_by(|left, right| {
+            (left.ty.type_name)()
+                .cmp((right.ty.type_name)())
+                .then_with(|| left.path.cmp(right.path))
+        });
+
+        for descriptor in descriptors {
             self.push_binding(descriptor.to_binding());
         }
 
@@ -451,11 +485,25 @@ impl<F> ConfigManager<F> {
         seed_defaults_into(&mut self.root, &self.bindings);
     }
 
-    /// The merged subtree at `path` in the current tree (pre-substitution), or `None`
-    /// if absent. Reload compares this against the freshly re-read tree to swap only
-    /// the bindings whose source actually changed.
-    pub(crate) fn subtree(&self, path: &str) -> Option<&ConfigValue> {
-        self.root.get_path(path)
+    /// Returns whether a candidate tree still matches the exact deserialization pass
+    /// that produced a committed binding. With an unchanged raw subtree, only the
+    /// placeholders actually consumed by serde are re-resolved.
+    pub(crate) fn snapshot_matches(
+        &self,
+        base: &ConfigValue,
+        path: &str,
+        committed: &ConfigSnapshot,
+    ) -> bool {
+        if base.get_path(path) != committed.raw.as_ref() {
+            return false;
+        }
+
+        let mut ctx = ResolveCtx::new(base, &self.resolvers);
+
+        committed.resolved.iter().all(|dependency| {
+            ctx.resolve_placeholder(&dependency.placeholder)
+                .is_ok_and(|value| value == dependency.value)
+        })
     }
 
     /// Re-reads every retained source from disk and rebuilds a fresh merged tree
@@ -481,6 +529,13 @@ impl<F> ConfigManager<F> {
     pub(crate) fn adopt(&mut self, root: ConfigValue) {
         self.root = root;
     }
+}
+
+/// The dependency-aware view of one config binding at its last successful commit.
+#[derive(Clone, PartialEq)]
+pub(crate) struct ConfigSnapshot {
+    raw: Option<ConfigValue>,
+    resolved: Vec<ResolvedDependency>,
 }
 
 /// Seeds every bound type's [`DefaultSpec`] into `root` at its path. See
