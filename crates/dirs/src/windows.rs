@@ -1,28 +1,57 @@
-use std::ffi::c_void;
 use std::io;
+use std::mem::{MaybeUninit, size_of};
 use std::os::windows::ffi::OsStrExt;
-use std::os::windows::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 use std::ptr;
 
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, LocalFree};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_ALREADY_EXISTS, HANDLE, INVALID_HANDLE_VALUE, LocalFree,
+};
 use windows_sys::Win32::Security::Authorization::{
-    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-    GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
+    ConvertSecurityDescriptorToStringSecurityDescriptorW, ConvertSidToStringSidW,
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW, SDDL_REVISION_1,
+    SE_FILE_OBJECT,
 };
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACL, DACL_SECURITY_INFORMATION, GetAce, GetSecurityDescriptorControl,
-    GetTokenInformation, OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION,
-    PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SetFileSecurityW, TOKEN_QUERY, TOKEN_USER,
-    TokenUser,
+    DACL_SECURITY_INFORMATION, GetTokenInformation, OWNER_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+#[cfg(test)]
+use windows_sys::Win32::Security::{PROTECTED_DACL_SECURITY_INFORMATION, SetFileSecurityW};
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FileAttributeTagInfo, GetFileInformationByHandleEx,
+    OPEN_EXISTING,
+};
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows_sys::core::PWSTR;
 
-const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-const ACCESS_ALLOWED_ACE_TYPE: u8 = 0;
-const LOCAL_SYSTEM_SID: &str = "S-1-5-18";
+const SECURITY_INFORMATION: u32 = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+
+struct LocalDescriptor(PSECURITY_DESCRIPTOR);
+
+impl LocalDescriptor {
+    fn as_ptr(&self) -> PSECURITY_DESCRIPTOR {
+        self.0
+    }
+}
+
+impl Drop for LocalDescriptor {
+    fn drop(&mut self) {
+        // SAFETY: this wrapper is constructed only from LocalAlloc-returning APIs.
+        unsafe { LocalFree(self.0) };
+    }
+}
+
+struct OwnedDirectory(HANDLE);
+
+impl Drop for OwnedDirectory {
+    fn drop(&mut self) {
+        // SAFETY: this wrapper is constructed only from successful CreateFileW calls.
+        unsafe { CloseHandle(self.0) };
+    }
+}
 
 pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
     if path
@@ -35,69 +64,45 @@ pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
         ));
     }
 
+    let user_sid = current_user_sid_string()?;
+    let private_sddl = private_sddl(&user_sid);
+    let private_descriptor = descriptor_from_sddl(&private_sddl)?;
+    let security_attributes = SECURITY_ATTRIBUTES {
+        nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: private_descriptor.as_ptr(),
+        bInheritHandle: 0,
+    };
     let mut current = PathBuf::new();
-    let mut target_created = false;
+    // Omitting FILE_SHARE_DELETE while these handles are alive prevents a checked
+    // component from being renamed or replaced during the remainder of the walk.
+    let mut held_components = Vec::new();
 
     for component in path.components() {
         match component {
-            // A drive/UNC prefix and its root are syntax, not directories to query as
-            // incomplete paths (notably `C:` means a per-drive working directory).
-            Component::Prefix(_) | Component::RootDir => {
+            // A drive/UNC prefix alone is syntax, not a directory (`C:` means a
+            // per-drive working directory). Open its rooted form on RootDir below.
+            Component::Prefix(_) => {
                 current.push(component.as_os_str());
                 continue;
             }
+            Component::RootDir => current.push(component.as_os_str()),
             Component::CurDir => continue,
             Component::ParentDir => unreachable!("parent components rejected before walking"),
             Component::Normal(_) => current.push(component.as_os_str()),
         }
 
-        let target = current
-            .components()
-            .filter(|component| !matches!(component, Component::CurDir))
-            .eq(path
-                .components()
-                .filter(|component| !matches!(component, Component::CurDir)));
-        let (metadata, created) = match std::fs::symlink_metadata(&current) {
-            Ok(metadata) => (metadata, false),
+        let handle = match open_directory(&current) {
+            Ok(handle) => handle,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                match std::fs::create_dir(&current) {
-                    Ok(()) => (std::fs::symlink_metadata(&current)?, true),
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                        (std::fs::symlink_metadata(&current)?, false)
-                    }
-                    Err(error) => return Err(error),
-                }
+                create_private_directory(&current, &security_attributes)?;
+                open_directory(&current)?
             }
             Err(error) => return Err(error),
         };
-
-        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-            return Err(permission_denied(format!(
-                "refusing reparse point in application directory: {}",
-                current.display()
-            )));
-        }
-
-        if !metadata.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotADirectory,
-                format!(
-                    "application directory path is not a directory: {}",
-                    current.display()
-                ),
-            ));
-        }
-
-        if target {
-            target_created = created;
-        }
+        held_components.push(handle);
     }
 
-    if target_created {
-        apply_private_acl(path)?;
-    }
-
-    verify_private_acl(path)
+    verify_private_acl(path, &private_sddl)
 }
 
 fn permission_denied(message: impl Into<String>) -> io::Error {
@@ -108,20 +113,89 @@ fn wide_null(value: &std::ffi::OsStr) -> Vec<u16> {
     value.encode_wide().chain(std::iter::once(0)).collect()
 }
 
-fn apply_private_acl(path: &Path) -> io::Result<()> {
-    let user_sid = current_user_sid_string()?;
-    let sddl = format!("D:P(A;OICI;FA;;;{user_sid})(A;OICI;FA;;;SY)");
-
-    apply_dacl(path, &sddl)
+fn private_sddl(user_sid: &str) -> String {
+    format!("O:{user_sid}D:P(A;OICI;FA;;;{user_sid})(A;OICI;FA;;;SY)")
 }
 
-fn apply_dacl(path: &Path, sddl: &str) -> io::Result<()> {
-    let encoded_sddl: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+fn create_private_directory(
+    path: &Path,
+    security_attributes: &SECURITY_ATTRIBUTES,
+) -> io::Result<()> {
     let encoded_path = wide_null(path.as_os_str());
+    // SAFETY: path is NUL-terminated and security_attributes points to a descriptor
+    // that remains alive for this call. The ACL is therefore installed atomically with
+    // directory creation; there is no inherited-permissions window.
+    if unsafe { CreateDirectoryW(encoded_path.as_ptr(), security_attributes) } != 0 {
+        return Ok(());
+    }
+
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(ERROR_ALREADY_EXISTS as i32) {
+        return Ok(());
+    }
+
+    Err(error)
+}
+
+fn open_directory(path: &Path) -> io::Result<OwnedDirectory> {
+    let encoded_path = wide_null(path.as_os_str());
+    // SAFETY: path is NUL-terminated. The returned owned handle is closed by its
+    // wrapper. OPEN_REPARSE_POINT ensures we inspect the component itself, not a target.
+    let handle = unsafe {
+        CreateFileW(
+            encoded_path.as_ptr(),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            ptr::null_mut(),
+        )
+    };
+
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+
+    let handle = OwnedDirectory(handle);
+    let mut attributes = FILE_ATTRIBUTE_TAG_INFO::default();
+    // SAFETY: handle is valid and attributes is correctly sized writable storage.
+    if unsafe {
+        GetFileInformationByHandleEx(
+            handle.0,
+            FileAttributeTagInfo,
+            ptr::addr_of_mut!(attributes).cast(),
+            size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+
+    if attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(permission_denied(format!(
+            "refusing reparse point in application directory: {}",
+            path.display()
+        )));
+    }
+    if attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotADirectory,
+            format!(
+                "application directory path is not a directory: {}",
+                path.display()
+            ),
+        ));
+    }
+
+    Ok(handle)
+}
+
+fn descriptor_from_sddl(sddl: &str) -> io::Result<LocalDescriptor> {
+    let encoded_sddl: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
 
-    // SAFETY: the UTF-16 input is NUL-terminated; Windows allocates the returned
-    // self-relative descriptor, which is released with LocalFree below.
+    // SAFETY: input is NUL-terminated and the output pointer is valid writable storage.
     if unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             encoded_sddl.as_ptr(),
@@ -133,17 +207,38 @@ fn apply_dacl(path: &Path, sddl: &str) -> io::Result<()> {
     {
         return Err(io::Error::last_os_error());
     }
+    if descriptor.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Windows returned an empty security descriptor",
+        ));
+    }
+
+    Ok(LocalDescriptor(descriptor))
+}
+
+#[cfg(test)]
+fn apply_dacl(path: &Path, sddl: &str) -> io::Result<()> {
+    apply_security(
+        path,
+        sddl,
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+    )
+}
+
+#[cfg(test)]
+fn apply_security(path: &Path, sddl: &str, security_information: u32) -> io::Result<()> {
+    let descriptor = descriptor_from_sddl(sddl)?;
+    let encoded_path = wide_null(path.as_os_str());
 
     // SAFETY: both arguments remain valid for the duration of this call.
     let result = unsafe {
         SetFileSecurityW(
             encoded_path.as_ptr(),
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            descriptor,
+            security_information,
+            descriptor.as_ptr(),
         )
     };
-    // SAFETY: descriptor is the LocalAlloc allocation returned above.
-    unsafe { LocalFree(descriptor) };
 
     if result == 0 {
         return Err(io::Error::last_os_error());
@@ -152,23 +247,20 @@ fn apply_dacl(path: &Path, sddl: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn verify_private_acl(path: &Path) -> io::Result<()> {
-    let user_sid = current_user_sid_string()?;
+fn verify_private_acl(path: &Path, expected_sddl: &str) -> io::Result<()> {
     let encoded_path = wide_null(path.as_os_str());
-    let mut owner: PSID = ptr::null_mut();
-    let mut dacl: *mut ACL = ptr::null_mut();
     let mut descriptor: PSECURITY_DESCRIPTOR = ptr::null_mut();
 
-    // SAFETY: the path is NUL-terminated and all output pointers are valid. owner and
-    // dacl point inside descriptor, which remains allocated throughout validation.
+    // SAFETY: the path is NUL-terminated and the output pointer is valid. We request
+    // one self-contained descriptor instead of borrowing owner/ACL interior pointers.
     let status = unsafe {
         GetNamedSecurityInfoW(
             encoded_path.as_ptr(),
             SE_FILE_OBJECT,
-            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-            &mut owner,
+            SECURITY_INFORMATION,
             ptr::null_mut(),
-            &mut dacl,
+            ptr::null_mut(),
+            ptr::null_mut(),
             ptr::null_mut(),
             &mut descriptor,
         )
@@ -178,81 +270,60 @@ fn verify_private_acl(path: &Path) -> io::Result<()> {
         return Err(io::Error::from_raw_os_error(status as i32));
     }
 
-    let checked = validate_descriptor(path, descriptor, owner, dacl, &user_sid);
+    if descriptor.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Windows returned an empty security descriptor",
+        ));
+    }
+    let descriptor = LocalDescriptor(descriptor);
+    let actual = descriptor_to_sddl(descriptor.as_ptr())?;
+    let expected_descriptor = descriptor_from_sddl(expected_sddl)?;
+    let expected = descriptor_to_sddl(expected_descriptor.as_ptr())?;
 
-    // SAFETY: descriptor is the LocalAlloc allocation returned above.
-    unsafe { LocalFree(descriptor) };
-
-    checked
-}
-
-fn validate_descriptor(
-    path: &Path,
-    descriptor: PSECURITY_DESCRIPTOR,
-    owner: PSID,
-    dacl: *mut ACL,
-    user_sid: &str,
-) -> io::Result<()> {
-    if owner.is_null() || sid_to_string(owner)? != user_sid {
+    if actual != expected {
         return Err(permission_denied(format!(
-            "application directory is not owned by the current user: {}",
-            path.display()
-        )));
-    }
-
-    let mut control = 0u16;
-    let mut revision = 0u32;
-    // SAFETY: descriptor is a valid security descriptor returned by Windows.
-    if unsafe { GetSecurityDescriptorControl(descriptor, &mut control, &mut revision) } == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    if control & SE_DACL_PROTECTED == 0 || dacl.is_null() {
-        return Err(permission_denied(format!(
-            "application directory does not have a protected private ACL: {}",
-            path.display()
-        )));
-    }
-
-    let ace_count = unsafe { (*dacl).AceCount };
-    let mut grants_owner = false;
-
-    for index in 0..u32::from(ace_count) {
-        let mut raw_ace: *mut c_void = ptr::null_mut();
-        // SAFETY: dacl is valid and index is bounded by its AceCount.
-        if unsafe { GetAce(dacl, index, &mut raw_ace) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        // Only simple allow ACEs for this user and LocalSystem are accepted. Deny,
-        // callback, object, and unrelated-principal ACEs fail closed.
-        let ace = raw_ace.cast::<ACCESS_ALLOWED_ACE>();
-        if unsafe { (*ace).Header.AceType } != ACCESS_ALLOWED_ACE_TYPE {
-            return Err(permission_denied(format!(
-                "application directory ACL contains an unsupported entry: {}",
-                path.display()
-            )));
-        }
-
-        let sid = unsafe { ptr::addr_of_mut!((*ace).SidStart).cast::<c_void>() };
-        let sid = sid_to_string(sid)?;
-        if sid == user_sid {
-            grants_owner |= unsafe { (*ace).Mask } & FILE_ALL_ACCESS == FILE_ALL_ACCESS;
-        } else if sid != LOCAL_SYSTEM_SID {
-            return Err(permission_denied(format!(
-                "application directory ACL grants another principal access: {}",
-                path.display()
-            )));
-        }
-    }
-
-    if !grants_owner {
-        return Err(permission_denied(format!(
-            "application directory ACL does not grant its owner access: {}",
+            "application directory owner or private ACL does not match the current user: {}",
             path.display()
         )));
     }
 
     Ok(())
+}
+
+fn descriptor_to_sddl(descriptor: PSECURITY_DESCRIPTOR) -> io::Result<String> {
+    let mut encoded: PWSTR = ptr::null_mut();
+    let mut length = 0u32;
+    // SAFETY: descriptor is owned by a live LocalDescriptor and both outputs point to
+    // writable storage. Windows returns a LocalAlloc UTF-16 string and its length.
+    if unsafe {
+        ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            descriptor,
+            SDDL_REVISION_1,
+            SECURITY_INFORMATION,
+            &mut encoded,
+            &mut length,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    if encoded.is_null() || length == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Windows returned an empty SDDL string",
+        ));
+    }
+
+    // The reported length includes the trailing NUL for this API.
+    let units = unsafe { std::slice::from_raw_parts(encoded, length as usize) };
+    let units = units.strip_suffix(&[0]).unwrap_or(units);
+    let result = String::from_utf16(units)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Windows returned invalid SDDL"));
+    // SAFETY: encoded is the LocalAlloc allocation returned above.
+    unsafe { LocalFree(encoded.cast()) };
+
+    result
 }
 
 fn current_user_sid_string() -> io::Result<String> {
@@ -281,8 +352,18 @@ fn token_user_sid_string(token: HANDLE) -> io::Result<String> {
         return Err(io::Error::last_os_error());
     }
 
-    let mut buffer = vec![0u8; required as usize];
-    // SAFETY: buffer has the exact byte capacity requested by Windows.
+    if required < size_of::<TOKEN_USER>() as u32 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Windows returned an undersized token-user buffer length",
+        ));
+    }
+
+    // TOKEN_USER contains pointer-aligned fields. Allocate in machine words rather
+    // than bytes so casting the initialized prefix is correctly aligned on all targets.
+    let words = (required as usize).div_ceil(size_of::<usize>());
+    let mut buffer = vec![MaybeUninit::<usize>::uninit(); words];
+    // SAFETY: buffer is pointer-aligned and has at least `required` writable bytes.
     if unsafe {
         GetTokenInformation(
             token,
@@ -296,9 +377,10 @@ fn token_user_sid_string(token: HANDLE) -> io::Result<String> {
         return Err(io::Error::last_os_error());
     }
 
-    let user = buffer.as_ptr().cast::<TOKEN_USER>();
-    // SAFETY: a successful TokenUser query initialized TOKEN_USER and its SID.
-    sid_to_string(unsafe { (*user).User.Sid })
+    // SAFETY: successful TokenUser initialized the aligned TOKEN_USER prefix. The SID
+    // pointer refers into `buffer`, which remains alive throughout sid_to_string.
+    let user = unsafe { buffer.as_ptr().cast::<TOKEN_USER>().read() };
+    sid_to_string(user.User.Sid)
 }
 
 fn sid_to_string(sid: PSID) -> io::Result<String> {
