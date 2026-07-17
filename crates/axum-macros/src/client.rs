@@ -179,8 +179,14 @@ pub fn collect_wire_types(arg_types: &[&Type], output: &ReturnType, sink: &mut V
     }
 
     // The response payload (a `Result`/`Json` return is peeled). `()` is a `Dto`, so a bare return
-    // is fine; a plain unary response payload is asserted like any other wire type.
-    sink.push(response_type(output));
+    // is fine; a plain unary response payload is asserted like any other wire type. An opaque return
+    // (`impl IntoResponse`, a raw `Response`) carries no `Dto` contract, so the bound is lifted — the
+    // client decodes it as a raw byte body instead.
+    let response = response_type(output);
+
+    if !is_opaque_response(&response) {
+        sink.push(response);
+    }
 }
 
 /// Emits a **single** `const` block asserting every collected wire type is [`Dto`], turning a
@@ -1234,8 +1240,17 @@ fn assemble(
     let http = paths.plugin("http");
     let http_response = paths.plugin("client::HttpResponse");
 
-    // The decoded response body: peel a `Json<T>` return to `T`, else the bare return type.
+    // The decoded response body: peel a `Json<T>` return to `T`, else the bare return type. An opaque
+    // return (`impl IntoResponse`, a raw `Response`) has no typed decode, so the client reads it as a
+    // raw `Bytes` body — the caller gets the response bytes and interprets them itself.
     let response = response_type(output);
+    let response = if is_opaque_response(&response) {
+        let octet_stream = paths.plugin("client::OctetStream");
+
+        syn::parse_quote!(#octet_stream)
+    } else {
+        response
+    };
 
     // The body: the raw `T` (or `Vec<u8>` / `Multipart`) is the param, but the wire body is its
     // `HttpBody` wrapper — which drives the `Encodes<B>` bound, the envelope, and the content type.
@@ -1353,6 +1368,28 @@ pub(crate) fn response_type(output: &ReturnType) -> Type {
         }
 
         ReturnType::Default => syn::parse_quote!(()),
+    }
+}
+
+/// Whether a (peeled) response type is **opaque** — one the macro cannot turn into a schema or decode
+/// into a typed value: an `impl Trait` return (the canonical `fn() -> impl IntoResponse`, a valid axum
+/// handler) or a raw `Response` (`axum::response::Response`, a handler building its own response).
+/// Such a return carries no `Dto`/`ToSchema`/`Decodes` contract, so the macro lifts the `Dto` wire
+/// assertion, documents it bodyless in OpenAPI, and gives the client a raw byte body instead of a
+/// typed decode. Keyed syntactically (the macro cannot resolve trait bounds); a bare `impl Trait`
+/// return has already been claimed by the streaming path when it is `impl Stream`, so only genuinely
+/// opaque `impl Trait` reaches here.
+pub(crate) fn is_opaque_response(ty: &Type) -> bool {
+    match ty {
+        Type::ImplTrait(_) => true,
+
+        Type::Path(path) => path
+            .path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident == "Response"),
+
+        _ => false,
     }
 }
 

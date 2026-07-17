@@ -133,6 +133,21 @@ mod fixture {
                 ok: false,
             })
         }
+
+        /// `GET /docs-demo/raw` — returns a raw axum `Response` (opaque, no schema).
+        #[get("/raw")]
+        async fn raw(&self) -> overseerd::axum::axum::response::Response {
+            use overseerd::axum::axum::response::IntoResponse;
+
+            "raw".into_response()
+        }
+
+        /// `GET /docs-demo/opaque` — the canonical `-> impl IntoResponse` axum handler (opaque, no
+        /// schema). Must be a valid handler, documented bodyless, not schema-ified.
+        #[get("/opaque")]
+        async fn opaque(&self) -> impl overseerd::axum::axum::response::IntoResponse {
+            "opaque"
+        }
     }
 }
 
@@ -183,4 +198,33 @@ fn custom_responses_replace_the_generated_default() {
         op.responses.responses.contains_key("200"),
         "the custom 200 response is documented"
     );
+}
+
+#[test]
+fn opaque_returns_are_documented_bodyless_not_schema_ified() {
+    let doc = docs_doc();
+
+    // A raw `Response` and an `impl IntoResponse` are both valid handlers: documented with a `200`
+    // and no body schema, rather than a (nonexistent) `Response`/opaque component ref.
+    for path in ["/docs-demo/raw", "/docs-demo/opaque"] {
+        let op = doc.paths.paths[path]
+            .get
+            .as_ref()
+            .unwrap_or_else(|| panic!("GET {path} is documented"));
+        let ok = op
+            .responses
+            .responses
+            .get("200")
+            .unwrap_or_else(|| panic!("{path} has a 200"));
+
+        let utoipa::openapi::RefOr::T(response) = ok else {
+            panic!("{path} 200 is inline");
+        };
+
+        assert!(
+            response.content.is_empty(),
+            "{path} must be documented bodyless (no schema), got content: {:?}",
+            response.content.keys().collect::<Vec<_>>()
+        );
+    }
 }

@@ -279,12 +279,11 @@ impl ParseMethod for AxumHandlers {
             client::classify_stream_return(&method.sig.output, route_attr.streamed, &cx.paths)
         };
 
-        // A server-streaming handler usually returns `impl Stream<..>` from `&self`; inject
-        // `use<..>` so the opaque type does not capture `self`'s lifetime (edition 2024). Must run
-        // before the argument types are borrowed, since it mutates the signature.
-        if stream_return.is_some() {
-            add_use_capture(&mut method.sig.output, &cx.capture);
-        }
+        // Any `impl Trait` return from `&self` — a server-streaming `impl Stream<..>` or a plain
+        // `impl IntoResponse` — must not capture `self`'s lifetime under edition 2024, so inject
+        // `use<..>` precise capturing. A no-op for a concrete return type. Must run before the
+        // argument types are borrowed, since it mutates the signature.
+        add_use_capture(&mut method.sig.output, &cx.capture);
 
         let arg_types: Vec<&Type> = method
             .sig

@@ -169,6 +169,20 @@ where
     }
 }
 
+/// The raw-body escape hatch: an opaque handler return (`impl IntoResponse`, a raw `Response`) has no
+/// typed decode, so its generated client method reads the whole response as raw bytes wrapped in
+/// [`OctetStream`]. Coexists with the `DeserializeOwned` blanket above because `OctetStream` is a
+/// local type that no upstream crate can implement `DeserializeOwned` for, so the two never overlap.
+impl<W, I> Decodes<super::OctetStream> for HyperClient<W, I>
+where
+    W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
+{
+    fn decode(&self, body: Vec<u8>) -> Result<super::OctetStream, CodecError> {
+        Ok(super::OctetStream(body))
+    }
+}
+
 /// The HTTP client's protocol status is the genuine [`http::StatusCode`].
 impl<W, I> Transport for HyperClient<W, I>
 where
