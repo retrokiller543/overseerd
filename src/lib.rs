@@ -191,7 +191,7 @@ pub mod daemon {
         Guard, GuardLayer, GuardService, Handler, Inject, OperationKind, ParameterDescriptor,
         ParameterKind, Payload, Peer, RequestStream, ResolvedService, Responder, ResponseError,
         ResponseStream, Result, RouterService, Rpc, RpcAppBuilder, RpcCallContext, RpcDescriptor,
-        RpcGroup, RpcHandler, RpcOutcome, RpcPlugin, RpcRequest, RpcResponse, RpcRouter,
+        RpcGroup, RpcHandler, RpcLimits, RpcOutcome, RpcPlugin, RpcRequest, RpcResponse, RpcRouter,
         RpcService, SERVICES, ServiceDescriptor, ServiceRpcs, Streaming, dispatch_fallible,
         dispatch_with,
     };

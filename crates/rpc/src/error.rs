@@ -81,9 +81,24 @@ impl ResponseError for Error {
     }
 
     fn error_response(self) -> ErrorResponse {
-        ErrorResponse::with_serialized_body(self.status_code(), &self.to_string())
+        let code = self.status_code();
+        let public_message = match &self {
+            Error::InvalidPayload(_) => "invalid request payload",
+            Error::NotStreaming => "request stream required",
+            Error::RouteNotFound(_) => "route not found",
+            _ => "internal server error",
+        };
+
+        if code.predefined() == PredefinedCode::Internal {
+            tracing::error!(error = %self, "RPC request failed internally");
+        }
+
+        ErrorResponse::with_serialized_body(code, public_message)
     }
 }
 
 /// The RPC-layer result type.
 pub type Result<T, E = Error> = core::result::Result<T, E>;
+
+#[cfg(test)]
+mod tests;

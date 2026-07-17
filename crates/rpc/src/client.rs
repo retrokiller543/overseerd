@@ -9,18 +9,20 @@
 //! names anything in this module.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::task::{Context, Poll};
 
 use futures::{Stream, StreamExt};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::{Mutex, mpsc};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use overseerd_client::{
@@ -29,47 +31,162 @@ use overseerd_client::{
 };
 use overseerd_transport::protocol::{
     WireMessage, WireRequest, WireResponse,
-    codec::{read_message, write_message},
+    codec::{FrameConfig, MessageReader},
 };
 use overseerd_transport::{CallId, CodecError, Decodes, Encodes, Error, StatusCode, WireOutcome};
 
 /// Outbound frames buffered per call before the read loop backpressures.
 const REPLY_BUFFER: usize = 32;
 
-/// A demuxed outbound frame belonging to one in-flight call (the `CallId` already stripped).
+/// Outbound data frames queued for the single-owner writer task.
+const WRITE_BUFFER: usize = 32;
+
+/// Out-of-band cancellation frames buffered independently of ordinary writes.
+const CONTROL_BUFFER: usize = 32;
+
+/// The stable local error returned when a peer outruns a streaming response consumer.
+const REPLY_OVERFLOW_ERROR: &str = "local RPC reply buffer exceeded";
+
+/// A demuxed frame belonging to one in-flight call (the `CallId` already stripped).
 enum Reply {
     Response(WireOutcome),
     Item(Vec<u8>),
     End,
     Error { code: StatusCode, body: Vec<u8> },
+    Overflow,
 }
 
-/// The per-call routing table: maps a `CallId` to the sender feeding that call's reply
-/// channel. Shared between `open` (registration) and the read loop (demuxing); a synchronous
-/// mutex so it can also be cleared from `Drop`.
-type CallTable = Arc<StdMutex<HashMap<CallId, mpsc::Sender<Reply>>>>;
+/// The terminal lane is independent of the bounded item lane. This lets the read loop end a
+/// call without awaiting capacity, including when all item slots are occupied.
+struct CallRoute {
+    items: mpsc::Sender<Vec<u8>>,
+    terminal: oneshot::Sender<Reply>,
+    active: Arc<AtomicBool>,
+}
 
-/// Aborts the demux read task when the last transport handle is dropped.
-struct ReadTask(JoinHandle<()>);
+/// The per-call routing table. Shared between `open` (registration) and the read loop
+/// (demuxing); a synchronous mutex so it can also be cleared from `Drop`.
+type CallTable = Arc<StdMutex<HashMap<CallId, CallRoute>>>;
 
-impl Drop for ReadTask {
+/// A pre-serialized data frame and completion signal for the writer task.
+struct WriteCommand {
+    frame: Vec<u8>,
+    written: oneshot::Sender<Result<(), Error>>,
+}
+
+/// Out-of-band commands that must not depend on the bounded data queue having capacity.
+struct WriteControl(Vec<u8>);
+
+/// Shared connection liveness. Either actor may poison the connection and wake the other.
+struct ConnectionState {
+    closed: AtomicBool,
+    shutdown: CancellationToken,
+}
+
+impl ConnectionState {
+    fn new() -> Self {
+        Self {
+            closed: AtomicBool::new(false),
+            shutdown: CancellationToken::new(),
+        }
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    fn close(&self) {
+        if !self.closed.swap(true, Ordering::AcqRel) {
+            self.shutdown.cancel();
+        }
+    }
+}
+
+/// Cloneable handle to the task that exclusively owns the byte-stream writer.
+#[derive(Clone)]
+struct Writer {
+    data: mpsc::Sender<WriteCommand>,
+    control: mpsc::Sender<WriteControl>,
+    state: Arc<ConnectionState>,
+}
+
+impl Writer {
+    async fn write_message(&self, message: &WireMessage) -> Result<(), ClientError<StatusCode>> {
+        let frame = serialize_frame(message)?;
+
+        self.write_frame(frame).await
+    }
+
+    async fn write_frame(&self, frame: Vec<u8>) -> Result<(), ClientError<StatusCode>> {
+        if self.state.is_closed() {
+            return Err(ClientError::ConnectionClosed);
+        }
+
+        let (written, wait_written) = oneshot::channel();
+        self.data
+            .send(WriteCommand { frame, written })
+            .await
+            .map_err(|_| ClientError::ConnectionClosed)?;
+
+        wait_written
+            .await
+            .map_err(|_| ClientError::ConnectionClosed)??;
+
+        Ok(())
+    }
+
+    /// Enqueues a pre-serialized cancellation without blocking in `Drop`. Failure means the
+    /// writer actor is already gone, so poison the shared connection state.
+    fn cancel(&self, frame: Vec<u8>) {
+        if self.state.is_closed() {
+            return;
+        }
+
+        if self.control.try_send(WriteControl(frame)).is_err() {
+            self.state.close();
+        }
+    }
+
+    fn close(&self) {
+        self.state.close();
+    }
+}
+
+/// Owns both connection actors while at least one transport handle remains.
+struct ClientTasks {
+    read: JoinHandle<()>,
+    _write: JoinHandle<()>,
+    _writer: Writer,
+    calls: CallTable,
+}
+
+impl Drop for ClientTasks {
     fn drop(&mut self) {
-        self.0.abort();
+        // Stop the reader immediately, but detach the writer so it can drain already accepted
+        // frames (especially a cancellation enqueued by `RpcSource::drop`) before its now-closed
+        // channels make it exit. Aborting it here could strand remote work when a response stream
+        // owned the final transport handle.
+        self.read.abort();
+
+        if let Ok(mut calls) = self.calls.lock() {
+            calls.clear();
+        }
     }
 }
 
 /// An RPC client transport over any reliable, ordered byte stream (TCP, Unix).
 ///
 /// One background task owns the read half and demuxes `Response`/`StreamItem`/`StreamEnd`/
-/// `StreamError` frames by `CallId` into per-call channels; the write half is shared behind a
-/// mutex, locked only for a single frame write. Cheaply cloneable (all shared state is
-/// `Arc`): a response stream holds a clone to decode its items, and the read task is aborted
-/// only when the last clone drops.
+/// `StreamError` frames by `CallId` into per-call channels. A single writer actor owns the write
+/// half and finishes each accepted frame even if its caller is cancelled. Cheaply cloneable (all
+/// shared state is `Arc`): a response stream holds a clone to decode its items, and the actors
+/// remain available until the last clone drops.
 pub struct StreamClientTransport<W> {
-    write: Arc<Mutex<W>>,
+    writer: Writer,
     next_id: Arc<AtomicU64>,
     calls: CallTable,
-    _read_task: Arc<ReadTask>,
+    _tasks: Arc<ClientTasks>,
+    _write: PhantomData<fn() -> W>,
 }
 
 // Manual `Clone` — all state is `Arc`, so cloning is independent of `W` (a derived impl
@@ -77,10 +194,11 @@ pub struct StreamClientTransport<W> {
 impl<W> Clone for StreamClientTransport<W> {
     fn clone(&self) -> Self {
         Self {
-            write: Arc::clone(&self.write),
+            writer: self.writer.clone(),
             next_id: Arc::clone(&self.next_id),
             calls: Arc::clone(&self.calls),
-            _read_task: Arc::clone(&self._read_task),
+            _tasks: Arc::clone(&self._tasks),
+            _write: PhantomData,
         }
     }
 }
@@ -94,14 +212,39 @@ where
     where
         R: AsyncRead + Unpin + Send + 'static,
     {
+        Self::with_frame_config(read, write, FrameConfig::default())
+    }
+
+    /// Builds a client with explicit frame-size and idle-read limits.
+    pub fn with_frame_config<R>(read: R, write: W, frame_config: FrameConfig) -> Self
+    where
+        R: AsyncRead + Unpin + Send + 'static,
+    {
         let calls: CallTable = Arc::new(StdMutex::new(HashMap::new()));
-        let read_task = tokio::spawn(read_loop(read, Arc::clone(&calls)));
+        let state = Arc::new(ConnectionState::new());
+        let (data_tx, data_rx) = mpsc::channel(WRITE_BUFFER);
+        let (control_tx, control_rx) = mpsc::channel(CONTROL_BUFFER);
+        let writer = Writer {
+            data: data_tx,
+            control: control_tx,
+            state: Arc::clone(&state),
+        };
+        let reader = MessageReader::with_config(read, frame_config);
+        let read_task = tokio::spawn(read_loop(reader, Arc::clone(&calls), writer.clone()));
+        let write_task = tokio::spawn(write_loop(write, data_rx, control_rx, Arc::clone(&state)));
+        let tasks = Arc::new(ClientTasks {
+            read: read_task,
+            _write: write_task,
+            _writer: writer.clone(),
+            calls: Arc::clone(&calls),
+        });
 
         Self {
-            write: Arc::new(Mutex::new(write)),
+            writer,
             next_id: Arc::new(AtomicU64::new(1)),
             calls,
-            _read_task: Arc::new(ReadTask(read_task)),
+            _tasks: tasks,
+            _write: PhantomData,
         }
     }
 
@@ -113,34 +256,54 @@ where
         streaming_input: bool,
         payload: Vec<u8>,
     ) -> Result<RpcCall<W>, ClientError<StatusCode>> {
+        if self.writer.state.is_closed() {
+            return Err(ClientError::ConnectionClosed);
+        }
+
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = mpsc::channel(REPLY_BUFFER);
+        let (items_tx, items_rx) = mpsc::channel(REPLY_BUFFER);
+        let (terminal_tx, terminal_rx) = oneshot::channel();
+        let active = Arc::new(AtomicBool::new(true));
         let request = WireMessage::Request(WireRequest {
             id,
             path: path.to_string(),
             payload,
             streaming_input,
         });
+        let request = serialize_frame(&request)?;
+        let cancel = serialize_frame(&WireMessage::StreamCancel { id })?;
 
         // Register before writing so a fast reply can't race an absent entry.
-        self.calls.lock().unwrap().insert(id, tx);
+        self.calls.lock().unwrap().insert(
+            id,
+            CallRoute {
+                items: items_tx,
+                terminal: terminal_tx,
+                active: Arc::clone(&active),
+            },
+        );
 
-        {
-            let mut write = self.write.lock().await;
+        if self.writer.state.is_closed() {
+            self.calls.lock().unwrap().remove(&id);
 
-            if let Err(e) = write_message(&mut *write, &request).await {
-                drop(write);
-                self.calls.lock().unwrap().remove(&id);
+            return Err(ClientError::ConnectionClosed);
+        }
 
-                return Err(e.into());
-            }
+        if let Err(error) = self.writer.write_frame(request).await {
+            self.calls.lock().unwrap().remove(&id);
+
+            return Err(error);
         }
 
         Ok(RpcCall {
             id,
-            write: Arc::clone(&self.write),
+            writer: self.writer.clone(),
             calls: Arc::clone(&self.calls),
-            replies: rx,
+            items: items_rx,
+            terminal: Some(terminal_rx),
+            active,
+            cancel: Some(cancel),
+            _write: PhantomData,
         })
     }
 }
@@ -149,9 +312,13 @@ where
 /// (reply receiver) so the two directions run independently.
 struct RpcCall<W> {
     id: CallId,
-    write: Arc<Mutex<W>>,
+    writer: Writer,
     calls: CallTable,
-    replies: mpsc::Receiver<Reply>,
+    items: mpsc::Receiver<Vec<u8>>,
+    terminal: Option<oneshot::Receiver<Reply>>,
+    active: Arc<AtomicBool>,
+    cancel: Option<Vec<u8>>,
+    _write: PhantomData<fn() -> W>,
 }
 
 impl<W> RpcCall<W> {
@@ -159,23 +326,27 @@ impl<W> RpcCall<W> {
         (
             RpcSink {
                 id: self.id,
-                write: self.write,
-                calls: Arc::clone(&self.calls),
+                writer: self.writer.clone(),
+                _write: PhantomData,
             },
             RpcSource {
                 id: self.id,
-                replies: self.replies,
                 calls: self.calls,
+                writer: self.writer,
+                items: self.items,
+                terminal: self.terminal,
+                active: self.active,
+                cancel: self.cancel,
             },
         )
     }
 }
 
-/// The send half: writes inbound frames under the shared write lock.
+/// The send half: submits pre-serialized inbound frames to the writer actor.
 struct RpcSink<W> {
     id: CallId,
-    write: Arc<Mutex<W>>,
-    calls: CallTable,
+    writer: Writer,
+    _write: PhantomData<fn() -> W>,
 }
 
 impl<W> RpcSink<W>
@@ -183,9 +354,7 @@ where
     W: AsyncWrite + Unpin + Send + 'static,
 {
     async fn write_frame(&self, msg: &WireMessage) -> Result<(), ClientError<StatusCode>> {
-        let mut write = self.write.lock().await;
-
-        write_message(&mut *write, msg).await.map_err(Into::into)
+        self.writer.write_message(msg).await
     }
 
     async fn send(&mut self, payload: Vec<u8>) -> Result<(), ClientError<StatusCode>> {
@@ -200,29 +369,49 @@ where
         self.write_frame(&WireMessage::StreamEnd { id: self.id })
             .await
     }
-
-    #[allow(dead_code)]
-    async fn cancel(self) -> Result<(), ClientError<StatusCode>> {
-        self.write_frame(&WireMessage::StreamCancel { id: self.id })
-            .await?;
-
-        self.calls.lock().unwrap().remove(&self.id);
-
-        Ok(())
-    }
 }
 
 /// The receive half: pulls demuxed replies, and on drop removes the call's entry from the
-/// routing table so the read loop stops demuxing into a dead channel.
+/// routing table and asks the peer to cancel unfinished work.
 struct RpcSource {
     id: CallId,
     calls: CallTable,
-    replies: mpsc::Receiver<Reply>,
+    writer: Writer,
+    items: mpsc::Receiver<Vec<u8>>,
+    terminal: Option<oneshot::Receiver<Reply>>,
+    active: Arc<AtomicBool>,
+    cancel: Option<Vec<u8>>,
 }
 
 impl RpcSource {
     async fn recv(&mut self) -> Option<Reply> {
-        self.replies.recv().await
+        if let Some(item) = self.items.recv().await {
+            return Some(Reply::Item(item));
+        }
+
+        let terminal = self.terminal.take()?;
+
+        terminal.await.ok()
+    }
+
+    fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<Reply>> {
+        match self.items.poll_recv(cx) {
+            Poll::Ready(Some(item)) => return Poll::Ready(Some(Reply::Item(item))),
+            Poll::Ready(None) | Poll::Pending => {}
+        }
+
+        let Some(terminal) = &mut self.terminal else {
+            return Poll::Ready(None);
+        };
+
+        match Future::poll(Pin::new(terminal), cx) {
+            Poll::Ready(result) => {
+                self.terminal = None;
+
+                Poll::Ready(result.ok())
+            }
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -230,6 +419,12 @@ impl Drop for RpcSource {
     fn drop(&mut self) {
         if let Ok(mut calls) = self.calls.lock() {
             calls.remove(&self.id);
+        }
+
+        if self.active.swap(false, Ordering::AcqRel)
+            && let Some(cancel) = self.cancel.take()
+        {
+            self.writer.cancel(cancel);
         }
     }
 }
@@ -402,8 +597,10 @@ where
 /// The response stream of a server- or bidirectional-streaming RPC call. Decodes each item
 /// through the protocol's [`Decodes`] impl, so parsing stays the protocol's job.
 pub struct RpcResponses<W, Resp, E> {
-    transport: StreamClientTransport<W>,
+    // Keep the source before the transport: fields are dropped in declaration order, and the
+    // source must enqueue its cancellation before the final transport handle stops the actors.
     source: RpcSource,
+    transport: StreamClientTransport<W>,
     pump: Option<JoinHandle<()>>,
     _marker: PhantomData<fn() -> (Resp, E)>,
 }
@@ -411,8 +608,8 @@ pub struct RpcResponses<W, Resp, E> {
 impl<W, Resp, E> RpcResponses<W, Resp, E> {
     fn new(transport: StreamClientTransport<W>, source: RpcSource) -> Self {
         Self {
-            transport,
             source,
+            transport,
             pump: None,
             _marker: PhantomData,
         }
@@ -441,7 +638,7 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
-        match this.source.replies.poll_recv(cx) {
+        match this.source.poll_recv(cx) {
             Poll::Ready(reply) => Poll::Ready(decode_item(&this.transport, reply)),
 
             Poll::Pending => Poll::Pending,
@@ -475,6 +672,8 @@ where
         Some(Reply::Item(_)) => Err(ClientError::Decode(
             "unexpected stream item awaiting unary response".into(),
         )),
+
+        Some(Reply::Overflow) => Err(ClientError::Decode(REPLY_OVERFLOW_ERROR.into())),
     }
 }
 
@@ -506,51 +705,59 @@ where
             "unexpected unary response in stream".into(),
         ))),
 
+        Some(Reply::Overflow) => Some(Err(ClientError::Decode(REPLY_OVERFLOW_ERROR.into()))),
+
         None | Some(Reply::End) => None,
     }
 }
 
-/// Demuxes inbound frames into per-call channels until the stream ends or errors. On exit the
-/// call table is cleared, dropping every reply sender so outstanding calls observe a closed
-/// channel and resolve to `ConnectionClosed`.
-async fn read_loop<R>(mut read: R, calls: CallTable)
+/// Demuxes inbound frames into per-call channels until the stream ends or errors. Terminal
+/// replies use a one-shot lane, so delivering them never waits behind a full item buffer.
+async fn read_loop<R>(mut reader: MessageReader<R>, calls: CallTable, writer: Writer)
 where
     R: AsyncRead + Unpin,
 {
     loop {
-        let message = read_message(&mut read).await;
+        let message = tokio::select! {
+            _ = writer.state.shutdown.cancelled() => break,
+            message = reader.read_message() => message,
+        };
 
         match message {
             Ok(WireMessage::Response(WireResponse { id, outcome })) => {
-                let sender = calls.lock().unwrap().remove(&id);
-
-                if let Some(tx) = sender {
-                    let _ = tx.send(Reply::Response(outcome)).await;
-                }
+                complete_call(&calls, id, Reply::Response(outcome));
             }
 
             Ok(WireMessage::StreamItem { id, payload }) => {
-                let sender = calls.lock().unwrap().get(&id).cloned();
+                let sender = calls
+                    .lock()
+                    .unwrap()
+                    .get(&id)
+                    .map(|route| route.items.clone());
 
                 if let Some(tx) = sender {
-                    let _ = tx.send(Reply::Item(payload)).await;
+                    match tx.try_send(payload) {
+                        Ok(()) => {}
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            warn!(%id, "reply buffer exceeded; terminating call");
+
+                            if complete_call(&calls, id, Reply::Overflow) {
+                                cancel_overflowed_call(&writer, id);
+                            }
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                            calls.lock().unwrap().remove(&id);
+                        }
+                    }
                 }
             }
 
             Ok(WireMessage::StreamEnd { id }) => {
-                let sender = calls.lock().unwrap().remove(&id);
-
-                if let Some(tx) = sender {
-                    let _ = tx.send(Reply::End).await;
-                }
+                complete_call(&calls, id, Reply::End);
             }
 
             Ok(WireMessage::StreamError { id, code, body }) => {
-                let sender = calls.lock().unwrap().remove(&id);
-
-                if let Some(tx) = sender {
-                    let _ = tx.send(Reply::Error { code, body }).await;
-                }
+                complete_call(&calls, id, Reply::Error { code, body });
             }
 
             Ok(WireMessage::Request(_)) | Ok(WireMessage::StreamCancel { .. }) => {
@@ -573,7 +780,116 @@ where
         }
     }
 
+    writer.close();
     calls.lock().unwrap().clear();
+}
+
+/// Removes a call and publishes its terminal state without waiting for bounded capacity.
+fn complete_call(calls: &CallTable, id: CallId, reply: Reply) -> bool {
+    let route = calls.lock().unwrap().remove(&id);
+
+    let Some(route) = route else {
+        return false;
+    };
+
+    route.active.store(false, Ordering::Release);
+    let _ = route.terminal.send(reply);
+
+    true
+}
+
+/// Overflow is a local terminal error and a remote cancellation. If even serialization of the
+/// fixed control frame fails, poison the connection rather than leaving remote work orphaned.
+fn cancel_overflowed_call(writer: &Writer, id: CallId) {
+    match serialize_frame(&WireMessage::StreamCancel { id }) {
+        Ok(frame) => writer.cancel(frame),
+        Err(_) => writer.close(),
+    }
+}
+
+/// Serializes the complete length-prefixed frame before handing it to the writer actor.
+fn serialize_frame(message: &WireMessage) -> Result<Vec<u8>, Error> {
+    let payload =
+        postcard::to_allocvec(message).map_err(|error| Error::Serialization(error.to_string()))?;
+    let len = u32::try_from(payload.len()).map_err(|_| Error::FrameTooLarge {
+        len: payload.len(),
+        max: u32::MAX as usize,
+    })?;
+    let frame_len = payload
+        .len()
+        .checked_add(size_of::<u32>())
+        .ok_or(Error::FrameAllocation { len: payload.len() })?;
+    let mut frame = Vec::new();
+    frame
+        .try_reserve_exact(frame_len)
+        .map_err(|_| Error::FrameAllocation { len: frame_len })?;
+    frame.extend_from_slice(&len.to_le_bytes());
+    frame.extend_from_slice(&payload);
+
+    Ok(frame)
+}
+
+/// Owns the write half for its entire lifetime. Once a command is accepted, cancellation of the
+/// caller waiting for its acknowledgement cannot cancel the underlying frame write.
+async fn write_loop<W>(
+    mut write: W,
+    mut data: mpsc::Receiver<WriteCommand>,
+    mut control: mpsc::Receiver<WriteControl>,
+    state: Arc<ConnectionState>,
+) where
+    W: AsyncWrite + Unpin,
+{
+    loop {
+        tokio::select! {
+            biased;
+
+            _ = state.shutdown.cancelled() => break,
+
+            Some(WriteControl(frame)) = control.recv() => {
+                if let Err(error) = write_serialized(&mut write, &frame, &state).await {
+                    warn!(%error, "client control-frame write error");
+                    state.close();
+
+                    break;
+                }
+            }
+
+            Some(command) = data.recv() => {
+                match write_serialized(&mut write, &command.frame, &state).await {
+                    Ok(()) => {
+                        let _ = command.written.send(Ok(()));
+                    }
+                    Err(error) => {
+                        warn!(%error, "client frame write error");
+                        let _ = command.written.send(Err(error));
+                        state.close();
+
+                        break;
+                    }
+                }
+            }
+
+            else => break,
+        }
+    }
+
+    state.close();
+}
+
+async fn write_serialized<W>(
+    write: &mut W,
+    frame: &[u8],
+    state: &ConnectionState,
+) -> Result<(), Error>
+where
+    W: AsyncWrite + Unpin,
+{
+    tokio::select! {
+        biased;
+
+        _ = state.shutdown.cancelled() => Err(Error::Closed),
+        result = write.write_all(frame) => result.map_err(Error::from),
+    }
 }
 
 /// Distinguishes an orderly server disconnect from a genuine I/O failure.
@@ -612,3 +928,6 @@ pub async fn connect_unix(
 
     Ok(StreamClientTransport::new(read, write))
 }
+
+#[cfg(test)]
+mod tests;

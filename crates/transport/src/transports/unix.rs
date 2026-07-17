@@ -12,13 +12,14 @@ use crate::{
     error::Result,
     frame::PeerInfo,
     transport::Transport,
-    transports::stream::{StreamConnection, StreamResponder},
+    transports::stream::{StreamConfig, StreamConnection, StreamResponder},
 };
 
 /// Unix socket transport. Removes the socket file on drop.
 pub struct UnixTransport {
     listener: UnixListener,
     path: PathBuf,
+    config: StreamConfig,
 }
 
 /// An accepted Unix socket connection.
@@ -29,6 +30,10 @@ pub type UnixResponder = StreamResponder<OwnedWriteHalf>;
 
 impl UnixTransport {
     pub fn bind(path: impl Into<PathBuf>) -> Result<Self> {
+        Self::bind_with_config(path, StreamConfig::default())
+    }
+
+    pub fn bind_with_config(path: impl Into<PathBuf>, config: StreamConfig) -> Result<Self> {
         let path = path.into();
         Self::ensure_path(&path)?;
 
@@ -42,7 +47,11 @@ impl UnixTransport {
 
         debug!(path = %path.display(), "Unix transport bound");
 
-        Ok(Self { listener, path })
+        Ok(Self {
+            listener,
+            path,
+            config,
+        })
     }
 
     fn ensure_path(path: &Path) -> Result<()> {
@@ -177,7 +186,12 @@ impl Transport for UnixTransport {
         let (read, write) = stream.into_split();
         let peer = PeerInfo { addr: None };
 
-        Ok(StreamConnection::new(read, write, peer))
+        Ok(StreamConnection::with_config(
+            read,
+            write,
+            peer,
+            self.config,
+        ))
     }
 }
 

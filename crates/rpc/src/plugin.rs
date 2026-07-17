@@ -11,7 +11,7 @@ use tower::{Layer, Service};
 use crate::descriptors::{RpcOutcome, SERVICES, ServiceDescriptor};
 use crate::extract::ErrorResponse;
 use crate::middleware::{ErrorHandler, Guard, GuardLayer, RouterService, RpcRequest, RpcService};
-use crate::protocol::Rpc;
+use crate::protocol::{Rpc, RpcLimits};
 use crate::router::RpcRouter;
 use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
 
@@ -41,6 +41,7 @@ pub struct RpcPlugin {
     services: Vec<ServiceDescriptor>,
     layers: Vec<LayerApplier>,
     error_handler: Option<Arc<dyn ErrorHandler>>,
+    limits: RpcLimits,
 }
 
 impl Plugin for RpcPlugin {
@@ -83,7 +84,13 @@ impl ProtocolPlugin for RpcPlugin {
             service = applier(service);
         }
 
-        Ok(Rpc::new(router, service, self.error_handler, needs_peer))
+        Ok(Rpc::new(
+            router,
+            service,
+            self.error_handler,
+            needs_peer,
+            self.limits,
+        ))
     }
 }
 
@@ -122,6 +129,9 @@ pub trait RpcAppBuilder {
 
     /// Sets the single global [`ErrorHandler`] applied to every error response.
     fn error_handler<H: ErrorHandler>(self, handler: H) -> Self;
+
+    /// Sets connection and per-connection call admission limits.
+    fn rpc_limits(self, limits: RpcLimits) -> Self;
 }
 
 impl RpcAppBuilder for AppBuilder<RpcPlugin> {
@@ -175,6 +185,12 @@ impl RpcAppBuilder for AppBuilder<RpcPlugin> {
 
     fn error_handler<H: ErrorHandler>(mut self, handler: H) -> Self {
         self.protocol_mut().error_handler = Some(Arc::new(handler));
+
+        self
+    }
+
+    fn rpc_limits(mut self, limits: RpcLimits) -> Self {
+        self.protocol_mut().limits = limits;
 
         self
     }

@@ -27,7 +27,7 @@ pub use plugin::{RpcAppBuilder, RpcPlugin};
 /// is used directly or through the `overseerd` facade. The core macros (`app!`, `#[component]`,
 /// …) come from `overseerd` (the always-present core).
 pub use overseerd_rpc_macros::{handlers, rpc, service};
-pub use protocol::Rpc;
+pub use protocol::{Rpc, RpcLimits};
 pub use router::RpcRouter;
 pub use routes::ResolvedService;
 
