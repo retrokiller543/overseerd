@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.13.0...overseerd-v0.14.0) - 2026-07-17
+
+### Added
+
+- *(axum)* [**breaking**] DI-native STOMP auth + protocol-generic WS topics with per-message request/response ([#76](https://github.com/retrokiller543/overseerd/pull/76))
+
 ## [0.13.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.12.1...overseerd-v0.13.0) - 2026-07-12
 
 ### Added
