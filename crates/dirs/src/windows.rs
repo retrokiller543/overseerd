@@ -46,6 +46,10 @@ impl Drop for LocalDescriptor {
 
 struct OwnedDirectory(HANDLE);
 
+// Windows directory handles may be closed from any thread. Access to the collection
+// that owns them is synchronized by `Dir`.
+unsafe impl Send for OwnedDirectory {}
+
 impl Drop for OwnedDirectory {
     fn drop(&mut self) {
         // SAFETY: this wrapper is constructed only from successful CreateFileW calls.
@@ -53,7 +57,13 @@ impl Drop for OwnedDirectory {
     }
 }
 
-pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
+/// Keeps every checked path component open without FILE_SHARE_DELETE. Stored by the
+/// `Dir` handle after `ensure`, so an attacker cannot replace an ancestor afterwards.
+pub(super) struct PrivateDirectoryGuard {
+    _components: Vec<OwnedDirectory>,
+}
+
+pub(super) fn ensure_private_directory(path: &Path) -> io::Result<PrivateDirectoryGuard> {
     if path
         .components()
         .any(|component| matches!(component, Component::ParentDir))
@@ -102,7 +112,11 @@ pub(super) fn ensure_private_directory(path: &Path) -> io::Result<()> {
         held_components.push(handle);
     }
 
-    verify_private_acl(path, &private_sddl)
+    verify_private_acl(path, &private_sddl)?;
+
+    Ok(PrivateDirectoryGuard {
+        _components: held_components,
+    })
 }
 
 fn permission_denied(message: impl Into<String>) -> io::Error {

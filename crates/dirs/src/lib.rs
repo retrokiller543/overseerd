@@ -19,6 +19,8 @@
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::sync::{Arc, Mutex};
 
 use directories::ProjectDirs;
 use tracing::{debug, trace, warn};
@@ -114,6 +116,8 @@ dir_kinds! {
 pub struct Dir<K> {
     path: PathBuf,
     secure_root: Option<PathBuf>,
+    #[cfg(windows)]
+    protection: Arc<Mutex<Vec<windows::PrivateDirectoryGuard>>>,
     _marker: PhantomData<K>,
 }
 
@@ -123,6 +127,8 @@ impl<K> Dir<K> {
         Self {
             path,
             secure_root,
+            #[cfg(windows)]
+            protection: Arc::new(Mutex::new(Vec::new())),
             _marker: PhantomData,
         }
     }
@@ -148,17 +154,42 @@ impl<K> Dir<K> {
             return std::fs::create_dir_all(&self.path);
         }
 
+        #[cfg(windows)]
+        {
+            let mut next = Vec::new();
+
+            if let Some(root) = &self.secure_root {
+                next.push(ensure_private_directory(root)?);
+            }
+
+            next.push(ensure_private_directory(&self.path)?);
+            *self
+                .protection
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+
+            return Ok(());
+        }
+
+        #[cfg(not(windows))]
         if let Some(root) = &self.secure_root {
             ensure_private_directory(root)?;
         }
 
-        ensure_private_directory(&self.path)
+        #[cfg(not(windows))]
+        return ensure_private_directory(&self.path);
     }
 }
 
 impl<K> Clone for Dir<K> {
     fn clone(&self) -> Self {
-        Self::new(self.path.clone(), self.secure_root.clone())
+        Self {
+            path: self.path.clone(),
+            secure_root: self.secure_root.clone(),
+            #[cfg(windows)]
+            protection: Arc::clone(&self.protection),
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -267,7 +298,7 @@ fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(windows)]
-fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
+fn ensure_private_directory(path: &Path) -> std::io::Result<windows::PrivateDirectoryGuard> {
     windows::ensure_private_directory(path)
 }
 

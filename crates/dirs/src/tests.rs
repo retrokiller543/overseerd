@@ -104,6 +104,7 @@ fn group_writable_ancestor_is_rejected() {
 #[test]
 fn private_directories_receive_and_retain_a_private_windows_acl() {
     let root = temp_path("windows-private-acl");
+    let renamed = root.with_extension("renamed");
     let state = DirectoriesManager::from_path(root.clone()).dir::<State>();
 
     state.ensure().expect("secure Windows state directory");
@@ -111,7 +112,14 @@ fn private_directories_receive_and_retain_a_private_windows_acl() {
 
     assert!(root.is_dir());
     assert!(state.is_dir());
-    let _ = std::fs::remove_dir_all(root);
+    assert!(
+        std::fs::rename(&root, &renamed).is_err(),
+        "ensured directory remains protected from ancestor replacement"
+    );
+
+    drop(state);
+    std::fs::rename(&root, &renamed).expect("protection releases with the Dir handle");
+    let _ = std::fs::remove_dir_all(renamed);
 }
 
 #[cfg(windows)]
@@ -125,6 +133,7 @@ fn existing_directory_with_world_access_is_rejected() {
     let error = state.ensure().expect_err("unsafe ACL must be rejected");
 
     assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    drop(state);
     let _ = std::fs::remove_dir_all(root);
 }
 
