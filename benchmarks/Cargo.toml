@@ -1,0 +1,16 @@
+[package]
+name = "overseerd-benchmarks"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+criterion = "0.8.2"
+overseerd-core = { path = "../crates/core" }
+
+[[bench]]
+name = "di_hot_paths"
+harness = false

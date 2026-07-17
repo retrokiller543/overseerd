@@ -1,4 +1,5 @@
 /target
+/benchmarks/target
 debug/
 release/
 *.rs.bk

@@ -27,6 +27,10 @@ pub struct ScopeRegistry {
     /// construction at resolution time. Transients are never cached.
     transient: HashMap<TypeId, ComponentDescriptor>,
     providers: Vec<ProviderDescriptor>,
+    /// Provider descriptors indexed once by their concrete component. Scope builds
+    /// consult only the entries for the component that just landed instead of scanning
+    /// every provider registered in the application.
+    providers_by_concrete: HashMap<TypeId, Vec<ProviderDescriptor>>,
 }
 
 impl ScopeRegistry {
@@ -34,14 +38,31 @@ impl ScopeRegistry {
         transient: HashMap<TypeId, ComponentDescriptor>,
         providers: Vec<ProviderDescriptor>,
     ) -> Self {
+        let mut providers_by_concrete: HashMap<TypeId, Vec<ProviderDescriptor>> = HashMap::new();
+
+        for provider in &providers {
+            providers_by_concrete
+                .entry((provider.concrete_ty.type_id)())
+                .or_default()
+                .push(*provider);
+        }
+
         Self {
             transient,
             providers,
+            providers_by_concrete,
         }
     }
 
     pub(crate) fn providers(&self) -> &[ProviderDescriptor] {
         &self.providers
+    }
+
+    pub(crate) fn providers_for(&self, concrete: TypeId) -> &[ProviderDescriptor] {
+        self.providers_by_concrete
+            .get(&concrete)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     pub(crate) fn transient(&self, target: TypeId) -> Option<ComponentDescriptor> {
@@ -207,13 +228,11 @@ impl ScopeContainer {
     ) -> crate::Result<Arc<ScopeContainer>> {
         let mut cx =
             ComponentConstructionContext::new(scope, parent, Arc::clone(&registry), externals);
-        let providers = registry.providers();
-
         for seed in seeds {
             let type_id = (seed.ty.type_id)();
 
             cx.insert(seed);
-            register_providers_for(&mut cx, providers, type_id);
+            register_providers_for(&mut cx, &registry, type_id);
         }
 
         for descriptor in order {
@@ -238,7 +257,7 @@ impl ScopeContainer {
                 }
             }
 
-            register_providers_for(&mut cx, providers, (descriptor.ty.type_id)());
+            register_providers_for(&mut cx, &registry, (descriptor.ty.type_id)());
         }
 
         let (scope, store, parent, registry, externals) = cx.into_parts();
@@ -350,13 +369,10 @@ pub type ComponentContainer = ScopeContainer;
 /// aliasing its single instance under each trait it provides.
 fn register_providers_for(
     cx: &mut ComponentConstructionContext,
-    providers: &[ProviderDescriptor],
+    registry: &ScopeRegistry,
     concrete_id: TypeId,
 ) {
-    for provider in providers
-        .iter()
-        .filter(|p| (p.concrete_ty.type_id)() == concrete_id)
-    {
+    for provider in registry.providers_for(concrete_id) {
         cx.register_provider(provider);
     }
 }
@@ -455,67 +471,4 @@ fn dep_ready(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use overseerd_core::TypeDescriptor;
-
-    /// A throwaway intermediate scope for exercising child-container construction
-    /// without depending on any protocol's concrete scopes.
-    struct TestScope;
-
-    impl Scope for TestScope {
-        fn rank(&self) -> u8 {
-            1
-        }
-
-        fn name(&self) -> &'static str {
-            "Test"
-        }
-    }
-
-    fn registry() -> Arc<ScopeRegistry> {
-        Arc::new(ScopeRegistry::new(HashMap::new(), Vec::new()))
-    }
-
-    async fn root() -> Arc<ScopeContainer> {
-        ScopeContainer::build_root(&[], Vec::new(), ResolverSet::new(), registry())
-            .await
-            .expect("root builds")
-    }
-
-    #[tokio::test]
-    async fn empty_child_scope_is_skipped() {
-        let root = root().await;
-
-        let child =
-            ScopeContainer::open_child(&TestScope, Arc::clone(&root), registry(), &[], Vec::new())
-                .await
-                .expect("open child");
-
-        assert!(
-            Arc::ptr_eq(&root, &child),
-            "empty child scope should reuse the parent container"
-        );
-    }
-
-    #[tokio::test]
-    async fn child_scope_with_a_seed_is_built() {
-        let root = root().await;
-
-        let seed = BoxedComponent {
-            ty: TypeDescriptor::of::<u8>("u8"),
-            value: Box::new(7u8),
-        };
-
-        let child =
-            ScopeContainer::open_child(&TestScope, Arc::clone(&root), registry(), &[], vec![seed])
-                .await
-                .expect("open child");
-
-        assert!(
-            !Arc::ptr_eq(&root, &child),
-            "a seeded scope should allocate its own container"
-        );
-        assert_eq!(child.scope().name(), "Test");
-    }
-}
+mod tests;

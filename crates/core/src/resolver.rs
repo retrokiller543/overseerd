@@ -56,13 +56,14 @@ impl<T: ResolverCtx + ?Sized> ResolverCtxExt for T {}
 /// [`ResolverCtx`] impl to.
 ///
 /// Each resolver is stored as `Arc<dyn Any + Send + Sync>` (a plain unsizing coercion
-/// from `Arc<R>`, needing no trait upcasting) keyed by its concrete [`TypeId`]. Cloning
-/// the set clones the map of `Arc`s — every clone observes the same underlying resolver
-/// instances, so a config store swapped in place by a reload is seen everywhere it was
-/// threaded.
+/// from `Arc<R>`, needing no trait upcasting) keyed by its concrete [`TypeId`]. The map
+/// itself is copy-on-write behind an [`Arc`], so cloning a set on a request hot path is
+/// allocation-free while mutation still gives each scope its own resolver namespace.
+/// Every clone observes the same underlying resolver instances, so a config store swapped
+/// in place by a reload is seen everywhere it was threaded.
 #[derive(Default, Clone)]
 pub struct ResolverSet {
-    map: HashMap<TypeId, Arc<dyn Any + Send + Sync>>,
+    map: Arc<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
 }
 
 impl ResolverSet {
@@ -73,7 +74,7 @@ impl ResolverSet {
 
     /// Registers `resolver` under its concrete type `R`, replacing any previous one.
     pub fn insert<R: Resolver>(&mut self, resolver: Arc<R>) {
-        self.map.insert(TypeId::of::<R>(), resolver);
+        Arc::make_mut(&mut self.map).insert(TypeId::of::<R>(), resolver);
     }
 
     /// The registered resolver of concrete type `R`, as a shared handle, if present.
@@ -90,3 +91,6 @@ impl ResolverCtx for ResolverSet {
         self.map.get(&kind).map(|arc| arc.as_ref() as &dyn Any)
     }
 }
+
+#[cfg(test)]
+mod tests;
