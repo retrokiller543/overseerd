@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0](https://github.com/retrokiller543/overseerd/compare/overseerd-rpc-v0.16.0...overseerd-rpc-v0.17.0) - 2026-07-17
+
+### Fixed
+
+- *(rpc)* close cancellation and write-failure gaps
+- harden RPC transport resource handling
+
 ## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-rpc-v0.11.2...overseerd-rpc-v0.12.0) - 2026-07-08
 
 ### Fixed
