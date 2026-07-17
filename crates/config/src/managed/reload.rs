@@ -10,9 +10,8 @@
 
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use overseerd_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
 use overseerd_di::{BoxedComponent, Injectable};
@@ -137,6 +136,11 @@ pub enum ConfigReloadError {
         #[source]
         source: Box<overseerd_hooks::Error>,
     },
+
+    /// User-provided deserialization panicked while preparing a reload. Panic
+    /// payloads are omitted because they may contain application secrets.
+    #[error("configuration reload panicked while preparing changed bindings")]
+    Panicked,
 }
 
 /// One binding changed by a reload.
@@ -194,7 +198,7 @@ pub trait ReloadableConfig: Send + Sync {
         &self,
         manager: &ConfigManager,
         new_root: &ConfigValue,
-    ) -> Result<PreparedSwap, ConfigError>;
+    ) -> Result<Option<PreparedSwap>, ConfigError>;
 
     /// The current committed value, erased, for staging an unchanged binding into the
     /// proposal so hooks reading it still resolve.
@@ -212,6 +216,7 @@ impl<T: ConfigProperties> ConfigSlot<T> {
     /// Recovers a reloadable slot from a freshly bound config seed, sharing its live
     /// cell. Returns `None` if the seed does not hold a `Cfg<T>`.
     pub(crate) fn from_seed(
+        _manager: &ConfigManager,
         seed: &BoxedComponent,
         path: &str,
     ) -> Option<Box<dyn ReloadableConfig>> {
@@ -241,19 +246,30 @@ impl<T: ConfigProperties> ReloadableConfig for ConfigSlot<T> {
         &self,
         manager: &ConfigManager,
         new_root: &ConfigValue,
-    ) -> Result<PreparedSwap, ConfigError> {
-        let value: T = manager.get_config_in::<T>(new_root, &self.path)?;
+    ) -> Result<Option<PreparedSwap>, ConfigError> {
+        let committed_snapshot = self.cfg.committed_snapshot();
+        let unchanged = manager.snapshot_matches(new_root, &self.path, &committed_snapshot);
+
+        if unchanged {
+            return Ok(None);
+        }
+
+        let (value, next_snapshot) =
+            manager.get_config_in_with_snapshot::<T>(new_root, &self.path)?;
         let replacement = Arc::new(value);
         let staged: Arc<dyn Any + Send + Sync> = replacement.clone();
         let committed = replacement.clone();
         let cfg = self.cfg.clone();
 
-        Ok(PreparedSwap {
+        Ok(Some(PreparedSwap {
             type_id: TypeId::of::<T>(),
             path: Arc::from(self.path.as_str()),
             staged,
-            commit: Box::new(move || cfg.replace(committed)),
-        })
+            commit: Box::new(move || {
+                cfg.replace(committed);
+                cfg.replace_snapshot(next_snapshot);
+            }),
+        }))
     }
 
     fn stage_current(&self) -> StagedConfig {
@@ -314,12 +330,19 @@ impl ConfigReloader {
     /// A snapshot of the config source files, in merge order — the inputs a file watcher
     /// observes to drive [`reload`](Self::reload).
     pub fn sources(&self) -> Vec<std::path::PathBuf> {
-        self.inner
-            .manager
-            .lock()
-            .expect("config manager mutex poisoned")
-            .sources()
-            .to_vec()
+        self.lock_manager().sources().to_vec()
+    }
+
+    fn lock_manager(&self) -> std::sync::MutexGuard<'_, ConfigManager> {
+        self.inner.manager.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!(
+                target: "overseerd::config",
+                "recovering config manager after a panicking reload"
+            );
+            self.inner.manager.clear_poison();
+
+            poisoned.into_inner()
+        })
     }
 
     /// Re-reads the config sources and re-publishes the changed bindings.
@@ -338,45 +361,40 @@ impl ConfigReloader {
         // If nothing listens for config_reload, skip building proposals entirely (O(1)).
         let run_hooks = self.inner.hooks.has::<ConfigReload>();
 
-        let new_root;
-        let mut prepared = Vec::new();
-        let mut changed = Vec::new();
-        let mut staged = Vec::new();
-        let mut changed_paths: HashSet<String> = HashSet::new();
-        let bindings_by_type: HashMap<TypeId, Vec<String>>;
-
         // Phase 1 (prepare): re-read, diff, and deserialize changed bindings — all under
-        // the manager lock, with no await, so the lock is released before hooks run.
-        {
-            let manager = self
-                .inner
-                .manager
-                .lock()
-                .expect("config manager mutex poisoned");
-
-            new_root = manager.reread().map_err(ConfigReloadError::Load)?;
-            bindings_by_type = if run_hooks {
+        // the manager lock, with no await, so the lock is released before hooks run. User
+        // deserializers execute in this boundary; convert their panics to a failed reload.
+        let phase_one = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let manager = self.lock_manager();
+            let new_root = manager
+                .reread()
+                .map_err(|error| Box::new(ConfigReloadError::Load(error)))?;
+            let bindings_by_type = if run_hooks {
                 bindings_by_type_index(&manager)
             } else {
                 HashMap::new()
             };
+            let mut prepared = Vec::new();
+            let mut changed = Vec::new();
+            let mut staged = Vec::new();
+            let mut changed_paths: HashSet<String> = HashSet::new();
 
             for slot in &self.inner.slots {
-                if manager.subtree(slot.path()) == new_root.get_path(slot.path()) {
+                let swap = slot.prepare(&manager, &new_root).map_err(|source| {
+                    Box::new(ConfigReloadError::Bind {
+                        path: slot.path().to_string(),
+                        type_name: slot.type_name(),
+                        source,
+                    })
+                })?;
+
+                let Some(swap) = swap else {
                     if run_hooks {
                         staged.push(slot.stage_current());
                     }
 
                     continue;
-                }
-
-                let swap = slot.prepare(&manager, &new_root).map_err(|source| {
-                    ConfigReloadError::Bind {
-                        path: slot.path().to_string(),
-                        type_name: slot.type_name(),
-                        source,
-                    }
-                })?;
+                };
 
                 if run_hooks {
                     staged.push(StagedConfig {
@@ -393,7 +411,22 @@ impl ConfigReloader {
                 });
                 prepared.push(swap);
             }
-        }
+
+            Ok::<_, Box<ConfigReloadError>>((
+                new_root,
+                prepared,
+                changed,
+                staged,
+                changed_paths,
+                bindings_by_type,
+            ))
+        }));
+
+        let (new_root, prepared, changed, staged, changed_paths, bindings_by_type) = match phase_one
+        {
+            Ok(result) => result.map_err(|error| *error)?,
+            Err(_) => return Err(ConfigReloadError::Panicked),
+        };
 
         // Nothing changed: no commit, no hooks — but a successful reload still advances the
         // generation so observers can tell a reload ran.
@@ -442,11 +475,7 @@ impl ConfigReloader {
 
         // Phase 3 (commit): every binding re-bound and every hook accepted.
         {
-            let mut manager = self
-                .inner
-                .manager
-                .lock()
-                .expect("config manager mutex poisoned");
+            let mut manager = self.lock_manager();
 
             for swap in prepared {
                 (swap.commit)();

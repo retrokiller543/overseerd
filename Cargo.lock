@@ -1441,9 +1441,11 @@ name = "overseerd-dirs"
 version = "0.14.2"
 dependencies = [
  "directories",
+ "libc",
  "overseerd-core",
  "overseerd-di",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1588,6 +1590,7 @@ version = "0.14.2"
 dependencies = [
  "bitflags 2.13.0",
  "futures",
+ "libc",
  "overseerd-di",
  "postcard",
  "serde",

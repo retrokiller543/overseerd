@@ -23,9 +23,22 @@ pub struct ComponentRegistry {
 impl ComponentRegistry {
     /// Collects every link-time-registered component and provider descriptor.
     pub fn collect() -> Self {
+        let mut components: Vec<_> = COMPONENTS.iter().copied().collect();
+        let mut providers: Vec<_> = PROVIDERS.iter().copied().collect();
+
+        // linkme does not promise cross-platform iteration order. Stable discovery
+        // keeps construction and lifecycle hook ordering equal on every target.
+        components.sort_by_key(|component| component.id);
+        providers.sort_by(|left, right| {
+            (left.trait_ty.type_name)()
+                .cmp((right.trait_ty.type_name)())
+                .then_with(|| (left.concrete_ty.type_name)().cmp((right.concrete_ty.type_name)()))
+                .then_with(|| left.qualifier.cmp(right.qualifier))
+        });
+
         Self {
-            components: COMPONENTS.iter().copied().collect(),
-            providers: PROVIDERS.iter().copied().collect(),
+            components,
+            providers,
         }
     }
 
@@ -34,22 +47,27 @@ impl ComponentRegistry {
     /// for the same type. The per-type factory ambiguity check runs here via
     /// [`ComponentDescriptor::effective_factory`].
     pub fn resolved_components(&self) -> crate::Result<Vec<ComponentDescriptor>> {
-        let mut chosen: HashMap<TypeId, ComponentDescriptor> = HashMap::new();
+        let mut chosen = Vec::new();
+        let mut positions: HashMap<TypeId, usize> = HashMap::new();
 
         for component in &self.components {
             let type_id = (component.ty.type_id)();
             let new_manual = component.effective_factory()?.is_none();
 
-            match chosen.get(&type_id) {
+            match positions.get(&type_id).copied() {
                 None => {
-                    chosen.insert(type_id, *component);
+                    positions.insert(type_id, chosen.len());
+                    chosen.push(*component);
                 }
 
-                Some(existing) => {
+                Some(position) => {
+                    let existing = &chosen[position];
                     let existing_manual = existing.effective_factory()?.is_none();
 
                     if new_manual && !existing_manual {
-                        chosen.insert(type_id, *component);
+                        // An override replaces the descriptor at its original position.
+                        // Lifecycle hook ordering must not depend on HashMap iteration.
+                        chosen[position] = *component;
                     } else if new_manual == existing_manual && existing.id != component.id {
                         return Err(Error::DuplicateComponentType(
                             (component.ty.type_name)().to_string(),
@@ -59,7 +77,7 @@ impl ComponentRegistry {
             }
         }
 
-        Ok(chosen.into_values().collect())
+        Ok(chosen)
     }
 
     /// Validates the component graph: unique ids, satisfiable dependencies, and the
@@ -394,6 +412,25 @@ mod tests {
         };
 
         assert!(with.validate().is_ok());
+    }
+
+    #[test]
+    fn resolved_components_preserve_registration_order_through_manual_override() {
+        let manual = ComponentDescriptor::manual(
+            "pg_pool_manual",
+            "PgPool",
+            TypeDescriptor::of::<u16>("PgPool"),
+            &Singleton,
+        );
+        let registry = ComponentRegistry {
+            components: vec![PG_POOL, BACKUP_REPO, manual],
+            ..Default::default()
+        };
+
+        let resolved = registry.resolved_components().expect("resolve components");
+        let ids: Vec<_> = resolved.iter().map(|component| component.id).collect();
+
+        assert_eq!(ids, ["pg_pool_manual", "backup_repo"]);
     }
 
     // --- Scope validation --------------------------------------------------

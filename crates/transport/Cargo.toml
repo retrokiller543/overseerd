@@ -31,6 +31,9 @@ overseerd-di = { workspace = true, optional = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 # wasm: no runtime/net — only `tokio::sync` (used by `frame`) and `tokio_util`'s
 # `CancellationToken`. The socket transports and IO codec are compiled out (see `lib.rs`).
 [target.'cfg(target_family = "wasm")'.dependencies]

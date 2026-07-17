@@ -33,10 +33,29 @@ impl AppRegistry {
     /// config bindings) into an `AppRegistry`. Protocol variant slices (e.g. RPC services)
     /// are folded in by the protocol plugin, not here.
     pub fn collect() -> Self {
+        let mut components: Vec<_> = COMPONENTS.iter().copied().collect();
+        let mut providers: Vec<_> = PROVIDERS.iter().copied().collect();
+        let mut config_bindings: Vec<_> = CONFIG_BINDINGS.iter().map(|d| d.to_binding()).collect();
+
+        // Distributed-slice order differs between linkers. Sort auto-discovered
+        // descriptors only; explicit builder registrations retain caller order.
+        components.sort_by_key(|component| component.id);
+        providers.sort_by(|left, right| {
+            (left.trait_ty.type_name)()
+                .cmp((right.trait_ty.type_name)())
+                .then_with(|| (left.concrete_ty.type_name)().cmp((right.concrete_ty.type_name)()))
+                .then_with(|| left.qualifier.cmp(right.qualifier))
+        });
+        config_bindings.sort_by(|left, right| {
+            (left.ty.type_name)()
+                .cmp((right.ty.type_name)())
+                .then_with(|| left.path.cmp(&right.path))
+        });
+
         Self {
-            components: COMPONENTS.iter().copied().collect(),
-            providers: PROVIDERS.iter().copied().collect(),
-            config_bindings: CONFIG_BINDINGS.iter().map(|d| d.to_binding()).collect(),
+            components,
+            providers,
+            config_bindings,
         }
     }
 

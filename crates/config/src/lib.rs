@@ -35,4 +35,5 @@ pub use managed::{
     ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError, ConfigReloadReport,
     ConfigReloader, ConfigStore, ContainerConfigExt, DirectoriesResolver, Dynamic, Format,
     FormatId, HookOutcome, ReloadProposal, ReloadTriggers, ReloadableConfig, spawn_reload_triggers,
+    stop_reload_triggers,
 };

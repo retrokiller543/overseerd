@@ -13,7 +13,7 @@ mod store;
 mod trigger;
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde::de::DeserializeOwned;
 
@@ -28,7 +28,7 @@ pub use reload::{
     ReloadableConfig,
 };
 pub use store::{ConfigStore, ContainerConfigExt};
-pub use trigger::spawn_reload_triggers;
+pub use trigger::{spawn_reload_triggers, stop_reload_triggers};
 
 use crate::DefaultSpec;
 
@@ -96,14 +96,20 @@ pub enum ConfigError {
 pub struct Cfg<T> {
     live: Live<T>,
     path: Arc<str>,
+    committed_snapshot: Arc<Mutex<source::ConfigSnapshot>>,
 }
 
 impl<T: Send + Sync + 'static> Cfg<T> {
     /// Wraps a freshly bound value with the property path it was bound at.
-    pub(crate) fn new(value: T, path: impl Into<Arc<str>>) -> Self {
+    pub(crate) fn new(
+        value: T,
+        path: impl Into<Arc<str>>,
+        committed_snapshot: source::ConfigSnapshot,
+    ) -> Self {
         Self {
             live: Live::new(Arc::new(value)),
             path: path.into(),
+            committed_snapshot: Arc::new(Mutex::new(committed_snapshot)),
         }
     }
 
@@ -127,6 +133,20 @@ impl<T: Send + Sync + 'static> Cfg<T> {
     pub(crate) fn replace(&self, value: Arc<T>) {
         self.live.replace(value);
     }
+
+    pub(crate) fn committed_snapshot(&self) -> source::ConfigSnapshot {
+        self.committed_snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(crate) fn replace_snapshot(&self, snapshot: source::ConfigSnapshot) {
+        *self
+            .committed_snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = snapshot;
+    }
 }
 
 impl<T: Send + Sync + 'static> Clone for Cfg<T> {
@@ -134,6 +154,7 @@ impl<T: Send + Sync + 'static> Clone for Cfg<T> {
         Self {
             live: self.live.clone(),
             path: Arc::clone(&self.path),
+            committed_snapshot: Arc::clone(&self.committed_snapshot),
         }
     }
 }
@@ -219,18 +240,22 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
     /// Deserializes this type from the subtree at `path` (filling missing fields from
     /// [`DEFAULTS`](Self::DEFAULTS)) and wraps it as a stored `Cfg<Self>` handle.
     fn bind(tree: &ConfigManager, path: &str) -> Result<BoxedComponent, ConfigError> {
-        let value: Self = tree.get_config::<Self>(path)?;
+        let (value, snapshot) = tree.get_config_with_snapshot::<Self>(path)?;
 
         Ok(BoxedComponent {
             ty: TypeDescriptor::of::<Self>(Self::NAME),
-            value: Box::new(Cfg::new(value, path)),
+            value: Box::new(Cfg::new(value, path, snapshot)),
         })
     }
 
     /// Recovers a [`ReloadableConfig`] slot from a [`bind`](Self::bind) seed, sharing
     /// its live cell so a reload can re-publish the value in place.
-    fn slot(seed: &BoxedComponent, path: &str) -> Option<Box<dyn ReloadableConfig>> {
-        ConfigSlot::<Self>::from_seed(seed, path)
+    fn slot(
+        tree: &ConfigManager,
+        seed: &BoxedComponent,
+        path: &str,
+    ) -> Option<Box<dyn ReloadableConfig>> {
+        ConfigSlot::<Self>::from_seed(tree, seed, path)
     }
 }
 
@@ -241,7 +266,7 @@ pub trait ConfigProperties: DeserializeOwned + Send + Sync + 'static + Sized {
 /// seed every bound type's defaults into the tree (enabling cross-path `${a.b.c}` references).
 /// Monomorphized-per-type recovery of a [`ReloadableConfig`] from a bind seed, so the
 /// type-erased manager can build reload slots without naming the config type.
-pub type SlotThunk = fn(&BoxedComponent, &str) -> Option<Box<dyn ReloadableConfig>>;
+pub type SlotThunk = fn(&ConfigManager, &BoxedComponent, &str) -> Option<Box<dyn ReloadableConfig>>;
 
 #[derive(Clone)]
 pub struct ConfigBinding {
