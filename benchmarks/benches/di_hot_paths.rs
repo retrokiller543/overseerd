@@ -1,9 +1,22 @@
+//! DI resolution hot paths — the functions touched on every component injection and every
+//! request-time extraction.
+//!
+//! - `resolver_set_clone`: cloning the request-scope resolver set (an `Arc` bump; the existing
+//!   deterministic contract in `overseerd-core` proves it is allocation-free — this tracks its
+//!   wall-clock cost).
+//! - `resolve_by_scope_depth`: `ScopeContainer::get`, resolving a root component from the deepest
+//!   scope, across 1/4/8 nested scopes — the parent-chain walk every injected `Arc<T>` performs.
+//! - `extract_shapes`: `ScopeContainer::extract`, the `FromContainer` path backing every HTTP/RPC
+//!   handler parameter, for a single component, an optional one, and a trait collection.
+
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use overseerd_benchmarks::di;
 use overseerd_core::{Resolver, ResolverSet};
+use tokio::runtime::Runtime;
 
 macro_rules! resolver_types {
     ($($name:ident),+ $(,)?) => {
@@ -75,12 +88,70 @@ fn resolver_set_clone(c: &mut Criterion) {
     group.finish();
 }
 
+/// Resolve a root component from the deepest scope, over graphs of increasing scope depth. The
+/// width is fixed so only the parent-chain length varies.
+fn resolve_by_scope_depth(c: &mut Criterion) {
+    const WIDTH: usize = 8;
+
+    let runtime = Runtime::new().expect("tokio runtime");
+    let roster = di::roster();
+
+    let mut group = c.benchmark_group("di_resolve_by_scope_depth");
+
+    for layers in [1usize, 4, 8] {
+        let container = runtime.block_on(di::build_graph(&roster, WIDTH, layers));
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(layers),
+            &container,
+            |bencher, container| bencher.iter(|| black_box(di::resolve_root(container))),
+        );
+    }
+
+    group.finish();
+}
+
+/// The three request-time extraction shapes a handler parameter can take.
+fn extract_shapes(c: &mut Criterion) {
+    const WIDTH: usize = 8;
+    const LAYERS: usize = 4;
+    const PROVIDERS: usize = 16;
+
+    let runtime = Runtime::new().expect("tokio runtime");
+    let roster = di::roster();
+
+    let layered = runtime.block_on(di::build_graph(&roster, WIDTH, LAYERS));
+    let with_providers = runtime.block_on(di::build_with_providers(&roster, PROVIDERS));
+
+    let mut group = c.benchmark_group("di_extract");
+
+    group.bench_function("single_arc", |bencher| {
+        bencher
+            .to_async(&runtime)
+            .iter(|| async { black_box(di::extract_single(&layered).await) });
+    });
+
+    group.bench_function("optional_arc", |bencher| {
+        bencher
+            .to_async(&runtime)
+            .iter(|| async { black_box(di::extract_optional(&layered).await) });
+    });
+
+    group.bench_function(BenchmarkId::new("collection", PROVIDERS), |bencher| {
+        bencher
+            .to_async(&runtime)
+            .iter(|| async { black_box(di::extract_collection(&with_providers).await) });
+    });
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default()
         .warm_up_time(Duration::from_secs(2))
         .measurement_time(Duration::from_secs(5))
         .sample_size(60);
-    targets = resolver_set_clone
+    targets = resolver_set_clone, resolve_by_scope_depth, extract_shapes
 }
 criterion_main!(benches);
