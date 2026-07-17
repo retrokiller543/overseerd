@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.14.0...overseerd-v0.14.1) - 2026-07-17
+
+### Other
+
+- release v0.14.1 ([#80](https://github.com/retrokiller543/overseerd/pull/80))
+
 ## [0.14.0](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.13.0...overseerd-v0.14.0) - 2026-07-17
 
 ### Added
