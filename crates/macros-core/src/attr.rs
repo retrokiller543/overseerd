@@ -169,6 +169,14 @@ impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
             }
         }
 
+        if args.by_value && !args.provide.is_empty() {
+            return Err(syn::Error::new_spanned(
+                &args.provide[0],
+                "`by_value` cannot be combined with `provide`: trait providers share the \
+                 component through an `Arc`, while a by-value component is stored as `Self`",
+            ));
+        }
+
         Ok(args)
     }
 }
@@ -565,3 +573,6 @@ pub fn returns_result(output: &ReturnType) -> bool {
         .last()
         .is_some_and(|segment| segment.ident == "Result")
 }
+
+#[cfg(test)]
+mod tests;
