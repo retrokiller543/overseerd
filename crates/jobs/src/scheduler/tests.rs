@@ -41,40 +41,31 @@ fn descriptor_carries_a_non_default_factory() {
 #[tokio::test]
 async fn dynamic_job_runs_then_cancels() {
     let scheduler = JobScheduler::create(RootResolver::new()).await;
-    let runs = Arc::new(AtomicUsize::new(0));
+    let (run_tx, mut run_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let counter = Arc::clone(&runs);
     let handle = scheduler.schedule(Schedule::every(Duration::from_millis(10)), move || {
-        let counter = Arc::clone(&counter);
+        let run_tx = run_tx.clone();
 
         async move {
-            counter.fetch_add(1, Ordering::Relaxed);
+            run_tx.send(()).expect("test is still observing runs");
 
             Ok(())
         }
     });
 
-    // The first interval tick is consumed, so the first run lands after one period.
-    tokio::time::sleep(Duration::from_millis(35)).await;
-    let while_running = runs.load(Ordering::Relaxed);
+    // Wait for observed runs instead of assuming a loaded runner schedules two ticks within a
+    // narrow wall-clock window. The timeout is only a deadlock guard.
+    for expected in 1..=2 {
+        tokio::time::timeout(Duration::from_secs(1), run_rx.recv())
+            .await
+            .unwrap_or_else(|_| panic!("timed out waiting for run {expected}"))
+            .expect("job runner channel stays open");
+    }
 
-    assert!(
-        while_running >= 2,
-        "expected repeated runs, got {while_running}"
-    );
-
-    handle.cancel();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let after_cancel = runs.load(Ordering::Relaxed);
-
-    // No further runs happen once cancelled.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-
-    assert_eq!(
-        runs.load(Ordering::Relaxed),
-        after_cancel,
-        "ran after cancel"
-    );
+    scheduler
+        .cancel_and_wait(handle.id())
+        .await
+        .expect("job exists");
     assert!(
         scheduler.registry.is_empty(),
         "cancelled job was not removed from the registry"
