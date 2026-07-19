@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.2](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.17.1...overseerd-di-v0.17.2) - 2026-07-18
+
+### Other
+
+- *(di)* isolate memory contract measurements
+
 ## [0.17.1](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.17.0...overseerd-di-v0.17.1) - 2026-07-17
 
 ### Other

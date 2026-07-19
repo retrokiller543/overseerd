@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.2](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.17.1...overseerd-v0.17.2) - 2026-07-18
+
+### Removed
+
+- removed locked ci flag
+
 ## [0.17.1](https://github.com/retrokiller543/overseerd/compare/overseerd-v0.17.0...overseerd-v0.17.1) - 2026-07-17
 
 ### Other
