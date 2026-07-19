@@ -45,4 +45,4 @@ pub use transport::{StompClientTransport, StompConnectOptions};
 mod wasm;
 
 #[cfg(all(target_family = "wasm", feature = "tungstenite"))]
-pub use wasm::{connect_stomp, connect_stomp_with_options, disconnect_stomp};
+pub use wasm::{connect_stomp, disconnect_stomp};

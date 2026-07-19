@@ -153,4 +153,4 @@ pub use client::StompStatus;
 pub use client::{StompClientTransport, StompConnectOptions};
 
 #[cfg(all(target_family = "wasm", feature = "tungstenite"))]
-pub use client::{connect_stomp, connect_stomp_with_options, disconnect_stomp};
+pub use client::{connect_stomp, disconnect_stomp};
