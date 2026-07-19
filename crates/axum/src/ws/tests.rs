@@ -2,11 +2,17 @@ use std::any::{Any, TypeId};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(feature = "tungstenite")]
+use axum::extract::ws::Message;
 use axum::extract::ws::WebSocket;
+#[cfg(feature = "tungstenite")]
+use futures::StreamExt;
 use overseerd_app::AppRuntime;
 use overseerd_core::TypeDescriptor;
 use overseerd_di::ScopeContainer;
 
+#[cfg(feature = "tungstenite")]
+use super::WsConnectionMeta;
 use super::{
     WebsocketProtocol, WsAdmission, WsControllerDescriptor, WsFuture, WsHandlerFn, WsIdle, WsRoute,
     WsShutdown, mount_ws,
@@ -21,11 +27,16 @@ impl WebsocketProtocol for TestProtocol {
     type Payload = ();
     type Outcome = ();
     type Options = ();
+    type BuildError = std::convert::Infallible;
 
-    fn build(_controllers: &[WsControllerDescriptor], _runtime: &AppRuntime, _options: ()) -> Self {
+    fn build(
+        _controllers: &[WsControllerDescriptor],
+        _runtime: &AppRuntime,
+        _options: (),
+    ) -> Result<Self, Self::BuildError> {
         TEST_PROTOCOL_BUILDS.fetch_add(1, Ordering::Relaxed);
 
-        Self
+        Ok(Self)
     }
 
     async fn serve(
@@ -64,11 +75,16 @@ impl WebsocketProtocol for DuplicateProtocol {
     type Payload = ();
     type Outcome = ();
     type Options = ();
+    type BuildError = std::convert::Infallible;
 
-    fn build(_: &[WsControllerDescriptor], _: &AppRuntime, _: ()) -> Self {
+    fn build(
+        _: &[WsControllerDescriptor],
+        _: &AppRuntime,
+        _: (),
+    ) -> Result<Self, Self::BuildError> {
         DUPLICATE_PROTOCOL_BUILDS.fetch_add(1, Ordering::Relaxed);
 
-        Self
+        Ok(Self)
     }
 
     async fn serve(
@@ -188,4 +204,83 @@ fn admission_accepts_tokio_boundary_and_rejects_oversized_config() {
 
     assert!(error.to_string().contains("max_websocket_connections"));
     assert!(error.to_string().contains(&oversized.to_string()));
+}
+
+#[cfg(feature = "tungstenite")]
+struct RequiredSubprotocol;
+
+#[cfg(feature = "tungstenite")]
+impl WebsocketProtocol for RequiredSubprotocol {
+    type Payload = ();
+    type Outcome = ();
+    type Options = ();
+    type BuildError = std::convert::Infallible;
+
+    const SUBPROTOCOLS: &'static [&'static str] = &["test.v1"];
+    const REQUIRE_SUBPROTOCOL: bool = true;
+
+    fn build(
+        _: &[WsControllerDescriptor],
+        _: &AppRuntime,
+        _: (),
+    ) -> Result<Self, Self::BuildError> {
+        Ok(Self)
+    }
+
+    async fn serve(
+        self: Arc<Self>,
+        mut socket: WebSocket,
+        connection: Arc<ScopeContainer>,
+        shutdown: WsShutdown,
+    ) {
+        let selected = connection
+            .extract::<WsConnectionMeta>()
+            .await
+            .expect("connection metadata resolves")
+            .selected_subprotocol()
+            .unwrap_or_default()
+            .to_owned();
+
+        let _ = socket.send(Message::Text(selected.into())).await;
+        let _ = (self, shutdown);
+    }
+}
+
+#[cfg(feature = "tungstenite")]
+#[tokio::test]
+async fn required_subprotocol_is_negotiated_and_seeded() {
+    let app = crate::App::builder("ws-subprotocol-test")
+        .config_source(overseerd_config::ConfigManager::<overseerd_config::Toml>::empty())
+        .register_ws::<RequiredSubprotocol>("/ws")
+        .build()
+        .await
+        .expect("subprotocol app builds");
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .expect("bind test listener");
+    let address = listener.local_addr().expect("listener address");
+    let shutdown = app.shutdown_handle();
+    let server = tokio::spawn(async move { app.serve(listener).await });
+    let url = format!("ws://{address}/ws");
+
+    let mut socket = tokio_tungstenite_wasm::connect_with_protocols(&url, &["other", "test.v1"])
+        .await
+        .expect("accepted subprotocol connects");
+    let message = socket
+        .next()
+        .await
+        .expect("selected protocol message")
+        .expect("valid selected protocol message");
+
+    assert_eq!(message.into_text().expect("text frame"), "test.v1");
+    assert!(
+        tokio_tungstenite_wasm::connect(&url).await.is_err(),
+        "required protocol rejects a client that offers none"
+    );
+
+    shutdown.shutdown();
+    server
+        .await
+        .expect("server task joins")
+        .expect("server stops");
 }

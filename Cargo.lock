@@ -1299,6 +1299,8 @@ dependencies = [
  "futures",
  "overseerd-app",
  "overseerd-axum",
+ "overseerd-axum-json-ws",
+ "overseerd-axum-stomp",
  "overseerd-client",
  "overseerd-config",
  "overseerd-core",
@@ -1361,10 +1363,8 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "serde_urlencoded",
- "stomp-parser",
  "thiserror",
  "tokio",
- "tokio-tungstenite 0.29.0",
  "tokio-tungstenite-wasm",
  "tower",
  "tower-http",
@@ -1381,6 +1381,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "overseerd-axum-json-ws"
+version = "0.17.1"
+dependencies = [
+ "overseerd-axum",
+ "overseerd-client",
+ "overseerd-transport",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "overseerd-axum-macros"
 version = "0.17.1"
 dependencies = [
@@ -1388,6 +1403,27 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "overseerd-axum-stomp"
+version = "0.17.1"
+dependencies = [
+ "bytes",
+ "futures",
+ "js-sys",
+ "overseerd-axum",
+ "overseerd-client",
+ "overseerd-transport",
+ "serde",
+ "serde_json",
+ "stomp-parser",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite-wasm",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

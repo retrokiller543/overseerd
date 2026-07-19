@@ -1,8 +1,13 @@
 # STOMP over WebSocket — status
 
-STOMP 1.2 pub/sub over WebSocket, in `overseerd-axum` behind the `stomp` feature (and re-exported
-through the `overseerd` facade's `stomp` feature). This document tracks what v1 ships and what is
-deliberately deferred.
+STOMP 1.2 pub/sub over WebSocket, implemented by the `overseerd-axum-stomp` crate as an ordinary
+downstream consumer of `overseerd-axum`'s public protocol API. It is re-exported through the
+`overseerd` facade's `stomp` feature. This document tracks what v1 ships and what is deliberately
+deferred.
+
+Custom codecs implement `overseerd_axum::TopicCodec<Stomp>` directly. Rust coherence does not
+permit a protocol crate to blanket-adapt every downstream codec trait implementation; the bundled
+`JsonCodec` provides the default adapter.
 
 ## Shipped in v1
 

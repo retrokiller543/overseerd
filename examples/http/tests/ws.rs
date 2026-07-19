@@ -69,7 +69,7 @@ struct Sock {
     greeter: Greeter,
 }
 
-#[handlers]
+#[handlers(ws = JsonWs)]
 impl Sock {
     #[message("greet")]
     async fn greet(&self, msg: Who) -> Greeting {
@@ -177,7 +177,7 @@ async fn ws_controller_dispatches_and_injects() {
         .expect_err("unknown destination is remote error");
     match error {
         ClientError::Remote(body) => {
-            assert_eq!(body.code(), overseerd::axum::client::WsStatus::Error);
+            assert_eq!(body.code(), overseerd::axum::JsonWsStatus::Error);
             assert_eq!(
                 String::from_utf8(body.into_raw()).unwrap(),
                 "no handler for destination"

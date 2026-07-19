@@ -279,6 +279,18 @@ pub mod axum {
     /// With the facade's `axum` feature, `overseerd-axum/facade` is on, so the macros' generated
     /// code roots plugin types at `::overseerd::axum::*` and core types at `::overseerd::*`.
     pub use overseerd_axum::*;
+    #[cfg(feature = "json-ws")]
+    pub use overseerd_axum_json_ws::*;
+    #[cfg(feature = "stomp")]
+    pub use overseerd_axum_stomp::*;
+
+    #[cfg(all(feature = "stomp", feature = "client"))]
+    pub mod stomp_client {
+        pub use overseerd_axum_stomp::StompStatus;
+
+        #[cfg(feature = "tungstenite")]
+        pub use overseerd_axum_stomp::{StompClientTransport, StompConnectOptions};
+    }
 
     /// Common imports for building an HTTP controller app: `use overseerd::axum::prelude::*;`
     /// (pair with the crate-root `use overseerd::prelude::*;` for the core framework + `app!`).
@@ -304,12 +316,14 @@ pub mod axum {
             App, AxumAppBuilder, AxumAppServe, AxumConfig, AxumPlugin, Controller, Inject,
         };
 
+        #[cfg(all(feature = "json-ws", not(target_family = "wasm")))]
+        pub use super::JsonWs;
         /// WebSocket controller imports (`#[controller(ws = ..)]` + `#[message]`, the per-connection
         /// [`Connection`](super::scope::Connection) scope), available with the `ws` feature.
         #[cfg(all(feature = "ws", not(target_family = "wasm")))]
         pub use super::scope::Connection;
         #[cfg(all(feature = "ws", not(target_family = "wasm")))]
-        pub use super::{JsonWs, WebsocketController, WebsocketProtocol, message};
+        pub use super::{WebsocketController, WebsocketProtocol, message};
 
         /// STOMP pub/sub imports (`#[controller(ws = Stomp)]` + `#[topics]`, the typed
         /// [`Publisher`](super::Publisher) and [`Topic`](super::Topic)), available with the

@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use overseerd_di::{Component, FromContainer, Injectable, ScopeContainer};
+use overseerd_axum::{Component, DiError, FromContainer, Injectable, ScopeContainer};
 
 use super::StompHeaders;
 
@@ -201,7 +201,7 @@ pub trait StompAuthenticator: Send + Sync + 'static {
 /// missing provider is a wiring bug the client cannot act on.
 fn authenticator_dependency_error(
     dependency: &'static str,
-    error: overseerd_di::Error,
+    error: DiError,
 ) -> StompAuthenticationError {
     tracing::error!(
         target: "overseerd::axum",
@@ -372,7 +372,8 @@ where
 }
 
 #[cfg(feature = "di-check")]
-impl overseerd_di::Provide<StompPrincipal> for overseerd_di::Wiring {}
+impl overseerd_axum::Provide<StompPrincipal> for overseerd_axum::Wiring {}
 
 #[cfg(test)]
+#[path = "auth/tests.rs"]
 mod tests;

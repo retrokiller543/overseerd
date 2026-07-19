@@ -1,8 +1,8 @@
 //! Client-side WebSocket request/reply support.
 //!
 //! The transport owns the socket and request correlation; the protocol owns the frame shape.
-//! `JsonWs` is the first protocol implementation, and future protocols can implement
-//! [`WebsocketClientProtocol`] without changing generated `#[message]` clients.
+//! Downstream protocols implement [`WebsocketClientProtocol`] without changing generated
+//! `#[message]` clients.
 
 use overseerd_client::ClientError;
 use overseerd_transport::{CodecError, Error as TransportError};
@@ -13,18 +13,21 @@ mod tungstenite;
 #[cfg(feature = "tungstenite")]
 pub use tungstenite::*;
 
-/// WebSocket request/reply status carried by [`ClientError::Remote`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WsStatus {
-    /// The peer returned an application/protocol error frame.
-    Error,
+/// A protocol-neutral application frame for the correlated WebSocket client actor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WsClientFrame {
+    /// A UTF-8 WebSocket text frame.
+    Text(String),
+
+    /// An opaque WebSocket binary frame.
+    Binary(Vec<u8>),
 }
 
 /// A websocket request/reply protocol. The framework does not assume numeric request ids: each
 /// protocol chooses its own correlation key and frame grammar.
 pub trait WebsocketClientProtocol: Send + Sync + 'static {
     type Key: Eq + std::hash::Hash + Clone + Send + 'static;
-    type Frame: Send + 'static;
+    type Status: std::fmt::Debug + Copy + Send + 'static;
     type Payload;
 
     fn next_key(counter: u64) -> Self::Key;
@@ -33,13 +36,18 @@ pub trait WebsocketClientProtocol: Send + Sync + 'static {
         destination: &str,
         key: &Self::Key,
         payload: Req,
-    ) -> Result<Self::Frame, CodecError>
+    ) -> Result<WsClientFrame, CodecError>
     where
         Self: WebsocketEncodes<Req>;
 
-    fn reply_key(frame: &Self::Frame) -> Result<Option<Self::Key>, CodecError>;
+    /// Encodes an uncorrelated fire-and-forget message.
+    fn encode_send<Req>(destination: &str, payload: Req) -> Result<WsClientFrame, CodecError>
+    where
+        Self: WebsocketEncodes<Req>;
 
-    fn decode_reply<Resp>(frame: Self::Frame) -> Result<Resp, ClientError<WsStatus>>
+    fn reply_key(frame: &WsClientFrame) -> Result<Option<Self::Key>, CodecError>;
+
+    fn decode_reply<Resp>(frame: WsClientFrame) -> Result<Resp, ClientError<Self::Status>>
     where
         Self: WebsocketDecodes<Resp>;
 }
@@ -61,9 +69,9 @@ where
 {
     fn websocket_call(
         &self,
-        destination: &'static str,
+        destination: &str,
         payload: Req,
-    ) -> impl std::future::Future<Output = Result<Resp, ClientError<WsStatus>>> + Send
+    ) -> impl std::future::Future<Output = Result<Resp, ClientError<P::Status>>> + Send
     where
         Req: Send,
         Resp: Send;
@@ -75,9 +83,9 @@ where
 {
     async fn websocket_call(
         &self,
-        _destination: &'static str,
+        _destination: &str,
         _payload: Req,
-    ) -> Result<Resp, ClientError<WsStatus>>
+    ) -> Result<Resp, ClientError<P::Status>>
     where
         Req: Send,
         Resp: Send,

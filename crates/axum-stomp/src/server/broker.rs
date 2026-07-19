@@ -7,9 +7,9 @@
 
 use stomp_parser::server::MessageFrameBuilder;
 
-use crate::ws::pubsub::SubscriptionRegistry;
+use overseerd_axum::SubscriptionRegistry;
 
-use super::body::StompBody;
+use crate::StompBody;
 
 /// A frame queued to a connection's writer task. `Heartbeat` is an empty server heart-beat
 /// (a bare newline), `Ping` probes an idle websocket peer, and `Frame` is a fully serialized STOMP
@@ -55,16 +55,28 @@ pub(crate) fn build_message(
     OutFrame::Frame(builder.body(body.bytes.to_vec()).build().into())
 }
 
-impl SubscriptionRegistry<OutFrame> {
+/// STOMP framing helpers layered legally over the neutral foreign registry type.
+pub trait BrokerExt {
     /// Fans `body` out to every subscriber of `destination` as a `MESSAGE` frame (fire-and-forget).
-    pub fn publish(&self, destination: &str, body: &StompBody, extra_headers: &[(String, String)]) {
+    fn publish(&self, destination: &str, body: &StompBody, extra_headers: &[(String, String)]);
+
+    /// Fans `body` out with backpressure, up to `N` subscribers concurrently.
+    fn deliver<const N: usize>(
+        &self,
+        destination: &str,
+        body: &StompBody,
+        extra_headers: &[(String, String)],
+    ) -> impl std::future::Future<Output = ()> + Send;
+}
+
+impl BrokerExt for SubscriptionRegistry<OutFrame> {
+    fn publish(&self, destination: &str, body: &StompBody, extra_headers: &[(String, String)]) {
         self.publish_frames(destination, |sub_id, message_id| {
             build_message(message_id, destination, sub_id, body, extra_headers)
         });
     }
 
-    /// Fans `body` out with **backpressure**, up to `N` subscribers concurrently.
-    pub async fn deliver<const N: usize>(
+    async fn deliver<const N: usize>(
         &self,
         destination: &str,
         body: &StompBody,
@@ -78,4 +90,5 @@ impl SubscriptionRegistry<OutFrame> {
 }
 
 #[cfg(test)]
+#[path = "broker/tests.rs"]
 mod tests;

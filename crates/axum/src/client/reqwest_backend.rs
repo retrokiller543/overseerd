@@ -16,11 +16,11 @@ use overseerd_client::{ClientError, MaybeSend, MaybeSync, Transport, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
 
+#[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
+use super::WebsocketClient;
 use super::{ClientInterceptor, DefaultClientInterceptor, HttpBody, HttpResponse};
 #[cfg(not(target_family = "wasm"))]
 use super::{HttpClientStreaming, HttpStreaming};
-#[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
-use super::{WebsocketClient, WsStatus};
 
 /// A callback producing the default headers to attach to every request — the transport-level hook for
 /// dynamic auth: it runs per request, so returning `authorization` from a token store applies (and
@@ -405,9 +405,9 @@ where
 {
     async fn websocket_call(
         &self,
-        destination: &'static str,
+        destination: &str,
         payload: Req,
-    ) -> Result<Resp, ClientError<WsStatus>>
+    ) -> Result<Resp, ClientError<P::Status>>
     where
         Req: Send,
         Resp: Send,

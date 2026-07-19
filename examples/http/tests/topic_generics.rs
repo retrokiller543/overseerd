@@ -11,7 +11,7 @@
 
 use std::borrow::Cow;
 
-use overseerd::axum::client::StompClientTransport;
+use overseerd::axum::StompClientTransport;
 use overseerd::axum::*;
 
 #[dto]
@@ -22,7 +22,7 @@ pub struct Payload {
 
 /// A borrowing topic set: the lifetime lets a publisher hand the broker a borrowed payload without
 /// cloning, while the subscribe client still decodes an owned value.
-#[topics]
+#[topics(protocol = Stomp)]
 pub enum Borrowed<'a> {
     #[topic("/topic/borrowed")]
     Msg(Cow<'a, Payload>),
@@ -30,7 +30,7 @@ pub enum Borrowed<'a> {
 
 /// A generic topic set: any owned, serializable payload. The subscribe client streams the payload
 /// across tasks, so it must be `Send + 'static` — a bound the macro forwards from this `where`.
-#[topics]
+#[topics(protocol = Stomp)]
 pub enum Generic<T>
 where
     T: serde::Serialize + serde::de::DeserializeOwned + Send + 'static,
@@ -42,7 +42,7 @@ where
 /// A templated topic whose lifetime is used *only* by a destination param (`room: &'a str`), not by
 /// the payload. The subscribe client must accept a non-`'static` borrow: the param is rendered into
 /// the destination synchronously and never enters the payload stream, so its lifetime stays free.
-#[topics]
+#[topics(protocol = Stomp)]
 pub enum Room<'a> {
     #[topic("/topic/room/{room}")]
     Message {
@@ -53,7 +53,7 @@ pub enum Room<'a> {
 }
 
 /// The enum's own `C` generic must not clash with the generated client's transport parameter.
-#[topics]
+#[topics(protocol = Stomp)]
 pub enum UsesC<C>
 where
     C: serde::Serialize + serde::de::DeserializeOwned + Send + 'static,

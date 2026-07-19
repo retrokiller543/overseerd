@@ -38,6 +38,8 @@ overseerd-rpc-macros = { path = "crates/rpc-macros", version = "0.17.1" }
 overseerd-transport = { path = "crates/transport", version = "0.17.1" }
 overseerd-axum = { path = "crates/axum", version = "0.17.1" }
 overseerd-axum-macros = { path = "crates/axum-macros", version = "0.17.1" }
+overseerd-axum-json-ws = { path = "crates/axum-json-ws", version = "0.17.1" }
+overseerd-axum-stomp = { path = "crates/axum-stomp", version = "0.17.1" }
 
 # Common dependencies
 arc-swap = "1.9.1"
@@ -156,9 +158,13 @@ jobs = ["dep:overseerd-jobs", "overseerd-jobs/facade"]
 # since WebSockets pull in extra machinery a plain HTTP app does not need. Implies `axum`.
 ws = ["axum", "overseerd-axum/ws"]
 
+# JSON-envelope request/reply over WebSocket. The implementation is an ordinary downstream crate
+# over the neutral axum WebSocket API and is re-exported through the facade.
+json-ws = ["ws", "dep:overseerd-axum-json-ws"]
+
 # STOMP 1.2 pub/sub over WebSocket: the broker, `#[controller(ws = Stomp)]` handlers, `#[topics]`,
 # and the typed generated client. Implies `ws`.
-stomp = ["ws", "overseerd-axum/stomp"]
+stomp = ["ws", "dep:overseerd-axum-stomp"]
 
 # The `multipart/form-data` request extractor (`overseerd::axum::Multipart`), for upload handlers.
 # Off by default (mirrors axum); implies `axum`. The client-side `Multipart` body builder is always
@@ -189,12 +195,20 @@ uuid = ["overseerd-axum?/uuid"]
 client = [
     "overseerd-rpc?/client",
     "overseerd-axum?/client",
+    "overseerd-axum-json-ws?/client",
+    "overseerd-axum-stomp?/client",
 ]
 
 # HTTP client backends — independent, so a user picks one (or both). Each implies `client`.
 reqwest = ["client", "overseerd-axum?/reqwest"]
 hyper = ["client", "overseerd-axum?/hyper"]
-tungstenite = ["client", "ws", "overseerd-axum?/tungstenite"]
+tungstenite = [
+    "client",
+    "ws",
+    "overseerd-axum?/tungstenite",
+    "overseerd-axum-json-ws?/tungstenite",
+    "overseerd-axum-stomp?/tungstenite",
+]
 
 # Opt into the new `tsify` `Ts<T>` wasm ABI for the generated browser client (typed + leak-free).
 # Requires the unreleased `tsify` (git master) as a wasm dep in your crate; off by default uses the
@@ -210,6 +224,7 @@ di-check = [
     "overseerd-app/di-check",
     "overseerd-rpc?/di-check",
     "overseerd-axum?/di-check",
+    "overseerd-axum-stomp?/di-check",
     "overseerd-jobs?/di-check",
 ]
 
@@ -232,6 +247,8 @@ watch = ["overseerd-config/watch", "overseerd-app/watch", "overseerd-rpc?/watch"
 overseerd-client = { workspace = true }
 overseerd-transport = { workspace = true }
 overseerd-axum = { workspace = true, optional = true }
+overseerd-axum-json-ws = { workspace = true, optional = true }
+overseerd-axum-stomp = { workspace = true, optional = true }
 # The facade depends only on the *core* macros crate; each protocol crate owns and re-exports
 # its own macros (the facade reaches them through the protocol crate).
 overseerd-macros = { workspace = true }

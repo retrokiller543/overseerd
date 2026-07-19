@@ -9,11 +9,12 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use overseerd::ScopeContainer;
-use overseerd::axum::client::{ReqwestClient, StompClientTransport, StompConnectOptions};
+use overseerd::axum::client::ReqwestClient;
 use overseerd::axum::prelude::*;
 use overseerd::axum::{
     CodecError, Injected, StompAuthFuture, StompAuthenticationError, StompAuthenticator, StompBody,
-    StompCodec, StompConfig, StompConnect, StompPrincipal,
+    StompClientTransport, StompCodec, StompConfig, StompConnect, StompConnectOptions,
+    StompPrincipal, TopicCodec,
 };
 use overseerd::prelude::*;
 use serde::Serialize;
@@ -36,7 +37,7 @@ struct RoomMsg {
 /// The app's broadcast topics — the single source of truth for both sides. Generates
 /// `impl Topic for ChatTopics` (server publish) and `ChatTopicsClient<C>::subscribe_room()`
 /// (client subscribe), typed to `RoomMsg`.
-#[topics]
+#[topics(protocol = Stomp)]
 enum ChatTopics {
     #[topic("/topic/room")]
     Room(RoomMsg),
@@ -384,8 +385,18 @@ impl StompCodec for MarkedCodec {
     }
 }
 
+impl TopicCodec<Stomp> for MarkedCodec {
+    fn encode<T: Serialize>(value: &T) -> Result<StompBody, CodecError> {
+        <Self as StompCodec>::encode(value)
+    }
+
+    fn decode<T: DeserializeOwned>(body: StompBody) -> Result<T, CodecError> {
+        <Self as StompCodec>::decode(body)
+    }
+}
+
 /// A topic set using the custom codec on both publish and subscribe.
-#[topics(codec = MarkedCodec)]
+#[topics(protocol = Stomp, codec = MarkedCodec)]
 enum MarkedTopics {
     #[topic("/topic/marked")]
     Marked(RoomMsg),

@@ -15,9 +15,9 @@ use overseerd_client::{ClientError, MaybeSend, Transport, Unary};
 use overseerd_transport::{CodecError, Decodes, Encodes, Error as TransportError};
 use serde::de::DeserializeOwned;
 
-use super::{ClientInterceptor, HttpBody, HttpClientStreaming, HttpResponse, HttpStreaming};
 #[cfg(all(feature = "ws", feature = "client"))]
-use super::{WebsocketClient, WsStatus};
+use super::WebsocketClient;
+use super::{ClientInterceptor, HttpBody, HttpClientStreaming, HttpResponse, HttpStreaming};
 
 type HyperBody = UnsyncBoxBody<Bytes, TransportError>;
 
@@ -342,9 +342,9 @@ where
 {
     async fn websocket_call(
         &self,
-        destination: &'static str,
+        destination: &str,
         payload: Req,
-    ) -> Result<Resp, ClientError<WsStatus>>
+    ) -> Result<Resp, ClientError<P::Status>>
     where
         Req: Send,
         Resp: Send,

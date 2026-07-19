@@ -124,6 +124,15 @@ jobs:
       - name: Check transport-generic client
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
         run: cargo check -p overseerd-axum --target wasm32-unknown-unknown --no-default-features --features client --locked
+      - name: Check WebSocket-only browser client
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo check -p overseerd-axum --target wasm32-unknown-unknown --no-default-features --features tungstenite --locked
+      - name: Check JSON WebSocket browser protocol
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo check -p overseerd-axum-json-ws --target wasm32-unknown-unknown --no-default-features --features tungstenite --locked
+      - name: Check STOMP browser protocol
+        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+        run: cargo check -p overseerd-axum-stomp --target wasm32-unknown-unknown --no-default-features --features tungstenite --locked
       - name: Check reqwest browser client
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
         run: cargo check -p overseerd-axum --target wasm32-unknown-unknown --no-default-features --features reqwest --locked

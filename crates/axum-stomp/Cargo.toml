@@ -1,0 +1,42 @@
+[package]
+name = "overseerd-axum-stomp"
+description = "STOMP 1.2 WebSocket messaging protocol for overseerd-axum."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+client = ["overseerd-axum/client", "dep:overseerd-client"]
+tungstenite = ["client", "overseerd-axum/tungstenite", "dep:tokio-tungstenite-wasm"]
+di-check = ["overseerd-axum/di-check"]
+
+[dependencies]
+overseerd-axum = { path = "../axum", default-features = false, features = ["ws"] }
+overseerd-client = { workspace = true, optional = true }
+overseerd-transport = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+stomp-parser = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio-tungstenite-wasm = { workspace = true, optional = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+tokio = { workspace = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["sync", "macros"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

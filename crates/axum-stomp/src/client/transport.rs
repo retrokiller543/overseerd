@@ -29,10 +29,10 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite_wasm::{Error as WsError, Message, WebSocketStream};
 
 use super::StompStatus;
-use crate::client::messaging::{
+use crate::{MESSAGE_ERROR_HEADER, REPLY_SUBSCRIPTION_ID, Stomp, StompBody};
+use overseerd_axum::client::{
     MessageRequest, MessageSend, Subscription, SubscriptionId, TopicSubscribe,
 };
-use crate::stomp::{MESSAGE_ERROR_HEADER, REPLY_SUBSCRIPTION_ID, Stomp, StompBody};
 
 /// The write and read halves of a connected WebSocket, split for the actor loop.
 type WsWrite = SplitSink<WebSocketStream, Message>;
@@ -282,7 +282,7 @@ impl StompClientTransport {
         let (tx, rx) = mpsc::channel::<Command>(CHANNEL_DEPTH);
         let requests: Requests = Arc::new(Mutex::new(HashMap::new()));
 
-        crate::client::ws_rt::spawn(actor(write, read, rx, requests.clone()));
+        overseerd_axum::client::ws_rt::spawn(actor(write, read, rx, requests.clone()));
 
         Ok(Self {
             inner: Arc::new(TransportInner {
@@ -480,11 +480,9 @@ where
         return fut.await;
     };
 
-    match tokio::time::timeout(timeout, fut).await {
-        Ok(received) => received,
-
-        Err(_elapsed) => Err(ClientError::Timeout),
-    }
+    tokio::time::timeout(timeout, fut)
+        .await
+        .unwrap_or_else(|_elapsed| Err(ClientError::Timeout))
 }
 
 /// See the native variant. On wasm the deadline is enforced with a browser `setTimeout` timer
@@ -965,4 +963,5 @@ fn connect_frame(options: StompConnectOptions) -> Vec<u8> {
 }
 
 #[cfg(test)]
+#[path = "transport/tests.rs"]
 mod tests;

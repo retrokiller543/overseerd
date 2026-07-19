@@ -53,10 +53,10 @@ struct TopicVariant {
     kind: VariantKind,
 }
 
-/// The `#[topics(...)]` arguments: an optional `protocol = <Path>` (the pub/sub protocol, default
-/// `Stomp`) and an optional `codec = <Path>` (the body codec, default the protocol's `DefaultCodec`).
+/// The `#[topics(...)]` arguments: the required `protocol = <Path>` and an optional
+/// `codec = <Path>` (defaulting to the protocol's `DefaultCodec`).
 pub struct TopicsArgs {
-    protocol: Option<Path>,
+    protocol: Path,
     codec: Option<Path>,
 }
 
@@ -92,6 +92,9 @@ impl Parse for TopicsArgs {
             }
         }
 
+        let protocol = protocol
+            .ok_or_else(|| syn::Error::new(input.span(), "#[topics] requires `protocol = P`"))?;
+
         Ok(Self { protocol, codec })
     }
 }
@@ -109,18 +112,9 @@ pub fn expand(args: TopicsArgs, mut item: ItemEnum, paths: &Paths) -> syn::Resul
     let topic_codec = paths.plugin("TopicCodec");
     let codec_error = paths.plugin("CodecError");
 
-    // The pub/sub protocol this topic set is published over: the user's `protocol = ..` or the
-    // default `Stomp`. Everything the macro emits is generic over it (`<P as MessagingProtocol>::Body`,
-    // `TopicCodec<P>`, the client's `TopicSubscribe<P>`), so a new protocol needs no macro change.
-    let protocol = match &args.protocol {
-        Some(path) => quote!(#path),
-
-        None => {
-            let stomp = paths.plugin("Stomp");
-
-            quote!(#stomp)
-        }
-    };
+    // Everything the macro emits is generic over the explicitly named messaging protocol.
+    let protocol_path = &args.protocol;
+    let protocol = quote!(#protocol_path);
 
     // The body codec for this topic set: the user's `codec = ..` or the protocol's `DefaultCodec`.
     // Both `Topic::encode` (server publish) and the client `subscribe_*` decode route through it.
@@ -321,11 +315,11 @@ fn generate_client(
     });
 
     quote! {
-        #[doc = concat!("Generated STOMP subscription client for the `", stringify!(#enum_ident), "` topics.")]
+        #[doc = concat!("Generated subscription client for the `", stringify!(#enum_ident), "` topics.")]
         pub struct #client_ident #client_impl_generics #struct_fields #client_where;
 
         impl #client_impl_generics #client_ident #client_ty_generics #client_where {
-            /// Wraps a STOMP client transport.
+            /// Wraps a messaging client transport.
             pub fn new(transport: #transport) -> Self {
                 Self(transport #phantom_init)
             }
@@ -336,11 +330,11 @@ fn generate_client(
 }
 
 /// Emits the **wasm** JS binding for the topics subscribe client: a `#[wasm_bindgen]` newtype over
-/// `{Enum}Client<StompClientTransport>`, built from the shared [`Connection`], with one
+/// the protocol's generic client transport, built from the shared [`Connection`], with one
 /// `subscribe_<variant>()` per topic. Each takes a **typed** callback (`(message: T) => void`, via a
-/// per-method `typescript_type` extern so TS sees the real message type) and returns a
-/// `StompSubscription` handle. wasm-only; requires the fetch backend (`Connection`) and the ws
-/// transport (`StompClientTransport`), so it is gated on both `reqwest` and `tungstenite`.
+/// per-method `typescript_type` extern so TS sees the real message type) and returns a subscription
+/// handle. wasm-only; requires the fetch backend (`Connection`) and a ws transport, so it is gated
+/// on both `reqwest` and `tungstenite`.
 fn generate_wasm_client(
     enum_ident: &Ident,
     generics: &Generics,
@@ -348,7 +342,7 @@ fn generate_wasm_client(
     protocol: &TokenStream,
     paths: &Paths,
 ) -> TokenStream {
-    if !(cfg!(feature = "reqwest") && cfg!(feature = "tungstenite")) {
+    if !cfg!(feature = "tungstenite") {
         return quote!();
     }
 
