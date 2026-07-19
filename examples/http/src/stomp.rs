@@ -43,7 +43,7 @@ pub struct RoomCount {
 /// client-side). `Room` is **templated**: its `room` field fills the `{room}` hole, so each room is
 /// its own destination (`/topic/room/general`) and a subscriber gets only that room. Generates
 /// `ChatTopicClient::subscribe_chat()` (no args) and `subscribe_room(room: String)` (typed arg).
-#[topics]
+#[topics(protocol = Stomp)]
 pub enum ChatTopic {
     #[topic("/topic/chat")]
     Chat(ChatMessage),

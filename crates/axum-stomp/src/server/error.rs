@@ -5,9 +5,17 @@
 //! message to a handler (that stays [`WsDispatchError`]). It renders to an `ERROR` frame via the
 //! server module's `error_frame` helper before the socket closes.
 
-use crate::ws::WsDispatchError;
+use overseerd_axum::WsDispatchError;
 
 use super::StompAuthenticationError;
+
+/// A STOMP endpoint construction failure.
+#[derive(Debug, thiserror::Error)]
+pub enum StompBuildError {
+    /// The protocol registration hook did not install its shared topic bus.
+    #[error("STOMP topic bus is missing from the DI root")]
+    MissingTopicBus,
+}
 
 /// A STOMP protocol-level error on one connection.
 #[derive(Debug, thiserror::Error)]

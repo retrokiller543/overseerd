@@ -20,7 +20,7 @@ use wasm_bindgen::prelude::*;
 use crate::client::Connection;
 use crate::messaging::MessagingClientProtocol;
 
-use super::{MessageRequest, MessageSend, Subscription, TopicSubscribe};
+use super::{Subscription, TopicSubscribe};
 
 /// Pulls a protocol's client transport out of the shared browser [`Connection`]. This is the only
 /// protocol-specific step in either generated wasm client (the topics subscribe binding and the
@@ -32,12 +32,7 @@ pub trait TopicWasmClient: MessagingClientProtocol + Sized {
     /// must support every wasm client surface both bindings emit — topic subscription plus the
     /// point-to-point message send/request — so a missing capability is an error at the
     /// `impl TopicWasmClient` site rather than inside a generated method body.
-    type Transport: TopicSubscribe<Self>
-        + MessageSend<Self>
-        + MessageRequest<Self>
-        + Clone
-        + Unpin
-        + 'static;
+    type Transport: Clone + Unpin + 'static;
 
     /// Pulls this protocol's transport out of the shared connection (errors if it isn't connected).
     fn transport(connection: &Connection) -> Result<Self::Transport, JsError>;

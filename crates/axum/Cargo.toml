@@ -38,13 +38,10 @@ reqwest = [
 # uses the published `tsify` `into_wasm_abi` path, which needs no git dependency.
 wasm-ts = ["overseerd-axum-macros/wasm-ts"]
 hyper = ["client", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
-# The client WebSocket transports. `tokio-tungstenite-wasm` powers the cross-target STOMP transport;
-# `wasm-bindgen-futures` (wasm-only, dropped on native) gives it `spawn_local`; `tokio-tungstenite`
-# (native-only, dropped on wasm) powers the JsonWs request/reply backend.
+# Protocol-neutral cross-target WebSocket client primitives.
 tungstenite = [
     "client",
     "ws",
-    "dep:tokio-tungstenite",
     "dep:tokio-tungstenite-wasm",
     "dep:wasm-bindgen-futures",
     "dep:js-sys",
@@ -77,9 +74,6 @@ ws = ["axum/ws"]
 # default, mirroring axum: enable it to receive uploads on the server. The client-side `Multipart`
 # body builder is always available (it needs no server machinery) under the `client` feature.
 multipart = ["axum/multipart"]
-# STOMP 1.2 pub/sub over WebSocket: the broker, `#[controller(ws = Stomp)]` message handlers, and
-# the typed generated client. Implies `ws`; pulls in the `stomp-parser` frame grammar.
-stomp = ["ws", "dep:stomp-parser"]
 # Integration flag: pull in `uuid`. A cross-cutting flag (not tied to a protocol) so the facade can
 # fan it out to every crate that has a `uuid` integration. On its own it only adds the dependency;
 # the actual `TopicParam for Uuid` impl is gated on `all(ws, uuid)`, so `uuid` without `ws` is
@@ -107,10 +101,7 @@ thiserror = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true, optional = true }
 serde_urlencoded = { workspace = true, optional = true }
-# STOMP frame grammar + the unified native/wasm WebSocket client power the STOMP client transport,
-# which compiles on both targets — so they are shared (not in a target table). `uuid` too: the
-# wasm-safe `TopicParam for Uuid` impl lives in `crate::stomp`. All wasm-safe.
-stomp-parser = { workspace = true, optional = true }
+# Unified native/wasm WebSocket client transport.
 tokio-tungstenite-wasm = { workspace = true, optional = true }
 uuid = { workspace = true, optional = true }
 # Serializes decoded STOMP messages to JS for the wasm subscription callback (wasm-only in practice;
@@ -137,8 +128,6 @@ reqwest = { workspace = true, optional = true, features = ["rustls-tls", "stream
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
-# The JsonWs request/reply backend (native-only for now — it uses a tokio timer for heart-beats).
-tokio-tungstenite = { workspace = true, optional = true }
 # OpenAPI (native server surface only): the doc model + the served UIs. The `ToSchema` derive that
 # `#[dto]` emits is itself gated `not(target_family = "wasm")`, so utoipa never reaches a wasm build.
 utoipa = { workspace = true, optional = true }

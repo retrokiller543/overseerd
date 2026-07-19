@@ -24,11 +24,6 @@ pub mod dto;
 #[cfg(feature = "ws")]
 pub mod messaging;
 
-/// STOMP's implementation of the [`messaging`] wire contract (`StompBody`, `StompCodec`, the `Stomp`
-/// tag). Available on every target so the wasm client names them.
-#[cfg(feature = "stomp")]
-pub mod stomp;
-
 /// Stream framing. The markers (`Ndjson`/`RawStream`), the `StreamEncode` contract, and the
 /// NDJSON encode/decode helpers are pure and compile everywhere (the generated streaming client
 /// names them); the axum extractor/response impls inside are gated to non-wasm.
@@ -87,8 +82,9 @@ pub use utoipa;
 
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub use ws::{
-    JsonWs, WS_CONTROLLERS, WebsocketController, WebsocketHandler, WebsocketProtocol, WsCodec,
-    WsControllerDescriptor, WsDispatchError, WsReply, WsRespond, WsRoute, WsShutdown,
+    SOCKET_SEND_TIMEOUT, WS_CONTROLLERS, WebsocketController, WebsocketHandler, WebsocketProtocol,
+    WsConnectionMeta, WsConnectionSettings, WsControllerDescriptor, WsDispatchError, WsFuture,
+    WsHandlerFn, WsIdle, WsRespond, WsRoute, WsShutdown,
 };
 
 /// The `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements so
@@ -103,6 +99,7 @@ pub use ws::{MessageReply, PubSubProtocol};
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub use ws::pubsub::{
     ConnectionId, DEFAULT_PUBLISH_FANOUT, Publisher, SubscriptionRegistry, TopicBus,
+    register_topic_bus, topic_bus_descriptor,
 };
 
 /// The protocol-generic messaging wire contract, re-exported at the crate root on every target — the
@@ -110,21 +107,6 @@ pub use ws::pubsub::{
 /// `ws` so a non-STOMP protocol reuses it without enabling `stomp`.
 #[cfg(feature = "ws")]
 pub use messaging::{MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec, TopicParam};
-
-/// STOMP's wire types, re-exported at the crate root on every target. Includes the [`Stomp`]
-/// protocol tag (its server-only state is `cfg`-gated) so a `#[topics(protocol = Stomp)]` set and
-/// its client compile on wasm.
-#[cfg(feature = "stomp")]
-pub use stomp::{JsonCodec, Stomp, StompBody, StompCodec};
-
-/// The STOMP pub/sub protocol surface (server side): the broker/session/publish/auth types.
-/// Server-only.
-#[cfg(all(feature = "stomp", not(target_family = "wasm")))]
-pub use ws::stomp::{
-    Broker, Direct, Injected, IntoAuthenticator, Publish, ResolvedAuthenticator, StompAuthFuture,
-    StompAuthenticationError, StompAuthenticator, StompConfig, StompConnect, StompError,
-    StompHeaders, StompOutcome, StompPrincipal, StompSession, StompTopicBus,
-};
 
 /// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a
 /// separate `overseerd-transport` dependency. Behind `ws` so a non-STOMP protocol's generated code
@@ -142,8 +124,8 @@ pub use extract::{Inject, InjectRejection, ScopeHandle};
 #[cfg(not(target_family = "wasm"))]
 pub use middleware::AxumMiddleware;
 /// The topic-set macro (`#[topics]`). Behind `ws` so a non-STOMP protocol declares a topic set with
-/// `#[topics(protocol = P)]`; it defaults `protocol` to `Stomp`, so a bare `#[topics]` additionally
-/// needs `stomp`.
+/// `#[topics(protocol = P)]`. The protocol is explicit so neutral code generation never names a
+/// concrete downstream protocol.
 #[cfg(feature = "ws")]
 pub use overseerd_axum_macros::topics;
 /// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
@@ -189,6 +171,26 @@ pub use bytes;
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 #[doc(hidden)]
 pub use overseerd_di::ScopeContainer as __ScopeContainer;
+
+/// The DI scope container, re-exported for downstream WebSocket protocol implementations.
+#[cfg(all(feature = "ws", not(target_family = "wasm")))]
+pub use overseerd_di::ScopeContainer;
+
+/// DI construction primitives needed by downstream protocol implementations that seed message
+/// scope metadata or implement injectable authentication adapters.
+#[cfg(all(feature = "ws", not(target_family = "wasm")))]
+pub use overseerd_di::{BoxedComponent, Component, FromContainer, Injectable, Provide, Wiring};
+
+#[cfg(all(feature = "ws", not(target_family = "wasm")))]
+pub use overseerd_core::TypeDescriptor;
+
+/// The DI error returned while resolving protocol-owned connection dependencies.
+#[cfg(all(feature = "ws", not(target_family = "wasm")))]
+pub use overseerd_di::Error as DiError;
+
+/// Standard HTTP and WebSocket scope markers available to downstream protocol implementations.
+#[cfg(all(feature = "ws", not(target_family = "wasm")))]
+pub use scope::{Connection as ConnectionScope, Request as RequestScope};
 
 /// The axum app type: an [`App`](overseerd_app::App) specialized to [`AxumPlugin`].
 /// `App::builder(name)` resolves through this alias without a turbofish.

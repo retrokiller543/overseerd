@@ -89,7 +89,7 @@ impl<P: MessagingClientProtocol, C: TopicSubscribe<P>, M> Subscription<P, C, M> 
     // Constructed only by a wired transport (`tungstenite`-backed today); dead in a client build
     // that compiles the generic capability traits without any transport.
     #[cfg_attr(not(feature = "tungstenite"), allow(dead_code))]
-    pub(crate) fn new(
+    pub fn new(
         id: SubscriptionId,
         items: tokio::sync::mpsc::Receiver<P::Body>,
         decode: fn(P::Body) -> Result<M, CodecError>,
@@ -173,8 +173,8 @@ impl<P: MessagingClientProtocol> TopicSubscribe<P> for () {
 // The wasm/JS subscription bridge (the protocol-agnostic `TopicWasmClient` seam, the `pump`, and the
 // `TopicSubscription` handle). wasm-only; the generated `subscribe_*`/message bindings and the
 // `#[topics]` macro name them.
-#[cfg(all(target_family = "wasm", feature = "reqwest", feature = "tungstenite"))]
+#[cfg(all(target_family = "wasm", feature = "tungstenite"))]
 mod wasm;
 
-#[cfg(all(target_family = "wasm", feature = "reqwest", feature = "tungstenite"))]
+#[cfg(all(target_family = "wasm", feature = "tungstenite"))]
 pub use wasm::{TopicSubscription, TopicWasmClient, pump};

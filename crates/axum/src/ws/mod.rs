@@ -9,12 +9,10 @@
 //! the builder with [`register_ws::<P>(path)`](crate::AxumAppBuilder::register_ws). That call owns
 //! the upgrade-endpoint path (it can't be inferred), mounts the framework's generic upgrade handler
 //! there, and hands the controllers that speak `P` to [`WebsocketProtocol::build`] — so the protocol
-//! sets up its own routing and the app never sees a route. The first bundled protocol is [`JsonWs`].
+//! sets up its own routing and the app never sees a route. Concrete protocols live in downstream
+//! crates such as `overseerd-axum-json-ws` and `overseerd-axum-stomp`.
 
-mod json;
 pub mod pubsub;
-#[cfg(feature = "stomp")]
-pub mod stomp;
 
 use std::any::{Any, TypeId};
 use std::collections::HashSet;
@@ -23,7 +21,7 @@ use std::sync::Arc;
 
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, close_code};
 use futures::future::BoxFuture;
-use overseerd_app::AppRuntime;
+use overseerd_app::{AppRegistry, AppRuntime};
 use overseerd_config::ContainerConfigExt;
 use overseerd_core::TypeDescriptor;
 use overseerd_di::{BoxedComponent, ScopeContainer};
@@ -34,14 +32,7 @@ use crate::request_meta::RequestMeta;
 /// How long the framework waits for a WS close handshake to flush before abandoning the socket.
 /// Bounds [`mount_ws`]'s error-path close send so a peer that never drains its receive buffer
 /// can't block the upgrade task forever.
-pub(crate) const SOCKET_SEND_TIMEOUT: Duration = Duration::from_secs(5);
-
-pub use json::{JsonWs, WsReply};
-
-/// The JSON value [`JsonWs`] messages decode from / encode to. Kept as a public alias so generated
-/// `JsonWs` `#[message]` code names it without a separate `serde_json` dependency; it is exactly
-/// [`JsonWs`]'s [`WebsocketProtocol::Payload`].
-pub type WsValue = serde_json::Value;
+pub const SOCKET_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The boxed future a [`WsHandlerFn`] returns — a decoded, dispatched message [`Outcome`], generic
 /// over the protocol `P` that owns the payload/outcome vocabulary.
@@ -79,17 +70,24 @@ pub enum WsDispatchError {
     /// The handler's response could not be encoded.
     #[error("encoding ws response: {0}")]
     Encode(String),
+
+    /// The handler intentionally returned an application-level error. Unlike framework failures,
+    /// this message is public: handler authors control the error's `Display` representation and
+    /// therefore opt into exposing it to a correlated caller.
+    #[error("ws application error: {0}")]
+    Application(String),
 }
 
 impl WsDispatchError {
     /// A stable, client-safe summary for a directed error reply. The detailed [`Display`] — which
     /// can carry provider names (`Inject`) or decoder/encoder internals (`Decode`/`Encode`) — stays
     /// in the server logs; an untrusted peer only learns the error category, never internal wiring.
-    pub fn public_message(&self) -> &'static str {
+    pub fn public_message(&self) -> &str {
         match self {
             Self::NotFound(_) => "no handler for destination",
             Self::Decode(_) => "invalid request payload",
             Self::Inject(_) | Self::Encode(_) => "internal error",
+            Self::Application(message) => message,
         }
     }
 }
@@ -140,19 +138,10 @@ fn validate_unique_routes<P: WebsocketProtocol>(
     Ok(())
 }
 
-/// Decodes a protocol payload into a handler parameter type `T`. Implemented per protocol so the
-/// codec (and its error mapping) lives here, not in emitted `#[message]` tokens; the macro calls
-/// `<P as WsCodec<T>>::decode(payload)` uniformly across protocols.
-pub trait WsCodec<T>: WebsocketProtocol {
-    /// Decodes this protocol's [`Payload`](WebsocketProtocol::Payload) into `T`.
-    fn decode(payload: Self::Payload) -> Result<T, WsDispatchError>;
-}
-
 /// Turns a handler's response value `R` into this protocol's [`Outcome`](WebsocketProtocol::Outcome).
-/// The dual of [`WsCodec`]; the macro calls `<P as WsRespond<R>>::respond(response)`.
+/// The macro calls `<P as WsRespond<R>>::respond(response)` for send-mode handlers.
 pub trait WsRespond<R>: WebsocketProtocol {
-    /// Renders `response` into this protocol's outcome (a reply frame for `JsonWs`, a publish set
-    /// for STOMP, …).
+    /// Renders `response` into this protocol's send outcome.
     fn respond(response: R) -> Result<Self::Outcome, WsDispatchError>;
 }
 
@@ -229,22 +218,31 @@ pub trait WebsocketController {
 ///
 /// [`build`](Self::build) receives every controller registered to this protocol type and sets up
 /// its routing once; [`serve`](Self::serve) then drives one upgraded socket against it. The future
-/// generic `JsonWs` is the first implementation; a STOMP impl would add subscription/broadcast on
-/// top without changing this seam.
+/// A concrete implementation may add request correlation, subscriptions, or another framing model
+/// without changing this seam.
 pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
-    /// The decoded body a handler receives / an outbound frame carries. `JsonWs` uses
-    /// [`WsValue`](serde_json::Value); a STOMP protocol uses a bytes + content-type body.
+    /// The decoded body a handler receives or an outbound frame carries.
     type Payload: Send + 'static;
 
-    /// What a handler returns, before framing: a correlated reply for `JsonWs`, a publish set for
-    /// STOMP. Produced from the handler's response value via [`WsRespond`].
+    /// What a handler returns before protocol framing.
     type Outcome: Send + 'static;
 
-    /// Per-endpoint settings passed at registration — heart-beat/version policy for STOMP, `()` for
-    /// a protocol with nothing to configure. A user supplies these through
+    /// Per-endpoint settings passed at registration. A user supplies these through
     /// [`register_ws_with`](crate::AxumAppBuilder::register_ws_with); the plain
     /// [`register_ws`](crate::AxumAppBuilder::register_ws) uses [`Default`].
     type Options: Send + 'static;
+
+    /// A typed failure raised while constructing the protocol's endpoint state.
+    type BuildError: std::error::Error + Send + Sync + 'static;
+
+    /// RFC 6455 subprotocol tokens accepted by this protocol, in server preference order.
+    const SUBPROTOCOLS: &'static [&'static str] = &[];
+
+    /// Whether an upgrade must negotiate one of [`SUBPROTOCOLS`](Self::SUBPROTOCOLS).
+    const REQUIRE_SUBPROTOCOL: bool = false;
+
+    /// Contributes protocol-owned DI components before the root container is validated and built.
+    fn register(_registry: &mut AppRegistry) {}
 
     /// Builds the protocol's routing from the controllers registered to it and the endpoint
     /// `options`. Called once per `register_ws` entrypoint at app build. The protocol keeps whatever
@@ -255,7 +253,7 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
         controllers: &[WsControllerDescriptor],
         runtime: &AppRuntime,
         options: Self::Options,
-    ) -> Self;
+    ) -> Result<Self, Self::BuildError>;
 
     /// Drives one upgraded connection until the peer closes it or graceful shutdown fires.
     /// `connection` is this socket's [`Connection`](crate::scope::Connection) scope (opened once by
@@ -272,12 +270,13 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
 /// internal so adding operational controls does not change the public protocol implementation
 /// contract.
 #[derive(Clone, Copy, Debug)]
-struct WsConnectionConfig {
+pub struct WsConnectionSettings {
     idle_timeout: Option<Duration>,
 }
 
-impl WsConnectionConfig {
-    fn from_connection(connection: &ScopeContainer) -> Self {
+impl WsConnectionSettings {
+    /// Reads framework-owned WebSocket settings from a connection scope.
+    pub fn from_connection(connection: &ScopeContainer) -> Self {
         let timeout_ms = connection
             .config::<crate::AxumConfig>(crate::AXUM_CONFIG_PATH)
             .map(|config| config.snapshot().websocket_idle_timeout_ms)
@@ -287,22 +286,63 @@ impl WsConnectionConfig {
             idle_timeout: (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms)),
         }
     }
+
+    /// The configured idle interval, or `None` when liveness probing is disabled.
+    pub fn idle_timeout(&self) -> Option<Duration> {
+        self.idle_timeout
+    }
 }
+
+/// Metadata selected while accepting one WebSocket upgrade.
+#[derive(Clone, Debug)]
+pub struct WsConnectionMeta {
+    selected_subprotocol: Option<String>,
+}
+
+impl WsConnectionMeta {
+    /// The negotiated RFC 6455 subprotocol, if one was selected.
+    pub fn selected_subprotocol(&self) -> Option<&str> {
+        self.selected_subprotocol.as_deref()
+    }
+}
+
+impl overseerd_di::Injectable for WsConnectionMeta {
+    type Target = Self;
+    type Stored = Self;
+
+    fn into_stored(self) -> Self {
+        self
+    }
+
+    fn from_stored(stored: &Self) -> Self {
+        stored.clone()
+    }
+}
+
+pub(crate) static WS_CONNECTION_META_DESCRIPTOR: overseerd_di::ComponentDescriptor =
+    overseerd_di::ComponentDescriptor::manual(
+        "__overseerd_ws_connection_meta",
+        "WsConnectionMeta",
+        TypeDescriptor::of::<WsConnectionMeta>("WsConnectionMeta"),
+        &crate::scope::Connection,
+    );
 
 /// Tracks peer activity without spawning a feeder or timer task. A silent connection is probed
 /// once, then dropped if no frame (normally a pong) arrives during the following interval.
-pub(crate) struct WsIdle {
+pub struct WsIdle {
     timeout: Option<Duration>,
     deadline: Option<tokio::time::Instant>,
     awaiting_probe_reply: bool,
 }
 
 impl WsIdle {
-    pub(crate) fn from_connection(connection: &ScopeContainer) -> Self {
-        Self::new(WsConnectionConfig::from_connection(connection).idle_timeout)
+    /// Builds the liveness state from one connection's framework settings.
+    pub fn from_connection(connection: &ScopeContainer) -> Self {
+        Self::new(WsConnectionSettings::from_connection(connection).idle_timeout)
     }
 
-    pub(crate) fn new(timeout: Option<Duration>) -> Self {
+    /// Builds liveness state for an explicit idle interval.
+    pub fn new(timeout: Option<Duration>) -> Self {
         let deadline = timeout.map(|timeout| tokio::time::Instant::now() + timeout);
 
         Self {
@@ -312,20 +352,22 @@ impl WsIdle {
         }
     }
 
-    pub(crate) async fn wait(&self) {
+    /// Waits until the current idle deadline, or forever when probing is disabled.
+    pub async fn wait(&self) {
         match self.deadline {
             Some(deadline) => tokio::time::sleep_until(deadline).await,
             None => std::future::pending().await,
         }
     }
 
-    pub(crate) fn on_activity(&mut self) {
+    /// Records peer activity and resets the liveness deadline.
+    pub fn on_activity(&mut self) {
         self.awaiting_probe_reply = false;
         self.reset_deadline();
     }
 
     /// Returns `true` when the peer already ignored one probe and must be disconnected.
-    pub(crate) fn on_timeout(&mut self) -> bool {
+    pub fn on_timeout(&mut self) -> bool {
         if self.awaiting_probe_reply {
             return true;
         }
@@ -403,7 +445,7 @@ pub trait PubSubProtocol: WebsocketProtocol + crate::messaging::MessagingProtoco
 /// [`reply`](Self::reply) into an outcome the protocol routes to the *requester* (STOMP: via the
 /// inbound frame's `reply-to`/`correlation-id`), never broadcast. A handler returning `()` uses
 /// [`WsRespond`] instead, so a protocol without request/response simply never needs this.
-pub trait MessageReply: PubSubProtocol {
+pub trait MessageReply: WebsocketProtocol + crate::messaging::MessagingProtocol {
     /// Wraps an already-encoded reply `body` into this protocol's outcome.
     fn reply(body: Self::Body) -> Self::Outcome;
 }
@@ -479,7 +521,12 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
 
     validate_unique_routes::<P>(&controllers, runtime)?;
 
-    let proto = Arc::new(P::build(&controllers, runtime, options));
+    let proto = Arc::new(P::build(&controllers, runtime, options).map_err(|source| {
+        crate::Error::WebsocketBuild {
+            protocol: std::any::type_name::<P>(),
+            source: Box::new(source),
+        }
+    })?);
     let shutdown = WsShutdown(rx);
     let admission = WsAdmission::new(config.max_websocket_connections)?;
     let max_message_bytes = config.max_websocket_message_bytes;
@@ -515,49 +562,65 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
                 }
             };
 
-            ws.max_message_size(max_message_bytes)
+            let ws = ws
+                .max_message_size(max_message_bytes)
                 .max_frame_size(max_frame_bytes)
-                .on_upgrade(move |mut socket| async move {
-                    // Keep the admission permit for exactly the lifetime of this upgraded connection.
-                    let _permit = permit;
-                    let meta = RequestMeta::from_parts(method, uri, headers);
-                    let seed = BoxedComponent {
-                        ty: TypeDescriptor::of::<RequestMeta>("RequestMeta"),
-                        value: Box::new(meta),
-                    };
+                .protocols(P::SUBPROTOCOLS.iter().copied());
+            let selected_subprotocol = ws
+                .selected_protocol()
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
 
-                    let connection = match runtime
-                        .open_scope(
-                            &crate::scope::Connection,
-                            Arc::clone(runtime.root()),
-                            vec![seed],
-                        )
-                        .await
-                    {
-                        Ok(scope) => scope,
+            if P::REQUIRE_SUBPROTOCOL && selected_subprotocol.is_none() {
+                return axum::http::StatusCode::BAD_REQUEST.into_response();
+            }
 
-                        Err(error) => {
-                            tracing::error!(
-                                target: "overseerd::axum",
-                                %error,
-                                "ws connection scope build failed; closing socket"
-                            );
+            ws.on_upgrade(move |mut socket| async move {
+                // Keep the admission permit for exactly the lifetime of this upgraded connection.
+                let _permit = permit;
+                let meta = RequestMeta::from_parts(method, uri, headers);
+                let request_seed = BoxedComponent {
+                    ty: TypeDescriptor::of::<RequestMeta>("RequestMeta"),
+                    value: Box::new(meta),
+                };
+                let connection_seed = BoxedComponent {
+                    ty: TypeDescriptor::of::<WsConnectionMeta>("WsConnectionMeta"),
+                    value: Box::new(WsConnectionMeta {
+                        selected_subprotocol,
+                    }),
+                };
 
-                            let close = Message::Close(Some(CloseFrame {
-                                code: close_code::ERROR,
-                                reason: Utf8Bytes::from_static("connection scope build failed"),
-                            }));
+                let connection = match runtime
+                    .open_scope(
+                        &crate::scope::Connection,
+                        Arc::clone(runtime.root()),
+                        vec![request_seed, connection_seed],
+                    )
+                    .await
+                {
+                    Ok(scope) => scope,
 
-                            let _ =
-                                tokio::time::timeout(SOCKET_SEND_TIMEOUT, socket.send(close)).await;
+                    Err(error) => {
+                        tracing::error!(
+                            target: "overseerd::axum",
+                            %error,
+                            "ws connection scope build failed; closing socket"
+                        );
 
-                            return;
-                        }
-                    };
+                        let close = Message::Close(Some(CloseFrame {
+                            code: close_code::ERROR,
+                            reason: Utf8Bytes::from_static("connection scope build failed"),
+                        }));
 
-                    proto.serve(socket, connection, shutdown).await;
-                })
-                .into_response()
+                        let _ = tokio::time::timeout(SOCKET_SEND_TIMEOUT, socket.send(close)).await;
+
+                        return;
+                    }
+                };
+
+                proto.serve(socket, connection, shutdown).await;
+            })
+            .into_response()
         }
     };
 

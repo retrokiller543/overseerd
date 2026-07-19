@@ -15,4 +15,4 @@ mod topic_bus;
 
 pub use publisher::Publisher;
 pub use registry::{ConnectionId, SubscriptionRegistry};
-pub use topic_bus::{DEFAULT_PUBLISH_FANOUT, TopicBus};
+pub use topic_bus::{DEFAULT_PUBLISH_FANOUT, TopicBus, register_topic_bus, topic_bus_descriptor};

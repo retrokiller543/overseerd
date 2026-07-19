@@ -10,7 +10,7 @@ use super::{Pending, prune_pending};
 fn prune_pending_removes_calls_after_receiver_is_dropped() {
     let (closed_tx, closed_rx) = oneshot::channel();
     let (open_tx, _open_rx) = oneshot::channel();
-    let mut pending: HashMap<u64, Pending> = HashMap::new();
+    let mut pending: HashMap<u64, Pending<()>> = HashMap::new();
 
     pending.insert(1, closed_tx);
     pending.insert(2, open_tx);

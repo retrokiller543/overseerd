@@ -21,6 +21,9 @@ use overseerd_transport::CodecError;
 /// [`StompBody`](crate::stomp::StompBody).
 struct TestProto;
 
+/// A second protocol tag used to prove generic bus descriptors do not collide.
+struct OtherProto;
+
 /// `TestProto`'s wire body: a distinct type, so a body welded to STOMP would fail to compile here.
 #[derive(Clone, Default)]
 struct TestBody(Vec<u8>);
@@ -40,6 +43,18 @@ impl TopicCodec<TestProto> for TestCodec {
     }
 }
 
+impl TopicCodec<OtherProto> for TestCodec {
+    fn encode<T: Serialize>(value: &T) -> Result<TestBody, CodecError> {
+        serde_json::to_vec(value)
+            .map(TestBody)
+            .map_err(|error| CodecError::internal(error.to_string()))
+    }
+
+    fn decode<T: serde::de::DeserializeOwned>(body: TestBody) -> Result<T, CodecError> {
+        serde_json::from_slice(&body.0).map_err(|error| CodecError::bad_input(error.to_string()))
+    }
+}
+
 impl MessagingProtocol for TestProto {
     type Body = TestBody;
     type DefaultCodec = TestCodec;
@@ -53,9 +68,14 @@ impl WebsocketProtocol for TestProto {
     type Payload = ();
     type Outcome = ();
     type Options = ();
+    type BuildError = std::convert::Infallible;
 
-    fn build(_: &[WsControllerDescriptor], _: &AppRuntime, _: ()) -> Self {
-        TestProto
+    fn build(
+        _: &[WsControllerDescriptor],
+        _: &AppRuntime,
+        _: (),
+    ) -> Result<Self, Self::BuildError> {
+        Ok(TestProto)
     }
 
     async fn serve(
@@ -70,6 +90,49 @@ impl WebsocketProtocol for TestProto {
 }
 
 impl PubSubProtocol for TestProto {
+    type OutFrame = TestBody;
+
+    fn frame_message(
+        _message_id: u64,
+        _destination: &str,
+        _sub_id: &str,
+        body: &TestBody,
+        _headers: &[(String, String)],
+    ) -> TestBody {
+        body.clone()
+    }
+}
+
+impl MessagingProtocol for OtherProto {
+    type Body = TestBody;
+    type DefaultCodec = TestCodec;
+}
+
+impl WebsocketProtocol for OtherProto {
+    type Payload = ();
+    type Outcome = ();
+    type Options = ();
+    type BuildError = std::convert::Infallible;
+
+    fn build(
+        _: &[WsControllerDescriptor],
+        _: &AppRuntime,
+        _: (),
+    ) -> Result<Self, Self::BuildError> {
+        Ok(Self)
+    }
+
+    async fn serve(
+        self: Arc<Self>,
+        socket: WebSocket,
+        connection: Arc<ScopeContainer>,
+        shutdown: WsShutdown,
+    ) {
+        let _ = (self, socket, connection, shutdown);
+    }
+}
+
+impl PubSubProtocol for OtherProto {
     type OutFrame = TestBody;
 
     fn frame_message(
@@ -152,4 +215,13 @@ async fn topic_bus_round_trips_over_a_non_stomp_protocol() {
     let ping: Ping = <TestCodec as TopicCodec<TestProto>>::decode(frame).expect("body decodes");
 
     assert_eq!(ping, Ping { seq: 7 });
+}
+
+#[test]
+fn topic_bus_descriptors_are_distinct_per_protocol() {
+    let first = super::topic_bus_descriptor::<TestProto>();
+    let second = super::topic_bus_descriptor::<OtherProto>();
+
+    assert_ne!(first.id, second.id);
+    assert_ne!((first.ty.type_id)(), (second.ty.type_id)());
 }

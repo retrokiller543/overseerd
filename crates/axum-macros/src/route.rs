@@ -51,8 +51,8 @@ pub enum MessageMode {
     Infer,
 
     /// Force a fire-and-forget SEND. The return is routed through the protocol's SEND path (for
-    /// STOMP: `()`, a `Publish`/`Vec<Publish>` to broadcast, a `StompOutcome`, or a `Result` of
-    /// those) — never sent back to the caller. Forcing `send` on a handler returning an arbitrary
+    /// example `()`, a protocol-specific publish outcome, or a `Result` of either) — never sent
+    /// back to the caller. Forcing `send` on a handler returning an arbitrary
     /// reply DTO is therefore a compile error; use the inferred/`request` mode for that.
     Send,
 

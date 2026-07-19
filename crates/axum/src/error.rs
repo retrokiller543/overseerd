@@ -22,6 +22,17 @@ pub enum Error {
     /// OpenAPI `json_path`/`ui_path`).
     #[error("axum configuration error: {0}")]
     Config(String),
+
+    /// A registered WebSocket protocol could not construct its endpoint state.
+    #[error("building WebSocket protocol `{protocol}`: {source}")]
+    WebsocketBuild {
+        /// The concrete protocol type that failed.
+        protocol: &'static str,
+
+        /// The protocol-owned build failure.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }
 
 /// The axum protocol's [`Result`](std::result::Result) alias.

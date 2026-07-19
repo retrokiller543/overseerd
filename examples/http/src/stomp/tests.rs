@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use overseerd::axum::StompBody;
-use overseerd::axum::client::{MessageRequest, StompClientTransport, StompConnectOptions};
+use overseerd::axum::client::MessageRequest;
+use overseerd::axum::{StompClientTransport, StompConnectOptions};
 use overseerd::prelude::*;
 use tokio::net::TcpListener;
 

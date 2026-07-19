@@ -2,7 +2,7 @@
 
 use stomp_parser::client::ClientFrame;
 
-use super::*;
+use crate::server::{ensure_connect_host, send_header_seed};
 
 #[test]
 fn host_is_injected_so_a_hostless_connect_parses() {

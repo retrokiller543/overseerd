@@ -20,7 +20,7 @@ pub struct GreetSocket {
     greeter: Greeter,
 }
 
-#[handlers]
+#[handlers(ws = JsonWs)]
 impl GreetSocket {
     /// `dest = "greet"` — greets the payload's `who`, reusing the same shared [`Greeter`] the HTTP
     /// controller uses, so the greeting count is shared across HTTP and WebSocket callers.

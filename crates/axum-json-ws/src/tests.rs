@@ -7,7 +7,7 @@ fn ok_result_renders_an_ok_frame_echoing_the_id() {
     let reply = render_reply(
         "echo",
         Some(7),
-        Ok(WsReply(serde_json::json!({ "echo": "hi" }))),
+        Ok(WsReply(Some(serde_json::json!({ "echo": "hi" })))),
     )
     .expect("a reply frame");
     let value: WsValue = serde_json::from_str(&reply).expect("valid json reply");
@@ -16,6 +16,32 @@ fn ok_result_renders_an_ok_frame_echoing_the_id() {
     assert_eq!(value["id"], 7);
     assert_eq!(value["ok"]["echo"], "hi");
     assert!(value.get("error").is_none());
+}
+
+#[test]
+fn uncorrelated_send_success_and_error_emit_no_reply() {
+    assert!(render_reply("send", None, Ok(WsReply(None))).is_none());
+    assert!(
+        render_reply(
+            "send",
+            None,
+            Err(WsDispatchError::Application("visible".to_owned())),
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn application_error_text_is_visible_when_correlated() {
+    let reply = render_reply(
+        "request",
+        Some(9),
+        Err(WsDispatchError::Application("safe message".to_owned())),
+    )
+    .expect("correlated error reply");
+    let value: WsValue = serde_json::from_str(&reply).expect("valid json reply");
+
+    assert_eq!(value["error"], "safe message");
 }
 
 #[test]

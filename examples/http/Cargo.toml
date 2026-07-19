@@ -24,7 +24,7 @@ arc-swap = { workspace = true }
 # Native (server): the full protocol stack — ws/stomp controllers, DI middleware, both HTTP client
 # backends. The binary and the server-only modules use these.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-overseerd = { path = "../..", default-features = false, features = ["axum", "ws", "stomp", "multipart", "uuid", "reqwest", "hyper", "tungstenite", "tracing-subscriber", "openapi-swagger-ui"] }
+overseerd = { path = "../..", default-features = false, features = ["axum", "ws", "json-ws", "stomp", "multipart", "uuid", "reqwest", "hyper", "tungstenite", "tracing-subscriber", "openapi-swagger-ui"] }
 tokio = { workspace = true }
 tracing.workspace = true
 # The `openapi` feature makes `#[dto]`/`#[handlers]` emit `utoipa` derives/attributes, whose output
@@ -37,7 +37,7 @@ utoipa = { workspace = true }
 # published `tsify` (the default `into_wasm_abi` ABI); enable overseerd's `wasm-ts` feature for the
 # newer `Ts<T>` ABI, which needs the unreleased `tsify` git master instead.
 [target.'cfg(target_family = "wasm")'.dependencies]
-overseerd = { path = "../..", default-features = false, features = ["axum", "client", "reqwest", "ws", "stomp", "tungstenite"] }
+overseerd = { path = "../..", default-features = false, features = ["axum", "client", "reqwest", "ws", "json-ws", "stomp", "tungstenite"] }
 tsify = "0.5.6"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

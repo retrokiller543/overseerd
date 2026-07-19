@@ -9,7 +9,10 @@
 
 mod body;
 // The shared browser-client `Connection` (wasm-only; needs the reqwest fetch backend).
-#[cfg(all(target_family = "wasm", feature = "reqwest"))]
+#[cfg(all(
+    target_family = "wasm",
+    any(feature = "reqwest", feature = "tungstenite")
+))]
 mod connection;
 mod headers;
 mod interceptor;
@@ -18,15 +21,12 @@ mod interceptor;
 #[cfg(all(feature = "ws", feature = "client"))]
 mod messaging;
 mod response;
-// The STOMP client transport is cross-target (native + wasm) via `tokio-tungstenite-wasm`.
-#[cfg(all(feature = "stomp", feature = "client"))]
-mod stomp;
 mod streaming;
 // Shared ws runtime (task spawn) for the client transports; only needed with a ws transport.
 #[cfg(all(feature = "tungstenite", feature = "client"))]
-mod ws_rt;
-// The JsonWs request/reply backend is native-only for now (its heart-beat uses a tokio timer).
-#[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
+pub mod ws_rt;
+// The protocol-neutral correlated request/reply WebSocket actor.
+#[cfg(all(feature = "ws", feature = "client"))]
 mod websocket;
 
 #[cfg(all(feature = "hyper", not(target_family = "wasm")))]
@@ -35,7 +35,10 @@ mod hyper_backend;
 mod reqwest_backend;
 
 pub use body::{Form, HttpBody, Json, Multipart, OctetStream, RawForm};
-#[cfg(all(target_family = "wasm", feature = "reqwest"))]
+#[cfg(all(
+    target_family = "wasm",
+    any(feature = "reqwest", feature = "tungstenite")
+))]
 pub use connection::Connection;
 pub use headers::RequestHeaders;
 #[cfg(all(target_family = "wasm", feature = "reqwest"))]
@@ -44,10 +47,8 @@ pub use interceptor::{ClientInterceptor, DefaultClientInterceptor};
 #[cfg(all(feature = "ws", feature = "client"))]
 pub use messaging::*;
 pub use response::HttpResponse;
-#[cfg(all(feature = "stomp", feature = "client"))]
-pub use stomp::*;
 pub use streaming::{HttpClientStreaming, HttpStreaming, StreamDecode, encode_stream};
-#[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
+#[cfg(all(feature = "ws", feature = "client"))]
 pub use websocket::*;
 
 /// Re-exported so generated streaming-client code names the codec without a separate dep.

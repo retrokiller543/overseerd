@@ -66,6 +66,7 @@ struct WsRegistration {
     path: String,
     protocol: std::any::TypeId,
     mount: WsMount,
+    register: fn(&mut AppRegistry),
 }
 
 impl Plugin for AxumPlugin {
@@ -84,6 +85,10 @@ impl Plugin for AxumPlugin {
             .config_bindings
             .push(ConfigBinding::of::<AxumConfig>(AXUM_CONFIG_PATH));
         registry.components.push(REQUEST_META_DESCRIPTOR);
+        #[cfg(feature = "ws")]
+        registry
+            .components
+            .push(crate::ws::WS_CONNECTION_META_DESCRIPTOR);
 
         #[cfg(feature = "openapi")]
         registry
@@ -92,11 +97,9 @@ impl Plugin for AxumPlugin {
                 crate::AXUM_OPENAPI_CONFIG_PATH,
             ));
 
-        #[cfg(feature = "stomp")]
-        {
-            registry
-                .components
-                .push(crate::ws::stomp::STOMP_TOPIC_BUS_DESCRIPTOR);
+        #[cfg(feature = "ws")]
+        for registration in &self.ws_registrations {
+            (registration.register)(registry);
         }
     }
 }
@@ -440,6 +443,7 @@ impl AxumAppBuilder for AppBuilder<AxumPlugin> {
             path,
             protocol: std::any::TypeId::of::<P>(),
             mount,
+            register: P::register,
         });
 
         self

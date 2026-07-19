@@ -181,10 +181,10 @@ pub fn message(_attr: TokenStream, item: TokenStream) -> TokenStream {
     run::<ItemFn, _>(item.into(), route::expand_standalone).into()
 }
 
-/// Declares a **STOMP topic set**: an enum whose variants each carry a `#[topic("/topic/..")]`
+/// Declares a messaging protocol topic set: an enum whose variants each carry a `#[topic("/topic/..")]`
 /// destination and a single payload type. Emits an `impl Topic` (typed server publish) and a
 /// `{Enum}Client<C>` with one `subscribe_<variant>()` per topic (typed client subscribe), so the
-/// same enum is the single source of truth for both sides. See the crate docs for an example.
+/// same enum is the single source of truth for both sides. Requires `protocol = P`.
 ///
 /// The per-variant `#[topic("/topic/..")]` is an inert helper attribute: `#[topics]` reads and
 /// strips it, so it is never resolved on its own.

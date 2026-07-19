@@ -233,26 +233,24 @@ pub enum WasmBackend {
     Http,
 
     /// `#[controller(ws = P)]` message clients over `P`'s shared socket — resolved generically
-    /// through [`TopicWasmClient`], so any pub/sub protocol works with no macro change. A `SEND`
+    /// through [`TopicWasmClient`], so any messaging protocol works with no macro change. A `SEND`
     /// method returns `void`; a request method returns its decoded reply.
-    PubSub { protocol: syn::Path },
+    Message { protocol: syn::Path },
 }
 
 impl WasmBackend {
     /// The feature gating this backend's wasm binding (its transport must be compiled in). The
-    /// pub/sub gate mirrors the `#[topics]` subscribe client: the shared [`Connection`] needs the
+    /// message gate mirrors the `#[topics]` subscribe client: the shared [`Connection`] needs the
     /// fetch backend and the ws transport must be present.
     fn available(&self) -> bool {
         match self {
             WasmBackend::Http => cfg!(feature = "reqwest"),
 
-            WasmBackend::PubSub { .. } => {
-                cfg!(feature = "reqwest") && cfg!(feature = "tungstenite")
-            }
+            WasmBackend::Message { .. } => cfg!(feature = "tungstenite"),
         }
     }
 
-    /// The transport type the wasm newtype wraps. HTTP names the concrete fetch client; a pub/sub
+    /// The transport type the wasm newtype wraps. HTTP names the concrete fetch client; a messaging
     /// protocol projects its transport through [`TopicWasmClient`], so no protocol type is named
     /// here.
     fn transport(&self, paths: &Paths) -> TokenStream {
@@ -263,7 +261,7 @@ impl WasmBackend {
                 quote!(#client)
             }
 
-            WasmBackend::PubSub { protocol } => {
+            WasmBackend::Message { protocol } => {
                 let topic_wasm_client = paths.plugin("client::TopicWasmClient");
 
                 quote!(<#protocol as #topic_wasm_client>::Transport)
@@ -279,7 +277,7 @@ impl WasmBackend {
                 quote!(::core::result::Result::Ok(Self(#client_ident::new(connection.http()))))
             }
 
-            WasmBackend::PubSub { protocol } => {
+            WasmBackend::Message { protocol } => {
                 let topic_wasm_client = paths.plugin("client::TopicWasmClient");
 
                 quote! {
@@ -295,7 +293,7 @@ impl WasmBackend {
 /// Emits the **wasm** JavaScript binding's *struct* — a `#[wasm_bindgen]` newtype over the concrete
 /// `{Client}<Transport>` (wasm-bindgen cannot export the generic form) plus its constructor. The
 /// transport is the fetch client for HTTP, or the protocol's [`TopicWasmClient::Transport`] for a
-/// pub/sub controller. Emitted **once** by `#[controller]` (like the generic client struct), so
+/// messaging controller. Emitted **once** by `#[controller]` (like the generic client struct), so
 /// multiple `#[handlers]` blocks — which contribute methods (see [`wasm_client_methods`]) — never
 /// re-declare it.
 ///
@@ -338,7 +336,7 @@ pub fn wasm_client_struct(
         #[::wasm_bindgen::prelude::wasm_bindgen(js_class = #js_name)]
         impl #wrapper {
             /// Builds the client from a shared [`Connection`], so every client reuses its one
-            /// underlying transport (the HTTP pool + cookies, or the STOMP socket).
+            /// underlying transport (the HTTP pool + cookies, or the protocol socket).
             #[::wasm_bindgen::prelude::wasm_bindgen(constructor)]
             pub fn new(
                 connection: &#connection,
@@ -425,7 +423,7 @@ fn wasm_client_methods(
                     )
                 }
 
-                WasmBackend::PubSub { .. } => (quote!(), quote!(), ident.clone()),
+                WasmBackend::Message { .. } => (quote!(), quote!(), ident.clone()),
             };
 
             let response = &m.response;
@@ -442,12 +440,12 @@ fn wasm_client_methods(
                 ),
                 WasmBackend::Http => (quote!(#response), quote!(__response.into_body())),
 
-                WasmBackend::PubSub { .. } if response_is_unit => (quote!(()), quote!(__response)),
-                WasmBackend::PubSub { .. } if ts => (
+                WasmBackend::Message { .. } if response_is_unit => (quote!(()), quote!(__response)),
+                WasmBackend::Message { .. } if ts => (
                     quote!(::tsify::Ts<#response>),
                     quote!(__response.into_ts().map_err(::wasm_bindgen::JsError::from)?),
                 ),
-                WasmBackend::PubSub { .. } => (quote!(#response), quote!(__response)),
+                WasmBackend::Message { .. } => (quote!(#response), quote!(__response)),
             };
 
             quote! {
@@ -515,7 +513,7 @@ pub fn extra_client_tokens(
     };
 
     // The wasm method impl (the struct comes from `#[controller]`). Only when the block has a wasm
-    // backend (HTTP, or STOMP `SEND`) and that backend's transport is compiled in.
+    // backend and that backend's transport is compiled in.
     let wasm_methods = match backend {
         Some(backend) if backend.available() && !methods.is_empty() => {
             wasm_client_methods(client_ident, methods, backend, paths)

@@ -1,5 +1,4 @@
-//! STOMP's implementation of the protocol-generic messaging wire contract (defined in
-//! [`crate::messaging`]).
+//! STOMP's implementation of the protocol-generic messaging wire contract.
 //!
 //! The generic capability traits ([`MessagingProtocol`](crate::messaging::MessagingProtocol),
 //! [`TopicCodec`](crate::messaging::TopicCodec), …) live in [`crate::messaging`] so they compile
@@ -16,8 +15,6 @@
 
 use bytes::Bytes;
 use overseerd_transport::CodecError;
-
-use crate::messaging::{MessagingProtocol, TopicCodec};
 
 /// The `subscription` header value the server stamps on a request/response reply `MESSAGE`. It is a
 /// sentinel (never a real client subscription id, which are `sub-*`), so the client consults its
@@ -38,12 +35,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[cfg(not(target_family = "wasm"))]
-use overseerd_app::AppRuntime;
+use overseerd_axum::AppRuntime;
 
 #[cfg(not(target_family = "wasm"))]
-use crate::ws::WsHandlerFn;
-#[cfg(not(target_family = "wasm"))]
-use crate::ws::stomp::{Broker, StompConfig};
+use overseerd_axum::WsHandlerFn;
 
 /// A STOMP frame body: opaque bytes with an optional `content-type`. Handlers usually receive a
 /// decoded type (via [`WsCodec`](crate::ws::WsCodec) JSON decoding) rather than this directly.
@@ -88,7 +83,7 @@ pub struct Stomp {
 
     /// The shared broker for `/topic/**` fan-out (one per endpoint, cloned from the DI bus).
     #[cfg(not(target_family = "wasm"))]
-    pub(crate) broker: Arc<Broker>,
+    pub(crate) broker: Arc<server::Broker>,
 
     /// The runtime, kept to open per-message [`Request`](crate::scope::Request) scopes while serving.
     #[cfg(not(target_family = "wasm"))]
@@ -96,10 +91,10 @@ pub struct Stomp {
 
     /// Heart-beat/version/authenticator policy for this endpoint.
     #[cfg(not(target_family = "wasm"))]
-    pub(crate) config: StompConfig,
+    pub(crate) config: server::StompConfig,
 }
 
-impl MessagingProtocol for Stomp {
+impl overseerd_axum::MessagingProtocol for Stomp {
     type Body = StompBody;
     type DefaultCodec = JsonCodec;
 }
@@ -119,19 +114,6 @@ pub trait StompCodec: Send + Sync + 'static {
     fn decode<T: serde::de::DeserializeOwned>(body: StompBody) -> Result<T, CodecError>;
 }
 
-impl<C> TopicCodec<Stomp> for C
-where
-    C: StompCodec,
-{
-    fn encode<T: serde::Serialize>(value: &T) -> Result<StompBody, CodecError> {
-        <C as StompCodec>::encode(value)
-    }
-
-    fn decode<T: serde::de::DeserializeOwned>(body: StompBody) -> Result<T, CodecError> {
-        <C as StompCodec>::decode(body)
-    }
-}
-
 /// The default [`StompCodec`]: JSON bodies (`application/json`).
 pub struct JsonCodec;
 
@@ -144,3 +126,31 @@ impl StompCodec for JsonCodec {
         serde_json::from_slice(&body.bytes).map_err(|e| CodecError::bad_input(e.to_string()))
     }
 }
+
+impl overseerd_axum::TopicCodec<Stomp> for JsonCodec {
+    fn encode<T: serde::Serialize>(value: &T) -> Result<StompBody, CodecError> {
+        <Self as StompCodec>::encode(value)
+    }
+
+    fn decode<T: serde::de::DeserializeOwned>(body: StompBody) -> Result<T, CodecError> {
+        <Self as StompCodec>::decode(body)
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+mod server;
+
+#[cfg(feature = "client")]
+mod client;
+
+#[cfg(not(target_family = "wasm"))]
+pub use server::*;
+
+#[cfg(feature = "client")]
+pub use client::StompStatus;
+
+#[cfg(all(feature = "client", feature = "tungstenite"))]
+pub use client::{StompClientTransport, StompConnectOptions};
+
+#[cfg(all(target_family = "wasm", feature = "tungstenite"))]
+pub use client::{connect_stomp, disconnect_stomp};

@@ -7,8 +7,15 @@
 //! registered as a DI singleton in [`crate::ws::stomp`]; a new protocol registers its own
 //! `TopicBus<ThatProtocol>` descriptor the same way.
 
+use std::future::Future;
 use std::sync::Arc;
 
+use overseerd_core::{Singleton, TypeDescriptor};
+use overseerd_di::{
+    BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
+    ComponentFactoryDescriptor, DependencyDescriptor, Injectable,
+};
+use overseerd_hooks::no_hooks;
 use overseerd_transport::CodecError;
 
 use crate::messaging::Topic;
@@ -111,3 +118,72 @@ impl<P: PubSubProtocol> Default for TopicBus<P> {
         Self::new()
     }
 }
+
+impl<P: PubSubProtocol> Component for TopicBus<P> {
+    const ID: &'static str = "overseerd:axum:topic-bus";
+    const NAME: &'static str = "TopicBus";
+    type Handle = Self;
+
+    fn into_handle(self) -> Self::Handle {
+        self
+    }
+}
+
+impl<P: PubSubProtocol> Injectable for TopicBus<P> {
+    type Target = Self;
+    type Stored = Self;
+
+    fn into_stored(self) -> Self {
+        self
+    }
+
+    fn from_stored(stored: &Self) -> Self {
+        stored.clone()
+    }
+}
+
+fn topic_bus_dependencies() -> Vec<DependencyDescriptor> {
+    Vec::new()
+}
+
+fn construct_topic_bus<P: PubSubProtocol>(
+    _: &mut ComponentConstructionContext,
+) -> std::pin::Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + '_>> {
+    Box::pin(async {
+        Ok(BoxedComponent {
+            ty: TypeDescriptor::of::<TopicBus<P>>(std::any::type_name::<TopicBus<P>>()),
+            value: Box::new(Injectable::into_stored(TopicBus::<P>::new())),
+        })
+    })
+}
+
+fn topic_bus_factories<P: PubSubProtocol>() -> &'static [ComponentFactoryDescriptor] {
+    &[ComponentFactoryDescriptor {
+        construct: construct_topic_bus::<P>,
+        dependencies: topic_bus_dependencies,
+        default: true,
+    }]
+}
+
+/// Builds the DI descriptor for one protocol's shared topic bus.
+pub fn topic_bus_descriptor<P: PubSubProtocol>() -> ComponentDescriptor {
+    let name = std::any::type_name::<TopicBus<P>>();
+    let id = Box::leak(format!("overseerd:axum:topic-bus:{name}").into_boxed_str());
+
+    ComponentDescriptor {
+        id,
+        name,
+        ty: TypeDescriptor::of::<TopicBus<P>>(name),
+        scope: &Singleton,
+        factories: topic_bus_factories::<P>,
+        hooks: no_hooks,
+    }
+}
+
+/// Registers one protocol's shared topic bus in the application DI graph.
+pub fn register_topic_bus<P: PubSubProtocol>(registry: &mut overseerd_app::AppRegistry) {
+    registry.components.push(topic_bus_descriptor::<P>());
+}
+
+#[cfg(feature = "di-check")]
+impl<P: PubSubProtocol> overseerd_di::Provide<TopicBus<P>> for overseerd_di::Wiring {}

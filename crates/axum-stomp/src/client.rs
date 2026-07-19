@@ -8,8 +8,8 @@
 //!
 //! STOMP's transport sends no heart-beats in v1 (see `docs/stomp.md` for the deferred-feature list).
 
-use crate::messaging::MessagingClientProtocol;
-use crate::stomp::Stomp;
+use crate::Stomp;
+use overseerd_axum::MessagingClientProtocol;
 
 /// The status carried by a STOMP [`ClientError::Remote`](overseerd_client::ClientError::Remote),
 /// mirroring [`WsStatus`](super::WsStatus). This is [`Stomp`]'s [`MessagingClientProtocol::Status`].
@@ -31,6 +31,7 @@ impl MessagingClientProtocol for Stomp {
 }
 
 #[cfg(feature = "tungstenite")]
+#[path = "client/transport.rs"]
 mod transport;
 
 #[cfg(feature = "tungstenite")]
@@ -39,5 +40,9 @@ pub use transport::{StompClientTransport, StompConnectOptions};
 // STOMP's `TopicWasmClient` impl (pulling its shared socket out of the browser `Connection`).
 // wasm-only; the protocol-generic `TopicWasmClient`/`TopicSubscription`/`pump` live in
 // `crate::client::messaging`.
-#[cfg(all(target_family = "wasm", feature = "reqwest", feature = "tungstenite"))]
+#[cfg(all(target_family = "wasm", feature = "tungstenite"))]
+#[path = "client/wasm.rs"]
 mod wasm;
+
+#[cfg(all(target_family = "wasm", feature = "tungstenite"))]
+pub use wasm::{connect_stomp, disconnect_stomp};

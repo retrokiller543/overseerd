@@ -14,51 +14,51 @@
 //! v1 covers the core pub/sub path; see `docs/stomp.md` for what is deferred (RECEIPT,
 //! heart-beating, ACK modes, transactions, destination wildcards).
 
+#[path = "server/auth.rs"]
 mod auth;
+#[path = "server/body.rs"]
 mod body;
+#[path = "server/broker.rs"]
 mod broker;
+#[path = "server/error.rs"]
 mod error;
+#[path = "server/headers.rs"]
 mod headers;
 #[cfg(test)]
 mod tests;
-mod topic_bus;
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
-use overseerd_app::AppRuntime;
-use overseerd_core::TypeDescriptor;
-use overseerd_di::{BoxedComponent, ScopeContainer};
+use overseerd_axum::axum::extract::ws::{Message, WebSocket};
+use overseerd_axum::{AppRuntime, BoxedComponent, ScopeContainer, TypeDescriptor};
 use stomp_parser::client::ClientFrame;
 use stomp_parser::headers::{HeaderValue, StompVersion, StompVersions};
 use stomp_parser::server::{ConnectedFrameBuilder, ErrorFrame, ReceiptFrameBuilder};
 use tokio::sync::mpsc;
 
-use super::{
+use overseerd_axum::RequestScope;
+use overseerd_axum::{
     MessageReply, PubSubProtocol, SOCKET_SEND_TIMEOUT, WebsocketProtocol, WsControllerDescriptor,
     WsDispatchError, WsHandlerFn, WsIdle, WsRespond, WsShutdown,
 };
-use crate::scope::Request as RequestScope;
 
 pub use auth::{
     Direct, Injected, IntoAuthenticator, ResolvedAuthenticator, StompAuthFuture,
     StompAuthenticationError, StompAuthenticator, StompConnect, StompPrincipal,
 };
-pub use body::{
-    JsonCodec, MessagingClientProtocol, MessagingProtocol, Publish, StompBody, StompCodec,
-    StompOutcome, Topic, TopicCodec, TopicParam,
-};
-pub use broker::Broker;
-pub use error::StompError;
+pub use body::{Publish, StompOutcome};
+pub use broker::{Broker, BrokerExt};
+pub use error::{StompBuildError, StompError};
 pub use headers::{StompHeaders, StompSession};
-pub(crate) use topic_bus::STOMP_TOPIC_BUS_DESCRIPTOR;
-pub use topic_bus::StompTopicBus;
 // The protocol-generic pub/sub runtime lives in `crate::ws::pubsub`; re-exported here so the STOMP
 // serve loop and the crate's historical `ws::stomp::*` surface keep naming them unchanged.
-pub use crate::ws::pubsub::{ConnectionId, Publisher, SubscriptionRegistry, TopicBus};
+pub use overseerd_axum::{ConnectionId, Publisher, SubscriptionRegistry, TopicBus};
+
+/// STOMP's protocol-specific instantiation of the neutral topic bus.
+pub type StompTopicBus = TopicBus<Stomp>;
 
 use broker::{OutFrame, build_message};
 
@@ -109,7 +109,7 @@ impl StompConfig {
 // The `Stomp` struct is defined in the wasm-safe `crate::stomp` module (so a `#[topics(protocol =
 // Stomp)]` set and its client can name it on wasm), with its server-only fields behind a `cfg`. The
 // stateful protocol behavior — the `WebsocketProtocol` impl and serve loop — lives here.
-use crate::stomp::{MESSAGE_ERROR_HEADER, REPLY_SUBSCRIPTION_ID, Stomp};
+use crate::{MESSAGE_ERROR_HEADER, REPLY_SUBSCRIPTION_ID, Stomp, StompBody};
 
 impl PubSubProtocol for Stomp {
     type OutFrame = OutFrame;
@@ -135,12 +135,17 @@ impl WebsocketProtocol for Stomp {
     type Payload = StompBody;
     type Outcome = StompOutcome;
     type Options = StompConfig;
+    type BuildError = StompBuildError;
+
+    fn register(registry: &mut overseerd_axum::AppRegistry) {
+        overseerd_axum::register_topic_bus::<Self>(registry);
+    }
 
     fn build(
         controllers: &[WsControllerDescriptor],
         runtime: &AppRuntime,
         config: StompConfig,
-    ) -> Self {
+    ) -> Result<Self, Self::BuildError> {
         let mut app_routes: HashMap<&'static str, WsHandlerFn<Stomp>> = HashMap::new();
 
         for descriptor in controllers {
@@ -149,18 +154,17 @@ impl WebsocketProtocol for Stomp {
             }
         }
 
-        Self {
+        let bus = runtime
+            .root()
+            .get::<StompTopicBus>()
+            .ok_or(StompBuildError::MissingTopicBus)?;
+
+        Ok(Self {
             app_routes,
-            broker: Arc::clone(
-                runtime
-                    .root()
-                    .get::<StompTopicBus>()
-                    .expect("StompTopicBus missing from DI root; AxumPlugin should register it")
-                    .broker(),
-            ),
+            broker: Arc::clone(bus.registry()),
             runtime: runtime.clone(),
             config,
-        }
+        })
     }
 
     async fn serve(
@@ -591,7 +595,7 @@ impl Stomp {
         // by the caller (`STOMP handler failed`), so internal wiring never crosses the wire.
         let body = StompBody {
             content_type: Some("text/plain".to_owned()),
-            bytes: bytes::Bytes::from_static(error.public_message().as_bytes()),
+            bytes: bytes::Bytes::copy_from_slice(error.public_message().as_bytes()),
         };
         let extra_headers =
             reply.correlation_headers(&[(MESSAGE_ERROR_HEADER.to_owned(), "1".to_owned())]);
@@ -655,7 +659,7 @@ where
     E: std::fmt::Display,
 {
     fn into_outcome(self) -> Result<StompOutcome, WsDispatchError> {
-        self.map_err(|e| WsDispatchError::Encode(e.to_string()))?
+        self.map_err(|e| WsDispatchError::Application(e.to_string()))?
             .into_outcome()
     }
 }
