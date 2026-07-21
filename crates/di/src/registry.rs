@@ -314,6 +314,12 @@ impl ComponentRegistry {
                         crate::container::select_single_provider(candidates)
                     };
 
+                    if selected.is_none() && !candidates.is_empty() {
+                        return Err(Error::AmbiguousProvider(
+                            (dependency.ty.type_name)().to_string(),
+                        ));
+                    }
+
                     selected
                         .and_then(|provider| by_type.get(&provider.concrete_ty.type_id).copied())
                 });
