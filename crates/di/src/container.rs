@@ -36,6 +36,8 @@ pub struct ScopeRegistry {
     providers_by_trait: HashMap<TypeId, Vec<ProviderDescriptor>>,
     /// Global per-trait provider ordinals, keyed by concrete type.
     provider_order: HashMap<TypeId, HashMap<TypeId, usize>>,
+    /// Providers whose concrete component is transient, indexed by provided trait.
+    transient_providers_by_trait: HashMap<TypeId, Vec<ProviderDescriptor>>,
 }
 
 impl ScopeRegistry {
@@ -43,10 +45,26 @@ impl ScopeRegistry {
         transient: HashMap<TypeId, ComponentDescriptor>,
         factory_backed: HashMap<TypeId, ComponentDescriptor>,
         providers: Vec<ProviderDescriptor>,
-        provider_order: HashMap<TypeId, HashMap<TypeId, usize>>,
+        mut provider_order: HashMap<TypeId, HashMap<TypeId, usize>>,
     ) -> Self {
         let mut providers_by_concrete: HashMap<TypeId, Vec<ProviderDescriptor>> = HashMap::new();
         let mut providers_by_trait: HashMap<TypeId, Vec<ProviderDescriptor>> = HashMap::new();
+        let mut transient_providers_by_trait: HashMap<TypeId, Vec<ProviderDescriptor>> =
+            HashMap::new();
+
+        // Complete the order plan for any provider missing an ordinal, so the
+        // per-request lookup path never has to assert on data supplied through
+        // this public constructor. Missing entries sort after planned ones, in
+        // registration order.
+        for provider in &providers {
+            let ordinals = provider_order.entry(provider.trait_ty.type_id).or_default();
+
+            if !ordinals.contains_key(&provider.concrete_ty.type_id) {
+                let next = ordinals.values().max().map_or(0, |max| max + 1);
+
+                ordinals.insert(provider.concrete_ty.type_id, next);
+            }
+        }
 
         for provider in &providers {
             providers_by_concrete
@@ -57,6 +75,13 @@ impl ScopeRegistry {
                 .entry(provider.trait_ty.type_id)
                 .or_default()
                 .push(*provider);
+
+            if transient.contains_key(&provider.concrete_ty.type_id) {
+                transient_providers_by_trait
+                    .entry(provider.trait_ty.type_id)
+                    .or_default()
+                    .push(*provider);
+            }
         }
 
         Self {
@@ -66,6 +91,7 @@ impl ScopeRegistry {
             providers,
             providers_by_concrete,
             providers_by_trait,
+            transient_providers_by_trait,
         }
     }
 
@@ -88,20 +114,16 @@ impl ScopeRegistry {
     }
 
     pub(crate) fn single_provider(&self, trait_id: TypeId) -> Option<ProviderDescriptor> {
-        let providers = self.providers_for_trait(trait_id);
+        select_single_provider(self.providers_for_trait(trait_id))
+    }
 
-        if providers.len() == 1 {
-            return providers.first().copied();
-        }
-
-        let mut primaries = providers.iter().filter(|provider| provider.primary);
-        let primary = primaries.next().copied()?;
-
-        if primaries.next().is_some() {
-            return None;
-        }
-
-        Some(primary)
+    /// Transient-backed providers of a trait, precomputed at registry build so
+    /// collection resolution does not probe the transient map per provider.
+    pub(crate) fn transient_providers_for(&self, trait_id: TypeId) -> &[ProviderDescriptor] {
+        self.transient_providers_by_trait
+            .get(&trait_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
     }
 
     pub(crate) fn qualified_provider(
@@ -130,6 +152,27 @@ impl ScopeRegistry {
     pub(crate) fn factory_backed(&self, target: TypeId) -> Option<ComponentDescriptor> {
         self.factory_backed.get(&target).copied()
     }
+}
+
+/// Selects the single provider for an unqualified `Arc<dyn Trait>` dependency:
+/// the sole entry, or the unique primary one. Returns `None` when zero or
+/// ambiguous. Shared by runtime resolution and registry validation so both
+/// always agree on which provider a dependency selects.
+pub(crate) fn select_single_provider(
+    providers: &[ProviderDescriptor],
+) -> Option<ProviderDescriptor> {
+    if providers.len() == 1 {
+        return providers.first().copied();
+    }
+
+    let mut primaries = providers.iter().filter(|provider| provider.primary);
+    let primary = primaries.next().copied()?;
+
+    if primaries.next().is_some() {
+        return None;
+    }
+
+    Some(primary)
 }
 
 /// Cloneable weak attachment point for the scope currently under construction.
@@ -197,10 +240,13 @@ impl ScopeResolverSlot {
 /// Constructs a fresh `Transient` instance whose `Injectable::Target` is `H`, if
 /// one is registered. A transient is rebuilt on every resolution and never stored,
 /// so it is constructed in a throwaway context parented to `parent` (its
-/// dependencies — singletons in v1 — resolve up the chain).
+/// dependencies — singletons in v1 — resolve up the chain). `slot` is the capture
+/// slot of the scope on whose behalf the transient is being built, so its
+/// `Deferred`/`Lazy`/`Fresh` fields hydrate with that scope.
 async fn construct_transient_boxed(
     registry: &Arc<ScopeRegistry>,
     parent: Option<Arc<ScopeContainer>>,
+    slot: ScopeResolverSlot,
     descriptor: ComponentDescriptor,
 ) -> crate::Result<BoxedComponent> {
     let factory = descriptor
@@ -212,10 +258,6 @@ async fn construct_transient_boxed(
         .map(|p| p.resolvers().clone())
         .unwrap_or_default();
 
-    let slot = parent
-        .as_ref()
-        .map(|container| container.slot.clone())
-        .unwrap_or_default();
     let mut cx = ComponentConstructionContext::new_with_slot(
         &Transient,
         parent,
@@ -253,12 +295,13 @@ pub(crate) async fn construct_fresh_boxed(
 pub(crate) async fn construct_transient<H: Injectable>(
     registry: &Arc<ScopeRegistry>,
     parent: Option<Arc<ScopeContainer>>,
+    slot: ScopeResolverSlot,
 ) -> crate::Result<Option<H>> {
     let target = TypeId::of::<H::Target>();
     let Some(descriptor) = registry.transient(target) else {
         return Ok(None);
     };
-    let boxed = construct_transient_boxed(registry, parent, descriptor).await?;
+    let boxed = construct_transient_boxed(registry, parent, slot, descriptor).await?;
 
     Ok(crate::descriptors::component::from_boxed::<H>(&boxed))
 }
@@ -266,15 +309,43 @@ pub(crate) async fn construct_transient<H: Injectable>(
 pub(crate) async fn construct_transient_provider<H: Injectable>(
     registry: &Arc<ScopeRegistry>,
     parent: Option<Arc<ScopeContainer>>,
+    slot: ScopeResolverSlot,
     provider: ProviderDescriptor,
 ) -> crate::Result<Option<H>> {
     let Some(descriptor) = registry.transient(provider.concrete_ty.type_id) else {
         return Ok(None);
     };
-    let concrete = construct_transient_boxed(registry, parent, descriptor).await?;
+    let concrete = construct_transient_boxed(registry, parent, slot, descriptor).await?;
     let erased = (provider.erase)(&concrete);
 
     Ok(crate::descriptors::component::from_boxed::<H>(&erased))
+}
+
+/// Resolves the selected single provider of `H::Target` as a fresh transient,
+/// when the provider selected for this dependency is transient-backed. Returns
+/// `Ok(None)` when there is no such provider or it is scope-cached, so callers
+/// fall through to the built-store lookup. Shared by every single-provider
+/// resolution path so all injection shapes agree.
+pub(crate) async fn construct_selected_transient_provider<H: Injectable>(
+    registry: &Arc<ScopeRegistry>,
+    parent: Option<Arc<ScopeContainer>>,
+    slot: ScopeResolverSlot,
+    qualifier: Option<&str>,
+) -> crate::Result<Option<H>> {
+    let target = TypeId::of::<H::Target>();
+    let provider = match qualifier {
+        Some(qualifier) => registry.qualified_provider(target, qualifier),
+        None => registry.single_provider(target),
+    };
+    let Some(provider) = provider else {
+        return Ok(None);
+    };
+
+    if registry.transient(provider.concrete_ty.type_id).is_none() {
+        return Ok(None);
+    }
+
+    construct_transient_provider::<H>(registry, parent, slot, provider).await
 }
 
 /// One scope's constructed instances, layered over an optional parent scope.
@@ -490,27 +561,22 @@ impl ScopeContainer {
     /// Resolves `H` through this scope then each parent, or — if `H::Target` is a
     /// `Transient` — constructs a fresh instance.
     pub async fn resolve<H: Injectable>(self: &Arc<Self>) -> crate::Result<Option<H>> {
-        let target = TypeId::of::<H::Target>();
-
-        if let Some(provider) = self.registry.single_provider(target)
-            && self
-                .registry
-                .transient(provider.concrete_ty.type_id)
-                .is_some()
+        if let Some(handle) = construct_selected_transient_provider::<H>(
+            &self.registry,
+            Some(Arc::clone(self)),
+            self.slot.clone(),
+            None,
+        )
+        .await?
         {
-            return construct_transient_provider::<H>(
-                &self.registry,
-                Some(Arc::clone(self)),
-                provider,
-            )
-            .await;
+            return Ok(Some(handle));
         }
 
         if let Some(handle) = self.resolve_built::<H>() {
             return Ok(Some(handle));
         }
 
-        construct_transient::<H>(&self.registry, Some(Arc::clone(self))).await
+        construct_transient::<H>(&self.registry, Some(Arc::clone(self)), self.slot.clone()).await
     }
 
     /// Resolves a qualifier-selected trait provider from this scope.
@@ -519,20 +585,15 @@ impl ScopeContainer {
         self: &Arc<Self>,
         qualifier: &str,
     ) -> crate::Result<Option<H>> {
-        let target = TypeId::of::<H::Target>();
-
-        if let Some(provider) = self.registry.qualified_provider(target, qualifier)
-            && self
-                .registry
-                .transient(provider.concrete_ty.type_id)
-                .is_some()
+        if let Some(handle) = construct_selected_transient_provider::<H>(
+            &self.registry,
+            Some(Arc::clone(self)),
+            self.slot.clone(),
+            Some(qualifier),
+        )
+        .await?
         {
-            return construct_transient_provider::<H>(
-                &self.registry,
-                Some(Arc::clone(self)),
-                provider,
-            )
-            .await;
+            return Ok(Some(handle));
         }
 
         Ok(self.resolve_qualified_built::<H>(qualifier))
@@ -580,15 +641,14 @@ impl ScopeContainer {
             .resolve_qualified_built::<H>(qualifier)
     }
 
-    /// Every provider of the trait `H::Target` across this scope and its parents.
+    /// Every provider of the trait `H::Target` across this scope and its parents,
+    /// unsorted. Callers merging transient providers sort the combined list once.
     pub(crate) fn collect_all_built<H: Injectable>(&self) -> Vec<(usize, H)> {
         let mut all = self.store.collect_all_local::<H>();
 
         if let Some(parent) = &self.parent {
             all.extend(parent.collect_all_built::<H>());
         }
-
-        all.sort_by_key(|(ordinal, _)| *ordinal);
 
         all
     }
@@ -646,6 +706,12 @@ pub fn topological_sort<'a>(
             .push(provider.concrete_ty.type_id);
     }
 
+    // Only concretes taking part in this sort can gate readiness: transient
+    // providers are constructed on demand at resolution time, and providers of
+    // other scopes were already built (or resolve through the parent chain), so
+    // waiting for either would wedge the sort on ids that never become built.
+    let sortable: HashSet<TypeId> = components.iter().map(|c| c.ty.type_id).collect();
+
     let mut result: Vec<&'a ComponentDescriptor> = Vec::new();
     let mut remaining: Vec<&'a ComponentDescriptor> = components.iter().collect();
 
@@ -672,6 +738,7 @@ pub fn topological_sort<'a>(
                         dep.cardinality,
                         dep.ty.type_id,
                         &provider_concretes,
+                        &sortable,
                         &is_built,
                     )
                 });
@@ -704,16 +771,21 @@ pub fn topological_sort<'a>(
 }
 
 /// Whether a dependency's predecessors are all built. A trait edge waits for
-/// every provider of that trait; a single concrete edge waits for that concrete;
+/// every provider of that trait *that participates in this scope's build*;
+/// transient and other-scope providers are resolved on demand and impose no
+/// build-ordering constraint. A single concrete edge waits for that concrete;
 /// a multi-valued edge with no providers is trivially ready (empty is valid).
 fn dep_ready(
     cardinality: Cardinality,
     dep_type_id: TypeId,
     provider_concretes: &HashMap<TypeId, Vec<TypeId>>,
+    sortable: &HashSet<TypeId>,
     is_built: &impl Fn(TypeId) -> bool,
 ) -> bool {
     if let Some(concretes) = provider_concretes.get(&dep_type_id) {
-        return concretes.iter().all(|id| is_built(*id));
+        return concretes
+            .iter()
+            .all(|id| !sortable.contains(id) || is_built(*id));
     }
 
     match cardinality {

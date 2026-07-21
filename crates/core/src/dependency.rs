@@ -30,6 +30,8 @@ pub enum ResolutionMode {
     Eager,
     /// Hydrate a weak dependency handle after its scope finishes construction.
     Deferred,
+    /// Resolve through a scope-capturing handle on first access, then cache strongly.
+    Lazy,
     /// Re-run the target component factory without using its declared-scope cache.
     Fresh,
 }

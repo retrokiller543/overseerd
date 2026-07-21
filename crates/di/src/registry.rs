@@ -245,7 +245,7 @@ impl ComponentRegistry {
                 .filter(|dependency| dependency.resolution == ResolutionMode::Deferred)
             {
                 let target = by_type.get(&dependency.ty.type_id).copied().or_else(|| {
-                    let matching: Vec<_> = self
+                    let matching: Vec<ProviderDescriptor> = self
                         .providers
                         .iter()
                         .filter(|provider| provider.trait_ty.type_id == dependency.ty.type_id)
@@ -254,11 +254,14 @@ impl ComponentRegistry {
                                 .qualifier
                                 .is_none_or(|qualifier| provider.qualifier == qualifier)
                         })
+                        .copied()
                         .collect();
-                    let selected = if dependency.qualifier.is_some() || matching.len() == 1 {
+                    // Use the same selection rule runtime resolution uses, so the
+                    // validated target is definitionally the hydrated target.
+                    let selected = if dependency.qualifier.is_some() {
                         matching.first().copied()
                     } else {
-                        matching.iter().find(|provider| provider.primary).copied()
+                        crate::container::select_single_provider(&matching)
                     };
 
                     selected
@@ -301,6 +304,22 @@ impl ComponentRegistry {
                 let targets = self.fresh_targets(&dependency, &by_type);
 
                 for target in targets {
+                    // The consumer retains a fresh instance permanently, so the
+                    // target's own scope must be visible from the consumer's scope —
+                    // the same lifetime rule an eager edge follows. Collection shapes
+                    // skip inaccessible providers at runtime, so only validate the
+                    // accessible subset.
+                    if !scope_allows(consumer.scope, target.scope) {
+                        if dependency.cardinality == Cardinality::One {
+                            return Err(Error::InvalidFreshDependency {
+                                component: consumer.name.to_string(),
+                                dependency: target.name.to_string(),
+                            });
+                        }
+
+                        continue;
+                    }
+
                     if target.effective_factory()?.is_none() {
                         return Err(Error::UnsupportedFreshFactory(target.name.to_string()));
                     }
@@ -620,6 +639,74 @@ mod tests {
         config: false,
         resolution: ResolutionMode::Deferred,
     }];
+
+    static SINGLETON_FRESH_REQUEST: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "RequestFresh",
+        ty: TypeDescriptor::of::<u128>("RequestFresh"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+        config: false,
+        resolution: ResolutionMode::Fresh,
+    }];
+
+    #[test]
+    fn validate_rejects_fresh_target_with_shorter_lived_scope() {
+        let request = scoped!(
+            "RequestFresh",
+            &Request,
+            &[],
+            TypeDescriptor::of::<u128>("RequestFresh"),
+        );
+        let singleton = scoped!(
+            "FreshConsumer",
+            &Singleton,
+            &SINGLETON_FRESH_REQUEST,
+            TypeDescriptor::of::<i8>("FreshConsumer"),
+        );
+        let registry = ComponentRegistry {
+            components: vec![singleton, request],
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            registry.validate(),
+            Err(Error::InvalidFreshDependency { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_allows_lazy_dependency_on_transient_target() {
+        static SINGLETON_LAZY_TRANSIENT: [DependencyDescriptor; 1] = [DependencyDescriptor {
+            name: "TransientLazy",
+            ty: TypeDescriptor::of::<u32>("TransientLazy"),
+            cardinality: Cardinality::One,
+            optional: false,
+            dynamic: false,
+            qualifier: None,
+            config: false,
+            resolution: ResolutionMode::Lazy,
+        }];
+        let transient = scoped!(
+            "TransientLazy",
+            &Transient,
+            &[],
+            TypeDescriptor::of::<u32>("TransientLazy"),
+        );
+        let singleton = scoped!(
+            "LazyConsumer",
+            &Singleton,
+            &SINGLETON_LAZY_TRANSIENT,
+            TypeDescriptor::of::<u8>("LazyConsumer"),
+        );
+        let registry = ComponentRegistry {
+            components: vec![singleton, transient],
+            ..Default::default()
+        };
+
+        assert!(registry.validate().is_ok());
+    }
 
     #[test]
     fn validate_rejects_singleton_depending_on_request() {

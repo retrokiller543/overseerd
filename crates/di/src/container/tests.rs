@@ -122,6 +122,66 @@ fn provider_lookup_uses_the_prebuilt_concrete_index() {
     );
 }
 
+fn test_provider(name: &'static str, qualifier: &'static str, primary: bool) -> ProviderDescriptor {
+    ProviderDescriptor {
+        trait_ty: TypeDescriptor::of::<dyn Send>("dyn Send"),
+        concrete_ty: TypeDescriptor::of::<u8>(name),
+        qualifier,
+        primary,
+        priority: 0,
+        ordering: &[],
+        erase: erase_unreachable,
+    }
+}
+
+#[test]
+fn single_provider_selection_is_shared_and_ambiguity_aware() {
+    let sole = [test_provider("Sole", "sole", false)];
+
+    assert_eq!(
+        select_single_provider(&sole).map(|p| p.qualifier),
+        Some("sole")
+    );
+
+    let two_plain = [
+        test_provider("First", "first", false),
+        test_provider("Second", "second", false),
+    ];
+
+    assert!(select_single_provider(&two_plain).is_none());
+
+    let unique_primary = [
+        test_provider("First", "first", true),
+        test_provider("Second", "second", false),
+    ];
+
+    assert_eq!(
+        select_single_provider(&unique_primary).map(|p| p.qualifier),
+        Some("first")
+    );
+
+    let two_primaries = [
+        test_provider("First", "first", true),
+        test_provider("Second", "second", true),
+    ];
+
+    assert!(select_single_provider(&two_primaries).is_none());
+}
+
+#[test]
+fn registry_construction_completes_missing_provider_ordinals() {
+    let provider = test_provider("Unplanned", "unplanned", false);
+    let registry = ScopeRegistry::new(
+        HashMap::new(),
+        HashMap::new(),
+        vec![provider],
+        HashMap::new(),
+    );
+
+    // Previously this expect() panicked for providers missing from the plan.
+    assert_eq!(registry.provider_ordinal(&provider), 0);
+}
+
 #[tokio::test]
 async fn component_source_does_not_keep_a_scope_alive() {
     let root = root().await;
