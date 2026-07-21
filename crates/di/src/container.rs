@@ -895,6 +895,7 @@ impl WaitExpansion<'_> {
         match select_provider_for(dep, &local) {
             Some(provider) => self.provider_waits(provider.concrete_ty.type_id),
             None if local.is_empty() => HashSet::new(),
+            None if dep.qualifier.is_some() => HashSet::new(),
             // Ambiguous local set: the runtime fallback to the parent is only
             // deterministic once every local provider is registered.
             None => {
@@ -1031,6 +1032,7 @@ fn dep_ready(
 
             match select_provider_for(dep, &local) {
                 Some(provider) => provider_waits.get(&provider.concrete_ty.type_id),
+                None if dep.qualifier.is_some() => return true,
                 // An ambiguous local set falls back to the parent provider at
                 // runtime — but only once the complete set is registered, since
                 // a partially registered set resolves as temporarily sole. Wait
