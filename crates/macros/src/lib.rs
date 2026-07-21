@@ -76,6 +76,11 @@ use proc_macro::TokenStream;
 /// - `default_factory = false` — emit no factory (a **manual** instance, provided
 ///   via `AppBuilder::with_component`).
 /// - `factory_slice = Ident` — override the generated `{Type}Factories` slice name.
+/// - `priority = <const i64 expression>` — collection-provider order among providers whose
+///   `before` / `after` constraints are satisfied; lower values run first. Constants and
+///   associated constants are accepted.
+/// - `before` / `after` — relative ordering constraints for traits shared by both providers;
+///   use `as dyn Trait` to require and restrict the relationship to a specific trait.
 ///
 /// ```ignore
 /// #[component]                          // id = "dbpool", name = "DbPool"
@@ -248,11 +253,15 @@ pub fn daemon(input: TokenStream) -> TokenStream {
 /// Marks a trait as injectable as `Arc<dyn Trait>` (providers register with
 /// `#[component(provide = dyn Trait)]`).
 ///
+/// On native targets the trait also extends
+/// `RuntimeDescriptor<ComponentDescriptor>`, allowing a provider's component
+/// descriptor to be read through the trait object. Wasm targets retain the
+/// original trait because the DI descriptor types are native-only.
+///
 /// Under the `di-check` feature it emits `impl Provide<dyn Trait> for Wiring` so
 /// a single `Arc<dyn Trait>` dependency type-checks; the trait must be `Send +
-/// Sync` (state it as a supertrait) and object-safe. Without `di-check` the trait
-/// passes through unchanged.
+/// Sync` (state it as a supertrait) and object-safe.
 #[proc_macro_attribute]
-pub fn injectable(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    overseerd_macros_core::injectable(item.into()).into()
+pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
+    overseerd_macros_core::injectable(attr.into(), item.into()).into()
 }

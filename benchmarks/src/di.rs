@@ -134,6 +134,8 @@ where
         concrete_ty: TypeDescriptor::of::<T>(T::NAME),
         qualifier: "bench",
         primary: false,
+        priority: 0,
+        ordering: &[],
         erase: erase::<T>,
     }
 }
@@ -219,7 +221,12 @@ pub async fn build_graph(entries: &[Entry], width: usize, layers: usize) -> Arc<
     );
     assert!(layers >= 1 && layers <= LAYER_SCOPES.len(), "1..=8 layers");
 
-    let registry = Arc::new(ScopeRegistry::new(HashMap::new(), Vec::new()));
+    let registry = Arc::new(ScopeRegistry::new(
+        HashMap::new(),
+        HashMap::new(),
+        Vec::new(),
+        HashMap::new(),
+    ));
 
     let root = &entries[0..width];
     let root_descs: Vec<ComponentDescriptor> = root.iter().map(|entry| entry.desc).collect();
@@ -263,7 +270,12 @@ pub async fn build_graph(entries: &[Entry], width: usize, layers: usize) -> Arc<
 pub async fn build_with_providers(entries: &[Entry], count: usize) -> Arc<ScopeContainer> {
     let slice = &entries[0..count];
     let providers: Vec<ProviderDescriptor> = slice.iter().map(|entry| entry.provider).collect();
-    let registry = Arc::new(ScopeRegistry::new(HashMap::new(), providers));
+    let registry = Arc::new(ScopeRegistry::new(
+        HashMap::new(),
+        HashMap::new(),
+        providers,
+        HashMap::new(),
+    ));
 
     let seeds: Vec<BoxedComponent> = slice.iter().map(|entry| (entry.make)()).collect();
 

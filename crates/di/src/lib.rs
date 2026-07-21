@@ -15,6 +15,7 @@ pub mod construct;
 pub mod container;
 pub mod descriptors;
 pub mod error;
+mod primitives;
 pub mod registry;
 pub mod root;
 mod seeded;
@@ -31,10 +32,11 @@ pub use descriptors::{
     BoxedComponent, COMPONENTS, Cardinality, Component, ComponentConstructionContext,
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor, Dep,
     DependencyDescriptor, Dynamic, Injectable, Live, LiveRef, PROVIDERS, Provide,
-    ProviderDescriptor, Scope, ServiceComponent, Singleton, StaticScope, Transient, TypeDescriptor,
-    Wired, Wiring,
+    ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection, ResolutionMode, Scope,
+    ServiceComponent, Singleton, StaticScope, Transient, TypeDescriptor, Wired, Wiring,
 };
 pub use error::{Error, Result};
+pub use primitives::{Deferred, Fresh, FreshFromContainer, Lazy};
 pub use registry::ComponentRegistry;
 pub use root::{ROOT_RESOLVER_ID, ROOT_RESOLVER_NAME, RootResolver, root_resolver_descriptor};
 

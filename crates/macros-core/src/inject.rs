@@ -369,6 +369,8 @@ fn plan_field(field: &mut Field, paths: &Paths) -> FieldPlan {
     let injectable = paths.core("Injectable");
     let type_descriptor = paths.core("TypeDescriptor");
     let dependency_descriptor = paths.core("DependencyDescriptor");
+    let resolution_mode = paths.core("ResolutionMode");
+    let from_container = paths.core("FromContainer");
     let config_store = paths.core("ConfigStore");
     let resolver_ctx_ext = paths.core("ResolverCtxExt");
 
@@ -392,6 +394,7 @@ fn plan_field(field: &mut Field, paths: &Paths) -> FieldPlan {
                 dynamic: #dynamic,
                 qualifier: #qualifier,
                 config: false,
+                resolution: #resolution_mode::Eager,
             }
         }
     };
@@ -399,6 +402,68 @@ fn plan_field(field: &mut Field, paths: &Paths) -> FieldPlan {
     let none = quote!(::core::option::Option::None);
 
     let ty = &field.ty;
+
+    if let Some(handle) = attr::fresh_inner(ty) {
+        let qualifier = match &field_qualifier {
+            Some(qualifier) => quote!(::core::option::Option::Some(#qualifier)),
+            None => none.clone(),
+        };
+        let dependency = quote!({
+            let mut dependency = <#ty as #from_container>::dependency();
+            dependency.qualifier = #qualifier;
+            dependency
+        });
+
+        return FieldPlan {
+            value: quote!(cx.fresh::<#handle>(#qualifier)),
+            dependency: Some(dependency),
+            check: None,
+            wired: None,
+        };
+    }
+
+    if let Some(target) = attr::deferred_inner(ty) {
+        let qualifier = match &field_qualifier {
+            Some(qualifier) => quote!(::core::option::Option::Some(#qualifier)),
+            None => none.clone(),
+        };
+        let dependency = quote!({
+            let mut dependency = <#ty as #from_container>::dependency();
+            dependency.qualifier = #qualifier;
+            dependency
+        });
+
+        return FieldPlan {
+            value: quote!(cx.deferred::<#target>(#qualifier)),
+            dependency: Some(dependency),
+            check: None,
+            wired: None,
+        };
+    }
+
+    if let Some(handle) = attr::lazy_inner(ty) {
+        let dependency = match &field_qualifier {
+            Some(qualifier) => quote!({
+                let mut dependency = <#ty as #from_container>::dependency();
+                dependency.qualifier = ::core::option::Option::Some(#qualifier);
+                dependency
+            }),
+            None => quote!(<#ty as #from_container>::dependency()),
+        };
+        let value = match (&field_qualifier, attr::arc_inner_type(&handle)) {
+            (Some(qualifier), Ok(target)) => {
+                quote!(cx.lazy_qualified::<#target>(#qualifier))
+            }
+            _ => quote!(<#ty as #from_container>::from_container(cx).await?),
+        };
+
+        return FieldPlan {
+            value,
+            dependency: Some(dependency),
+            check: None,
+            wired: None,
+        };
+    }
 
     // A `#[config]` / `#[config("path")]` field is a config binding injected as
     // `Cfg<T>`, keyed by property path. Config edges are validated against the
@@ -441,6 +506,7 @@ fn plan_field(field: &mut Field, paths: &Paths) -> FieldPlan {
                 dynamic: false,
                 qualifier: #qualifier,
                 config: true,
+                resolution: #resolution_mode::Eager,
             }
         };
 
@@ -464,7 +530,7 @@ fn plan_field(field: &mut Field, paths: &Paths) -> FieldPlan {
         );
 
         return FieldPlan {
-            value: quote!(cx.resolve_all::<#item>().await),
+            value: quote!(cx.resolve_all::<#item>().await?),
             dependency: Some(dependency),
             check: None,
             wired: None,
@@ -481,7 +547,7 @@ fn plan_field(field: &mut Field, paths: &Paths) -> FieldPlan {
         );
 
         return FieldPlan {
-            value: quote!(cx.resolve_keyed::<#value>().await),
+            value: quote!(cx.resolve_keyed::<#value>().await?),
             dependency: Some(dependency),
             check: None,
             wired: None,
@@ -507,10 +573,10 @@ fn plan_field(field: &mut Field, paths: &Paths) -> FieldPlan {
 
     let (resolved, qualifier) = match &field_qualifier {
         Some(q) => (
-            quote!(cx.resolve_qualified::<#handle>(#q).await),
+            quote!(cx.resolve_qualified::<#handle>(#q).await?),
             quote!(::core::option::Option::Some(#q)),
         ),
-        None => (quote!(cx.resolve::<#handle>().await), none),
+        None => (quote!(cx.resolve::<#handle>().await?), none),
     };
     let value = match (optional, dynamic) {
         (false, false) => quote!(#resolved.ok_or(#error::MissingComponent(#dep_name))?),

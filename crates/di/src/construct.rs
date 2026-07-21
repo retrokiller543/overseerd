@@ -18,7 +18,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use overseerd_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
+use overseerd_core::{Cardinality, DependencyDescriptor, ResolutionMode, TypeDescriptor};
 
 use crate::descriptors::{
     BoxedComponent, Component, ComponentConstructionContext, Dep, Injectable,
@@ -47,6 +47,7 @@ pub fn dependency_of<T: ?Sized + 'static>(
         dynamic: false,
         qualifier: None,
         config,
+        resolution: ResolutionMode::Eager,
     }
 }
 
@@ -79,7 +80,7 @@ where
 
     async fn from_container(cx: &ComponentConstructionContext) -> crate::Result<Self> {
         cx.resolve::<Arc<T>>()
-            .await
+            .await?
             .ok_or(Error::MissingComponent(short_name::<T>()))
     }
 }
@@ -98,7 +99,7 @@ where
 
     async fn from_container(cx: &ComponentConstructionContext) -> crate::Result<Self> {
         cx.resolve::<Dep<T>>()
-            .await
+            .await?
             .ok_or(Error::MissingComponent(short_name::<T>()))
     }
 }
@@ -118,7 +119,7 @@ where
 
     async fn from_container(cx: &ComponentConstructionContext) -> crate::Result<Self> {
         cx.resolve::<H>()
-            .await
+            .await?
             .ok_or(Error::MissingComponent(short_name::<H>()))
     }
 }
@@ -132,7 +133,7 @@ where
     }
 
     async fn from_container(cx: &ComponentConstructionContext) -> crate::Result<Self> {
-        Ok(cx.resolve::<Arc<T>>().await)
+        cx.resolve::<Arc<T>>().await
     }
 }
 
@@ -145,7 +146,7 @@ where
     }
 
     async fn from_container(cx: &ComponentConstructionContext) -> crate::Result<Self> {
-        Ok(cx.resolve_all::<Arc<T>>().await)
+        cx.resolve_all::<Arc<T>>().await
     }
 }
 
@@ -158,7 +159,7 @@ where
     }
 
     async fn from_container(cx: &ComponentConstructionContext) -> crate::Result<Self> {
-        Ok(cx.resolve_keyed::<Arc<T>>().await)
+        cx.resolve_keyed::<Arc<T>>().await
     }
 }
 

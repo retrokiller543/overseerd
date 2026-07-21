@@ -29,6 +29,35 @@ pub enum Error {
     #[error("dependency cycle: no construction order for components: {0}")]
     DependencyCycle(String),
 
+    #[error("provider ordering target '{target}' for component '{component}' is not registered")]
+    MissingProviderOrderTarget { component: String, target: String },
+
+    #[error("provider ordering component '{component}' cannot target itself")]
+    SelfProviderOrder { component: String },
+
+    #[error(
+        "provider ordering component '{component}' does not provide restricted trait '{trait_name}'"
+    )]
+    ProviderOrderSourceTraitMismatch {
+        component: String,
+        trait_name: String,
+    },
+
+    #[error(
+        "provider ordering target '{target}' does not provide trait '{trait_name}' required by '{component}'"
+    )]
+    ProviderOrderTargetTraitMismatch {
+        component: String,
+        target: String,
+        trait_name: String,
+    },
+
+    #[error("provider ordering cycle for trait '{trait_name}': {components}")]
+    ProviderOrderCycle {
+        trait_name: String,
+        components: String,
+    },
+
     #[error("missing component: {0}")]
     MissingComponent(&'static str),
 
@@ -36,6 +65,18 @@ pub enum Error {
         "the root resolver is unavailable: the root container was never attached or has been dropped"
     )]
     RootUnavailable,
+
+    #[error("the captured scope is unavailable: it was not attached or has been dropped")]
+    ScopeUnavailable,
+
+    #[error("fresh construction is unsupported for factory-less component '{0}'")]
+    UnsupportedFreshFactory(String),
+
+    #[error("invalid fresh dependency for component '{component}': {dependency}")]
+    InvalidFreshDependency {
+        component: String,
+        dependency: String,
+    },
 
     #[error(
         "scope violation: component '{component}' ({component_scope}) depends on \

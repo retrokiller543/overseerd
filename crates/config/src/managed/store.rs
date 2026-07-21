@@ -54,7 +54,7 @@ impl ConfigStore {
 
     /// Records one bound value under its type and path.
     fn insert(&mut self, path: String, seed: BoxedComponent) {
-        let type_id = (seed.ty.type_id)();
+        let type_id = seed.ty.type_id;
 
         self.by_type.entry(type_id).or_default().insert(path, seed);
     }

@@ -13,10 +13,7 @@
 // Leaf vocabulary + resolver model.
 // ---------------------------------------------------------------------------
 #[cfg(not(target_family = "wasm"))]
-pub use overseerd_core::{
-    Cardinality, DependencyDescriptor, Descriptor, Resolver, ResolverCtx, ResolverCtxExt,
-    ResolverSet, Scope, StaticScope, TypeDescriptor, type_id_of,
-};
+pub use overseerd_core::*;
 
 /// Component lifetime scopes: the [`Scope`] trait a protocol's scope chain is built from,
 /// plus the marker types. A component selects one with `#[component(scope = Request)]`; a
@@ -40,8 +37,9 @@ pub mod scope {
 pub use overseerd_di::{
     BoxedComponent, COMPONENTS, Component, ComponentConstructionContext, ComponentContainer,
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor,
-    ComponentRegistry, ComponentSource, Dep, Dynamic, Factory, FactoryOutput, FromContainer,
-    Injectable, Live, LiveRef, PROVIDERS, Provide, ProviderDescriptor, RootResolver,
+    ComponentRegistry, ComponentSource, Deferred, Dep, Dynamic, Factory, FactoryOutput, Fresh,
+    FreshFromContainer, FromContainer, Injectable, Lazy, Live, LiveRef, PROVIDERS, Provide,
+    ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection, RootResolver,
     ScopeContainer, ServiceComponent, Wired, Wiring, dispatch_factory, factory_dependencies,
     from_boxed,
 };
@@ -345,9 +343,9 @@ pub mod prelude {
 
     #[cfg(not(target_family = "wasm"))]
     pub use crate::{
-        App, Cfg, Component, ConfigManager, ConfigProperties, Dep, Dir, DirKind,
-        DirectoriesManager, Injectable, Plugin, Protocol, ProtocolPlugin, Scope, Serve,
-        ServiceComponent,
+        App, Cfg, Component, ConfigManager, ConfigProperties, Deferred, Dep, Dir, DirKind,
+        DirectoriesManager, Fresh, FreshFromContainer, Injectable, Lazy, Plugin, Protocol,
+        ProtocolPlugin, RuntimeDescriptor, Scope, Serve, ServiceComponent,
     };
 }
 
@@ -360,6 +358,6 @@ mod tests {
         let td = TypeDescriptor::of::<u8>("byte");
 
         assert_eq!(td.name, "byte");
-        assert_eq!((td.type_id)(), (type_id_of::<u8>)());
+        assert_eq!(td.type_id, type_id_of::<u8>());
     }
 }

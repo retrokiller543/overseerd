@@ -11,6 +11,9 @@ pub trait Notifier: Send + Sync {
     fn channel(&self) -> &'static str;
 }
 
+#[injectable]
+pub trait Example: Send + Sync {}
+
 /// The default channel: `primary` wins a single `Arc<dyn Notifier>`. Its
 /// qualifier is inferred as the component id, `"email"`.
 #[component(provide = dyn Notifier, primary)]
@@ -23,7 +26,7 @@ impl Notifier for Email {
 }
 
 /// An explicit qualifier overrides the inferred id.
-#[component(provide = dyn Notifier, qualifier = "sms")]
+#[component(provide = dyn Notifier, qualifier = "sms", before = Push as dyn Notifier, after = Email as dyn Notifier)]
 pub struct Sms;
 
 impl Notifier for Sms {

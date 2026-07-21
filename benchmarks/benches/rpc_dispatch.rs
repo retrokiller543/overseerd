@@ -132,7 +132,12 @@ fn build_router(routes: usize) -> RpcRouter {
 }
 
 async fn empty_scope() -> Arc<ScopeContainer> {
-    let registry = Arc::new(ScopeRegistry::new(HashMap::new(), Vec::new()));
+    let registry = Arc::new(ScopeRegistry::new(
+        HashMap::new(),
+        HashMap::new(),
+        Vec::new(),
+        HashMap::new(),
+    ));
 
     ScopeContainer::build_root(&[], Vec::new(), ResolverSet::new(), registry)
         .await

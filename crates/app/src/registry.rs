@@ -60,7 +60,7 @@ impl AppRegistry {
     }
 
     /// The DI engine's view of this registry — the component/provider graph.
-    fn component_registry(&self) -> ComponentRegistry {
+    pub(crate) fn component_registry(&self) -> ComponentRegistry {
         ComponentRegistry {
             components: self.components.clone(),
             providers: self.providers.clone(),
@@ -92,14 +92,14 @@ impl AppRegistry {
 
         for binding in &self.config_bindings {
             bound
-                .entry((binding.ty.type_id)())
+                .entry(binding.ty.type_id)
                 .or_default()
                 .push(&binding.path);
         }
 
         for c in components {
             for dep in c.dependencies().iter().filter(|dep| dep.config) {
-                let dep_id = (dep.ty.type_id)();
+                let dep_id = dep.ty.type_id;
                 let paths = bound.get(&dep_id);
 
                 match dep.qualifier {
@@ -227,6 +227,7 @@ mod tests {
             dynamic: false,
             qualifier: None,
             config: true,
+            resolution: overseerd_core::ResolutionMode::Eager,
         }]
     }
 

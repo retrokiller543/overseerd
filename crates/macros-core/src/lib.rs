@@ -107,8 +107,13 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 /// `#[injectable]` expansion entry point.
-pub fn injectable(item: TokenStream) -> TokenStream {
-    let paths = Paths::overseerd();
+pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = match syn::parse2::<injectable::InjectableArgs>(attr) {
+        Ok(args) => args,
+
+        Err(e) => return e.into_compile_error(),
+    };
+    let paths = args.paths(Paths::overseerd());
 
     run::<ItemTrait, _>(item, |item| Ok(injectable::expand(item, &paths)))
 }

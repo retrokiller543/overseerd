@@ -171,10 +171,9 @@ impl ProtocolPlugin for AxumPlugin {
         if config_snapshot.request_timeout_ms > 0 {
             let timeout = std::time::Duration::from_millis(config_snapshot.request_timeout_ms);
             router = router.layer(middleware::from_fn(move |request, next: Next| async move {
-                match tokio::time::timeout(timeout, next.run(request)).await {
-                    Ok(response) => response,
-                    Err(_) => axum::http::StatusCode::REQUEST_TIMEOUT.into_response(),
-                }
+                tokio::time::timeout(timeout, next.run(request))
+                    .await
+                    .unwrap_or_else(|_| axum::http::StatusCode::REQUEST_TIMEOUT.into_response())
             }));
         }
 

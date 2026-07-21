@@ -22,7 +22,12 @@ impl Scope for TestScope {
 }
 
 fn registry() -> Arc<ScopeRegistry> {
-    Arc::new(ScopeRegistry::new(HashMap::new(), Vec::new()))
+    Arc::new(ScopeRegistry::new(
+        HashMap::new(),
+        HashMap::new(),
+        Vec::new(),
+        HashMap::new(),
+    ))
 }
 
 async fn root() -> Arc<ScopeContainer> {
@@ -86,16 +91,23 @@ fn provider_lookup_uses_the_prebuilt_concrete_index() {
     let concrete_ty = TypeDescriptor {
         name: "Counted",
         type_name: std::any::type_name::<u8>,
-        type_id: counted_concrete_id,
+        type_id: counted_concrete_id(),
     };
     let provider = ProviderDescriptor {
         trait_ty: TypeDescriptor::of::<dyn Send>("dyn Send"),
         concrete_ty,
         qualifier: "counted",
         primary: false,
+        priority: 0,
+        ordering: &[],
         erase: erase_unreachable,
     };
-    let registry = ScopeRegistry::new(HashMap::new(), vec![provider; PROVIDERS]);
+    let registry = ScopeRegistry::new(
+        HashMap::new(),
+        HashMap::new(),
+        vec![provider; PROVIDERS],
+        HashMap::new(),
+    );
 
     CONCRETE_ID_CALLS.store(0, Ordering::SeqCst);
 

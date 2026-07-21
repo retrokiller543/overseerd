@@ -5,7 +5,7 @@ use std::{
 };
 
 use overseerd_core::{
-    Cardinality, Resolver, ResolverCtx, ResolverSet, Scope, Singleton, Transient,
+    Cardinality, ResolutionMode, Resolver, ResolverCtx, ResolverSet, Scope, Singleton, Transient,
 };
 use tracing::{debug, error, info, instrument, trace};
 
@@ -26,31 +26,46 @@ pub struct ScopeRegistry {
     /// Transient components keyed by their concrete `TypeId`, for on-demand
     /// construction at resolution time. Transients are never cached.
     transient: HashMap<TypeId, ComponentDescriptor>,
+    factory_backed: HashMap<TypeId, ComponentDescriptor>,
     providers: Vec<ProviderDescriptor>,
     /// Provider descriptors indexed once by their concrete component. Scope builds
     /// consult only the entries for the component that just landed instead of scanning
     /// every provider registered in the application.
     providers_by_concrete: HashMap<TypeId, Vec<ProviderDescriptor>>,
+    /// Provider descriptors indexed by their provided trait.
+    providers_by_trait: HashMap<TypeId, Vec<ProviderDescriptor>>,
+    /// Global per-trait provider ordinals, keyed by concrete type.
+    provider_order: HashMap<TypeId, HashMap<TypeId, usize>>,
 }
 
 impl ScopeRegistry {
     pub fn new(
         transient: HashMap<TypeId, ComponentDescriptor>,
+        factory_backed: HashMap<TypeId, ComponentDescriptor>,
         providers: Vec<ProviderDescriptor>,
+        provider_order: HashMap<TypeId, HashMap<TypeId, usize>>,
     ) -> Self {
         let mut providers_by_concrete: HashMap<TypeId, Vec<ProviderDescriptor>> = HashMap::new();
+        let mut providers_by_trait: HashMap<TypeId, Vec<ProviderDescriptor>> = HashMap::new();
 
         for provider in &providers {
             providers_by_concrete
-                .entry((provider.concrete_ty.type_id)())
+                .entry(provider.concrete_ty.type_id)
+                .or_default()
+                .push(*provider);
+            providers_by_trait
+                .entry(provider.trait_ty.type_id)
                 .or_default()
                 .push(*provider);
         }
 
         Self {
+            provider_order,
             transient,
+            factory_backed,
             providers,
             providers_by_concrete,
+            providers_by_trait,
         }
     }
 
@@ -65,8 +80,75 @@ impl ScopeRegistry {
             .unwrap_or_default()
     }
 
+    pub(crate) fn providers_for_trait(&self, trait_id: TypeId) -> &[ProviderDescriptor] {
+        self.providers_by_trait
+            .get(&trait_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn single_provider(&self, trait_id: TypeId) -> Option<ProviderDescriptor> {
+        let providers = self.providers_for_trait(trait_id);
+
+        if providers.len() == 1 {
+            return providers.first().copied();
+        }
+
+        let mut primaries = providers.iter().filter(|provider| provider.primary);
+        let primary = primaries.next().copied()?;
+
+        if primaries.next().is_some() {
+            return None;
+        }
+
+        Some(primary)
+    }
+
+    pub(crate) fn qualified_provider(
+        &self,
+        trait_id: TypeId,
+        qualifier: &str,
+    ) -> Option<ProviderDescriptor> {
+        self.providers_for_trait(trait_id)
+            .iter()
+            .find(|provider| provider.qualifier == qualifier)
+            .copied()
+    }
+
+    pub(crate) fn provider_ordinal(&self, provider: &ProviderDescriptor) -> usize {
+        self.provider_order
+            .get(&provider.trait_ty.type_id)
+            .and_then(|order| order.get(&provider.concrete_ty.type_id))
+            .copied()
+            .expect("validated provider ordering contains every provider")
+    }
+
     pub(crate) fn transient(&self, target: TypeId) -> Option<ComponentDescriptor> {
         self.transient.get(&target).copied()
+    }
+
+    pub(crate) fn factory_backed(&self, target: TypeId) -> Option<ComponentDescriptor> {
+        self.factory_backed.get(&target).copied()
+    }
+}
+
+/// Cloneable weak attachment point for the scope currently under construction.
+#[derive(Clone, Default)]
+pub(crate) struct ScopeResolverSlot {
+    container: Arc<std::sync::Mutex<Weak<ScopeContainer>>>,
+}
+
+impl ScopeResolverSlot {
+    pub(crate) fn attach(&self, container: &Arc<ScopeContainer>) {
+        *self.container.lock().expect("scope resolver slot poisoned") = Arc::downgrade(container);
+    }
+
+    pub(crate) fn resolve(&self) -> crate::Result<Arc<ScopeContainer>> {
+        self.container
+            .lock()
+            .expect("scope resolver slot poisoned")
+            .upgrade()
+            .ok_or(Error::ScopeUnavailable)
     }
 }
 
@@ -74,31 +156,83 @@ impl ScopeRegistry {
 /// one is registered. A transient is rebuilt on every resolution and never stored,
 /// so it is constructed in a throwaway context parented to `parent` (its
 /// dependencies — singletons in v1 — resolve up the chain).
-pub(crate) async fn construct_transient<H: Injectable>(
+async fn construct_transient_boxed(
     registry: &Arc<ScopeRegistry>,
     parent: Option<Arc<ScopeContainer>>,
-) -> Option<H> {
-    let target = TypeId::of::<H::Target>();
-    let descriptor = registry.transient(target)?;
-    let factory = descriptor.effective_factory().ok().flatten()?;
+    descriptor: ComponentDescriptor,
+) -> crate::Result<BoxedComponent> {
+    let factory = descriptor
+        .effective_factory()?
+        .ok_or(Error::MissingComponent(descriptor.name))?;
 
     let externals = parent
         .as_ref()
         .map(|p| p.resolvers().clone())
         .unwrap_or_default();
 
-    let mut cx =
-        ComponentConstructionContext::new(&Transient, parent, Arc::clone(registry), externals);
+    let slot = parent
+        .as_ref()
+        .map(|container| container.slot.clone())
+        .unwrap_or_default();
+    let mut cx = ComponentConstructionContext::new_with_slot(
+        &Transient,
+        parent,
+        Arc::clone(registry),
+        externals,
+        slot,
+    );
 
-    match (factory.construct)(&mut cx).await {
-        Ok(boxed) => crate::descriptors::component::from_boxed::<H>(&boxed),
+    let boxed = (factory.construct)(&mut cx).await?;
 
-        Err(e) => {
-            error!(component = %descriptor.name, error = %e, "transient construction failed");
+    Ok(boxed)
+}
 
-            None
-        }
-    }
+pub(crate) async fn construct_fresh_boxed(
+    registry: &Arc<ScopeRegistry>,
+    parent: Arc<ScopeContainer>,
+    descriptor: ComponentDescriptor,
+) -> crate::Result<BoxedComponent> {
+    let factory = descriptor
+        .effective_factory()?
+        .ok_or_else(|| Error::UnsupportedFreshFactory(descriptor.name.to_string()))?;
+    let externals = parent.resolvers().clone();
+    let slot = parent.slot.clone();
+    let mut cx = ComponentConstructionContext::new_with_slot(
+        descriptor.scope,
+        Some(parent),
+        Arc::clone(registry),
+        externals,
+        slot,
+    );
+
+    (factory.construct)(&mut cx).await
+}
+
+pub(crate) async fn construct_transient<H: Injectable>(
+    registry: &Arc<ScopeRegistry>,
+    parent: Option<Arc<ScopeContainer>>,
+) -> crate::Result<Option<H>> {
+    let target = TypeId::of::<H::Target>();
+    let Some(descriptor) = registry.transient(target) else {
+        return Ok(None);
+    };
+    let boxed = construct_transient_boxed(registry, parent, descriptor).await?;
+
+    Ok(crate::descriptors::component::from_boxed::<H>(&boxed))
+}
+
+pub(crate) async fn construct_transient_provider<H: Injectable>(
+    registry: &Arc<ScopeRegistry>,
+    parent: Option<Arc<ScopeContainer>>,
+    provider: ProviderDescriptor,
+) -> crate::Result<Option<H>> {
+    let Some(descriptor) = registry.transient(provider.concrete_ty.type_id) else {
+        return Ok(None);
+    };
+    let concrete = construct_transient_boxed(registry, parent, descriptor).await?;
+    let erased = (provider.erase)(&concrete);
+
+    Ok(crate::descriptors::component::from_boxed::<H>(&erased))
 }
 
 /// One scope's constructed instances, layered over an optional parent scope.
@@ -117,6 +251,7 @@ pub struct ScopeContainer {
     parent: Option<Arc<ScopeContainer>>,
     registry: Arc<ScopeRegistry>,
     resolvers: ResolverSet,
+    slot: ScopeResolverSlot,
 }
 
 impl ResolverCtx for ScopeContainer {
@@ -161,6 +296,20 @@ impl ScopeContainer {
         &self.resolvers
     }
 
+    pub(crate) fn registry(&self) -> Arc<ScopeRegistry> {
+        Arc::clone(&self.registry)
+    }
+
+    pub(crate) fn can_access(&self, scope: &'static dyn Scope) -> bool {
+        if scope.is_transient() || self.scope.name() == scope.name() {
+            return true;
+        }
+
+        self.parent
+            .as_ref()
+            .is_some_and(|parent| parent.can_access(scope))
+    }
+
     /// Resolves all registered singleton components in dependency order into the
     /// root container.
     ///
@@ -178,7 +327,7 @@ impl ScopeContainer {
     ) -> crate::Result<Arc<ScopeContainer>> {
         debug!("resolving singleton dependency order");
 
-        let prebuilt: HashSet<TypeId> = instances.iter().map(|i| (i.ty.type_id)()).collect();
+        let prebuilt: HashSet<TypeId> = instances.iter().map(|i| i.ty.type_id).collect();
 
         let order = topological_sort(components, &prebuilt, registry.providers())?;
         let order: Vec<ComponentDescriptor> = order.into_iter().copied().collect();
@@ -226,10 +375,16 @@ impl ScopeContainer {
         seeds: Vec<BoxedComponent>,
         externals: ResolverSet,
     ) -> crate::Result<Arc<ScopeContainer>> {
-        let mut cx =
-            ComponentConstructionContext::new(scope, parent, Arc::clone(&registry), externals);
+        let slot = ScopeResolverSlot::default();
+        let mut cx = ComponentConstructionContext::new_with_slot(
+            scope,
+            parent,
+            Arc::clone(&registry),
+            externals,
+            slot.clone(),
+        );
         for seed in seeds {
-            let type_id = (seed.ty.type_id)();
+            let type_id = seed.ty.type_id;
 
             cx.insert(seed);
             register_providers_for(&mut cx, &registry, type_id);
@@ -248,7 +403,7 @@ impl ScopeContainer {
                 }
 
                 None => {
-                    if !cx.contains((descriptor.ty.type_id)()) {
+                    if !cx.contains(descriptor.ty.type_id) {
                         error!(component = %descriptor.name, "no instance provided for factory-less component");
                         return Err(Error::MissingComponent(descriptor.name));
                     }
@@ -257,25 +412,30 @@ impl ScopeContainer {
                 }
             }
 
-            register_providers_for(&mut cx, &registry, (descriptor.ty.type_id)());
+            register_providers_for(&mut cx, &registry, descriptor.ty.type_id);
         }
 
-        let (scope, store, parent, registry, externals) = cx.into_parts();
+        let parts = cx.into_parts();
+        let slot = parts.slot.clone();
 
-        Ok(Arc::new_cyclic(|weak| {
-            let mut resolvers = externals;
+        let container = Arc::new_cyclic(|weak| {
+            let mut resolvers = parts.resolvers;
             resolvers.insert(Arc::new(ComponentSource {
                 container: weak.clone(),
             }));
 
             ScopeContainer {
-                scope,
-                store,
-                parent,
-                registry,
+                scope: parts.scope,
+                store: parts.store,
+                parent: parts.parent,
+                registry: parts.registry,
                 resolvers,
+                slot: slot.clone(),
             }
-        }))
+        });
+        slot.attach(&container);
+
+        Ok(container)
     }
 
     /// Returns the registered component of type `T` as its handle (`Arc<T>` by
@@ -287,12 +447,53 @@ impl ScopeContainer {
 
     /// Resolves `H` through this scope then each parent, or — if `H::Target` is a
     /// `Transient` — constructs a fresh instance.
-    pub async fn resolve<H: Injectable>(self: &Arc<Self>) -> Option<H> {
+    pub async fn resolve<H: Injectable>(self: &Arc<Self>) -> crate::Result<Option<H>> {
+        let target = TypeId::of::<H::Target>();
+
+        if let Some(provider) = self.registry.single_provider(target)
+            && self
+                .registry
+                .transient(provider.concrete_ty.type_id)
+                .is_some()
+        {
+            return construct_transient_provider::<H>(
+                &self.registry,
+                Some(Arc::clone(self)),
+                provider,
+            )
+            .await;
+        }
+
         if let Some(handle) = self.resolve_built::<H>() {
-            return Some(handle);
+            return Ok(Some(handle));
         }
 
         construct_transient::<H>(&self.registry, Some(Arc::clone(self))).await
+    }
+
+    /// Resolves a qualifier-selected trait provider from this scope.
+    #[doc(hidden)]
+    pub async fn resolve_qualified<H: Injectable>(
+        self: &Arc<Self>,
+        qualifier: &str,
+    ) -> crate::Result<Option<H>> {
+        let target = TypeId::of::<H::Target>();
+
+        if let Some(provider) = self.registry.qualified_provider(target, qualifier)
+            && self
+                .registry
+                .transient(provider.concrete_ty.type_id)
+                .is_some()
+        {
+            return construct_transient_provider::<H>(
+                &self.registry,
+                Some(Arc::clone(self)),
+                provider,
+            )
+            .await;
+        }
+
+        Ok(self.resolve_qualified_built::<H>(qualifier))
     }
 
     /// Extracts any [`FromContainer`](crate::FromContainer) value from this scope — the
@@ -306,11 +507,12 @@ impl ScopeContainer {
     /// builds on this, so a handler can inject anything a constructor can — not just the
     /// `Injectable` subset that [`resolve`](Self::resolve) covers.
     pub async fn extract<H: crate::construct::FromContainer>(self: &Arc<Self>) -> crate::Result<H> {
-        let cx = ComponentConstructionContext::new(
+        let cx = ComponentConstructionContext::new_with_slot(
             &Transient,
             Some(Arc::clone(self)),
             Arc::clone(&self.registry),
             self.resolvers.clone(),
+            self.slot.clone(),
         );
 
         H::from_container(&cx).await
@@ -337,12 +539,14 @@ impl ScopeContainer {
     }
 
     /// Every provider of the trait `H::Target` across this scope and its parents.
-    pub(crate) fn collect_all_built<H: Injectable>(&self) -> Vec<H> {
+    pub(crate) fn collect_all_built<H: Injectable>(&self) -> Vec<(usize, H)> {
         let mut all = self.store.collect_all_local::<H>();
 
         if let Some(parent) = &self.parent {
             all.extend(parent.collect_all_built::<H>());
         }
+
+        all.sort_by_key(|(ordinal, _)| *ordinal);
 
         all
     }
@@ -373,7 +577,8 @@ fn register_providers_for(
     concrete_id: TypeId,
 ) {
     for provider in registry.providers_for(concrete_id) {
-        cx.register_provider(provider);
+        let ordinal = registry.provider_ordinal(provider);
+        cx.register_provider(provider, ordinal);
     }
 }
 
@@ -394,9 +599,9 @@ pub fn topological_sort<'a>(
 
     for provider in providers {
         provider_concretes
-            .entry((provider.trait_ty.type_id)())
+            .entry(provider.trait_ty.type_id)
             .or_default()
-            .push((provider.concrete_ty.type_id)());
+            .push(provider.concrete_ty.type_id);
     }
 
     let mut result: Vec<&'a ComponentDescriptor> = Vec::new();
@@ -407,18 +612,23 @@ pub fn topological_sort<'a>(
 
         remaining.retain(|descriptor| {
             let is_built = |type_id: TypeId| {
-                prebuilt.contains(&type_id) || result.iter().any(|r| (r.ty.type_id)() == type_id)
+                prebuilt.contains(&type_id) || result.iter().any(|r| r.ty.type_id == type_id)
             };
 
             let resolved = descriptor
                 .dependencies()
                 .iter()
                 // `optional`/`dynamic`/`config` edges impose no build-ordering constraint.
-                .filter(|dep| !dep.optional && !dep.dynamic && !dep.config)
+                .filter(|dep| {
+                    !dep.optional
+                        && !dep.dynamic
+                        && !dep.config
+                        && dep.resolution == ResolutionMode::Eager
+                })
                 .all(|dep| {
                     dep_ready(
                         dep.cardinality,
-                        (dep.ty.type_id)(),
+                        dep.ty.type_id,
                         &provider_concretes,
                         &is_built,
                     )
