@@ -310,19 +310,30 @@ impl ComponentRegistry {
                         } else {
                             &scoped
                         };
-                        // Hydration searches the consumer's own scope first and only
-                        // then falls back to parent providers, so selection runs
-                        // scope-locally before globally.
-                        let local: Vec<ProviderDescriptor> =
-                            candidates
-                                .iter()
-                                .filter(|provider| {
-                                    by_type.get(&provider.concrete_ty.type_id).is_some_and(
-                                        |concrete| concrete.scope.name() == consumer.scope.name(),
-                                    )
-                                })
-                                .copied()
-                                .collect();
+                        // Hydration searches the consumer's own scope, then each
+                        // parent scope in turn, selecting per scope and stopping at
+                        // the nearest scope that resolves — so candidates are
+                        // grouped by scope rank and walked nearest-first rather
+                        // than selected from the merged set. An ambiguous group
+                        // falls through to the next parent scope, exactly like
+                        // runtime `resolve_built`.
+                        let consumer_rank = consumer.scope.rank();
+                        let mut by_rank: std::collections::BTreeMap<u8, Vec<ProviderDescriptor>> =
+                            std::collections::BTreeMap::new();
+
+                        for provider in candidates {
+                            let Some(concrete) = by_type.get(&provider.concrete_ty.type_id) else {
+                                continue;
+                            };
+
+                            if concrete.scope.rank() >= consumer_rank {
+                                by_rank
+                                    .entry(concrete.scope.rank())
+                                    .or_default()
+                                    .push(*provider);
+                            }
+                        }
+
                         let select = |providers: &[ProviderDescriptor]| {
                             if dependency.qualifier.is_some() {
                                 providers.first().copied()
@@ -330,18 +341,25 @@ impl ComponentRegistry {
                                 crate::container::select_single_provider(providers)
                             }
                         };
-                        let selected = if local.is_empty() {
-                            select(candidates)
-                        } else {
-                            select(&local).or_else(|| select(candidates))
-                        };
+                        let mut selected = None;
+                        let mut saw_group = false;
+
+                        for group in by_rank.values() {
+                            saw_group = true;
+
+                            if let Some(provider) = select(group) {
+                                selected = Some(provider);
+                                break;
+                            }
+                        }
 
                         match selected {
                             Some(provider) => by_type.get(&provider.concrete_ty.type_id).copied(),
-                            // No candidates at all is a missing-dependency matter
-                            // (reported elsewhere); candidates that exist but cannot
-                            // be selected even after parent fallback are ambiguous.
-                            None if candidates.is_empty() => None,
+                            // No visible candidates is a missing-dependency or
+                            // scope-rule matter (reported elsewhere); candidates
+                            // that exist but no scope in the chain can select are
+                            // genuinely ambiguous.
+                            None if !saw_group => None,
                             None => {
                                 return Err(Error::AmbiguousProvider(
                                     (dependency.ty.type_name)().to_string(),
@@ -1014,6 +1032,65 @@ mod tests {
 
         // The consumer's own scope has an unambiguous local provider, so the
         // cross-scope candidate set is not ambiguous for hydration.
+        assert!(registry.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_walks_deferred_candidates_in_scope_chain_order() {
+        static REQUEST_DEFERRED_CHAIN: [DependencyDescriptor; 1] = [DependencyDescriptor {
+            name: "SharedTrait",
+            ty: TypeDescriptor::of::<dyn Send>("SharedTrait"),
+            cardinality: Cardinality::One,
+            optional: false,
+            dynamic: false,
+            qualifier: None,
+            config: false,
+            resolution: ResolutionMode::Deferred,
+        }];
+        let consumer = scoped!(
+            "ChainConsumer",
+            &Request,
+            &REQUEST_DEFERRED_CHAIN,
+            TypeDescriptor::of::<u64>("ChainConsumer"),
+        );
+        let connection = scoped!(
+            "ConnectionProvider",
+            &Connection,
+            &[],
+            TypeDescriptor::of::<u8>("ConnectionProvider"),
+        );
+        let singleton = scoped!(
+            "SingletonProvider",
+            &Singleton,
+            &[],
+            TypeDescriptor::of::<u16>("SingletonProvider"),
+        );
+        let transient = scoped!(
+            "TransientPrimary",
+            &Transient,
+            &[],
+            TypeDescriptor::of::<u32>("TransientPrimary"),
+        );
+        let registry = ComponentRegistry {
+            components: vec![consumer, connection, singleton, transient],
+            providers: vec![
+                trait_provider(TypeDescriptor::of::<u32>("TransientPrimary"), "t", true),
+                trait_provider(
+                    TypeDescriptor::of::<u8>("ConnectionProvider"),
+                    "conn",
+                    false,
+                ),
+                trait_provider(
+                    TypeDescriptor::of::<u16>("SingletonProvider"),
+                    "root",
+                    false,
+                ),
+            ],
+        };
+
+        // The merged non-transient set is ambiguous, but runtime hydration walks
+        // scope by scope and the connection scope selects its sole provider —
+        // so this is a valid registry, not an ambiguous one.
         assert!(registry.validate().is_ok());
     }
 
