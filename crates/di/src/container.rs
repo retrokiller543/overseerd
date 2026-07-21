@@ -894,7 +894,18 @@ impl WaitExpansion<'_> {
 
         match select_provider_for(dep, &local) {
             Some(provider) => self.provider_waits(provider.concrete_ty.type_id),
-            None => HashSet::new(),
+            None if local.is_empty() => HashSet::new(),
+            // Ambiguous local set: the runtime fallback to the parent is only
+            // deterministic once every local provider is registered.
+            None => {
+                let mut waits = HashSet::new();
+
+                for provider in local {
+                    waits.extend(self.provider_waits(provider.concrete_ty.type_id));
+                }
+
+                waits
+            }
         }
     }
 
@@ -1020,6 +1031,17 @@ fn dep_ready(
 
             match select_provider_for(dep, &local) {
                 Some(provider) => provider_waits.get(&provider.concrete_ty.type_id),
+                // An ambiguous local set falls back to the parent provider at
+                // runtime — but only once the complete set is registered, since
+                // a partially registered set resolves as temporarily sole. Wait
+                // for every local provider so the fallback is deterministic.
+                None if !local.is_empty() => {
+                    return local.iter().all(|provider| {
+                        provider_waits
+                            .get(&provider.concrete_ty.type_id)
+                            .is_none_or(|waits| waits.iter().all(|id| is_built(*id)))
+                    });
+                }
                 // No local provider: a parent provider or a validation error —
                 // neither is an ordering constraint for this scope.
                 None => return true,
