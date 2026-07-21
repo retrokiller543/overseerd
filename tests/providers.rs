@@ -115,6 +115,49 @@ trait TransientAnimal: Send + Sync {
     fn id(&self) -> u64;
 }
 
+/// A trait exercising selection-aware build ordering: a single edge constructs
+/// only the selected provider, so it must not wait for unselected ones.
+#[injectable]
+trait CycleProne: Send + Sync {
+    fn name(&self) -> &'static str;
+}
+
+/// The singleton a single trait edge selects via `primary`.
+#[component(provide = dyn CycleProne, primary)]
+struct SelectedCycleProvider;
+
+impl CycleProne for SelectedCycleProvider {
+    fn name(&self) -> &'static str {
+        "selected"
+    }
+}
+
+/// A singleton depending on the trait through a single edge: it selects the
+/// primary provider, never the transient one.
+#[component]
+struct CycleProneConsumer {
+    chosen: Arc<dyn CycleProne>,
+}
+
+/// An unselected transient provider depending on the consumer singleton. If the
+/// sort waited for every provider's dependencies, the consumer would wait on
+/// itself through this provider and the build would report a false cycle.
+#[component(
+    scope = Transient,
+    provide = dyn CycleProne,
+    qualifier = "unselected"
+)]
+struct UnselectedCycleProvider {
+    #[expect(unused)]
+    consumer: Arc<CycleProneConsumer>,
+}
+
+impl CycleProne for UnselectedCycleProvider {
+    fn name(&self) -> &'static str {
+        "unselected"
+    }
+}
+
 /// A singleton a transient provider depends on: build-time transient
 /// construction must see it in the in-progress scope store, and the topological
 /// sort must order consumers after it.
@@ -433,6 +476,22 @@ async fn transient_provider_dependencies_resolve_from_the_building_scope() {
     assert_eq!(views.qualified.kind(), "dependent");
     assert_eq!(views.ordered.len(), 1);
     assert_eq!(views.keyed["dependent"].kind(), "dependent");
+}
+
+#[tokio::test]
+async fn single_provider_edges_do_not_wait_for_unselected_transient_providers() {
+    let daemon = App::builder("cycle-prone-provider-test")
+        .auto_discover()
+        .build()
+        .await
+        .expect("selection-aware ordering reports no false cycle");
+
+    let consumer = daemon
+        .container()
+        .get::<CycleProneConsumer>()
+        .expect("consumer built");
+
+    assert_eq!(consumer.chosen.name(), "selected");
 }
 
 #[tokio::test]
