@@ -468,7 +468,10 @@ impl ScopeStore {
 /// lazy construction later without changing generated factory code.
 pub struct ComponentConstructionContext {
     scope: &'static dyn Scope,
-    store: ScopeStore,
+    /// Shared because transients constructed mid-build resolve their own
+    /// dependencies from this same in-progress store. Reads/writes are brief and
+    /// sequential; no guard is held across an await.
+    store: Arc<std::sync::RwLock<ScopeStore>>,
     parent: Option<Arc<crate::container::ScopeContainer>>,
     registry: Arc<crate::container::ScopeRegistry>,
     slot: crate::container::ScopeResolverSlot,
@@ -476,6 +479,8 @@ pub struct ComponentConstructionContext {
     /// factory parameter like `Cfg<T>` resolves through `cx.get::<ConfigStore>()`.
     resolvers: ResolverSet,
 }
+
+const STORE_POISON: &str = "scope store lock poisoned";
 
 pub(crate) struct ComponentConstructionParts {
     pub(crate) scope: &'static dyn Scope,
@@ -500,9 +505,31 @@ impl ComponentConstructionContext {
         resolvers: ResolverSet,
         slot: crate::container::ScopeResolverSlot,
     ) -> Self {
+        Self::with_store(
+            scope,
+            parent,
+            registry,
+            resolvers,
+            slot,
+            Arc::new(std::sync::RwLock::new(ScopeStore::default())),
+        )
+    }
+
+    /// Creates a context over an existing store, used when a transient is
+    /// constructed while another scope is still building: its dependencies must
+    /// resolve from the components already built in that scope, not just the
+    /// frozen parent chain.
+    pub(crate) fn with_store(
+        scope: &'static dyn Scope,
+        parent: Option<Arc<crate::container::ScopeContainer>>,
+        registry: Arc<crate::container::ScopeRegistry>,
+        resolvers: ResolverSet,
+        slot: crate::container::ScopeResolverSlot,
+        store: Arc<std::sync::RwLock<ScopeStore>>,
+    ) -> Self {
         Self {
             scope,
-            store: ScopeStore::default(),
+            store,
             parent,
             registry,
             resolvers,
@@ -512,6 +539,11 @@ impl ComponentConstructionContext {
 
     pub(crate) fn resolver_slot(&self) -> crate::container::ScopeResolverSlot {
         self.slot.clone()
+    }
+
+    /// The shared handle to this context's store, for transient construction.
+    pub(crate) fn store_handle(&self) -> Arc<std::sync::RwLock<ScopeStore>> {
+        Arc::clone(&self.store)
     }
 
     /// Captures this construction scope for forced reconstruction of `H`.
@@ -549,6 +581,7 @@ impl ComponentConstructionContext {
             &self.registry,
             self.parent.clone(),
             self.slot.clone(),
+            self.store_handle(),
             None,
         )
         .await?
@@ -556,7 +589,7 @@ impl ComponentConstructionContext {
             return Ok(Some(handle));
         }
 
-        if let Some(handle) = self.store.resolve_local::<H>() {
+        if let Some(handle) = self.store.read().expect(STORE_POISON).resolve_local::<H>() {
             return Ok(Some(handle));
         }
 
@@ -570,6 +603,7 @@ impl ComponentConstructionContext {
             &self.registry,
             self.parent.clone(),
             self.slot.clone(),
+            self.store_handle(),
         )
         .await
     }
@@ -583,6 +617,7 @@ impl ComponentConstructionContext {
             &self.registry,
             self.parent.clone(),
             self.slot.clone(),
+            self.store_handle(),
             Some(qualifier),
         )
         .await?
@@ -590,7 +625,12 @@ impl ComponentConstructionContext {
             return Ok(Some(handle));
         }
 
-        if let Some(handle) = self.store.resolve_qualified_local::<H>(qualifier) {
+        if let Some(handle) = self
+            .store
+            .read()
+            .expect(STORE_POISON)
+            .resolve_qualified_local::<H>(qualifier)
+        {
             return Ok(Some(handle));
         }
 
@@ -605,7 +645,11 @@ impl ComponentConstructionContext {
     /// Every provider of the trait `H::Target` across this scope and its parents.
     pub async fn resolve_all<H: Injectable>(&self) -> crate::Result<Vec<H>> {
         let target = TypeId::of::<H::Target>();
-        let mut all = self.store.collect_all_local::<H>();
+        let mut all = self
+            .store
+            .read()
+            .expect(STORE_POISON)
+            .collect_all_local::<H>();
 
         if let Some(parent) = &self.parent {
             all.extend(parent.collect_all_built::<H>());
@@ -616,6 +660,7 @@ impl ComponentConstructionContext {
                 &self.registry,
                 self.parent.clone(),
                 self.slot.clone(),
+                self.store_handle(),
                 *provider,
             )
             .await?
@@ -638,13 +683,19 @@ impl ComponentConstructionContext {
             None => HashMap::new(),
         };
 
-        keyed.extend(self.store.collect_keyed_local::<H>());
+        keyed.extend(
+            self.store
+                .read()
+                .expect(STORE_POISON)
+                .collect_keyed_local::<H>(),
+        );
 
         for provider in self.registry.transient_providers_for(target) {
             if let Some(value) = crate::container::construct_transient_provider::<H>(
                 &self.registry,
                 self.parent.clone(),
                 self.slot.clone(),
+                self.store_handle(),
                 *provider,
             )
             .await?
@@ -657,17 +708,27 @@ impl ComponentConstructionContext {
     }
 
     pub(crate) fn insert(&mut self, component: BoxedComponent) {
-        self.store.insert(component);
+        self.store.write().expect(STORE_POISON).insert(component);
     }
 
     pub(crate) fn register_provider(&mut self, provider: &ProviderDescriptor, ordinal: usize) {
-        self.store.register_provider(provider, ordinal);
+        self.store
+            .write()
+            .expect(STORE_POISON)
+            .register_provider(provider, ordinal);
     }
 
     pub(crate) fn into_parts(self) -> ComponentConstructionParts {
+        // The scope is freezing: every transient context sharing this store was
+        // dropped when its construction returned, so unwrapping cannot race.
+        let store = match Arc::try_unwrap(self.store) {
+            Ok(lock) => lock.into_inner().expect(STORE_POISON),
+            Err(_) => panic!("construction store has outstanding readers at scope freeze"),
+        };
+
         ComponentConstructionParts {
             scope: self.scope,
-            store: self.store,
+            store,
             parent: self.parent,
             registry: self.registry,
             resolvers: self.resolvers,
@@ -678,7 +739,7 @@ impl ComponentConstructionContext {
     /// Whether a component of `type_id` has already been constructed or seeded in
     /// this scope.
     pub(crate) fn contains(&self, type_id: TypeId) -> bool {
-        self.store.contains(type_id)
+        self.store.read().expect(STORE_POISON).contains(type_id)
     }
 }
 

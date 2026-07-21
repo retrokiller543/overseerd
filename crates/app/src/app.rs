@@ -424,7 +424,7 @@ impl ScopePlan {
         for scope in scopes {
             let components = by_scope.remove(scope.name()).unwrap_or_default();
             let order: Vec<ComponentDescriptor> =
-                topological_sort(&components, &prebuilt, providers)?
+                topological_sort(&components, &prebuilt, providers, &transient)?
                     .into_iter()
                     .copied()
                     .collect();

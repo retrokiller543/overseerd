@@ -115,6 +115,45 @@ trait TransientAnimal: Send + Sync {
     fn id(&self) -> u64;
 }
 
+/// A singleton a transient provider depends on: build-time transient
+/// construction must see it in the in-progress scope store, and the topological
+/// sort must order consumers after it.
+#[component]
+struct TransientDependency;
+
+/// A trait whose only provider is a transient with an eager singleton dependency.
+#[injectable]
+trait DependentAnimal: Send + Sync {
+    fn kind(&self) -> &'static str;
+}
+
+/// The dependent transient provider.
+#[component(
+    scope = Transient,
+    provide = dyn DependentAnimal,
+    qualifier = "dependent"
+)]
+struct DependentTransientAnimal {
+    #[expect(unused)]
+    dependency: Arc<TransientDependency>,
+}
+
+impl DependentAnimal for DependentTransientAnimal {
+    fn kind(&self) -> &'static str {
+        "dependent"
+    }
+}
+
+/// A singleton consuming the dependent transient provider in every shape.
+#[component]
+struct DependentAnimalViews {
+    chosen: Arc<dyn DependentAnimal>,
+    #[qualifier = "dependent"]
+    qualified: Arc<dyn DependentAnimal>,
+    ordered: Vec<Arc<dyn DependentAnimal>>,
+    keyed: HashMap<String, Arc<dyn DependentAnimal>>,
+}
+
 /// The primary transient provider, ordered after the secondary provider.
 #[component(
     scope = Transient,
@@ -372,6 +411,28 @@ async fn singleton_consumes_transient_providers_eagerly() {
             .iter()
             .all(|provider| !first_ids.contains(&provider.id()))
     );
+}
+
+#[tokio::test]
+async fn transient_provider_dependencies_resolve_from_the_building_scope() {
+    let daemon = App::builder("dependent-transient-provider-test")
+        .auto_discover()
+        .build()
+        .await
+        .expect("singleton consuming a dependent transient provider builds");
+
+    let views = daemon
+        .container()
+        .get::<DependentAnimalViews>()
+        .expect("dependent animal views constructed");
+
+    // Construction succeeding proves the transient provider resolved its own
+    // singleton dependency from the in-progress root store (and that the sort
+    // ordered the consumer after that dependency).
+    assert_eq!(views.chosen.kind(), "dependent");
+    assert_eq!(views.qualified.kind(), "dependent");
+    assert_eq!(views.ordered.len(), 1);
+    assert_eq!(views.keyed["dependent"].kind(), "dependent");
 }
 
 #[tokio::test]
