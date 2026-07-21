@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-v0.18.0...overseerd-axum-v0.19.0) - 2026-07-21
+
+### Added
+
+- *(di)* add provider ordering and deferred primitives
+
 ## [0.18.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-v0.17.2...overseerd-axum-v0.18.0) - 2026-07-19
 
 ### Added

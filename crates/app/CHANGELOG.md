@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0](https://github.com/retrokiller543/overseerd/compare/overseerd-app-v0.18.0...overseerd-app-v0.19.0) - 2026-07-21
+
+### Added
+
+- *(di)* add provider ordering and deferred primitives
+
+### Fixed
+
+- *(di)* resolve transient dependencies from the building scope
+
 ## [0.16.0](https://github.com/retrokiller543/overseerd/compare/overseerd-app-v0.15.0...overseerd-app-v0.16.0) - 2026-07-17
 
 ### Fixed

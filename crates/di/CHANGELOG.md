@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.18.0...overseerd-di-v0.19.0) - 2026-07-21
+
+### Added
+
+- *(di)* add provider ordering and deferred primitives
+
+### Fixed
+
+- *(di)* group deferred candidates by scope identity, not rank
+- *(di)* walk deferred candidates in scope-chain order
+- *(di)* make deferred candidate selection scope-aware
+- *(di)* reject ambiguous deferred candidates
+- *(di)* distinguish qualified no-match from ambiguity
+- *(di)* wait for complete local provider sets before fallback
+- *(di)* select scope-local providers in build ordering
+- *(di)* select providers before computing build-order waits
+- *(di)* resolve transient dependencies from the building scope
+- *(di)* resolve review findings in provider primitives
+- *(di)* hydrate deferred dependencies after build
+
 ## [0.17.2](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.17.1...overseerd-di-v0.17.2) - 2026-07-18
 
 ### Other
