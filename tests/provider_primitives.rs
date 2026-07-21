@@ -1,12 +1,19 @@
 //! End-to-end coverage for scope-capturing DI provider primitives.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
+use std::{
+    any::TypeId,
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use overseerd::daemon::App;
-use overseerd::{Deferred, Fresh, Lazy, component, injectable};
+use overseerd::{
+    ComponentDescriptor, Deferred, Descriptor, Fresh, Lazy, ResolverSet, ScopeContainer,
+    ScopeRegistry, component, injectable,
+};
 
 static IDS: AtomicU64 = AtomicU64::new(1);
 
@@ -77,6 +84,18 @@ struct PrimitiveConsumer {
     deferred_qualified: Deferred<dyn PrimitiveProvider>,
 }
 
+/// One side of a legitimate construction cycle, broken by deferred hydration.
+#[component]
+struct DeferredCycleA {
+    b: Deferred<DeferredCycleB>,
+}
+
+/// The eager side of the cycle retains the first component normally.
+#[component]
+struct DeferredCycleB {
+    a: Arc<DeferredCycleA>,
+}
+
 #[tokio::test]
 async fn lazy_fresh_and_deferred_follow_their_cache_contracts() {
     let app = App::builder("provider-primitives")
@@ -114,17 +133,9 @@ async fn lazy_fresh_and_deferred_follow_their_cache_contracts() {
         &canonical
     ));
 
-    assert!(consumer.deferred.get().is_none());
-    let deferred = consumer
-        .deferred
-        .get_or_resolve()
-        .await
-        .expect("deferred resolves");
+    let deferred = consumer.deferred.get();
     assert!(Arc::ptr_eq(&deferred, &canonical));
-    assert!(Arc::ptr_eq(
-        &consumer.deferred.get().expect("weak cache upgrades"),
-        &canonical
-    ));
+    assert!(Arc::ptr_eq(&consumer.deferred.get(), &canonical));
 
     assert_eq!(
         consumer
@@ -155,13 +166,40 @@ async fn lazy_fresh_and_deferred_follow_their_cache_contracts() {
             .name(),
         "target-provider"
     );
-    assert_eq!(
-        consumer
-            .deferred_qualified
-            .get_or_resolve()
+    assert_eq!(consumer.deferred_qualified.get().name(), "second");
+}
+
+#[tokio::test]
+async fn deferred_hydrates_after_construction_without_retaining_a_cycle() {
+    let components = [
+        <DeferredCycleA as Descriptor<ComponentDescriptor>>::DESCRIPTOR,
+        <DeferredCycleB as Descriptor<ComponentDescriptor>>::DESCRIPTOR,
+    ];
+    let registry = Arc::new(ScopeRegistry::new(
+        HashMap::new(),
+        components
+            .iter()
+            .map(|component| (component.ty.type_id, *component))
+            .collect::<HashMap<TypeId, ComponentDescriptor>>(),
+        Vec::new(),
+        HashMap::new(),
+    ));
+    let container =
+        ScopeContainer::build_root(&components, Vec::new(), ResolverSet::new(), registry)
             .await
-            .expect("qualified deferred resolves")
-            .name(),
-        "second"
-    );
+            .expect("deferred cycle builds");
+    let a = container.get::<DeferredCycleA>().expect("cycle A resolves");
+    let b = container.get::<DeferredCycleB>().expect("cycle B resolves");
+    let weak_a = Arc::downgrade(&a);
+    let weak_b = Arc::downgrade(&b);
+
+    assert!(Arc::ptr_eq(&a.b.get(), &b));
+    assert!(Arc::ptr_eq(&b.a, &a));
+
+    drop(a);
+    drop(b);
+    drop(container);
+
+    assert!(weak_a.upgrade().is_none());
+    assert!(weak_b.upgrade().is_none());
 }

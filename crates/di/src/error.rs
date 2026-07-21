@@ -79,6 +79,14 @@ pub enum Error {
     },
 
     #[error(
+        "component '{component}' cannot defer transient dependency '{dependency}': deferred targets must be stored in a scope"
+    )]
+    DeferredTransientDependency {
+        component: String,
+        dependency: String,
+    },
+
+    #[error(
         "scope violation: component '{component}' ({component_scope}) depends on \
          '{dependency}' ({dependency_scope}), which is shorter-lived"
     )]

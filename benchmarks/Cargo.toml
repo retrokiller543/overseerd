@@ -19,7 +19,8 @@ overseerd-di = { path = "../crates/di" }
 overseerd-config = { path = "../crates/config" }
 overseerd-transport = { path = "../crates/transport" }
 overseerd-rpc = { path = "../crates/rpc" }
-overseerd-axum = { path = "../crates/axum", features = ["ws", "client", "stomp"] }
+overseerd-axum = { path = "../crates/axum", features = ["ws", "client"] }
+overseerd-axum-stomp = { path = "../crates/axum-stomp" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_urlencoded = "0.7"

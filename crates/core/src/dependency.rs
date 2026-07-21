@@ -28,7 +28,7 @@ pub enum ResolutionMode {
     /// Resolve during ordinary component construction and impose build ordering.
     #[default]
     Eager,
-    /// Resolve after construction through a scope-capturing handle.
+    /// Hydrate a weak dependency handle after its scope finishes construction.
     Deferred,
     /// Re-run the target component factory without using its declared-scope cache.
     Fresh,

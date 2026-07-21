@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use overseerd_axum::client::{Form, HttpBody, Json};
-use overseerd_axum::{JsonCodec, StompCodec};
+use overseerd_axum_stomp::{JsonCodec, StompCodec};
 use overseerd_rpc::Responder;
 use overseerd_transport::{StreamDecode, StreamEncode};
 use serde::{Deserialize, Serialize};
