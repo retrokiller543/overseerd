@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use overseerd_core::{ResolverSet, Scope, Singleton, TypeDescriptor};
 use overseerd_di::{
-    BoxedComponent, Component, ComponentDescriptor, Injectable, Live, ProviderDescriptor,
-    ScopeContainer, ScopeRegistry,
+    BoxedComponent, Component, ComponentDescriptor, ComponentRegistry, Injectable, Live,
+    ProviderDescriptor, ScopeContainer, ScopeRegistry,
 };
 
 /// The heap payload a [`Payloaded`] component carries.
@@ -269,12 +269,19 @@ pub async fn build_graph(entries: &[Entry], width: usize, layers: usize) -> Arc<
 /// instance path alone registers each provider exactly once.
 pub async fn build_with_providers(entries: &[Entry], count: usize) -> Arc<ScopeContainer> {
     let slice = &entries[0..count];
+    let components: Vec<ComponentDescriptor> = slice.iter().map(|entry| entry.desc).collect();
     let providers: Vec<ProviderDescriptor> = slice.iter().map(|entry| entry.provider).collect();
+    let provider_order = ComponentRegistry {
+        components: components.clone(),
+        providers: providers.clone(),
+    }
+    .provider_order(&components)
+    .expect("benchmark provider ordering validates");
     let registry = Arc::new(ScopeRegistry::new(
         HashMap::new(),
         HashMap::new(),
         providers,
-        HashMap::new(),
+        provider_order,
     ));
 
     let seeds: Vec<BoxedComponent> = slice.iter().map(|entry| (entry.make)()).collect();

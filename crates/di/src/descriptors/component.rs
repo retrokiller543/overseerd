@@ -523,9 +523,9 @@ impl ComponentConstructionContext {
         crate::Fresh::capture(self.resolver_slot(), qualifier)
     }
 
-    /// Captures this construction scope for weak deferred resolution of `Arc<T>`.
+    /// Registers a weak deferred target for hydration after this scope finishes construction.
     #[doc(hidden)]
-    pub fn deferred<T>(&self, qualifier: Option<&'static str>) -> crate::Deferred<T>
+    pub fn deferred<T>(&self, qualifier: Option<&'static str>) -> crate::Result<crate::Deferred<T>>
     where
         T: ?Sized + Send + Sync + 'static,
     {

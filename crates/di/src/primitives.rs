@@ -20,6 +20,11 @@ use crate::{
     error::Error,
 };
 
+/// Type-erased deferred slot hydrated after a scope finishes construction.
+pub(crate) trait DeferredHydrator: Send + Sync {
+    fn hydrate(&self, scope: &ScopeContainer) -> crate::Result<()>;
+}
+
 /// A cloneable, strongly cached dependency resolved from the consumer's scope.
 pub struct Lazy<H> {
     inner: Arc<LazyInner<H>>,
@@ -375,10 +380,8 @@ pub struct Deferred<T: ?Sized> {
 }
 
 struct DeferredInner<T: ?Sized> {
-    scope: ScopeResolverSlot,
     qualifier: Option<&'static str>,
     value: Mutex<Option<Weak<T>>>,
-    resolving: AsyncMutex<()>,
 }
 
 impl<T: ?Sized> Clone for Deferred<T> {
@@ -393,19 +396,22 @@ impl<T> Deferred<T>
 where
     T: ?Sized + Send + Sync + 'static,
 {
-    pub(crate) fn capture(scope: ScopeResolverSlot, qualifier: Option<&'static str>) -> Self {
-        Self {
-            inner: Arc::new(DeferredInner {
-                scope,
-                qualifier,
-                value: Mutex::new(None),
-                resolving: AsyncMutex::new(()),
-            }),
-        }
+    pub(crate) fn capture(
+        scope: ScopeResolverSlot,
+        qualifier: Option<&'static str>,
+    ) -> crate::Result<Self> {
+        let inner = Arc::new(DeferredInner {
+            qualifier,
+            value: Mutex::new(None),
+        });
+
+        scope.register_deferred(Arc::clone(&inner) as Arc<dyn DeferredHydrator>)?;
+
+        Ok(Self { inner })
     }
 
-    /// Upgrades the weak cache without resolving from the scope.
-    pub fn get(&self) -> Option<Arc<T>> {
+    /// Returns the hydrated target when it is still alive.
+    pub fn try_get(&self) -> Option<Arc<T>> {
         self.inner
             .value
             .lock()
@@ -414,30 +420,35 @@ where
             .and_then(Weak::upgrade)
     }
 
-    /// Returns a live cached target or resolves it normally from the captured scope.
-    pub async fn get_or_resolve(&self) -> crate::Result<Arc<T>> {
-        if let Some(value) = self.get() {
-            return Ok(value);
+    /// Returns the hydrated target.
+    ///
+    /// Panics when called from a component factory before its scope has finished
+    /// construction, or after the target's scope has been dropped.
+    #[track_caller]
+    pub fn get(&self) -> Arc<T> {
+        self.try_get().unwrap_or_else(|| {
+            panic!(
+                "deferred dependency `{}` was accessed before scope hydration or after its scope was dropped",
+                std::any::type_name::<T>()
+            )
+        })
+    }
+}
+
+impl<T> DeferredHydrator for DeferredInner<T>
+where
+    T: ?Sized + Send + Sync + 'static,
+{
+    fn hydrate(&self, scope: &ScopeContainer) -> crate::Result<()> {
+        let value = match self.qualifier {
+            Some(qualifier) => scope.resolve_qualified_built::<Arc<T>>(qualifier),
+            None => scope.resolve_built::<Arc<T>>(),
         }
+        .ok_or(Error::MissingComponent(short_name::<T>()))?;
 
-        let _guard = self.inner.resolving.lock().await;
+        *self.value.lock().expect("deferred cache poisoned") = Some(Arc::downgrade(&value));
 
-        if let Some(value) = self.get() {
-            return Ok(value);
-        }
-
-        let scope = self.inner.scope.resolve()?;
-        let value = match self.inner.qualifier {
-            Some(qualifier) => scope
-                .resolve_qualified::<Arc<T>>(qualifier)
-                .await?
-                .ok_or(Error::MissingComponent(short_name::<T>()))?,
-            None => scope.extract::<Arc<T>>().await?,
-        };
-
-        *self.inner.value.lock().expect("deferred cache poisoned") = Some(Arc::downgrade(&value));
-
-        Ok(value)
+        Ok(())
     }
 }
 
@@ -454,7 +465,7 @@ where
     }
 
     async fn from_container(cx: &ComponentConstructionContext) -> crate::Result<Self> {
-        Ok(Self::capture(cx.resolver_slot(), None))
+        Self::capture(cx.resolver_slot(), None)
     }
 }
 

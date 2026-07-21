@@ -135,20 +135,62 @@ impl ScopeRegistry {
 /// Cloneable weak attachment point for the scope currently under construction.
 #[derive(Clone, Default)]
 pub(crate) struct ScopeResolverSlot {
-    container: Arc<std::sync::Mutex<Weak<ScopeContainer>>>,
+    state: Arc<std::sync::Mutex<ScopeResolverState>>,
+}
+
+#[derive(Default)]
+struct ScopeResolverState {
+    container: Weak<ScopeContainer>,
+    deferred: Vec<Arc<dyn crate::primitives::DeferredHydrator>>,
 }
 
 impl ScopeResolverSlot {
-    pub(crate) fn attach(&self, container: &Arc<ScopeContainer>) {
-        *self.container.lock().expect("scope resolver slot poisoned") = Arc::downgrade(container);
+    pub(crate) fn attach(&self, container: &Arc<ScopeContainer>) -> crate::Result<()> {
+        let deferred = {
+            let mut state = self.state.lock().expect("scope resolver slot poisoned");
+
+            state.container = Arc::downgrade(container);
+
+            std::mem::take(&mut state.deferred)
+        };
+
+        for deferred in deferred {
+            deferred.hydrate(container)?;
+        }
+
+        Ok(())
     }
 
     pub(crate) fn resolve(&self) -> crate::Result<Arc<ScopeContainer>> {
-        self.container
+        self.state
             .lock()
             .expect("scope resolver slot poisoned")
+            .container
             .upgrade()
             .ok_or(Error::ScopeUnavailable)
+    }
+
+    pub(crate) fn register_deferred(
+        &self,
+        deferred: Arc<dyn crate::primitives::DeferredHydrator>,
+    ) -> crate::Result<()> {
+        let container = {
+            let mut state = self.state.lock().expect("scope resolver slot poisoned");
+
+            if let Some(container) = state.container.upgrade() {
+                Some(container)
+            } else {
+                state.deferred.push(Arc::clone(&deferred));
+
+                None
+            }
+        };
+
+        if let Some(container) = container {
+            deferred.hydrate(&container)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -433,7 +475,7 @@ impl ScopeContainer {
                 slot: slot.clone(),
             }
         });
-        slot.attach(&container);
+        slot.attach(&container)?;
 
         Ok(container)
     }

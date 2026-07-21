@@ -89,6 +89,7 @@ impl ComponentRegistry {
 
         self.validate_component_ids(&components)?;
         self.validate_dependencies(&components)?;
+        self.validate_deferred_dependencies(&components)?;
         self.validate_fresh_dependencies(&components)?;
         self.provider_order(&components)?;
         self.validate_scopes(&components)?;
@@ -217,6 +218,57 @@ impl ComponentRegistry {
                     return Err(Error::MissingDependency {
                         component: c.name.to_string(),
                         type_name: (dep.ty.type_name)().to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Rejects deferred dependencies whose selected target is transient. Deferred
+    /// handles retain only a weak reference, so their targets must be stored by a
+    /// concrete scope after construction.
+    pub fn validate_deferred_dependencies(
+        &self,
+        components: &[ComponentDescriptor],
+    ) -> crate::Result<()> {
+        let by_type: HashMap<TypeId, ComponentDescriptor> = components
+            .iter()
+            .map(|component| (component.ty.type_id, *component))
+            .collect();
+
+        for consumer in components {
+            for dependency in consumer
+                .dependencies()
+                .into_iter()
+                .filter(|dependency| dependency.resolution == ResolutionMode::Deferred)
+            {
+                let target = by_type.get(&dependency.ty.type_id).copied().or_else(|| {
+                    let matching: Vec<_> = self
+                        .providers
+                        .iter()
+                        .filter(|provider| provider.trait_ty.type_id == dependency.ty.type_id)
+                        .filter(|provider| {
+                            dependency
+                                .qualifier
+                                .is_none_or(|qualifier| provider.qualifier == qualifier)
+                        })
+                        .collect();
+                    let selected = if dependency.qualifier.is_some() || matching.len() == 1 {
+                        matching.first().copied()
+                    } else {
+                        matching.iter().find(|provider| provider.primary).copied()
+                    };
+
+                    selected
+                        .and_then(|provider| by_type.get(&provider.concrete_ty.type_id).copied())
+                });
+
+                if target.is_some_and(|target| target.scope.is_transient()) {
+                    return Err(Error::DeferredTransientDependency {
+                        component: consumer.name.to_string(),
+                        dependency: (dependency.ty.type_name)().to_string(),
                     });
                 }
             }
@@ -558,6 +610,17 @@ mod tests {
         resolution: ResolutionMode::Eager,
     }];
 
+    static SINGLETON_DEFERRED_TRANSIENT: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "TransientDeferred",
+        ty: TypeDescriptor::of::<u32>("TransientDeferred"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+        config: false,
+        resolution: ResolutionMode::Deferred,
+    }];
+
     #[test]
     fn validate_rejects_singleton_depending_on_request() {
         let request = scoped!(
@@ -630,6 +693,31 @@ mod tests {
         assert!(matches!(
             registry.validate_scopes(&registry.components),
             Err(Error::ScopeViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_deferred_transient_target() {
+        let transient = scoped!(
+            "TransientDeferred",
+            &Transient,
+            &[],
+            TypeDescriptor::of::<u32>("TransientDeferred"),
+        );
+        let singleton = scoped!(
+            "DeferredConsumer",
+            &Singleton,
+            &SINGLETON_DEFERRED_TRANSIENT,
+            TypeDescriptor::of::<u64>("DeferredConsumer"),
+        );
+        let registry = ComponentRegistry {
+            components: vec![singleton, transient],
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            registry.validate(),
+            Err(Error::DeferredTransientDependency { .. })
         ));
     }
 }

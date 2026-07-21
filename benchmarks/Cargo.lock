@@ -840,7 +840,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "overseerd-app"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "futures",
  "overseerd-config",
@@ -857,7 +857,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-axum"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "axum",
  "bytes",
@@ -876,7 +876,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
- "stomp-parser",
  "thiserror",
  "tokio",
  "tower",
@@ -886,12 +885,31 @@ dependencies = [
 
 [[package]]
 name = "overseerd-axum-macros"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "overseerd-macros-core",
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "overseerd-axum-stomp"
+version = "0.18.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "js-sys",
+ "overseerd-axum",
+ "overseerd-transport",
+ "serde",
+ "serde_json",
+ "stomp-parser",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]
@@ -901,6 +919,7 @@ dependencies = [
  "criterion",
  "futures",
  "overseerd-axum",
+ "overseerd-axum-stomp",
  "overseerd-config",
  "overseerd-core",
  "overseerd-di",
@@ -916,7 +935,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-client"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "futures",
  "overseerd-transport",
@@ -924,7 +943,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-config"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "arc-swap",
  "futures",
@@ -942,11 +961,11 @@ dependencies = [
 
 [[package]]
 name = "overseerd-core"
-version = "0.16.0"
+version = "0.18.0"
 
 [[package]]
 name = "overseerd-di"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "arc-swap",
  "futures",
@@ -960,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-dirs"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "directories",
  "libc",
@@ -972,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-hooks"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "futures",
  "overseerd-core",
@@ -981,7 +1000,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-macros"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "overseerd-macros-core",
  "proc-macro2",
@@ -989,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-macros-core"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -998,7 +1017,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-rpc"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "arc-swap",
  "directories",
@@ -1024,7 +1043,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-rpc-macros"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "overseerd-macros-core",
  "proc-macro2",
@@ -1034,7 +1053,7 @@ dependencies = [
 
 [[package]]
 name = "overseerd-transport"
-version = "0.16.0"
+version = "0.18.0"
 dependencies = [
  "bitflags",
  "futures",
@@ -1793,6 +1812,16 @@ dependencies = [
  "rustversion",
  "wasm-bindgen-macro",
  "wasm-bindgen-shared",
+]
+
+[[package]]
+name = "wasm-bindgen-futures"
+version = "0.4.76"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c62df1340f32221cb9c54d6a27b030e3dba64361d4a95bed55f9aacb44da291d"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
 ]
 
 [[package]]

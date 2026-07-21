@@ -434,7 +434,7 @@ fn plan_field(field: &mut Field, paths: &Paths) -> FieldPlan {
         });
 
         return FieldPlan {
-            value: quote!(cx.deferred::<#target>(#qualifier)),
+            value: quote!(cx.deferred::<#target>(#qualifier)?),
             dependency: Some(dependency),
             check: None,
             wired: None,
