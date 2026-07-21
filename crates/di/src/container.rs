@@ -727,15 +727,16 @@ pub fn topological_sort<'a>(
 ) -> crate::Result<Vec<&'a ComponentDescriptor>> {
     trace!(total = components.len(), "starting topological sort");
 
-    // trait TypeId -> the concrete TypeIds that provide it. A dependency on a
-    // trait must wait for all of its providers to be built.
-    let mut provider_concretes: HashMap<TypeId, Vec<TypeId>> = HashMap::new();
+    // trait TypeId -> its providers. A collection/keyed dependency on a trait
+    // waits for every provider; a single dependency waits only for the provider
+    // runtime selection would construct (qualifier-selected, sole, or primary).
+    let mut providers_by_trait: HashMap<TypeId, Vec<ProviderDescriptor>> = HashMap::new();
 
     for provider in providers {
-        provider_concretes
+        providers_by_trait
             .entry(provider.trait_ty.type_id)
             .or_default()
-            .push(provider.concrete_ty.type_id);
+            .push(*provider);
     }
 
     // Only concretes taking part in this sort can gate readiness: providers of
@@ -743,24 +744,37 @@ pub fn topological_sort<'a>(
     // waiting for them would wedge the sort on ids that never become built here.
     let sortable: HashSet<TypeId> = components.iter().map(|c| c.ty.type_id).collect();
 
-    // A trait edge additionally waits for the eager dependencies of its transient
-    // providers: transients are constructed when the consumer is, so everything
-    // they need must be built by then. Precomputed once, transitively.
-    let mut memo = HashMap::new();
-    let mut visiting = HashSet::new();
+    // A trait edge additionally waits for the eager dependencies of the transient
+    // providers it constructs: transients are built when the consumer is, so
+    // everything they need must be built by then. Precomputed once, transitively,
+    // per provider concrete and per trait.
+    let mut expansion = WaitExpansion {
+        providers_by_trait: &providers_by_trait,
+        transients,
+        sortable: &sortable,
+        provider_memo: HashMap::new(),
+        trait_memo: HashMap::new(),
+        visiting: HashSet::new(),
+    };
+    let provider_concretes: Vec<TypeId> = providers_by_trait
+        .values()
+        .flatten()
+        .map(|provider| provider.concrete_ty.type_id)
+        .collect();
+    let trait_ids: Vec<TypeId> = providers_by_trait.keys().copied().collect();
+    let mut provider_waits: HashMap<TypeId, HashSet<TypeId>> = HashMap::new();
     let mut trait_waits: HashMap<TypeId, HashSet<TypeId>> = HashMap::new();
 
-    for trait_id in provider_concretes.keys() {
-        let waits = expand_trait_waits(
-            *trait_id,
-            &provider_concretes,
-            transients,
-            &sortable,
-            &mut memo,
-            &mut visiting,
-        );
+    for concrete in provider_concretes {
+        let waits = expansion.provider_waits(concrete);
 
-        trait_waits.insert(*trait_id, waits);
+        provider_waits.insert(concrete, waits);
+    }
+
+    for trait_id in trait_ids {
+        let waits = expansion.trait_waits(trait_id);
+
+        trait_waits.insert(trait_id, waits);
     }
 
     let mut result: Vec<&'a ComponentDescriptor> = Vec::new();
@@ -784,7 +798,15 @@ pub fn topological_sort<'a>(
                         && !dep.config
                         && dep.resolution == ResolutionMode::Eager
                 })
-                .all(|dep| dep_ready(dep.cardinality, dep.ty.type_id, &trait_waits, &is_built));
+                .all(|dep| {
+                    dep_ready(
+                        dep,
+                        &providers_by_trait,
+                        &provider_waits,
+                        &trait_waits,
+                        &is_built,
+                    )
+                });
 
             if resolved {
                 trace!(component = %descriptor.name, "dependency order resolved");
@@ -813,119 +835,155 @@ pub fn topological_sort<'a>(
     Ok(result)
 }
 
-/// The sortable concrete TypeIds a trait edge must wait for: providers built in
-/// this scope plus, transitively, the eager dependencies of transient providers.
-/// Memoized per trait; `visiting` breaks expansion cycles between transient
+/// Transitive wait-set expansion for the topological sort. Memoized per provider
+/// concrete and per trait; `visiting` breaks expansion cycles between transient
 /// providers (such a cycle is a construction-time error, not an ordering one).
-fn expand_trait_waits(
-    trait_id: TypeId,
-    provider_concretes: &HashMap<TypeId, Vec<TypeId>>,
-    transients: &HashMap<TypeId, ComponentDescriptor>,
-    sortable: &HashSet<TypeId>,
-    memo: &mut HashMap<TypeId, HashSet<TypeId>>,
-    visiting: &mut HashSet<TypeId>,
-) -> HashSet<TypeId> {
-    if let Some(done) = memo.get(&trait_id) {
-        return done.clone();
+struct WaitExpansion<'a> {
+    providers_by_trait: &'a HashMap<TypeId, Vec<ProviderDescriptor>>,
+    transients: &'a HashMap<TypeId, ComponentDescriptor>,
+    sortable: &'a HashSet<TypeId>,
+    provider_memo: HashMap<TypeId, HashSet<TypeId>>,
+    trait_memo: HashMap<TypeId, HashSet<TypeId>>,
+    visiting: HashSet<TypeId>,
+}
+
+impl WaitExpansion<'_> {
+    /// The sortable TypeIds a single provider concrete gates: itself when built
+    /// in this scope, or the eager dependencies of its transient recipe.
+    fn provider_waits(&mut self, concrete: TypeId) -> HashSet<TypeId> {
+        if let Some(done) = self.provider_memo.get(&concrete) {
+            return done.clone();
+        }
+
+        let mut waits = HashSet::new();
+
+        if self.sortable.contains(&concrete) {
+            waits.insert(concrete);
+        } else if let Some(descriptor) = self.transients.get(&concrete).copied() {
+            self.expand_transient(descriptor, &mut waits);
+        }
+
+        self.provider_memo.insert(concrete, waits.clone());
+
+        waits
     }
 
-    if !visiting.insert(trait_id) {
-        return HashSet::new();
-    }
+    /// The union of every provider's waits for a trait — what collection and
+    /// keyed edges wait for, since they construct all providers.
+    fn trait_waits(&mut self, trait_id: TypeId) -> HashSet<TypeId> {
+        if let Some(done) = self.trait_memo.get(&trait_id) {
+            return done.clone();
+        }
 
-    let mut waits = HashSet::new();
+        if !self.visiting.insert(trait_id) {
+            return HashSet::new();
+        }
 
-    if let Some(concretes) = provider_concretes.get(&trait_id) {
+        let mut waits = HashSet::new();
+        let concretes: Vec<TypeId> = self
+            .providers_by_trait
+            .get(&trait_id)
+            .into_iter()
+            .flatten()
+            .map(|provider| provider.concrete_ty.type_id)
+            .collect();
+
         for concrete in concretes {
-            if sortable.contains(concrete) {
-                waits.insert(*concrete);
-            } else if let Some(descriptor) = transients.get(concrete) {
-                expand_transient_waits(
-                    *descriptor,
-                    provider_concretes,
-                    transients,
-                    sortable,
-                    memo,
-                    visiting,
-                    &mut waits,
-                );
+            waits.extend(self.provider_waits(concrete));
+        }
+
+        self.visiting.remove(&trait_id);
+        self.trait_memo.insert(trait_id, waits.clone());
+
+        waits
+    }
+
+    /// Adds the eager dependencies of a transient component to `waits`, matching
+    /// runtime resolution: sortable concrete deps directly, single trait deps
+    /// through their selected provider only, collection/keyed deps through all
+    /// providers, and concrete transient deps through their own expansion.
+    fn expand_transient(&mut self, descriptor: ComponentDescriptor, waits: &mut HashSet<TypeId>) {
+        if !self.visiting.insert(descriptor.ty.type_id) {
+            return;
+        }
+
+        for dep in descriptor.dependencies() {
+            if dep.optional || dep.dynamic || dep.config || dep.resolution != ResolutionMode::Eager
+            {
+                continue;
+            }
+
+            if self.sortable.contains(&dep.ty.type_id) {
+                waits.insert(dep.ty.type_id);
+            } else if let Some(providers) = self.providers_by_trait.get(&dep.ty.type_id) {
+                let providers = providers.clone();
+
+                match dep.cardinality {
+                    Cardinality::One => {
+                        if let Some(provider) = select_provider_for(&dep, &providers) {
+                            waits.extend(self.provider_waits(provider.concrete_ty.type_id));
+                        }
+                    }
+                    Cardinality::Collection | Cardinality::Keyed => {
+                        waits.extend(self.trait_waits(dep.ty.type_id));
+                    }
+                }
+            } else if let Some(next) = self.transients.get(&dep.ty.type_id).copied() {
+                self.expand_transient(next, waits);
             }
         }
+
+        self.visiting.remove(&descriptor.ty.type_id);
     }
-
-    visiting.remove(&trait_id);
-    memo.insert(trait_id, waits.clone());
-
-    waits
 }
 
-/// Adds the eager dependencies of a transient component to `waits`: sortable
-/// concrete deps directly, trait deps through their (transitively expanded)
-/// providers, and concrete transient deps through their own expansion.
-fn expand_transient_waits(
-    descriptor: ComponentDescriptor,
-    provider_concretes: &HashMap<TypeId, Vec<TypeId>>,
-    transients: &HashMap<TypeId, ComponentDescriptor>,
-    sortable: &HashSet<TypeId>,
-    memo: &mut HashMap<TypeId, HashSet<TypeId>>,
-    visiting: &mut HashSet<TypeId>,
-    waits: &mut HashSet<TypeId>,
-) {
-    if !visiting.insert(descriptor.ty.type_id) {
-        return;
+/// Selects the provider a single trait dependency constructs: qualifier-selected,
+/// the sole provider, or the unique primary one. Shared with runtime resolution.
+fn select_provider_for(
+    dep: &overseerd_core::DependencyDescriptor,
+    providers: &[ProviderDescriptor],
+) -> Option<ProviderDescriptor> {
+    match dep.qualifier {
+        Some(qualifier) => providers
+            .iter()
+            .find(|provider| provider.qualifier == qualifier)
+            .copied(),
+        None => select_single_provider(providers),
     }
-
-    for dep in descriptor.dependencies() {
-        if dep.optional || dep.dynamic || dep.config || dep.resolution != ResolutionMode::Eager {
-            continue;
-        }
-
-        if sortable.contains(&dep.ty.type_id) {
-            waits.insert(dep.ty.type_id);
-        } else if provider_concretes.contains_key(&dep.ty.type_id) {
-            waits.extend(expand_trait_waits(
-                dep.ty.type_id,
-                provider_concretes,
-                transients,
-                sortable,
-                memo,
-                visiting,
-            ));
-        } else if let Some(next) = transients.get(&dep.ty.type_id) {
-            expand_transient_waits(
-                *next,
-                provider_concretes,
-                transients,
-                sortable,
-                memo,
-                visiting,
-                waits,
-            );
-        }
-    }
-
-    visiting.remove(&descriptor.ty.type_id);
 }
 
-/// Whether a dependency's predecessors are all built. A trait edge waits for
-/// every provider of that trait *that participates in this scope's build*;
-/// transient and other-scope providers are resolved on demand and impose no
-/// build-ordering constraint. A single concrete edge waits for that concrete;
-/// a multi-valued edge with no providers is trivially ready (empty is valid).
+/// Whether a dependency's predecessors are all built. A single trait edge waits
+/// for the selected provider's wait set; a collection/keyed edge waits for every
+/// provider's. A single concrete edge waits for that concrete; a multi-valued
+/// edge with no providers is trivially ready (empty is valid).
 fn dep_ready(
-    cardinality: Cardinality,
-    dep_type_id: TypeId,
+    dep: &overseerd_core::DependencyDescriptor,
+    providers_by_trait: &HashMap<TypeId, Vec<ProviderDescriptor>>,
+    provider_waits: &HashMap<TypeId, HashSet<TypeId>>,
     trait_waits: &HashMap<TypeId, HashSet<TypeId>>,
     is_built: &impl Fn(TypeId) -> bool,
 ) -> bool {
-    if let Some(waits) = trait_waits.get(&dep_type_id) {
-        return waits.iter().all(|id| is_built(*id));
-    }
+    let Some(providers) = providers_by_trait.get(&dep.ty.type_id) else {
+        return match dep.cardinality {
+            Cardinality::One => is_built(dep.ty.type_id),
+            Cardinality::Collection | Cardinality::Keyed => true,
+        };
+    };
 
-    match cardinality {
-        Cardinality::One => is_built(dep_type_id),
-        Cardinality::Collection | Cardinality::Keyed => true,
-    }
+    let waits = match dep.cardinality {
+        Cardinality::One => {
+            let Some(provider) = select_provider_for(dep, providers) else {
+                // Ambiguous or missing selection is a validation error, not an
+                // ordering constraint.
+                return true;
+            };
+
+            provider_waits.get(&provider.concrete_ty.type_id)
+        }
+        Cardinality::Collection | Cardinality::Keyed => trait_waits.get(&dep.ty.type_id),
+    };
+
+    waits.is_none_or(|waits| waits.iter().all(|id| is_built(*id)))
 }
 
 #[cfg(test)]
