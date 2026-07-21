@@ -204,3 +204,95 @@ async fn ambiguous_local_set_waits_for_all_locals_before_parent_fallback() {
         "a complete ambiguous local set falls back to the parent primary"
     );
 }
+
+/// A trait exercising qualified single edges with no local qualifier match.
+#[injectable]
+trait QualChoice: Send + Sync {
+    fn name(&self) -> &'static str;
+}
+
+/// The parent provider carrying the qualifier the consumer asks for.
+#[component(provide = dyn QualChoice, qualifier = "wanted")]
+struct WantedParentProvider;
+
+impl QualChoice for WantedParentProvider {
+    fn name(&self) -> &'static str {
+        "wanted-parent"
+    }
+}
+
+/// A child consumer with a qualified edge that matches no local provider.
+#[component(scope = ChildScope)]
+struct QualifiedChoiceConsumer {
+    #[qualifier = "wanted"]
+    chosen: Arc<dyn QualChoice>,
+}
+
+/// A local provider with a different qualifier, depending on the consumer: if
+/// the consumer's qualified edge waited for every local provider (mistaking a
+/// qualifier miss for ambiguity), the sort would report a false cycle.
+#[component(
+    scope = ChildScope,
+    provide = dyn QualChoice,
+    qualifier = "other"
+)]
+struct OtherLocalProvider {
+    #[expect(unused)]
+    consumer: Arc<QualifiedChoiceConsumer>,
+}
+
+impl QualChoice for OtherLocalProvider {
+    fn name(&self) -> &'static str {
+        "other-local"
+    }
+}
+
+#[tokio::test]
+async fn qualified_edge_without_local_match_does_not_wait_for_unrelated_locals() {
+    let parent = <WantedParentProvider as Descriptor<ComponentDescriptor>>::DESCRIPTOR;
+    let consumer = <QualifiedChoiceConsumer as Descriptor<ComponentDescriptor>>::DESCRIPTOR;
+    let other = <OtherLocalProvider as Descriptor<ComponentDescriptor>>::DESCRIPTOR;
+    let components = [parent, consumer, other];
+    let providers: Vec<_> = PROVIDERS
+        .iter()
+        .filter(|provider| provider.trait_ty.type_id == TypeId::of::<dyn QualChoice>())
+        .copied()
+        .collect();
+    let registry = Arc::new(ScopeRegistry::new(
+        HashMap::new(),
+        components
+            .iter()
+            .map(|component| (component.ty.type_id, *component))
+            .collect::<HashMap<TypeId, ComponentDescriptor>>(),
+        providers.clone(),
+        HashMap::new(),
+    ));
+
+    let root =
+        ScopeContainer::build_root(&[parent], Vec::new(), ResolverSet::new(), registry.clone())
+            .await
+            .expect("root builds");
+    let prebuilt: HashSet<TypeId> = [parent.ty.type_id].into_iter().collect();
+
+    let child_components = [other, consumer];
+    let order = topological_sort(&child_components, &prebuilt, &providers, &HashMap::new())
+        .expect("no false cycle through the unrelated local provider");
+    let names: Vec<_> = order.iter().map(|component| component.name).collect();
+
+    assert_eq!(names, ["QualifiedChoiceConsumer", "OtherLocalProvider"]);
+
+    let order: Vec<ComponentDescriptor> = order.into_iter().copied().collect();
+    let child = ScopeContainer::open_child(&ChildScope, root, registry, &order, Vec::new())
+        .await
+        .expect("child scope builds");
+
+    assert_eq!(
+        child
+            .get::<QualifiedChoiceConsumer>()
+            .expect("consumer built")
+            .chosen
+            .name(),
+        "wanted-parent",
+        "a qualified edge with no local match resolves from the parent"
+    );
+}

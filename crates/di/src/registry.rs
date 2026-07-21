@@ -277,52 +277,79 @@ impl ComponentRegistry {
                 .into_iter()
                 .filter(|dependency| dependency.resolution == ResolutionMode::Deferred)
             {
-                let target = by_type.get(&dependency.ty.type_id).copied().or_else(|| {
-                    let matching: Vec<ProviderDescriptor> = self
-                        .providers
-                        .iter()
-                        .filter(|provider| provider.trait_ty.type_id == dependency.ty.type_id)
-                        .filter(|provider| {
-                            dependency
-                                .qualifier
-                                .is_none_or(|qualifier| provider.qualifier == qualifier)
-                        })
-                        .copied()
-                        .collect();
-                    // Hydration resolves through scope stores, which never contain
-                    // transient providers — so a transient can never be the hydrated
-                    // target while a scoped alternative exists. Select among scoped
-                    // providers with the runtime rule; only fall back to the full
-                    // set to report a genuinely transient-only target.
-                    let scoped: Vec<ProviderDescriptor> = matching
-                        .iter()
-                        .filter(|provider| {
-                            by_type
-                                .get(&provider.concrete_ty.type_id)
-                                .is_none_or(|concrete| !concrete.scope.is_transient())
-                        })
-                        .copied()
-                        .collect();
-                    let candidates = if scoped.is_empty() {
-                        &matching
-                    } else {
-                        &scoped
-                    };
-                    let selected = if dependency.qualifier.is_some() {
-                        candidates.first().copied()
-                    } else {
-                        crate::container::select_single_provider(candidates)
-                    };
+                let target = match by_type.get(&dependency.ty.type_id).copied() {
+                    Some(target) => Some(target),
+                    None => {
+                        let matching: Vec<ProviderDescriptor> = self
+                            .providers
+                            .iter()
+                            .filter(|provider| provider.trait_ty.type_id == dependency.ty.type_id)
+                            .filter(|provider| {
+                                dependency
+                                    .qualifier
+                                    .is_none_or(|qualifier| provider.qualifier == qualifier)
+                            })
+                            .copied()
+                            .collect();
+                        // Hydration resolves through scope stores, which never contain
+                        // transient providers — so a transient can never be the hydrated
+                        // target while a scoped alternative exists. Select among scoped
+                        // providers with the runtime rule; only fall back to the full
+                        // set to report a genuinely transient-only target.
+                        let scoped: Vec<ProviderDescriptor> = matching
+                            .iter()
+                            .filter(|provider| {
+                                by_type
+                                    .get(&provider.concrete_ty.type_id)
+                                    .is_none_or(|concrete| !concrete.scope.is_transient())
+                            })
+                            .copied()
+                            .collect();
+                        let candidates = if scoped.is_empty() {
+                            &matching
+                        } else {
+                            &scoped
+                        };
+                        // Hydration searches the consumer's own scope first and only
+                        // then falls back to parent providers, so selection runs
+                        // scope-locally before globally.
+                        let local: Vec<ProviderDescriptor> =
+                            candidates
+                                .iter()
+                                .filter(|provider| {
+                                    by_type.get(&provider.concrete_ty.type_id).is_some_and(
+                                        |concrete| concrete.scope.name() == consumer.scope.name(),
+                                    )
+                                })
+                                .copied()
+                                .collect();
+                        let select = |providers: &[ProviderDescriptor]| {
+                            if dependency.qualifier.is_some() {
+                                providers.first().copied()
+                            } else {
+                                crate::container::select_single_provider(providers)
+                            }
+                        };
+                        let selected = if local.is_empty() {
+                            select(candidates)
+                        } else {
+                            select(&local).or_else(|| select(candidates))
+                        };
 
-                    if selected.is_none() && !candidates.is_empty() {
-                        return Err(Error::AmbiguousProvider(
-                            (dependency.ty.type_name)().to_string(),
-                        ));
+                        match selected {
+                            Some(provider) => by_type.get(&provider.concrete_ty.type_id).copied(),
+                            // No candidates at all is a missing-dependency matter
+                            // (reported elsewhere); candidates that exist but cannot
+                            // be selected even after parent fallback are ambiguous.
+                            None if candidates.is_empty() => None,
+                            None => {
+                                return Err(Error::AmbiguousProvider(
+                                    (dependency.ty.type_name)().to_string(),
+                                ));
+                            }
+                        }
                     }
-
-                    selected
-                        .and_then(|provider| by_type.get(&provider.concrete_ty.type_id).copied())
-                });
+                };
 
                 if target.is_some_and(|target| target.scope.is_transient()) {
                     return Err(Error::DeferredTransientDependency {
@@ -882,6 +909,111 @@ mod tests {
         // Hydration resolves through scope stores, which never hold transients,
         // so the scoped provider — not the transient global primary — is the
         // validated target.
+        assert!(registry.validate().is_ok());
+    }
+
+    static SINGLETON_DEFERRED_SHARED: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "SharedTrait",
+        ty: TypeDescriptor::of::<dyn Send>("SharedTrait"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+        config: false,
+        resolution: ResolutionMode::Deferred,
+    }];
+
+    #[test]
+    fn validate_rejects_ambiguous_deferred_candidates() {
+        let consumer = scoped!(
+            "AmbiguousDeferredConsumer",
+            &Singleton,
+            &SINGLETON_DEFERRED_SHARED,
+            TypeDescriptor::of::<u64>("AmbiguousDeferredConsumer"),
+        );
+        let first = scoped!(
+            "FirstScoped",
+            &Singleton,
+            &[],
+            TypeDescriptor::of::<u8>("FirstScoped")
+        );
+        let second = scoped!(
+            "SecondScoped",
+            &Singleton,
+            &[],
+            TypeDescriptor::of::<u16>("SecondScoped"),
+        );
+        let transient = scoped!(
+            "TransientPrimary",
+            &Transient,
+            &[],
+            TypeDescriptor::of::<u32>("TransientPrimary"),
+        );
+        let registry = ComponentRegistry {
+            components: vec![consumer, first, second, transient],
+            providers: vec![
+                trait_provider(TypeDescriptor::of::<u32>("TransientPrimary"), "t", true),
+                trait_provider(TypeDescriptor::of::<u8>("FirstScoped"), "a", false),
+                trait_provider(TypeDescriptor::of::<u16>("SecondScoped"), "b", false),
+            ],
+        };
+
+        // The transient primary passes the global primary-count check, but after
+        // transient filtering the scoped set is ambiguous with no parent fallback
+        // left — hydration could never select deterministically.
+        assert!(matches!(
+            registry.validate(),
+            Err(Error::AmbiguousProvider(_))
+        ));
+    }
+
+    #[test]
+    fn validate_selects_deferred_candidates_scope_locally() {
+        static REQUEST_DEFERRED_SHARED: [DependencyDescriptor; 1] = [DependencyDescriptor {
+            name: "SharedTrait",
+            ty: TypeDescriptor::of::<dyn Send>("SharedTrait"),
+            cardinality: Cardinality::One,
+            optional: false,
+            dynamic: false,
+            qualifier: None,
+            config: false,
+            resolution: ResolutionMode::Deferred,
+        }];
+        let consumer = scoped!(
+            "RequestDeferredConsumer",
+            &Request,
+            &REQUEST_DEFERRED_SHARED,
+            TypeDescriptor::of::<u64>("RequestDeferredConsumer"),
+        );
+        let local = scoped!(
+            "LocalProvider",
+            &Request,
+            &[],
+            TypeDescriptor::of::<u8>("LocalProvider"),
+        );
+        let parent = scoped!(
+            "ParentProvider",
+            &Singleton,
+            &[],
+            TypeDescriptor::of::<u16>("ParentProvider"),
+        );
+        let transient = scoped!(
+            "TransientPrimary",
+            &Transient,
+            &[],
+            TypeDescriptor::of::<u32>("TransientPrimary"),
+        );
+        let registry = ComponentRegistry {
+            components: vec![consumer, local, parent, transient],
+            providers: vec![
+                trait_provider(TypeDescriptor::of::<u32>("TransientPrimary"), "t", true),
+                trait_provider(TypeDescriptor::of::<u8>("LocalProvider"), "local", false),
+                trait_provider(TypeDescriptor::of::<u16>("ParentProvider"), "parent", false),
+            ],
+        };
+
+        // The consumer's own scope has an unambiguous local provider, so the
+        // cross-scope candidate set is not ambiguous for hydration.
         assert!(registry.validate().is_ok());
     }
 
