@@ -26,8 +26,10 @@ impl Notifier for Email {
 }
 
 /// An explicit qualifier overrides the inferred id.
-#[component(provide = dyn Notifier, qualifier = "sms", before = Push as dyn Notifier, after = Email as dyn Notifier)]
+#[component(provide = [dyn Notifier, dyn Example], qualifier = "sms", before = Push as dyn Notifier, after = Email as dyn Notifier)]
 pub struct Sms;
+
+impl Example for Sms {}
 
 impl Notifier for Sms {
     fn channel(&self) -> &'static str {
