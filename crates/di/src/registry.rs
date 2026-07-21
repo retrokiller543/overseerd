@@ -313,13 +313,23 @@ impl ComponentRegistry {
                         // Hydration searches the consumer's own scope, then each
                         // parent scope in turn, selecting per scope and stopping at
                         // the nearest scope that resolves — so candidates are
-                        // grouped by scope rank and walked nearest-first rather
-                        // than selected from the merged set. An ambiguous group
-                        // falls through to the next parent scope, exactly like
-                        // runtime `resolve_built`.
+                        // grouped by scope and walked nearest-first rather than
+                        // selected from the merged set. An ambiguous group falls
+                        // through to the next parent scope, exactly like runtime
+                        // `resolve_built`.
+                        //
+                        // Runtime walks each scope *container* individually, so the
+                        // group key is scope identity — its stable `name` — keyed
+                        // within `rank` for chain ordering. `rank` alone is a
+                        // lifetime order, not an identity: distinct scopes may share
+                        // a rank yet resolve through separate containers, so keying
+                        // by rank would merge equal-rank siblings and report a false
+                        // ambiguity that runtime never sees.
                         let consumer_rank = consumer.scope.rank();
-                        let mut by_rank: std::collections::BTreeMap<u8, Vec<ProviderDescriptor>> =
-                            std::collections::BTreeMap::new();
+                        let mut by_scope: std::collections::BTreeMap<
+                            (u8, &'static str),
+                            Vec<ProviderDescriptor>,
+                        > = std::collections::BTreeMap::new();
 
                         for provider in candidates {
                             let Some(concrete) = by_type.get(&provider.concrete_ty.type_id) else {
@@ -327,8 +337,8 @@ impl ComponentRegistry {
                             };
 
                             if concrete.scope.rank() >= consumer_rank {
-                                by_rank
-                                    .entry(concrete.scope.rank())
+                                by_scope
+                                    .entry((concrete.scope.rank(), concrete.scope.name()))
                                     .or_default()
                                     .push(*provider);
                             }
@@ -344,7 +354,7 @@ impl ComponentRegistry {
                         let mut selected = None;
                         let mut saw_group = false;
 
-                        for group in by_rank.values() {
+                        for group in by_scope.values() {
                             saw_group = true;
 
                             if let Some(provider) = select(group) {
@@ -515,7 +525,9 @@ mod tests {
         BoxedComponent, ComponentConstructionContext, ComponentDescriptor,
         ComponentFactoryDescriptor,
     };
-    use overseerd_core::{Cardinality, DependencyDescriptor, Transient, TypeDescriptor};
+    use overseerd_core::{
+        Cardinality, DependencyDescriptor, StaticScope, Transient, TypeDescriptor,
+    };
 
     /// Local stand-in intermediate scopes (the captive rule only cares about rank
     /// ordering): `Connection` outranks `Request`, both between singleton and transient.
@@ -542,6 +554,23 @@ mod tests {
         fn name(&self) -> &'static str {
             "Request"
         }
+    }
+
+    /// Two distinct scopes that deliberately share a rank: `rank` is a lifetime
+    /// order, not an identity, so equal-rank siblings still resolve through
+    /// separate containers. Used to prove deferred selection groups by scope
+    /// identity rather than merging equal ranks.
+    struct SiblingA;
+    struct SiblingB;
+
+    impl StaticScope for SiblingA {
+        const RANK: u8 = 3;
+        const NAME: &'static str = "SiblingA";
+    }
+
+    impl StaticScope for SiblingB {
+        const RANK: u8 = 3;
+        const NAME: &'static str = "SiblingB";
     }
 
     fn fake_factory<'a>(
@@ -1091,6 +1120,58 @@ mod tests {
         // The merged non-transient set is ambiguous, but runtime hydration walks
         // scope by scope and the connection scope selects its sole provider —
         // so this is a valid registry, not an ambiguous one.
+        assert!(registry.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_groups_deferred_candidates_by_scope_identity_not_rank() {
+        static REQUEST_DEFERRED_SIBLINGS: [DependencyDescriptor; 1] = [DependencyDescriptor {
+            name: "SharedTrait",
+            ty: TypeDescriptor::of::<dyn Send>("SharedTrait"),
+            cardinality: Cardinality::One,
+            optional: false,
+            dynamic: false,
+            qualifier: None,
+            config: false,
+            resolution: ResolutionMode::Deferred,
+        }];
+        let consumer = scoped!(
+            "SiblingConsumer",
+            &Request,
+            &REQUEST_DEFERRED_SIBLINGS,
+            TypeDescriptor::of::<u64>("SiblingConsumer"),
+        );
+        let sibling_a = scoped!(
+            "SiblingAProvider",
+            &SiblingA,
+            &[],
+            TypeDescriptor::of::<u8>("SiblingAProvider"),
+        );
+        let sibling_b = scoped!(
+            "SiblingBProvider",
+            &SiblingB,
+            &[],
+            TypeDescriptor::of::<u16>("SiblingBProvider"),
+        );
+        let transient = scoped!(
+            "TransientPrimary",
+            &Transient,
+            &[],
+            TypeDescriptor::of::<u32>("TransientPrimary"),
+        );
+        let registry = ComponentRegistry {
+            components: vec![consumer, sibling_a, sibling_b, transient],
+            providers: vec![
+                trait_provider(TypeDescriptor::of::<u32>("TransientPrimary"), "t", true),
+                trait_provider(TypeDescriptor::of::<u8>("SiblingAProvider"), "a", false),
+                trait_provider(TypeDescriptor::of::<u16>("SiblingBProvider"), "b", false),
+            ],
+        };
+
+        // Both providers live in distinct scopes that share rank 3. Runtime walks
+        // each container individually and the nearer scope selects its sole
+        // provider, so grouping by rank alone would merge the siblings into a
+        // false ambiguity. Grouping by scope identity keeps them separate.
         assert!(registry.validate().is_ok());
     }
 
