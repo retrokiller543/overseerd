@@ -168,6 +168,18 @@ struct TransientProviderViews {
     keyed: HashMap<String, Arc<dyn TransientAnimal>>,
 }
 
+/// A singleton eagerly consuming transient providers: the topological sort must
+/// not wedge waiting for transient provider concretes that are never built in a
+/// scope, and construction must resolve the providers on demand.
+#[component]
+struct SingletonTransientViews {
+    chosen: Arc<dyn TransientAnimal>,
+    #[qualifier = "transient-cat"]
+    qualified: Arc<dyn TransientAnimal>,
+    ordered: Vec<Arc<dyn TransientAnimal>>,
+    keyed: HashMap<String, Arc<dyn TransientAnimal>>,
+}
+
 /// A trait whose transient provider always fails construction.
 #[injectable]
 trait BrokenTransientProvider: Send + Sync {}
@@ -312,6 +324,52 @@ async fn transient_providers_are_fresh_erased_and_globally_ordered() {
         second
             .keyed
             .values()
+            .all(|provider| !first_ids.contains(&provider.id()))
+    );
+}
+
+#[tokio::test]
+async fn singleton_consumes_transient_providers_eagerly() {
+    let daemon = App::builder("singleton-transient-views-test")
+        .auto_discover()
+        .build()
+        .await
+        .expect("singleton with eager transient providers builds");
+
+    let views = daemon
+        .container()
+        .get::<SingletonTransientViews>()
+        .expect("singleton transient views constructed");
+
+    assert_eq!(views.chosen.kind(), "dog");
+    assert_eq!(views.qualified.kind(), "cat");
+    assert_eq!(
+        views
+            .ordered
+            .iter()
+            .map(|provider| provider.kind())
+            .collect::<Vec<_>>(),
+        ["cat", "dog"]
+    );
+    assert_eq!(views.keyed["transientdog"].kind(), "dog");
+    assert_eq!(views.keyed["transient-cat"].kind(), "cat");
+
+    // Every resolution of the collection still constructs fresh transients.
+    let first = daemon
+        .container()
+        .extract::<Vec<Arc<dyn TransientAnimal>>>()
+        .await
+        .expect("first collection resolves");
+    let second = daemon
+        .container()
+        .extract::<Vec<Arc<dyn TransientAnimal>>>()
+        .await
+        .expect("second collection resolves");
+    let first_ids: Vec<u64> = first.iter().map(|provider| provider.id()).collect();
+
+    assert!(
+        second
+            .iter()
             .all(|provider| !first_ids.contains(&provider.id()))
     );
 }

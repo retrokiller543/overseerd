@@ -545,20 +545,15 @@ impl ComponentConstructionContext {
     /// `H::Target`: this scope first, then each longer-lived parent scope, then —
     /// if `H::Target` is a `Transient` component — a freshly constructed instance.
     pub async fn resolve<H: Injectable>(&self) -> crate::Result<Option<H>> {
-        let target = TypeId::of::<H::Target>();
-
-        if let Some(provider) = self.registry.single_provider(target)
-            && self
-                .registry
-                .transient(provider.concrete_ty.type_id)
-                .is_some()
+        if let Some(handle) = crate::container::construct_selected_transient_provider::<H>(
+            &self.registry,
+            self.parent.clone(),
+            self.slot.clone(),
+            None,
+        )
+        .await?
         {
-            return crate::container::construct_transient_provider::<H>(
-                &self.registry,
-                self.parent.clone(),
-                provider,
-            )
-            .await;
+            return Ok(Some(handle));
         }
 
         if let Some(handle) = self.store.resolve_local::<H>() {
@@ -571,7 +566,12 @@ impl ComponentConstructionContext {
             return Ok(Some(handle));
         }
 
-        crate::container::construct_transient::<H>(&self.registry, self.parent.clone()).await
+        crate::container::construct_transient::<H>(
+            &self.registry,
+            self.parent.clone(),
+            self.slot.clone(),
+        )
+        .await
     }
 
     /// Qualifier-selected single provider, this scope then parents.
@@ -579,20 +579,15 @@ impl ComponentConstructionContext {
         &self,
         qualifier: &str,
     ) -> crate::Result<Option<H>> {
-        let target = TypeId::of::<H::Target>();
-
-        if let Some(provider) = self.registry.qualified_provider(target, qualifier)
-            && self
-                .registry
-                .transient(provider.concrete_ty.type_id)
-                .is_some()
+        if let Some(handle) = crate::container::construct_selected_transient_provider::<H>(
+            &self.registry,
+            self.parent.clone(),
+            self.slot.clone(),
+            Some(qualifier),
+        )
+        .await?
         {
-            return crate::container::construct_transient_provider::<H>(
-                &self.registry,
-                self.parent.clone(),
-                provider,
-            )
-            .await;
+            return Ok(Some(handle));
         }
 
         if let Some(handle) = self.store.resolve_qualified_local::<H>(qualifier) {
@@ -616,10 +611,11 @@ impl ComponentConstructionContext {
             all.extend(parent.collect_all_built::<H>());
         }
 
-        for provider in self.registry.providers_for_trait(target) {
+        for provider in self.registry.transient_providers_for(target) {
             if let Some(value) = crate::container::construct_transient_provider::<H>(
                 &self.registry,
                 self.parent.clone(),
+                self.slot.clone(),
                 *provider,
             )
             .await?
@@ -644,10 +640,11 @@ impl ComponentConstructionContext {
 
         keyed.extend(self.store.collect_keyed_local::<H>());
 
-        for provider in self.registry.providers_for_trait(target) {
+        for provider in self.registry.transient_providers_for(target) {
             if let Some(value) = crate::container::construct_transient_provider::<H>(
                 &self.registry,
                 self.parent.clone(),
+                self.slot.clone(),
                 *provider,
             )
             .await?

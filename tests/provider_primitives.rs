@@ -96,6 +96,19 @@ struct DeferredCycleB {
     a: Arc<DeferredCycleA>,
 }
 
+/// A transient component holding a deferred dependency on a singleton.
+#[component(scope = overseerd::scope::Transient)]
+struct TransientDeferredConsumer {
+    target: Deferred<PrimitiveTarget>,
+}
+
+/// Resolves the transient during root construction through an optional edge, so
+/// its deferred handle must hydrate when the root scope attaches.
+#[component]
+struct RootBuildTransientOwner {
+    transient: Option<Arc<TransientDeferredConsumer>>,
+}
+
 #[tokio::test]
 async fn lazy_fresh_and_deferred_follow_their_cache_contracts() {
     let app = App::builder("provider-primitives")
@@ -202,4 +215,29 @@ async fn deferred_hydrates_after_construction_without_retaining_a_cycle() {
 
     assert!(weak_a.upgrade().is_none());
     assert!(weak_b.upgrade().is_none());
+}
+
+#[tokio::test]
+async fn deferred_in_transient_built_during_root_build_hydrates_at_attach() {
+    let app = App::builder("root-build-transient-deferred")
+        .auto_discover()
+        .build()
+        .await
+        .expect("app builds with a root-built transient holding a deferred");
+    let owner = app
+        .container()
+        .get::<RootBuildTransientOwner>()
+        .expect("owner resolves");
+    let canonical = app
+        .container()
+        .get::<PrimitiveTarget>()
+        .expect("canonical target resolves");
+    let transient = owner
+        .transient
+        .as_ref()
+        .expect("optional transient constructed during root build");
+
+    // The transient was constructed while the root scope was still building;
+    // its deferred handle must have hydrated when the root attached.
+    assert!(Arc::ptr_eq(&transient.target.get(), &canonical));
 }

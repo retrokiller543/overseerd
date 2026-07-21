@@ -5,7 +5,7 @@ use std::{
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    sync::{Arc, Mutex, Weak},
+    sync::{Arc, OnceLock, Weak},
 };
 
 use arc_swap::ArcSwapOption;
@@ -13,7 +13,7 @@ use overseerd_core::{Cardinality, DependencyDescriptor, ResolutionMode};
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
-    ComponentConstructionContext, FromContainer, Injectable, ScopeContainer,
+    ComponentConstructionContext, FromContainer, Injectable, ProviderDescriptor, ScopeContainer,
     construct::{dependency_of, short_name},
     container::{ScopeResolverSlot, construct_fresh_boxed},
     descriptors::component::from_boxed,
@@ -127,7 +127,7 @@ where
     fn dependency() -> DependencyDescriptor {
         let mut dependency = H::dependency();
 
-        dependency.resolution = ResolutionMode::Deferred;
+        dependency.resolution = ResolutionMode::Lazy;
 
         dependency
     }
@@ -237,6 +237,11 @@ where
         let descriptor = registry
             .factory_backed(std::any::TypeId::of::<H>())
             .ok_or_else(|| Error::UnsupportedFreshFactory(short_name::<H>().into()))?;
+
+        if !scope.can_access(descriptor.scope) {
+            return Err(Error::MissingComponent(short_name::<H>()));
+        }
+
         let boxed = construct_fresh_boxed(&registry, scope, descriptor).await?;
 
         from_boxed::<H>(&boxed).ok_or(Error::MissingComponent(short_name::<H>()))
@@ -272,26 +277,9 @@ where
         _: Option<&'static str>,
     ) -> crate::Result<Self> {
         let registry = scope.registry();
-        let mut values = Vec::new();
+        let mut values = fresh_construct_all::<T>(&scope).await?;
 
-        for provider in registry.providers_for_trait(std::any::TypeId::of::<T>()) {
-            let descriptor = registry
-                .factory_backed(provider.concrete_ty.type_id)
-                .ok_or_else(|| Error::UnsupportedFreshFactory(provider.concrete_ty.name.into()))?;
-
-            if !scope.can_access(descriptor.scope) {
-                continue;
-            }
-
-            let concrete = construct_fresh_boxed(&registry, Arc::clone(&scope), descriptor).await?;
-            let erased = (provider.erase)(&concrete);
-            let value =
-                from_boxed::<Arc<T>>(&erased).ok_or(Error::MissingComponent(short_name::<T>()))?;
-
-            values.push((registry.provider_ordinal(provider), value));
-        }
-
-        values.sort_by_key(|(ordinal, _)| *ordinal);
+        values.sort_by_key(|(provider, _)| registry.provider_ordinal(provider));
 
         Ok(values.into_iter().map(|(_, value)| value).collect())
     }
@@ -309,28 +297,45 @@ where
         scope: Arc<ScopeContainer>,
         _: Option<&'static str>,
     ) -> crate::Result<Self> {
-        let registry = scope.registry();
-        let mut values = HashMap::new();
+        let values = fresh_construct_all::<T>(&scope).await?;
 
-        for provider in registry.providers_for_trait(std::any::TypeId::of::<T>()) {
-            let descriptor = registry
-                .factory_backed(provider.concrete_ty.type_id)
-                .ok_or_else(|| Error::UnsupportedFreshFactory(provider.concrete_ty.name.into()))?;
+        Ok(values
+            .into_iter()
+            .map(|(provider, value)| (provider.qualifier.to_string(), value))
+            .collect())
+    }
+}
 
-            if !scope.can_access(descriptor.scope) {
-                continue;
-            }
+/// Rebuilds every factory-backed, scope-accessible provider of trait `T` against
+/// `scope`, returning each provider descriptor with its fresh value. Shared by the
+/// collection and keyed [`Fresh`] shapes so both apply identical eligibility rules.
+async fn fresh_construct_all<T>(
+    scope: &Arc<ScopeContainer>,
+) -> crate::Result<Vec<(ProviderDescriptor, Arc<T>)>>
+where
+    T: ?Sized + Send + Sync + 'static,
+{
+    let registry = scope.registry();
+    let mut values = Vec::new();
 
-            let concrete = construct_fresh_boxed(&registry, Arc::clone(&scope), descriptor).await?;
-            let erased = (provider.erase)(&concrete);
-            let value =
-                from_boxed::<Arc<T>>(&erased).ok_or(Error::MissingComponent(short_name::<T>()))?;
+    for provider in registry.providers_for_trait(std::any::TypeId::of::<T>()) {
+        let descriptor = registry
+            .factory_backed(provider.concrete_ty.type_id)
+            .ok_or_else(|| Error::UnsupportedFreshFactory(provider.concrete_ty.name.into()))?;
 
-            values.insert(provider.qualifier.to_string(), value);
+        if !scope.can_access(descriptor.scope) {
+            continue;
         }
 
-        Ok(values)
+        let concrete = construct_fresh_boxed(&registry, Arc::clone(scope), descriptor).await?;
+        let erased = (provider.erase)(&concrete);
+        let value =
+            from_boxed::<Arc<T>>(&erased).ok_or(Error::MissingComponent(short_name::<T>()))?;
+
+        values.push((*provider, value));
     }
+
+    Ok(values)
 }
 
 async fn fresh_arc<T>(
@@ -381,7 +386,7 @@ pub struct Deferred<T: ?Sized> {
 
 struct DeferredInner<T: ?Sized> {
     qualifier: Option<&'static str>,
-    value: Mutex<Option<Weak<T>>>,
+    value: OnceLock<Weak<T>>,
 }
 
 impl<T: ?Sized> Clone for Deferred<T> {
@@ -402,7 +407,7 @@ where
     ) -> crate::Result<Self> {
         let inner = Arc::new(DeferredInner {
             qualifier,
-            value: Mutex::new(None),
+            value: OnceLock::new(),
         });
 
         scope.register_deferred(Arc::clone(&inner) as Arc<dyn DeferredHydrator>)?;
@@ -412,12 +417,7 @@ where
 
     /// Returns the hydrated target when it is still alive.
     pub fn try_get(&self) -> Option<Arc<T>> {
-        self.inner
-            .value
-            .lock()
-            .expect("deferred cache poisoned")
-            .as_ref()
-            .and_then(Weak::upgrade)
+        self.inner.value.get().and_then(Weak::upgrade)
     }
 
     /// Returns the hydrated target.
@@ -446,7 +446,9 @@ where
         }
         .ok_or(Error::MissingComponent(short_name::<T>()))?;
 
-        *self.value.lock().expect("deferred cache poisoned") = Some(Arc::downgrade(&value));
+        // Each slot is registered with exactly one scope and hydrated once;
+        // a repeated set keeps the first value.
+        let _ = self.value.set(Arc::downgrade(&value));
 
         Ok(())
     }
