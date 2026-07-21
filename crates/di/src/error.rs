@@ -87,6 +87,15 @@ pub enum Error {
     },
 
     #[error(
+        "duplicate provider qualifier '{qualifier}' for trait '{trait_name}' in scope '{scope}': qualifier selection is first-registered, so same-scope duplicates resolve nondeterministically"
+    )]
+    DuplicateProviderQualifier {
+        trait_name: String,
+        qualifier: String,
+        scope: String,
+    },
+
+    #[error(
         "scope violation: component '{component}' ({component_scope}) depends on \
          '{dependency}' ({dependency_scope}), which is shorter-lived"
     )]

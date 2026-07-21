@@ -89,6 +89,7 @@ impl ComponentRegistry {
 
         self.validate_component_ids(&components)?;
         self.validate_dependencies(&components)?;
+        self.validate_provider_qualifiers(&components)?;
         self.validate_deferred_dependencies(&components)?;
         self.validate_fresh_dependencies(&components)?;
         self.provider_order(&components)?;
@@ -226,6 +227,38 @@ impl ComponentRegistry {
         Ok(())
     }
 
+    /// Rejects duplicate `(trait, qualifier)` providers within one scope: a
+    /// qualifier selects the first registered match, so two providers sharing a
+    /// qualifier in the same scope would resolve by build order — descriptor-order
+    /// dependent and effectively arbitrary. Distinct scopes may legitimately share
+    /// a qualifier (the closer scope wins by design).
+    pub fn validate_provider_qualifiers(
+        &self,
+        components: &[ComponentDescriptor],
+    ) -> crate::Result<()> {
+        let scope_of: HashMap<TypeId, &'static str> = components
+            .iter()
+            .map(|component| (component.ty.type_id, component.scope.name()))
+            .collect();
+        let mut seen: HashSet<(TypeId, &str, &str)> = HashSet::new();
+
+        for provider in &self.providers {
+            let Some(scope) = scope_of.get(&provider.concrete_ty.type_id).copied() else {
+                continue;
+            };
+
+            if !seen.insert((provider.trait_ty.type_id, provider.qualifier, scope)) {
+                return Err(Error::DuplicateProviderQualifier {
+                    trait_name: (provider.trait_ty.type_name)().to_string(),
+                    qualifier: provider.qualifier.to_string(),
+                    scope: scope.to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     /// Rejects deferred dependencies whose selected target is transient. Deferred
     /// handles retain only a weak reference, so their targets must be stored by a
     /// concrete scope after construction.
@@ -256,12 +289,29 @@ impl ComponentRegistry {
                         })
                         .copied()
                         .collect();
-                    // Use the same selection rule runtime resolution uses, so the
-                    // validated target is definitionally the hydrated target.
-                    let selected = if dependency.qualifier.is_some() {
-                        matching.first().copied()
+                    // Hydration resolves through scope stores, which never contain
+                    // transient providers — so a transient can never be the hydrated
+                    // target while a scoped alternative exists. Select among scoped
+                    // providers with the runtime rule; only fall back to the full
+                    // set to report a genuinely transient-only target.
+                    let scoped: Vec<ProviderDescriptor> = matching
+                        .iter()
+                        .filter(|provider| {
+                            by_type
+                                .get(&provider.concrete_ty.type_id)
+                                .is_none_or(|concrete| !concrete.scope.is_transient())
+                        })
+                        .copied()
+                        .collect();
+                    let candidates = if scoped.is_empty() {
+                        &matching
                     } else {
-                        crate::container::select_single_provider(&matching)
+                        &scoped
+                    };
+                    let selected = if dependency.qualifier.is_some() {
+                        candidates.first().copied()
+                    } else {
+                        crate::container::select_single_provider(candidates)
                     };
 
                     selected
@@ -705,6 +755,127 @@ mod tests {
             ..Default::default()
         };
 
+        assert!(registry.validate().is_ok());
+    }
+
+    fn unreachable_erase(_: &BoxedComponent) -> BoxedComponent {
+        unreachable!("validation never erases providers")
+    }
+
+    fn trait_provider(
+        concrete: TypeDescriptor,
+        qualifier: &'static str,
+        primary: bool,
+    ) -> ProviderDescriptor {
+        ProviderDescriptor {
+            trait_ty: TypeDescriptor::of::<dyn Send>("SharedTrait"),
+            concrete_ty: concrete,
+            qualifier,
+            primary,
+            priority: 0,
+            ordering: &[],
+            erase: unreachable_erase,
+        }
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_provider_qualifier_in_one_scope() {
+        let first = scoped!(
+            "FirstQ",
+            &Singleton,
+            &[],
+            TypeDescriptor::of::<u8>("FirstQ")
+        );
+        let second = scoped!(
+            "SecondQ",
+            &Singleton,
+            &[],
+            TypeDescriptor::of::<u16>("SecondQ")
+        );
+        let registry = ComponentRegistry {
+            components: vec![first, second],
+            providers: vec![
+                trait_provider(TypeDescriptor::of::<u8>("FirstQ"), "same", false),
+                trait_provider(TypeDescriptor::of::<u16>("SecondQ"), "same", false),
+            ],
+        };
+
+        assert!(matches!(
+            registry.validate(),
+            Err(Error::DuplicateProviderQualifier { .. })
+        ));
+    }
+
+    #[test]
+    fn validate_allows_duplicate_provider_qualifier_across_scopes() {
+        let first = scoped!(
+            "FirstQ",
+            &Singleton,
+            &[],
+            TypeDescriptor::of::<u8>("FirstQ")
+        );
+        let second = scoped!(
+            "SecondQ",
+            &Request,
+            &[],
+            TypeDescriptor::of::<u16>("SecondQ")
+        );
+        let registry = ComponentRegistry {
+            components: vec![first, second],
+            providers: vec![
+                trait_provider(TypeDescriptor::of::<u8>("FirstQ"), "same", false),
+                trait_provider(TypeDescriptor::of::<u16>("SecondQ"), "same", false),
+            ],
+        };
+
+        assert!(registry.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_allows_deferred_trait_with_scoped_provider_beside_transient_primary() {
+        static SINGLETON_DEFERRED_SHARED: [DependencyDescriptor; 1] = [DependencyDescriptor {
+            name: "SharedTrait",
+            ty: TypeDescriptor::of::<dyn Send>("SharedTrait"),
+            cardinality: Cardinality::One,
+            optional: false,
+            dynamic: false,
+            qualifier: None,
+            config: false,
+            resolution: ResolutionMode::Deferred,
+        }];
+        let consumer = scoped!(
+            "DeferredTraitConsumer",
+            &Singleton,
+            &SINGLETON_DEFERRED_SHARED,
+            TypeDescriptor::of::<u64>("DeferredTraitConsumer"),
+        );
+        let scoped_provider = scoped!(
+            "ScopedProvider",
+            &Singleton,
+            &[],
+            TypeDescriptor::of::<u8>("ScopedProvider"),
+        );
+        let transient_provider = scoped!(
+            "TransientProvider",
+            &Transient,
+            &[],
+            TypeDescriptor::of::<u16>("TransientProvider"),
+        );
+        let registry = ComponentRegistry {
+            components: vec![consumer, scoped_provider, transient_provider],
+            providers: vec![
+                trait_provider(
+                    TypeDescriptor::of::<u16>("TransientProvider"),
+                    "transient",
+                    true,
+                ),
+                trait_provider(TypeDescriptor::of::<u8>("ScopedProvider"), "scoped", false),
+            ],
+        };
+
+        // Hydration resolves through scope stores, which never hold transients,
+        // so the scoped provider — not the transient global primary — is the
+        // validated target.
         assert!(registry.validate().is_ok());
     }
 
