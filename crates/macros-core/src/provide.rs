@@ -37,6 +37,7 @@ pub fn generate_providers<Ext: ParseKeyed>(
     let provider_of = paths.core("ProviderOf");
     let provider_order = paths.core("ProviderOrder");
     let provider_order_direction = paths.core("ProviderOrderDirection");
+    let descriptor = paths.core("Descriptor");
 
     // Qualifier defaults to the component's id (explicit `id`, else lowercased
     // type name), overridable with `qualifier = ".."`.
@@ -120,7 +121,17 @@ pub fn generate_providers<Ext: ParseKeyed>(
         };
     };
 
-    let entries = args.provide.iter().enumerate().map(|(i, dyn_ty)| {
+    // Per-trait helper items (erase fns, `ProviderOf` marker impls), the
+    // descriptor literals aggregated into the by-type const, and the linkme
+    // statics that index back into it. A component provides many traits, so the
+    // by-type handle is one-to-many: a single `Descriptor<&[ProviderDescriptor]>`
+    // impl per type — not one `Descriptor<ProviderDescriptor>` impl per trait,
+    // which would collide (`E0119`).
+    let mut helpers = Vec::with_capacity(args.provide.len());
+    let mut descriptor_literals = Vec::with_capacity(args.provide.len());
+    let mut statics = Vec::with_capacity(args.provide.len());
+
+    for (i, dyn_ty) in args.provide.iter().enumerate() {
         // The trait object as written (`dyn Trait`). Both this provide side and
         // the dependency side spell it identically, so their keys match. The
         // trait must be `Send + Sync` (via supertraits, since components are
@@ -131,7 +142,7 @@ pub fn generate_providers<Ext: ParseKeyed>(
         let erase_ident = format_ident!("__overseerd_erase_{}", i);
         let provider_ident = format_ident!("__OVERSEERD_PROVIDER_{}", i);
 
-        quote! {
+        helpers.push(quote! {
             impl #provider_of<#dyn_ty> for #self_ident {}
 
             fn #assert_provider_ident(
@@ -153,10 +164,10 @@ pub fn generate_providers<Ext: ParseKeyed>(
                     value: ::std::boxed::Box::new(#live::new(__erased)),
                 }
             }
+        });
 
-            #[#distributed_slice(#providers_slice)]
-            #[linkme(crate = #linkme_crate)]
-            static #provider_ident: #provider_descriptor = #provider_descriptor {
+        descriptor_literals.push(quote! {
+            #provider_descriptor {
                 trait_ty: #type_descriptor::of::<#dyn_ty>(#trait_name),
                 concrete_ty: #type_descriptor::of::<#self_ident>(#self_name),
                 qualifier: #qualifier,
@@ -164,12 +175,29 @@ pub fn generate_providers<Ext: ParseKeyed>(
                 priority: #priority,
                 ordering: #ordering,
                 erase: #erase_ident,
-            };
-        }
-    });
+            }
+        });
+
+        // Index back into the by-type const so the auto-discovery slice and the
+        // explicit `builder.provider::<T>()` path share one source of truth.
+        statics.push(quote! {
+            #[#distributed_slice(#providers_slice)]
+            #[linkme(crate = #linkme_crate)]
+            static #provider_ident: #provider_descriptor =
+                <#self_ident as #descriptor<&'static [#provider_descriptor]>>::DESCRIPTOR[#i];
+        });
+    }
 
     quote! {
         #assertions
-        #(#entries)*
+        #(#helpers)*
+
+        impl #descriptor<&'static [#provider_descriptor]> for #self_ident {
+            const DESCRIPTOR: &'static [#provider_descriptor] = &[
+                #(#descriptor_literals),*
+            ];
+        }
+
+        #(#statics)*
     }
 }
