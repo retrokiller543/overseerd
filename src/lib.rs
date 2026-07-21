@@ -41,7 +41,7 @@ pub use overseerd_di::{
     FreshFromContainer, FromContainer, Injectable, Lazy, Live, LiveRef, PROVIDERS, Provide,
     ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection, RootResolver,
     ScopeContainer, ScopeRegistry, ServiceComponent, Wired, Wiring, dispatch_factory,
-    factory_dependencies, from_boxed,
+    factory_dependencies, from_boxed, topological_sort,
 };
 /// The DI layer's own error/result, exposed under distinct names so macro-generated
 /// **factory** code can name them without colliding with the root [`Error`]/[`Result`].

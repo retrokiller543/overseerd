@@ -804,6 +804,8 @@ pub fn topological_sort<'a>(
                         &providers_by_trait,
                         &provider_waits,
                         &trait_waits,
+                        &sortable,
+                        transients,
                         &is_built,
                     )
                 });
@@ -868,6 +870,34 @@ impl WaitExpansion<'_> {
         waits
     }
 
+    /// The wait set of a single trait edge, mirroring runtime resolution: the
+    /// globally selected provider when it is transient (constructed on demand),
+    /// otherwise the provider selected among those built in this scope — local
+    /// providers take precedence over prebuilt parent providers at runtime, so
+    /// they are what the consumer actually captures.
+    fn single_edge_waits(
+        &mut self,
+        dep: &overseerd_core::DependencyDescriptor,
+        providers: &[ProviderDescriptor],
+    ) -> HashSet<TypeId> {
+        if let Some(provider) = select_provider_for(dep, providers)
+            && self.transients.contains_key(&provider.concrete_ty.type_id)
+        {
+            return self.provider_waits(provider.concrete_ty.type_id);
+        }
+
+        let local: Vec<ProviderDescriptor> = providers
+            .iter()
+            .filter(|provider| self.sortable.contains(&provider.concrete_ty.type_id))
+            .copied()
+            .collect();
+
+        match select_provider_for(dep, &local) {
+            Some(provider) => self.provider_waits(provider.concrete_ty.type_id),
+            None => HashSet::new(),
+        }
+    }
+
     /// The union of every provider's waits for a trait — what collection and
     /// keyed edges wait for, since they construct all providers.
     fn trait_waits(&mut self, trait_id: TypeId) -> HashSet<TypeId> {
@@ -920,9 +950,7 @@ impl WaitExpansion<'_> {
 
                 match dep.cardinality {
                     Cardinality::One => {
-                        if let Some(provider) = select_provider_for(&dep, &providers) {
-                            waits.extend(self.provider_waits(provider.concrete_ty.type_id));
-                        }
+                        waits.extend(self.single_edge_waits(&dep, &providers));
                     }
                     Cardinality::Collection | Cardinality::Keyed => {
                         waits.extend(self.trait_waits(dep.ty.type_id));
@@ -953,14 +981,18 @@ fn select_provider_for(
 }
 
 /// Whether a dependency's predecessors are all built. A single trait edge waits
-/// for the selected provider's wait set; a collection/keyed edge waits for every
-/// provider's. A single concrete edge waits for that concrete; a multi-valued
-/// edge with no providers is trivially ready (empty is valid).
+/// for the provider runtime resolution would actually capture — the globally
+/// selected transient, or the scope-local selection (local providers take
+/// precedence over prebuilt parent providers at runtime). A collection/keyed
+/// edge waits for every provider's. A single concrete edge waits for that
+/// concrete; a multi-valued edge with no providers is trivially ready.
 fn dep_ready(
     dep: &overseerd_core::DependencyDescriptor,
     providers_by_trait: &HashMap<TypeId, Vec<ProviderDescriptor>>,
     provider_waits: &HashMap<TypeId, HashSet<TypeId>>,
     trait_waits: &HashMap<TypeId, HashSet<TypeId>>,
+    sortable: &HashSet<TypeId>,
+    transients: &HashMap<TypeId, ComponentDescriptor>,
     is_built: &impl Fn(TypeId) -> bool,
 ) -> bool {
     let Some(providers) = providers_by_trait.get(&dep.ty.type_id) else {
@@ -972,13 +1004,26 @@ fn dep_ready(
 
     let waits = match dep.cardinality {
         Cardinality::One => {
-            let Some(provider) = select_provider_for(dep, providers) else {
-                // Ambiguous or missing selection is a validation error, not an
-                // ordering constraint.
-                return true;
-            };
+            if let Some(provider) = select_provider_for(dep, providers)
+                && transients.contains_key(&provider.concrete_ty.type_id)
+            {
+                return provider_waits
+                    .get(&provider.concrete_ty.type_id)
+                    .is_none_or(|waits| waits.iter().all(|id| is_built(*id)));
+            }
 
-            provider_waits.get(&provider.concrete_ty.type_id)
+            let local: Vec<ProviderDescriptor> = providers
+                .iter()
+                .filter(|provider| sortable.contains(&provider.concrete_ty.type_id))
+                .copied()
+                .collect();
+
+            match select_provider_for(dep, &local) {
+                Some(provider) => provider_waits.get(&provider.concrete_ty.type_id),
+                // No local provider: a parent provider or a validation error —
+                // neither is an ordering constraint for this scope.
+                None => return true,
+            }
         }
         Cardinality::Collection | Cardinality::Keyed => trait_waits.get(&dep.ty.type_id),
     };
