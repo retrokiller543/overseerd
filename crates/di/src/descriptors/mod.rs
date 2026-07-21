@@ -5,11 +5,13 @@ pub mod component;
 pub use component::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
     ComponentFactories, ComponentFactory, ComponentFactoryDescriptor, Dep, Dynamic, Injectable,
-    Live, LiveRef, Provide, ProviderDescriptor, ServiceComponent, Wired, Wiring,
+    Live, LiveRef, Provide, ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection,
+    ServiceComponent, Wired, Wiring,
 };
 
 pub use overseerd_core::{
-    Cardinality, DependencyDescriptor, Scope, Singleton, StaticScope, Transient, TypeDescriptor,
+    Cardinality, DependencyDescriptor, ResolutionMode, Scope, Singleton, StaticScope, Transient,
+    TypeDescriptor,
 };
 
 /// Link-time registry of every discovered [`ComponentDescriptor`].

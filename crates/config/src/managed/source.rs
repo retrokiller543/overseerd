@@ -460,7 +460,7 @@ impl<F> ConfigManager<F> {
     /// type are kept (the multi-path case).
     fn push_binding(&mut self, binding: ConfigBinding) {
         let duplicate = self.bindings.iter().any(|existing| {
-            (existing.ty.type_id)() == (binding.ty.type_id)() && existing.path == binding.path
+            existing.ty.type_id == binding.ty.type_id && existing.path == binding.path
         });
 
         if !duplicate {

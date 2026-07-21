@@ -1,7 +1,9 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
-use overseerd_core::{Cardinality, Scope, Singleton};
+mod order;
+
+use overseerd_core::{Cardinality, ResolutionMode, Scope, Singleton};
 
 use crate::descriptors::{COMPONENTS, ComponentDescriptor, PROVIDERS, ProviderDescriptor};
 use crate::error::Error;
@@ -51,7 +53,7 @@ impl ComponentRegistry {
         let mut positions: HashMap<TypeId, usize> = HashMap::new();
 
         for component in &self.components {
-            let type_id = (component.ty.type_id)();
+            let type_id = component.ty.type_id;
             let new_manual = component.effective_factory()?.is_none();
 
             match positions.get(&type_id).copied() {
@@ -87,6 +89,8 @@ impl ComponentRegistry {
 
         self.validate_component_ids(&components)?;
         self.validate_dependencies(&components)?;
+        self.validate_fresh_dependencies(&components)?;
+        self.provider_order(&components)?;
         self.validate_scopes(&components)?;
 
         Ok(())
@@ -96,10 +100,8 @@ impl ComponentRegistry {
     /// only on equal-or-longer-lived non-transient components. Checked against
     /// [`Scope::rank`], not by matching each label.
     pub fn validate_scopes(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
-        let scope_of: HashMap<TypeId, &'static dyn Scope> = components
-            .iter()
-            .map(|c| ((c.ty.type_id)(), c.scope))
-            .collect();
+        let scope_of: HashMap<TypeId, &'static dyn Scope> =
+            components.iter().map(|c| (c.ty.type_id, c.scope)).collect();
 
         for c in components {
             for dep in c.dependencies() {
@@ -109,7 +111,7 @@ impl ComponentRegistry {
                     continue;
                 }
 
-                let dep_id = (dep.ty.type_id)();
+                let dep_id = dep.ty.type_id;
 
                 let dep_scopes: Vec<(&'static dyn Scope, &'static str)> =
                     match scope_of.get(&dep_id) {
@@ -118,17 +120,18 @@ impl ComponentRegistry {
                         None => self
                             .providers
                             .iter()
-                            .filter(|p| (p.trait_ty.type_id)() == dep_id)
+                            .filter(|p| p.trait_ty.type_id == dep_id)
                             .filter_map(|p| {
                                 scope_of
-                                    .get(&(p.concrete_ty.type_id)())
+                                    .get(&p.concrete_ty.type_id)
                                     .map(|scope| (*scope, (p.concrete_ty.type_name)()))
                             })
                             .collect(),
                     };
 
                 for (dep_scope, dep_name) in dep_scopes {
-                    if !scope_allows(c.scope, dep_scope) {
+                    if dep.resolution != ResolutionMode::Fresh && !scope_allows(c.scope, dep_scope)
+                    {
                         return Err(Error::ScopeViolation {
                             component: c.name.to_string(),
                             dependency: dep_name.to_string(),
@@ -157,13 +160,13 @@ impl ComponentRegistry {
     /// Validates that every non-config single dependency is satisfiable by a
     /// component or trait provider.
     pub fn validate_dependencies(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
-        let available: HashSet<TypeId> = components.iter().map(|c| (c.ty.type_id)()).collect();
+        let available: HashSet<TypeId> = components.iter().map(|c| c.ty.type_id).collect();
 
         // Per trait: (total providers, primary providers).
         let mut provider_counts: HashMap<TypeId, (usize, usize)> = HashMap::new();
 
         for p in &self.providers {
-            let counts = provider_counts.entry((p.trait_ty.type_id)()).or_default();
+            let counts = provider_counts.entry(p.trait_ty.type_id).or_default();
             counts.0 += 1;
             counts.1 += usize::from(p.primary);
         }
@@ -175,7 +178,7 @@ impl ComponentRegistry {
                     continue;
                 }
 
-                let dep_id = (dep.ty.type_id)();
+                let dep_id = dep.ty.type_id;
                 let providers = provider_counts.get(&dep_id).copied();
 
                 if let Some(qualifier) = dep.qualifier {
@@ -183,7 +186,7 @@ impl ComponentRegistry {
                         || self
                             .providers
                             .iter()
-                            .any(|p| (p.trait_ty.type_id)() == dep_id && p.qualifier == qualifier);
+                            .any(|p| p.trait_ty.type_id == dep_id && p.qualifier == qualifier);
 
                     if !found {
                         return Err(Error::MissingDependency {
@@ -220,6 +223,101 @@ impl ComponentRegistry {
         }
 
         Ok(())
+    }
+
+    /// Validates that forced-fresh targets have factories and can resolve their eager
+    /// dependencies from the consumer's scope.
+    pub fn validate_fresh_dependencies(
+        &self,
+        components: &[ComponentDescriptor],
+    ) -> crate::Result<()> {
+        let by_type: HashMap<TypeId, ComponentDescriptor> = components
+            .iter()
+            .map(|component| (component.ty.type_id, *component))
+            .collect();
+        let scope_of: HashMap<TypeId, &'static dyn Scope> = components
+            .iter()
+            .map(|component| (component.ty.type_id, component.scope))
+            .collect();
+
+        for consumer in components {
+            for dependency in consumer
+                .dependencies()
+                .into_iter()
+                .filter(|dependency| dependency.resolution == ResolutionMode::Fresh)
+            {
+                let targets = self.fresh_targets(&dependency, &by_type);
+
+                for target in targets {
+                    if target.effective_factory()?.is_none() {
+                        return Err(Error::UnsupportedFreshFactory(target.name.to_string()));
+                    }
+
+                    for target_dependency in target.dependencies().into_iter().filter(|edge| {
+                        edge.resolution == ResolutionMode::Eager && !edge.dynamic && !edge.config
+                    }) {
+                        let dependency_scopes: Vec<_> =
+                            match scope_of.get(&target_dependency.ty.type_id) {
+                                Some(scope) => vec![*scope],
+                                None => self
+                                    .providers
+                                    .iter()
+                                    .filter(|provider| {
+                                        provider.trait_ty.type_id == target_dependency.ty.type_id
+                                    })
+                                    .filter_map(|provider| {
+                                        scope_of.get(&provider.concrete_ty.type_id).copied()
+                                    })
+                                    .collect(),
+                            };
+
+                        if dependency_scopes
+                            .iter()
+                            .any(|scope| !scope_allows(consumer.scope, *scope))
+                        {
+                            return Err(Error::InvalidFreshDependency {
+                                component: consumer.name.to_string(),
+                                dependency: format!(
+                                    "{} -> {}",
+                                    target.name,
+                                    (target_dependency.ty.type_name)()
+                                ),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn fresh_targets(
+        &self,
+        dependency: &overseerd_core::DependencyDescriptor,
+        by_type: &HashMap<TypeId, ComponentDescriptor>,
+    ) -> Vec<ComponentDescriptor> {
+        if let Some(component) = by_type.get(&dependency.ty.type_id) {
+            return vec![*component];
+        }
+
+        self.providers
+            .iter()
+            .filter(|provider| provider.trait_ty.type_id == dependency.ty.type_id)
+            .filter(|provider| {
+                dependency
+                    .qualifier
+                    .is_none_or(|qualifier| provider.qualifier == qualifier)
+            })
+            .filter_map(|provider| by_type.get(&provider.concrete_ty.type_id).copied())
+            .collect()
+    }
+    /// Validates and topologically orders all providers independently per trait.
+    pub fn provider_order(
+        &self,
+        components: &[ComponentDescriptor],
+    ) -> crate::Result<HashMap<TypeId, HashMap<TypeId, usize>>> {
+        order::build(components, &self.providers)
     }
 }
 
@@ -339,6 +437,7 @@ mod tests {
             dynamic: false,
             qualifier: None,
             config: false,
+            resolution: ResolutionMode::Eager,
         }]
     }
 
@@ -445,6 +544,7 @@ mod tests {
         dynamic: false,
         qualifier: None,
         config: false,
+        resolution: ResolutionMode::Eager,
     }];
 
     static REQUEST_DEP_ON_CONNECTION: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -455,6 +555,7 @@ mod tests {
         dynamic: false,
         qualifier: None,
         config: false,
+        resolution: ResolutionMode::Eager,
     }];
 
     #[test]

@@ -12,7 +12,9 @@ use std::sync::{
 };
 
 use overseerd::daemon::{App, Inject, handlers, service};
-use overseerd::{CallResult, MemoryClient, MemoryConnectionHandle, PeerInfo, component};
+use overseerd::{
+    CallResult, MemoryClient, MemoryConnectionHandle, PeerInfo, component, injectable,
+};
 
 static CONNECTION_IDS: AtomicU64 = AtomicU64::new(1);
 static REQUEST_IDS: AtomicU64 = AtomicU64::new(1);
@@ -68,6 +70,29 @@ struct Trace {
     id: TraceId,
 }
 
+#[injectable]
+trait ScopedMarker: Send + Sync {
+    fn name(&self) -> &'static str;
+}
+
+#[component(provide = dyn ScopedMarker, after = RequestMarker)]
+struct RootMarker;
+
+impl ScopedMarker for RootMarker {
+    fn name(&self) -> &'static str {
+        "root"
+    }
+}
+
+#[component(scope = overseerd::daemon::Request, provide = dyn ScopedMarker)]
+struct RequestMarker;
+
+impl ScopedMarker for RequestMarker {
+    fn name(&self) -> &'static str {
+        "request"
+    }
+}
+
 #[service(id = "scopes", version = "0.1")]
 struct ScopeSvc;
 
@@ -86,6 +111,16 @@ impl ScopeSvc {
         Inject(b): Inject<Arc<Trace>>,
     ) -> overseerd::daemon::Result<(u64, u64)> {
         Ok((a.id.0, b.id.0))
+    }
+
+    #[rpc]
+    async fn ordered_markers(
+        Inject(markers): Inject<Vec<Arc<dyn ScopedMarker>>>,
+    ) -> overseerd::daemon::Result<Vec<String>> {
+        Ok(markers
+            .iter()
+            .map(|marker| marker.name().to_string())
+            .collect())
     }
 }
 
@@ -161,4 +196,20 @@ async fn transient_is_fresh_per_resolution() {
     };
 
     assert_ne!(a, b, "two transient resolutions yield distinct instances");
+}
+
+#[tokio::test]
+async fn provider_order_is_global_across_visible_scopes() {
+    let client = start().await;
+    let conn = client.connect().await.expect("connect");
+    let names = match conn
+        .call("ScopeSvc.ordered_markers", enc(&()))
+        .await
+        .unwrap()
+    {
+        CallResult::Ok(body) => dec::<Vec<String>>(&body),
+        CallResult::Err { .. } => panic!("ordered_markers call errored"),
+    };
+
+    assert_eq!(names, ["request", "root"]);
 }

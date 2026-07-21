@@ -4,6 +4,7 @@
 //! at the offending token rather than the whole attribute.
 
 use proc_macro2::Span;
+use quote::ToTokens;
 use syn::{
     GenericArgument, Generics, Ident, LitStr, PathArguments, ReturnType, Token, TraitBound, Type,
     TypeParamBound, WherePredicate,
@@ -28,6 +29,9 @@ const COMPONENT_KEYS: &[&str] = &[
     "factory",
     "default_factory",
     "provide",
+    "priority",
+    "before",
+    "after",
     "overseerd",
     "crate",
 ];
@@ -69,6 +73,10 @@ fn parse_scope_path(input: ParseStream) -> syn::Result<syn::Path> {
 ///   `Send + Sync` via a supertrait;
 /// - `qualifier = ".."` — key for `HashMap<String, Arc<dyn Trait>>` injection;
 /// - `primary` — mark this the primary provider for every trait it provides;
+/// - `priority = <const i64 expression>` — order currently eligible collection providers by
+///   ascending priority after enforcing `before` / `after` constraints;
+/// - `before` / `after` — order every trait shared with the target component; use `as dyn Trait`
+///   to require and restrict the relationship to a specific trait;
 /// - `by_value` — store/inject this component as `Self` rather than `Arc<Self>`;
 /// - `scope = <ScopePath>` — the instance lifetime, named by a [`Scope`] marker type in scope
 ///   (e.g. `Request` from a protocol's prelude, or a custom scope); omitted means singleton;
@@ -81,6 +89,9 @@ pub struct ComponentArgs<Ext: ParseKeyed = NoExt> {
     pub id: Option<LitStr>,
     pub name: Option<LitStr>,
     pub provide: Vec<Type>,
+    pub priority: Option<syn::Expr>,
+    pub before: Vec<ProviderOrderTarget>,
+    pub after: Vec<ProviderOrderTarget>,
     pub qualifier: Option<LitStr>,
     pub primary: bool,
     pub by_value: bool,
@@ -124,6 +135,10 @@ impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
                 "name" => args.name = Some(parse_value(input)?),
                 "qualifier" => args.qualifier = Some(parse_value(input)?),
                 "primary" => args.primary = true,
+                "priority" => {
+                    input.parse::<Token![=]>()?;
+                    args.priority = Some(input.parse()?);
+                }
                 "by_value" => args.by_value = true,
                 "factory_slice" => {
                     input.parse::<Token![=]>()?;
@@ -157,6 +172,8 @@ impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
                         args.provide.push(input.parse::<ProvidedTrait>()?.0);
                     }
                 }
+                "before" => parse_order_targets(input, &mut args.before)?,
+                "after" => parse_order_targets(input, &mut args.after)?,
                 _ => {
                     if !args.ext.parse_keyed(&key, input)? {
                         return Err(unknown_key_error::<Ext>(&key, COMPONENT_KEYS));
@@ -177,8 +194,50 @@ impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
             ));
         }
 
+        let mut provided = std::collections::HashSet::new();
+
+        for trait_ty in &args.provide {
+            let key = trait_ty.to_token_stream().to_string();
+
+            if !provided.insert(key) {
+                return Err(syn::Error::new_spanned(
+                    trait_ty,
+                    "duplicate trait in `provide` declaration",
+                ));
+            }
+        }
+
+        if args.provide.is_empty()
+            && (args.priority.is_some() || !args.before.is_empty() || !args.after.is_empty())
+        {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "`priority`, `before`, and `after` require at least one `provide` declaration",
+            ));
+        }
+
         Ok(args)
     }
+}
+
+fn parse_order_targets(
+    input: ParseStream,
+    targets: &mut Vec<ProviderOrderTarget>,
+) -> syn::Result<()> {
+    input.parse::<Token![=]>()?;
+    if input.peek(token::Bracket) {
+        let content;
+        syn::bracketed!(content in input);
+        let list = Punctuated::<ProviderOrderTarget, Token![,]>::parse_terminated(&content)?;
+        if list.is_empty() {
+            return Err(content.error("provider ordering target list cannot be empty"));
+        }
+        targets.extend(list);
+    } else {
+        targets.push(input.parse()?);
+    }
+
+    Ok(())
 }
 
 /// Parses the `= "value"` half of a string-valued argument.
@@ -188,9 +247,43 @@ fn parse_value(input: ParseStream) -> syn::Result<LitStr> {
     input.parse()
 }
 
-/// A provided-trait entry, parsed as a trait-object [`Type`] (`dyn Trait`) so the
-/// IDE treats it as a type — completions, go-to-definition, and highlighting —
-/// rather than an opaque path. The trait must be `Send + Sync` via supertraits.
+/// One component named by a `before` or `after` provider-ordering argument.
+pub struct ProviderOrderTarget {
+    pub target: Type,
+    pub traits: Vec<Type>,
+}
+
+impl Parse for ProviderOrderTarget {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let target: Type = input.parse()?;
+        let mut traits = Vec::new();
+        if matches!(target, Type::TraitObject(_)) {
+            return Err(syn::Error::new_spanned(
+                target,
+                "provider ordering target must be a concrete component type",
+            ));
+        }
+        if input.peek(Token![as]) {
+            input.parse::<Token![as]>()?;
+            if input.peek(token::Bracket) {
+                let content;
+                syn::bracketed!(content in input);
+                let list = Punctuated::<ProvidedTrait, Token![,]>::parse_terminated(&content)?;
+                if list.is_empty() {
+                    return Err(content.error("provider ordering trait list cannot be empty"));
+                }
+                traits.extend(list.into_iter().map(|provided| provided.0));
+            } else {
+                traits.push(input.parse::<ProvidedTrait>()?.0);
+            }
+        }
+
+        Ok(Self { target, traits })
+    }
+}
+
+/// A provided-trait entry parsed as a trait-object type rather than an opaque path. The trait must
+/// be `Send + Sync` via supertraits.
 struct ProvidedTrait(Type);
 
 impl Parse for ProvidedTrait {
@@ -331,6 +424,21 @@ pub fn hashmap_value(ty: &Type) -> Option<Type> {
 /// The handle type `H` of a `Dynamic<H>` field (a runtime-provided dependency).
 pub fn dynamic_inner(ty: &Type) -> Option<Type> {
     first_type_arg(ty, "Dynamic")
+}
+
+/// The wrapped shape of a `Lazy<H>` dependency.
+pub fn lazy_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "Lazy")
+}
+
+/// The wrapped shape of a `Fresh<H>` dependency.
+pub fn fresh_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "Fresh")
+}
+
+/// The target type of a `Deferred<T>` dependency.
+pub fn deferred_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "Deferred")
 }
 
 /// The config type `T` of a `Cfg<T>` field (a property-path-bound config value).

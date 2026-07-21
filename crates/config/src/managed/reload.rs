@@ -102,6 +102,7 @@ impl<T: ConfigProperties> HookParam<ConfigReload> for CfgNext<T> {
             dynamic: false,
             qualifier: path,
             config: true,
+            resolution: overseerd_core::ResolutionMode::Eager,
         }
     }
 
@@ -501,7 +502,7 @@ fn bindings_by_type_index(manager: &ConfigManager) -> HashMap<TypeId, Vec<String
 
     for binding in manager.bindings() {
         index
-            .entry((binding.ty.type_id)())
+            .entry(binding.ty.type_id)
             .or_default()
             .push(binding.path.clone());
     }
@@ -524,7 +525,7 @@ fn hook_targets_changed(
         match dep.qualifier {
             Some(path) => changed_paths.contains(path),
 
-            None => match bindings_by_type.get(&(dep.ty.type_id)()) {
+            None => match bindings_by_type.get(&dep.ty.type_id) {
                 Some(paths) if paths.len() == 1 => changed_paths.contains(&paths[0]),
                 _ => false,
             },

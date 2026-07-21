@@ -257,7 +257,16 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
 
         let scope_registry = Arc::new(ScopeRegistry::new(
             scopes.transient,
+            resolved
+                .iter()
+                .filter(|component| component.effective_factory().ok().flatten().is_some())
+                .map(|component| (component.ty.type_id, *component))
+                .collect(),
             registry.providers.clone(),
+            registry
+                .component_registry()
+                .provider_order(&resolved)
+                .map_err(Error::from)?,
         ));
         let root = ScopeContainer::build_root(
             &scopes.singletons,
@@ -398,17 +407,17 @@ impl ScopePlan {
 
         for c in resolved {
             if c.scope.is_transient() {
-                transient.insert((c.ty.type_id)(), *c);
+                transient.insert(c.ty.type_id, *c);
             } else if c.scope.rank() == singleton_rank {
                 singletons.push(*c);
             } else if c.effective_factory()?.is_some() {
                 by_scope.entry(c.scope.name()).or_default().push(*c);
             } else {
-                prebuilt.insert((c.ty.type_id)());
+                prebuilt.insert(c.ty.type_id);
             }
         }
 
-        prebuilt.extend(singletons.iter().map(|c| (c.ty.type_id)()));
+        prebuilt.extend(singletons.iter().map(|c| c.ty.type_id));
 
         let mut orders = std::collections::HashMap::new();
 
@@ -420,7 +429,7 @@ impl ScopePlan {
                     .copied()
                     .collect();
 
-            prebuilt.extend(order.iter().map(|c| (c.ty.type_id)()));
+            prebuilt.extend(order.iter().map(|c| c.ty.type_id));
             orders.insert(scope.name(), order);
         }
 
@@ -609,7 +618,7 @@ async fn run_startup(
     let mut started = HashSet::new();
 
     for (component, result) in hooks.run_until_error::<Startup>(&(), |_| true).await {
-        let component_ty = (component.type_id)();
+        let component_ty = component.type_id;
 
         match result {
             Ok(()) => {
@@ -637,7 +646,7 @@ async fn run_startup(
 async fn run_shutdown(hooks: &HookManager, started: &HashSet<TypeId>) {
     for (component, result) in hooks
         .run::<Shutdown>(&(), |hook| {
-            let component_ty = (hook.component_ty.type_id)();
+            let component_ty = hook.component_ty.type_id;
 
             !hooks.component_has::<Startup>(component_ty) || started.contains(&component_ty)
         })

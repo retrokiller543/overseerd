@@ -76,6 +76,7 @@ async fn dep_swap_is_shared_across_two_injection_sites() {
         .container()
         .resolve::<Dep<Shared>>()
         .await
+        .expect("Dep<Shared> resolution succeeds")
         .expect("Dep<Shared> resolves from the container");
 
     assert!(

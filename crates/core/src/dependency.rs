@@ -22,6 +22,18 @@ pub enum Cardinality {
     Keyed,
 }
 
+/// When a dependency is resolved relative to component construction.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ResolutionMode {
+    /// Resolve during ordinary component construction and impose build ordering.
+    #[default]
+    Eager,
+    /// Resolve after construction through a scope-capturing handle.
+    Deferred,
+    /// Re-run the target component factory without using its declared-scope cache.
+    Fresh,
+}
+
 impl Cardinality {
     /// Whether an edge of this cardinality requires at least one value to exist.
     /// Multi-valued edges (`Collection`/`Keyed`) accept zero.
@@ -54,4 +66,6 @@ pub struct DependencyDescriptor {
     /// against the registered config bindings, not the component graph, so they are
     /// exempt from the standard dependency/scope checks.
     pub config: bool,
+    /// Resolution timing and reconstruction behavior for this edge.
+    pub resolution: ResolutionMode,
 }

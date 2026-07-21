@@ -30,8 +30,13 @@ pub fn generate_providers<Ext: ParseKeyed>(
     let linkme_crate = paths.core("linkme");
     let provider_descriptor = paths.core("ProviderDescriptor");
     let providers_slice = paths.core("PROVIDERS");
+    let runtime_descriptor = paths.core("RuntimeDescriptor");
+    let component_descriptor = paths.core("ComponentDescriptor");
     let type_descriptor = paths.core("TypeDescriptor");
     let live = paths.core("Live");
+    let provider_of = paths.core("ProviderOf");
+    let provider_order = paths.core("ProviderOrder");
+    let provider_order_direction = paths.core("ProviderOrderDirection");
 
     // Qualifier defaults to the component's id (explicit `id`, else lowercased
     // type name), overridable with `qualifier = ".."`.
@@ -41,6 +46,79 @@ pub fn generate_providers<Ext: ParseKeyed>(
         .or_else(|| args.id.clone())
         .unwrap_or_else(|| LitStr::new(&self_ident.to_string().to_lowercase(), self_ident.span()));
     let primary = args.primary;
+    let priority = args
+        .priority
+        .as_ref()
+        .map_or_else(|| quote!(0i64), |priority| quote!(#priority));
+    let order = args
+        .before
+        .iter()
+        .map(|target| (target, quote!(#provider_order_direction::Before)))
+        .chain(
+            args.after
+                .iter()
+                .map(|target| (target, quote!(#provider_order_direction::After))),
+        )
+        .map(|(target, direction)| {
+            let concrete = &target.target;
+            let concrete_name =
+                LitStr::new(&concrete.to_token_stream().to_string(), Span::call_site());
+            let traits = target.traits.iter().map(|trait_ty| {
+                let trait_name =
+                    LitStr::new(&trait_ty.to_token_stream().to_string(), Span::call_site());
+                quote!(#type_descriptor::of::<#trait_ty>(#trait_name))
+            });
+            quote! {
+                #provider_order {
+                    target: #type_descriptor::of::<#concrete>(#concrete_name),
+                    traits: &[#(#traits),*],
+                    direction: #direction,
+                }
+            }
+        });
+    let ordering = quote!(&[#(#order),*]);
+    let provided_traits = &args.provide;
+    let mut seen_ordering_assertions = std::collections::HashSet::new();
+    let mut ordering_assertions = Vec::new();
+
+    for target in args.before.iter().chain(args.after.iter()) {
+        let concrete = &target.target;
+
+        for trait_ty in &target.traits {
+            let key = format!(
+                "{} as {}",
+                concrete.to_token_stream(),
+                trait_ty.to_token_stream()
+            );
+
+            if seen_ordering_assertions.insert(key) {
+                ordering_assertions.push(quote! {
+                    __overseerd_assert_ordering_provider::<#concrete, #trait_ty>();
+                });
+            }
+        }
+    }
+
+    let assertions = quote! {
+        const _: () = {
+            fn __overseerd_assert_injectable<T>()
+            where
+                T: ?Sized + #runtime_descriptor<#component_descriptor>,
+            {
+            }
+
+            fn __overseerd_assert_ordering_provider<T, P: ?Sized>()
+            where
+                T: #provider_of<P>,
+            {
+            }
+
+            fn __overseerd_check_provider_contracts() {
+                #(__overseerd_assert_injectable::<#provided_traits>();)*
+                #(#ordering_assertions)*
+            }
+        };
+    };
 
     let entries = args.provide.iter().enumerate().map(|(i, dyn_ty)| {
         // The trait object as written (`dyn Trait`). Both this provide side and
@@ -49,17 +127,26 @@ pub fn generate_providers<Ext: ParseKeyed>(
         // shared across threads); otherwise the erase fn's `Box<dyn Any + Send +
         // Sync>` storage fails to compile, pointing the author at the missing bound.
         let trait_name = LitStr::new(&dyn_ty.to_token_stream().to_string(), Span::call_site());
+        let assert_provider_ident = format_ident!("__overseerd_assert_provider_{}", i);
         let erase_ident = format_ident!("__overseerd_erase_{}", i);
         let provider_ident = format_ident!("__OVERSEERD_PROVIDER_{}", i);
 
         quote! {
+            impl #provider_of<#dyn_ty> for #self_ident {}
+
+            fn #assert_provider_ident(
+                __concrete: ::std::sync::Arc<#self_ident>,
+            ) -> ::std::sync::Arc<#dyn_ty> {
+                __concrete
+            }
+
             fn #erase_ident(__concrete: &#boxed_component) -> #boxed_component {
                 let __arc = __concrete
                     .value
                     .downcast_ref::<#live<#self_ident>>()
                     .expect("provider concrete type mismatch")
                     .snapshot();
-                let __erased: ::std::sync::Arc<#dyn_ty> = __arc;
+                let __erased = #assert_provider_ident(__arc);
 
                 #boxed_component {
                     ty: #type_descriptor::of::<#dyn_ty>(#trait_name),
@@ -74,10 +161,15 @@ pub fn generate_providers<Ext: ParseKeyed>(
                 concrete_ty: #type_descriptor::of::<#self_ident>(#self_name),
                 qualifier: #qualifier,
                 primary: #primary,
+                priority: #priority,
+                ordering: #ordering,
                 erase: #erase_ident,
             };
         }
     });
 
-    quote! { #(#entries)* }
+    quote! {
+        #assertions
+        #(#entries)*
+    }
 }

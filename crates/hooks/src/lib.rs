@@ -239,7 +239,7 @@ impl HookManager {
             .is_some_and(|hooks| {
                 hooks
                     .iter()
-                    .any(|hook| (hook.component_ty.type_id)() == component)
+                    .any(|hook| hook.component_ty.type_id == component)
             })
     }
 }

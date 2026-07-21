@@ -14,3 +14,24 @@
 pub trait Descriptor<D> {
     const DESCRIPTOR: D;
 }
+
+/// Provides object-safe access to a type's descriptor at runtime.
+///
+/// The blanket implementation bridges statically described concrete types to
+/// trait objects whose trait includes `RuntimeDescriptor<D>` as a supertrait.
+pub trait RuntimeDescriptor<D> {
+    fn descriptor(&self) -> D;
+}
+
+impl<T, D> RuntimeDescriptor<D> for T
+where
+    T: Descriptor<D>,
+{
+    #[inline(always)]
+    fn descriptor(&self) -> D {
+        T::DESCRIPTOR
+    }
+}
+
+#[cfg(test)]
+mod tests;

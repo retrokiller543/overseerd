@@ -20,7 +20,7 @@ pub fn resolved_services(services: &[ServiceDescriptor]) -> Vec<ResolvedService>
 
     services
         .iter()
-        .filter(|descriptor| seen.insert((descriptor.ty.type_id)()))
+        .filter(|descriptor| seen.insert(descriptor.ty.type_id))
         .map(|descriptor| {
             let rpcs = (descriptor.rpcs)()
                 .iter()

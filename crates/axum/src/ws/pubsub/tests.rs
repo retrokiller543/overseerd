@@ -223,5 +223,5 @@ fn topic_bus_descriptors_are_distinct_per_protocol() {
     let second = super::topic_bus_descriptor::<OtherProto>();
 
     assert_ne!(first.id, second.id);
-    assert_ne!((first.ty.type_id)(), (second.ty.type_id)());
+    assert_ne!(first.ty.type_id, second.ty.type_id);
 }

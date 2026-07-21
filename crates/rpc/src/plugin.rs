@@ -67,10 +67,9 @@ impl ProtocolPlugin for RpcPlugin {
         // Does any real component depend on the peer? If not, the connection scope need
         // not exist solely to hold it; handlers still reach the peer via the `Peer`
         // extractor, which reads it off the call context rather than the scope chain.
-        let peer_id = (PEER_INFO_DESCRIPTOR.ty.type_id)();
+        let peer_id = PEER_INFO_DESCRIPTOR.ty.type_id;
         let needs_peer = runtime.resolved_components().iter().any(|c| {
-            (c.ty.type_id)() != peer_id
-                && c.dependencies().iter().any(|d| (d.ty.type_id)() == peer_id)
+            c.ty.type_id != peer_id && c.dependencies().iter().any(|d| d.ty.type_id == peer_id)
         });
 
         let router = Arc::new(RpcRouter::from_services(&resolved));
