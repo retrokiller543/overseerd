@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-core-v0.19.1...overseerd-macros-core-v0.20.0) - 2026-07-22
+
+### Added
+
+- *(rpc,axum)* dual linkme/inventory backend for rpc groups & routes; stable hook order
+- *(di)* dual linkme/inventory registration backend for factories & hooks
+
+### Other
+
+- *(hooks)* non_exhaustive HookDescriptor + constructor; doc factory_slice merge
+
 ## [0.19.1](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-core-v0.19.0...overseerd-macros-core-v0.19.1) - 2026-07-21
 
 ### Fixed

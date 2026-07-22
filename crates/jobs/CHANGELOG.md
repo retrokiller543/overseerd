@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0](https://github.com/retrokiller543/overseerd/compare/overseerd-jobs-v0.19.1...overseerd-jobs-v0.20.0) - 2026-07-22
+
+### Added
+
+- *(rpc,axum)* dual linkme/inventory backend for rpc groups & routes; stable hook order
+
+### Other
+
+- *(hooks)* non_exhaustive HookDescriptor + constructor; doc factory_slice merge
+
 ## [0.17.2](https://github.com/retrokiller543/overseerd/compare/overseerd-jobs-v0.17.1...overseerd-jobs-v0.17.2) - 2026-07-18
 
 ### Other

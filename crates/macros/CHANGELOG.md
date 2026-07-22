@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.19.1...overseerd-macros-v0.20.0) - 2026-07-22
+
+### Added
+
+- *(di)* dual linkme/inventory registration backend for factories & hooks
+
 ## [0.19.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.18.0...overseerd-macros-v0.19.0) - 2026-07-21
 
 ### Added
