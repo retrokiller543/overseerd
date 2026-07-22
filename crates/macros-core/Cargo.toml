@@ -17,8 +17,15 @@ client = []
 # Emit the compile-time dependency-injection assertions (read by `di::enabled()` and the
 # field-injection codegen). Forwarded from the macro crates' `di-check` feature.
 di-check = []
+# Force the `inventory` registration backend at codegen time (read by `backend::use_inventory()`).
+# Complements the build-script `overseerd_hybrid` cfg (auto-on for Apple/Mach-O hosts); this is the
+# convenient feature-based force, forwarded from each macro crate and the facade.
+hybrid-registry = []
 
 [dependencies]
 syn = { workspace = true }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }
+
+[build-dependencies]
+overseerd-build = { workspace = true }

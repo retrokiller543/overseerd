@@ -121,6 +121,7 @@ tower = { workspace = true }
 tower-http = { workspace = true }
 tokio = { workspace = true }
 linkme = { workspace = true }
+inventory = { workspace = true }
 cookie = { workspace = true }
 # `stream` (streamed response bodies) and TLS need these reqwest features; both keep openssl/rsa
 # out (rustls-tls). Not available on wasm's fetch backend.
@@ -152,3 +153,6 @@ web-sys = { workspace = true, optional = true, features = ["Blob", "File"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+
+[build-dependencies]
+overseerd-build = { workspace = true }

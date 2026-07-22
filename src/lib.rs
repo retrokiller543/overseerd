@@ -37,11 +37,12 @@ pub mod scope {
 pub use overseerd_di::{
     BoxedComponent, COMPONENTS, Component, ComponentConstructionContext, ComponentContainer,
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor,
-    ComponentRegistry, ComponentSource, Deferred, Dep, Dynamic, Factory, FactoryOutput, Fresh,
-    FreshFromContainer, FromContainer, Injectable, Lazy, Live, LiveRef, PROVIDERS, Provide,
-    ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection, RootResolver,
-    ScopeContainer, ScopeRegistry, ServiceComponent, Wired, Wiring, dispatch_factory,
-    factory_dependencies, from_boxed, topological_sort,
+    ComponentRegistry, ComponentSource, Deferred, Dep, DescriptorFor, Dynamic, Factory,
+    FactoryOutput, Fresh, FreshFromContainer, FromContainer, Injectable, Lazy, Live, LiveRef,
+    OverseerdDescriptor, PROVIDERS, Provide, ProviderDescriptor, ProviderOf, ProviderOrder,
+    ProviderOrderDirection, Registration, RegistryFor, RootResolver, ScopeContainer, ScopeRegistry,
+    ServiceComponent, Wired, Wiring, dispatch_factory, factory_dependencies, from_boxed,
+    topological_sort,
 };
 /// The DI layer's own error/result, exposed under distinct names so macro-generated
 /// **factory** code can name them without colliding with the root [`Error`]/[`Result`].
@@ -115,6 +116,13 @@ pub use overseerd_macros::{app, component, config, daemon, injectable, methods};
 #[cfg(not(target_family = "wasm"))]
 #[doc(hidden)]
 pub use overseerd_di::linkme;
+
+/// Re-exported so macro-generated code can reach `inventory::collect!`/`submit!`/`iter` (the
+/// alternate registration backend, selected on Mach-O targets) through the facade. Server-only,
+/// like the `linkme` re-export.
+#[cfg(not(target_family = "wasm"))]
+#[doc(hidden)]
+pub use overseerd_di::inventory;
 
 // ---------------------------------------------------------------------------
 // Transport substrate: server endpoints, wire types, custom-transport traits. The RPC

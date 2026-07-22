@@ -11,7 +11,8 @@ use std::{
 };
 
 use overseerd_core::{
-    DependencyDescriptor, ResolverCtx, ResolverSet, Scope, Singleton, TypeDescriptor,
+    DependencyDescriptor, OverseerdDescriptor, ResolverCtx, ResolverSet, Scope, Singleton,
+    TypeDescriptor,
 };
 use overseerd_hooks::{HookDescriptor, no_hooks};
 
@@ -790,6 +791,52 @@ impl fmt::Debug for ComponentFactoryDescriptor {
             .finish_non_exhaustive()
     }
 }
+
+impl OverseerdDescriptor for ComponentFactoryDescriptor {}
+
+/// The merged element type of a component's single `{Type}Registrations` `linkme` slice.
+///
+/// Folding factories and hooks into one element type lets the base `#[component]` declare **one**
+/// distributed slice — hence one linker section — instead of two. The `inventory` backend does
+/// not use this: there, factories and hooks stay in separate `DescriptorFor` buckets (extra
+/// collections cost no sections), so this enum is a linkme-path-only concern.
+#[derive(Clone, Copy)]
+pub enum Registration {
+    Factory(ComponentFactoryDescriptor),
+    Hook(HookDescriptor),
+}
+
+impl Registration {
+    /// Wraps a factory.
+    pub const fn factory(descriptor: ComponentFactoryDescriptor) -> Self {
+        Self::Factory(descriptor)
+    }
+
+    /// Wraps a hook.
+    pub const fn hook(descriptor: HookDescriptor) -> Self {
+        Self::Hook(descriptor)
+    }
+
+    /// The factory, if this entry is one.
+    pub fn as_factory(&self) -> Option<&ComponentFactoryDescriptor> {
+        match self {
+            Self::Factory(factory) => Some(factory),
+
+            Self::Hook(_) => None,
+        }
+    }
+
+    /// The hook, if this entry is one.
+    pub fn as_hook(&self) -> Option<&HookDescriptor> {
+        match self {
+            Self::Hook(hook) => Some(hook),
+
+            Self::Factory(_) => None,
+        }
+    }
+}
+
+impl OverseerdDescriptor for Registration {}
 
 /// A component type's own construction factories.
 ///

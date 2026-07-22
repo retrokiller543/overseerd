@@ -22,71 +22,126 @@ use syn::{Expr, ExprLit, Field, Fields, ItemStruct, Lit, LitStr, Meta, spanned::
 
 use crate::{attr, paths::Paths};
 
-/// The per-type factory slice identifier, `{Type}Factories`. The `#[component]` /
-/// `#[service]` macro declares it; each `#[init]` / `factory = ..` appends to it.
-pub fn factories_slice_ident(self_ident: &syn::Ident) -> syn::Ident {
-    format_ident!("{}Factories", self_ident)
+/// The per-type registration slice identifier, `{Type}Registrations` — the merged `linkme` slice
+/// holding both factory and hook entries (as `Registration`). Declared by `#[component]` /
+/// `#[service]`; each `#[init]` / `factory = ..` / `#[hook]` appends to it. One slice (one linker
+/// section) per component instead of two. Unused on the `inventory` backend, which keys separate
+/// `DescriptorFor<Type, _>` buckets by owner type + descriptor kind.
+pub fn registrations_slice_ident(self_ident: &syn::Ident) -> syn::Ident {
+    format_ident!("{}Registrations", self_ident)
 }
 
-/// Declares the module-level `{Type}Factories` distributed slice and the
-/// `ComponentFactories` impl returning it. Module-level (and `pub`) so a `#[methods]`
-/// / `#[handlers]` block in another module can append to it via `use`. Mirrors the
-/// `{Service}Rpcs` slice + `ServiceRpcs` impl.
-pub fn factories_infrastructure(
+/// Declares the per-type registration infrastructure: the `ComponentFactories` / `ComponentHooks`
+/// accessor impls (returning `&'static [T]`), plus either the merged `{Type}Registrations` `linkme`
+/// slice or the two `inventory` collections — chosen by the active backend
+/// ([`backend::dual_backend`](crate::backend::dual_backend)).
+///
+/// Neither backend can hand back a borrowed typed slice directly (the `linkme` slice is a mixed
+/// `[Registration]` enum; the `inventory` collection is a linked list), so each accessor materializes
+/// its kind's entries into a per-type `OnceLock<Vec<_>>` cache — built once at app build, when the
+/// registry reads these — and returns `.as_slice()`, preserving the `&'static [T]` contract.
+pub fn registrations_infrastructure(
     self_ident: &syn::Ident,
     slice: &syn::Ident,
     paths: &Paths,
 ) -> TokenStream {
     let component_factories = paths.core("ComponentFactories");
+    let component_hooks = paths.core("ComponentHooks");
     let component_factory_descriptor = paths.core("ComponentFactoryDescriptor");
+    let hook_descriptor = paths.core("HookDescriptor");
+    let registration = paths.core("Registration");
+    let descriptor_for = paths.core("DescriptorFor");
     let distributed_slice = paths.core("linkme::distributed_slice");
     let linkme_crate = paths.core("linkme");
+    let inventory = paths.core("inventory");
 
-    quote! {
-        #[#distributed_slice]
-        #[linkme(crate = #linkme_crate)]
-        #[allow(non_upper_case_globals)]
-        pub static #slice: [#component_factory_descriptor];
+    let factory_registry = crate::backend::registry_for_impl(
+        quote!(#self_ident),
+        quote!(#component_factory_descriptor),
+        paths,
+    );
+    let hook_registry =
+        crate::backend::registry_for_impl(quote!(#self_ident), quote!(#hook_descriptor), paths);
+
+    let inventory_tokens = quote! {
+        #factory_registry
+        #hook_registry
 
         impl #component_factories for #self_ident {
             fn factories() -> &'static [#component_factory_descriptor] {
-                &#slice
+                static CACHE: ::std::sync::OnceLock<::std::vec::Vec<#component_factory_descriptor>> =
+                    ::std::sync::OnceLock::new();
+
+                CACHE
+                    .get_or_init(|| {
+                        #inventory::iter::<#descriptor_for<#self_ident, #component_factory_descriptor>>
+                            .into_iter()
+                            .map(|__entry| **__entry)
+                            .collect()
+                    })
+                    .as_slice()
             }
         }
-    }
-}
-
-/// The per-type hook slice identifier, `{Type}Hooks`. The `#[component]` / `#[service]`
-/// macro declares it; each `#[hook]` method appends to it.
-pub fn hooks_slice_ident(self_ident: &syn::Ident) -> syn::Ident {
-    format_ident!("{}Hooks", self_ident)
-}
-
-/// Declares the module-level `{Type}Hooks` distributed slice and the `ComponentHooks`
-/// impl returning it. Mirrors [`factories_infrastructure`]; empty when the type has no
-/// `#[hook]` methods.
-pub fn hooks_infrastructure(
-    self_ident: &syn::Ident,
-    slice: &syn::Ident,
-    paths: &Paths,
-) -> TokenStream {
-    let component_hooks = paths.core("ComponentHooks");
-    let hook_descriptor = paths.core("HookDescriptor");
-    let distributed_slice = paths.core("linkme::distributed_slice");
-    let linkme_crate = paths.core("linkme");
-
-    quote! {
-        #[#distributed_slice]
-        #[linkme(crate = #linkme_crate)]
-        #[allow(non_upper_case_globals)]
-        pub static #slice: [#hook_descriptor];
 
         impl #component_hooks for #self_ident {
             fn hooks() -> &'static [#hook_descriptor] {
-                &#slice
+                static CACHE: ::std::sync::OnceLock<::std::vec::Vec<#hook_descriptor>> =
+                    ::std::sync::OnceLock::new();
+
+                CACHE
+                    .get_or_init(|| {
+                        #inventory::iter::<#descriptor_for<#self_ident, #hook_descriptor>>
+                            .into_iter()
+                            .map(|__entry| **__entry)
+                            .collect()
+                    })
+                    .as_slice()
             }
         }
-    }
+    };
+
+    let linkme_tokens = quote! {
+        #[#distributed_slice]
+        #[linkme(crate = #linkme_crate)]
+        #[allow(non_upper_case_globals)]
+        pub static #slice: [#registration];
+
+        impl #component_factories for #self_ident {
+            fn factories() -> &'static [#component_factory_descriptor] {
+                static CACHE: ::std::sync::OnceLock<::std::vec::Vec<#component_factory_descriptor>> =
+                    ::std::sync::OnceLock::new();
+
+                CACHE
+                    .get_or_init(|| {
+                        #slice
+                            .iter()
+                            .filter_map(#registration::as_factory)
+                            .copied()
+                            .collect()
+                    })
+                    .as_slice()
+            }
+        }
+
+        impl #component_hooks for #self_ident {
+            fn hooks() -> &'static [#hook_descriptor] {
+                static CACHE: ::std::sync::OnceLock<::std::vec::Vec<#hook_descriptor>> =
+                    ::std::sync::OnceLock::new();
+
+                CACHE
+                    .get_or_init(|| {
+                        #slice
+                            .iter()
+                            .filter_map(#registration::as_hook)
+                            .copied()
+                            .collect()
+                    })
+                    .as_slice()
+            }
+        }
+    };
+
+    crate::backend::dual_backend(inventory_tokens, linkme_tokens)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -96,7 +151,7 @@ pub fn field_injection_component(
     name: &LitStr,
     defer_di_assert: bool,
     scope_path: &syn::Path,
-    factories_slice: &syn::Ident,
+    registrations_slice: &syn::Ident,
     emit_default_factory: bool,
     paths: &Paths,
 ) -> TokenStream {
@@ -113,6 +168,9 @@ pub fn field_injection_component(
     let injectable = paths.core("Injectable");
     let distributed_slice = paths.core("linkme::distributed_slice");
     let linkme_crate = paths.core("linkme");
+    let inventory = paths.core("inventory");
+    let registration = paths.core("Registration");
+    let descriptor_for = paths.core("DescriptorFor");
     let result = paths.core("DiResult");
     let type_descriptor = paths.core("TypeDescriptor");
     let descriptor_trait = paths.core("Descriptor");
@@ -184,6 +242,27 @@ pub fn field_injection_component(
         // checked when `app!` demands `T: Wired`.
         let wired = crate::di::wired_impl(&self_ident, &wired_targets, paths);
 
+        let factory_literal = quote! {
+            #component_factory_descriptor {
+                construct: __overseerd_factory,
+                dependencies: __overseerd_deps,
+                default: true,
+            }
+        };
+        let register_default = crate::backend::dual_backend(
+            quote! {
+                #inventory::submit! {
+                    #descriptor_for::<#self_ident, #component_factory_descriptor>::new(#factory_literal)
+                }
+            },
+            quote! {
+                #[#distributed_slice(#registrations_slice)]
+                #[linkme(crate = #linkme_crate)]
+                static __OVERSEERD_DEFAULT_FACTORY: #registration =
+                    #registration::Factory(#factory_literal);
+            },
+        );
+
         quote! {
             #di_assert
 
@@ -217,16 +296,9 @@ pub fn field_injection_component(
                 ::std::vec![ #(#dep_descriptors),* ]
             }
 
-            // The field-injection default, appended to the type's factory slice. Used
+            // The field-injection default, appended to the type's registrations. Used
             // only when no explicit (`#[init]` / `factory = ..`) factory is present.
-            #[#distributed_slice(#factories_slice)]
-            #[linkme(crate = #linkme_crate)]
-            static __OVERSEERD_DEFAULT_FACTORY: #component_factory_descriptor =
-                #component_factory_descriptor {
-                    construct: __overseerd_factory,
-                    dependencies: __overseerd_deps,
-                    default: true,
-                };
+            #register_default
         }
     } else {
         // A manual component still strips field attrs (done above) but builds
@@ -265,8 +337,9 @@ pub fn field_injection_component(
 /// signature need not be visible — its deps come from its parameters' `FromContainer`
 /// impls). Overrides the field-injection default.
 pub fn explicit_factory(
+    self_ident: &syn::Ident,
     factory_path: &syn::Path,
-    factories_slice: &syn::Ident,
+    registrations_slice: &syn::Ident,
     paths: &Paths,
 ) -> TokenStream {
     let component_construction_context = paths.core("ComponentConstructionContext");
@@ -277,7 +350,31 @@ pub fn explicit_factory(
     let boxed_component = paths.core("BoxedComponent");
     let distributed_slice = paths.core("linkme::distributed_slice");
     let linkme_crate = paths.core("linkme");
+    let inventory = paths.core("inventory");
+    let registration = paths.core("Registration");
+    let descriptor_for = paths.core("DescriptorFor");
     let result = paths.core("DiResult");
+
+    let factory_literal = quote! {
+        #component_factory_descriptor {
+            construct: __overseerd_explicit_factory,
+            dependencies: __overseerd_explicit_deps,
+            default: false,
+        }
+    };
+    let register = crate::backend::dual_backend(
+        quote! {
+            #inventory::submit! {
+                #descriptor_for::<#self_ident, #component_factory_descriptor>::new(#factory_literal)
+            }
+        },
+        quote! {
+            #[#distributed_slice(#registrations_slice)]
+            #[linkme(crate = #linkme_crate)]
+            static __OVERSEERD_EXPLICIT_FACTORY: #registration =
+                #registration::Factory(#factory_literal);
+        },
+    );
 
     quote! {
         fn __overseerd_explicit_deps() -> ::std::vec::Vec<#dependency_descriptor> {
@@ -297,14 +394,7 @@ pub fn explicit_factory(
             #dispatch_factory(#factory_path, cx)
         }
 
-        #[#distributed_slice(#factories_slice)]
-        #[linkme(crate = #linkme_crate)]
-        static __OVERSEERD_EXPLICIT_FACTORY: #component_factory_descriptor =
-            #component_factory_descriptor {
-                construct: __overseerd_explicit_factory,
-                dependencies: __overseerd_explicit_deps,
-                default: false,
-            };
+        #register
     }
 }
 

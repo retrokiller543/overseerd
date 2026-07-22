@@ -62,6 +62,11 @@ pub use overseerd_app::{
 #[doc(hidden)]
 pub use linkme;
 
+/// Re-exported so macro-generated code can reach `inventory` (the alternate registration backend)
+/// through a stable path, mirroring the `linkme` re-export.
+#[doc(hidden)]
+pub use inventory;
+
 /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`.
 pub use tower;
 

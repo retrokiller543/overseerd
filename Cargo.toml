@@ -30,6 +30,7 @@ overseerd-hooks = { path = "crates/hooks", version = "0.19.1" }
 overseerd-jobs = { path = "crates/jobs", version = "0.19.1" }
 overseerd-jobs-macros = { path = "crates/jobs-macros", version = "0.19.1" }
 overseerd-app = { path = "crates/app", version = "0.19.1" }
+overseerd-build = { path = "crates/overseerd-build", version = "0.19.1" }
 overseerd-client = { path = "crates/client", version = "0.19.1" }
 overseerd-rpc = { path = "crates/rpc", version = "0.19.1" }
 overseerd-macros = { path = "crates/macros", version = "0.19.1" }
@@ -100,6 +101,10 @@ serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
 async-trait = "0.1"
 linkme = "0.3"
+# Alternative registration backend to `linkme`, selected on macOS (or via the `overseerd_hybrid`
+# cfg). Uses one shared life-before-main constructor section instead of one custom linker section
+# per per-type slice, so it sidesteps the Mach-O ~255-sections-per-segment ceiling. Native-only.
+inventory = "0.3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "ansi", "json"] }
 # Typed wasm<->JS conversion + TypeScript type generation for `#[dto]` types, so the generated
@@ -240,6 +245,13 @@ tracing-subscriber = [
 
 # Watch config files and reload on change (`ConfigManager::watch_config`), via `notify`.
 watch = ["overseerd-config/watch", "overseerd-app/watch", "overseerd-rpc?/watch", "overseerd-axum?/watch"]
+
+# Force the `inventory` registration backend (Apple/Mach-O targets auto-select it via the macro
+# crate's build script). A marker feature — it activates no dependency (`inventory` is an
+# unconditional native dep); it flips the `hybrid-registry` feature on the macro crates, which the
+# proc-macros read at expansion (`cfg!(feature = "hybrid-registry")`) to emit inventory instead of
+# linkme. The convenient alternative to setting `--cfg overseerd_hybrid` on the macro crate.
+hybrid-registry = ["overseerd-macros/hybrid-registry"]
 
 # Shared across all targets: the client core, the (wasm-safe) transport substrate, the axum
 # protocol's *client* surface, and the proc-macros (built for the host regardless of target).

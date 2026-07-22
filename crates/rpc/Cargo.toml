@@ -40,6 +40,8 @@ overseerd-transport = { workspace = true, features = ["di"] }
 overseerd-dirs = { workspace = true }
 arc-swap = { workspace = true }
 linkme = { workspace = true }
+inventory = { workspace = true }
+# build.rs sets the `overseerd_hybrid` cfg (below).
 directories = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
@@ -51,3 +53,6 @@ postcard = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true, optional = true }
+
+[build-dependencies]
+overseerd-build = { workspace = true }

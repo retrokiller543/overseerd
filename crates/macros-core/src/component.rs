@@ -48,13 +48,12 @@ pub fn expand<Ext: ComponentExt>(
         .scope
         .clone()
         .unwrap_or_else(|| paths.core("scope::Singleton"));
-    let factories_slice = args
+    let registrations_slice = args
         .factory_slice
         .clone()
-        .unwrap_or_else(|| inject::factories_slice_ident(&self_ident));
-    let factories_infra = inject::factories_infrastructure(&self_ident, &factories_slice, paths);
-    let hooks_slice = inject::hooks_slice_ident(&self_ident);
-    let hooks_infra = inject::hooks_infrastructure(&self_ident, &hooks_slice, paths);
+        .unwrap_or_else(|| inject::registrations_slice_ident(&self_ident));
+    let registrations_infra =
+        inject::registrations_infrastructure(&self_ident, &registrations_slice, paths);
 
     // The type's own doc comments, forwarded to a router extension's generated client(s).
     let docs: Vec<syn::Attribute> = item
@@ -82,7 +81,7 @@ pub fn expand<Ext: ComponentExt>(
     let explicit = args
         .factory
         .as_ref()
-        .map(|path| inject::explicit_factory(path, &factories_slice, paths));
+        .map(|path| inject::explicit_factory(&self_ident, path, &registrations_slice, paths));
     let emit_default = explicit.is_none() && !args.no_default_factory;
     let factory = inject::field_injection_component(
         &mut item,
@@ -90,7 +89,7 @@ pub fn expand<Ext: ComponentExt>(
         &name,
         args.ext.defers_factory(),
         &scope_path,
-        &factories_slice,
+        &registrations_slice,
         emit_default,
         paths,
     );
@@ -126,9 +125,7 @@ pub fn expand<Ext: ComponentExt>(
 
         #provide_impl
 
-        #factories_infra
-
-        #hooks_infra
+        #registrations_infra
 
         const _: () = {
             #factory

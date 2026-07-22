@@ -101,7 +101,7 @@ fn take_config_path(attrs: &mut Vec<syn::Attribute>) -> syn::Result<Option<LitSt
 pub fn generate_hook(
     self_ty: &Type,
     name: &LitStr,
-    hooks_slice: &syn::Ident,
+    registrations_slice: &syn::Ident,
     info: &HookInfo,
     index: usize,
     paths: &Paths,
@@ -120,6 +120,9 @@ pub fn generate_hook(
     let hook_result = paths.core("HookResult");
     let distributed_slice = paths.core("linkme::distributed_slice");
     let linkme_crate = paths.core("linkme");
+    let inventory = paths.core("inventory");
+    let registration = paths.core("Registration");
+    let descriptor_for = paths.core("DescriptorFor");
 
     let kind = &info.kind;
     let method = &info.ident;
@@ -173,6 +176,29 @@ pub fn generate_hook(
         }
     };
 
+    let hook_literal = quote! {
+        #hook_descriptor {
+            component_ty: #type_descriptor::of::<#self_ty>(#name),
+            kind: <#kind as #hook_kind>::NAME,
+            kind_ty: #kind_ty_fn,
+            dependencies: #deps_fn,
+            call: #call_fn,
+        }
+    };
+    // The hook, appended to the type's registrations.
+    let register = crate::backend::dual_backend(
+        quote! {
+            #inventory::submit! {
+                #descriptor_for::<#self_ty, #hook_descriptor>::new(#hook_literal)
+            }
+        },
+        quote! {
+            #[#distributed_slice(#registrations_slice)]
+            #[linkme(crate = #linkme_crate)]
+            static #descriptor_static: #registration = #registration::Hook(#hook_literal);
+        },
+    );
+
     quote! {
         fn #deps_fn() -> ::std::vec::Vec<#dependency_descriptor> {
             ::std::vec![
@@ -215,15 +241,7 @@ pub fn generate_hook(
             })
         }
 
-        #[#distributed_slice(#hooks_slice)]
-        #[linkme(crate = #linkme_crate)]
-        static #descriptor_static: #hook_descriptor = #hook_descriptor {
-            component_ty: #type_descriptor::of::<#self_ty>(#name),
-            kind: <#kind as #hook_kind>::NAME,
-            kind_ty: #kind_ty_fn,
-            dependencies: #deps_fn,
-            call: #call_fn,
-        };
+        #register
     }
 }
 

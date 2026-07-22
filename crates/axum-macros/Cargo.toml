@@ -36,6 +36,8 @@ wasm-ts = []
 openapi = []
 # Emit the compile-time dependency-injection assertions (forwarded to macros-core).
 di-check = ["overseerd-macros-core/di-check"]
+# Force the `inventory` registration backend at codegen time. Forwarded to the shared codegen crate.
+hybrid-registry = ["overseerd-macros-core/hybrid-registry"]
 # Root generated plugin types at the `overseerd` facade (`::overseerd::axum::*`) instead of
 # this protocol crate (`::overseerd_axum::*`). Enabled by the `overseerd` facade; off means the
 # standalone `overseerd-axum` is the root. Core vocabulary is always `::overseerd` either way.
