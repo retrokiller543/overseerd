@@ -35,27 +35,25 @@ fn synchronously_panicking_call<'a>(
 }
 
 fn panicking_hook() -> HookDescriptor {
-    HookDescriptor {
-        ordinal: 0,
-        component_ty: TypeDescriptor::of::<PanickingComponent>("PanickingComponent"),
-        kind: Startup::NAME,
-        kind_ty: startup_type_id,
-        dependencies: no_dependencies,
-        call: panicking_call as HookCall,
-    }
+    HookDescriptor::new(
+        0,
+        TypeDescriptor::of::<PanickingComponent>("PanickingComponent"),
+        Startup::NAME,
+        startup_type_id,
+        no_dependencies,
+        panicking_call as HookCall,
+    )
 }
 
 fn synchronously_panicking_hook() -> HookDescriptor {
-    HookDescriptor {
-        ordinal: 0,
-        component_ty: TypeDescriptor::of::<SynchronouslyPanickingComponent>(
-            "SynchronouslyPanickingComponent",
-        ),
-        kind: Startup::NAME,
-        kind_ty: startup_type_id,
-        dependencies: no_dependencies,
-        call: synchronously_panicking_call as HookCall,
-    }
+    HookDescriptor::new(
+        0,
+        TypeDescriptor::of::<SynchronouslyPanickingComponent>("SynchronouslyPanickingComponent"),
+        Startup::NAME,
+        startup_type_id,
+        no_dependencies,
+        synchronously_panicking_call as HookCall,
+    )
 }
 
 #[test]

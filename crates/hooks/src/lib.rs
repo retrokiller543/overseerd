@@ -77,7 +77,12 @@ pub type HookCall =
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Any + Send>>> + Send + 'a>>;
 
 /// Static metadata for one hook, registered into its type's registration set.
+///
+/// `#[non_exhaustive]`: construct with [`HookDescriptor::new`], never a struct literal, so fields
+/// (like [`ordinal`](Self::ordinal)) can be added without breaking downstream construction. The
+/// macros and any hand-written descriptor site call `new`.
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub struct HookDescriptor {
     /// Source-position ordinal (the hook method's line), used to run a type's hooks in a stable
     /// source order regardless of registration backend. `linkme` preserves source order via link
@@ -94,6 +99,29 @@ pub struct HookDescriptor {
     pub dependencies: fn() -> Vec<DependencyDescriptor>,
     /// The erased call.
     pub call: HookCall,
+}
+
+impl HookDescriptor {
+    /// Builds a hook descriptor. The canonical constructor — required because the type is
+    /// `#[non_exhaustive]` — so macro-generated and hand-written registration sites survive future
+    /// field additions. `const`, so it is usable in the `static`s the `linkme` backend emits.
+    pub const fn new(
+        ordinal: u32,
+        component_ty: TypeDescriptor,
+        kind: &'static str,
+        kind_ty: fn() -> TypeId,
+        dependencies: fn() -> Vec<DependencyDescriptor>,
+        call: HookCall,
+    ) -> Self {
+        Self {
+            ordinal,
+            component_ty,
+            kind,
+            kind_ty,
+            dependencies,
+            call,
+        }
+    }
 }
 
 impl OverseerdDescriptor for HookDescriptor {}

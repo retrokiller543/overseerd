@@ -181,14 +181,14 @@ pub fn generate_hook(
     // as they do on `linkme`.
     let ordinal = quote_spanned!(method.span()=> ::core::line!());
     let hook_literal = quote! {
-        #hook_descriptor {
-            ordinal: #ordinal,
-            component_ty: #type_descriptor::of::<#self_ty>(#name),
-            kind: <#kind as #hook_kind>::NAME,
-            kind_ty: #kind_ty_fn,
-            dependencies: #deps_fn,
-            call: #call_fn,
-        }
+        #hook_descriptor::new(
+            #ordinal,
+            #type_descriptor::of::<#self_ty>(#name),
+            <#kind as #hook_kind>::NAME,
+            #kind_ty_fn,
+            #deps_fn,
+            #call_fn,
+        )
     };
     // The hook, appended to the type's registrations.
     let register = crate::backend::dual_backend(
