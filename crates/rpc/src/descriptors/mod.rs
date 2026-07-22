@@ -8,7 +8,7 @@ pub use rpc::{
 };
 
 pub use overseerd_core::Descriptor;
-use overseerd_core::TypeDescriptor;
+use overseerd_core::{OverseerdDescriptor, TypeDescriptor};
 
 /// Identity of a service, tied to its implementing type, carrying a handle to its
 /// own RPC surface.
@@ -35,6 +35,8 @@ pub struct RpcGroup {
     pub service: TypeDescriptor,
     pub rpcs: &'static [RpcDescriptor],
 }
+
+impl OverseerdDescriptor for RpcGroup {}
 
 /// A service type's own RPC groups.
 ///

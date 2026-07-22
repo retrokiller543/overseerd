@@ -191,8 +191,11 @@ impl<T: ComponentExt> AxumRouter<T> {
         let type_descriptor = paths.core("TypeDescriptor");
         let distributed_slice = paths.core("linkme::distributed_slice");
         let linkme_crate = paths.core("linkme");
+        let inventory = paths.core("inventory");
+        let descriptor_for = paths.core("DescriptorFor");
         let axum = paths.plugin("axum");
         let controller_trait = paths.plugin("Controller");
+        let controller_route = paths.plugin("ControllerRoute");
         let controller_descriptor = paths.plugin("ControllerDescriptor");
         let controllers_slice = paths.plugin("CONTROLLERS");
 
@@ -238,11 +241,34 @@ impl<T: ComponentExt> AxumRouter<T> {
 
         // The server surface — the route slice, the `Controller` impl, and the `CONTROLLERS`
         // registration — is gated out on wasm; the client struct + `BASE` above carry across.
+        // The per-controller route registry. `linkme` holds a slice of `ControllerRoute<Self>`
+        // (`#[handlers]` blocks append to it); `inventory` keys a `DescriptorFor<Self,
+        // ControllerRoute<Self>>` bucket. Both surface as an iterator of `ControllerRoute<Self>`, so
+        // the `router()` body is backend-uniform.
+        let route_registry = overseerd_macros_core::backend::dual_backend(
+            overseerd_macros_core::backend::registry_for_impl(
+                quote!(#ident),
+                quote!(#controller_route<#ident>),
+                paths,
+            ),
+            quote! {
+                #[#distributed_slice]
+                #[linkme(crate = #linkme_crate)]
+                #[allow(non_upper_case_globals)]
+                pub static #routes_slice: [#controller_route<#ident>];
+            },
+        );
+        let route_iter = overseerd_macros_core::backend::dual_backend(
+            quote! {
+                #inventory::iter::<#descriptor_for<#ident, #controller_route<#ident>>>
+                    .into_iter()
+                    .map(|__entry| **__entry)
+            },
+            quote! { #routes_slice.iter().copied() },
+        );
+
         let server = overseerd_macros_core::gate::native_only(quote! {
-            #[#distributed_slice]
-            #[linkme(crate = #linkme_crate)]
-            #[allow(non_upper_case_globals)]
-            pub static #routes_slice: [fn(::std::sync::Arc<#ident>, & #app_runtime) -> #axum::Router];
+            #route_registry
 
             impl #controller_trait for #ident {
                 const BASE: &'static str = #base;
@@ -258,8 +284,8 @@ impl<T: ComponentExt> AxumRouter<T> {
 
                     let mut router = #axum::Router::new();
 
-                    for group in #routes_slice {
-                        router = router.merge(group(::std::sync::Arc::clone(&svc), runtime));
+                    for group in #route_iter {
+                        router = router.merge((group.0)(::std::sync::Arc::clone(&svc), runtime));
                     }
 
                     #(#middleware_tokens)*
@@ -329,10 +355,13 @@ impl<T: ComponentExt> AxumRouter<T> {
         let type_descriptor = paths.core("TypeDescriptor");
         let distributed_slice = paths.core("linkme::distributed_slice");
         let linkme_crate = paths.core("linkme");
+        let inventory = paths.core("inventory");
+        let descriptor_for = paths.core("DescriptorFor");
         let ws_controller_trait = paths.plugin("WebsocketController");
         let ws_descriptor = paths.plugin("WsControllerDescriptor");
         let ws_controllers_slice = paths.plugin("WS_CONTROLLERS");
         let ws_route = paths.plugin("WsRoute");
+        let controller_ws_route = paths.plugin("ControllerWsRoute");
 
         // Every message route is typed to this controller's protocol `P`. The per-controller slice
         // and the `ws_routes` builder are monomorphic in `P`; only the link-time `WS_CONTROLLERS`
@@ -362,12 +391,30 @@ impl<T: ComponentExt> AxumRouter<T> {
         // The ws controller's server surface (the route slice, the `WebsocketController` impl, and
         // the `WS_CONTROLLERS` registration) is gated out on wasm; the client structs above carry
         // across, so a wasm client gets the generated SEND client with no server code.
+        let ws_route_registry = overseerd_macros_core::backend::dual_backend(
+            overseerd_macros_core::backend::registry_for_impl(
+                quote!(#ident),
+                quote!(#controller_ws_route<#ident, #protocol>),
+                paths,
+            ),
+            quote! {
+                #[#distributed_slice]
+                #[linkme(crate = #linkme_crate)]
+                #[allow(non_upper_case_globals)]
+                pub static #ws_routes_slice: [#controller_ws_route<#ident, #protocol>];
+            },
+        );
+        let ws_route_iter = overseerd_macros_core::backend::dual_backend(
+            quote! {
+                #inventory::iter::<#descriptor_for<#ident, #controller_ws_route<#ident, #protocol>>>
+                    .into_iter()
+                    .map(|__entry| **__entry)
+            },
+            quote! { #ws_routes_slice.iter().copied() },
+        );
+
         let server = overseerd_macros_core::gate::native_only(quote! {
-            #[#distributed_slice]
-            #[linkme(crate = #linkme_crate)]
-            #[allow(non_upper_case_globals)]
-            pub static #ws_routes_slice:
-                [fn(::std::sync::Arc<#ident>) -> ::std::vec::Vec<#ws_route_p>];
+            #ws_route_registry
 
             impl #ws_controller_trait for #ident {
                 type Protocol = #protocol;
@@ -383,8 +430,8 @@ impl<T: ComponentExt> AxumRouter<T> {
 
                     let mut routes = ::std::vec::Vec::new();
 
-                    for group in #ws_routes_slice {
-                        routes.extend(group(::std::sync::Arc::clone(&svc)));
+                    for group in #ws_route_iter {
+                        routes.extend((group.0)(::std::sync::Arc::clone(&svc)));
                     }
 
                     routes

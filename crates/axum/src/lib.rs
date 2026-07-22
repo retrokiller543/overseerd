@@ -69,7 +69,7 @@ pub use openapi::{
 };
 
 #[cfg(not(target_family = "wasm"))]
-pub use controller::{CONTROLLERS, Controller, ControllerDescriptor};
+pub use controller::{CONTROLLERS, Controller, ControllerDescriptor, ControllerRoute};
 #[cfg(not(target_family = "wasm"))]
 pub use error::{Error, Result};
 /// The `utoipa` crate, re-exported so `#[dto]`/`#[handlers]` generated OpenAPI code names its
@@ -82,9 +82,9 @@ pub use utoipa;
 
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub use ws::{
-    SOCKET_SEND_TIMEOUT, WS_CONTROLLERS, WebsocketController, WebsocketHandler, WebsocketProtocol,
-    WsConnectionMeta, WsConnectionSettings, WsControllerDescriptor, WsDispatchError, WsFuture,
-    WsHandlerFn, WsIdle, WsRespond, WsRoute, WsShutdown,
+    ControllerWsRoute, SOCKET_SEND_TIMEOUT, WS_CONTROLLERS, WebsocketController, WebsocketHandler,
+    WebsocketProtocol, WsConnectionMeta, WsConnectionSettings, WsControllerDescriptor,
+    WsDispatchError, WsFuture, WsHandlerFn, WsIdle, WsRespond, WsRoute, WsShutdown,
 };
 
 /// The `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements so

@@ -141,6 +141,8 @@ impl ToTokens for Rpcs {
         let wrappers = &self.wrappers;
         let distributed_slice = paths.core("linkme::distributed_slice");
         let linkme_crate = paths.core("linkme");
+        let inventory = paths.core("inventory");
+        let descriptor_for = paths.core("DescriptorFor");
         let rpc_descriptor = paths.plugin("RpcDescriptor");
         let rpc_group = paths.plugin("RpcGroup");
         let rpcs_slice = self
@@ -150,6 +152,26 @@ impl ToTokens for Rpcs {
         let type_descriptor = paths.core("TypeDescriptor");
         let self_ty = &cx.self_ty;
         let self_name = &cx.self_name;
+
+        let group_literal = quote! {
+            #rpc_group {
+                service: #type_descriptor::of::<#self_ty>(#self_name),
+                rpcs: &__OVERSEERD_RPCS,
+            }
+        };
+        // One `RpcGroup` per `#[handlers]` block, registered into the service's per-type registry.
+        let register = overseerd_macros_core::backend::dual_backend(
+            quote! {
+                #inventory::submit! {
+                    #descriptor_for::<#self_ty, #rpc_group>::new(#group_literal)
+                }
+            },
+            quote! {
+                #[#distributed_slice(#rpcs_slice)]
+                #[linkme(crate = #linkme_crate)]
+                static __OVERSEERD_RPC_GROUP: #rpc_group = #group_literal;
+            },
+        );
 
         // The RPC-specific surface only: the dispatch wrappers and the group registration. The
         // client is emitted by the framework from the per-method hints `parse_method` returned.
@@ -161,12 +183,7 @@ impl ToTokens for Rpcs {
                     #(#descriptors),*
                 ];
 
-                #[#distributed_slice(#rpcs_slice)]
-                #[linkme(crate = #linkme_crate)]
-                static __OVERSEERD_RPC_GROUP: #rpc_group = #rpc_group {
-                    service: #type_descriptor::of::<#self_ty>(#self_name),
-                    rpcs: &__OVERSEERD_RPCS,
-                };
+                #register
             };
         });
     }
