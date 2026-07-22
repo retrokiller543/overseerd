@@ -15,6 +15,7 @@
 //! [`overseerd-macros`]: https://docs.rs/overseerd-macros
 
 pub mod attr;
+pub mod backend;
 pub mod client;
 pub mod di;
 pub mod extend;

@@ -19,6 +19,8 @@ client = ["overseerd-macros-core/client"]
 # Emit the compile-time dependency-injection assertions (forwarded to macros-core, where the
 # `di::enabled()` / field-injection assertions read the feature).
 di-check = ["overseerd-macros-core/di-check"]
+# Force the `inventory` registration backend at codegen time. Forwarded to the shared codegen crate.
+hybrid-registry = ["overseerd-macros-core/hybrid-registry"]
 # Root generated plugin types at the `overseerd` facade (`::overseerd::daemon::*`) instead of
 # this protocol crate (`::overseerd_rpc::*`). Enabled by the `overseerd` facade; off means the
 # standalone `overseerd-rpc` is the root. Core vocabulary is always `::overseerd` either way.

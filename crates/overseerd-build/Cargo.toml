@@ -1,0 +1,14 @@
+[package]
+name = "overseerd-build"
+description = "Build-script helper for the Overseerd registration-backend seam: registers and (on linker-section-scarce targets, or when forced) activates the `overseerd_hybrid` cfg that selects the `inventory` backend over `linkme`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+# Intentionally dependency-free: it is a build-dependency of several framework crates.
+[dependencies]

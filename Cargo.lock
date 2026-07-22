@@ -1047,6 +1047,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4f0c30c76f2f4ccee3fe55a2435f691ca00c0e4bd87abe4f4a851b1d4dac39b"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1371,10 +1380,12 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "inventory",
  "js-sys",
  "linkme",
  "overseerd-app",
  "overseerd-axum-macros",
+ "overseerd-build",
  "overseerd-client",
  "overseerd-config",
  "overseerd-core",
@@ -1450,6 +1461,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "overseerd-build"
+version = "0.19.1"
+
+[[package]]
 name = "overseerd-client"
 version = "0.19.1"
 dependencies = [
@@ -1480,6 +1495,9 @@ dependencies = [
 [[package]]
 name = "overseerd-core"
 version = "0.19.1"
+dependencies = [
+ "inventory",
+]
 
 [[package]]
 name = "overseerd-di"
@@ -1487,7 +1505,9 @@ version = "0.19.1"
 dependencies = [
  "arc-swap",
  "futures",
+ "inventory",
  "linkme",
+ "overseerd-build",
  "overseerd-core",
  "overseerd-hooks",
  "thiserror",
@@ -1600,6 +1620,7 @@ dependencies = [
 name = "overseerd-macros-core"
 version = "0.19.1"
 dependencies = [
+ "overseerd-build",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -1613,8 +1634,10 @@ dependencies = [
  "async-trait",
  "directories",
  "futures",
+ "inventory",
  "linkme",
  "overseerd-app",
+ "overseerd-build",
  "overseerd-client",
  "overseerd-config",
  "overseerd-core",

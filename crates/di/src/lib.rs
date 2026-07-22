@@ -31,9 +31,10 @@ pub use descriptors::component::from_boxed;
 pub use descriptors::{
     BoxedComponent, COMPONENTS, Cardinality, Component, ComponentConstructionContext,
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor, Dep,
-    DependencyDescriptor, Dynamic, Injectable, Live, LiveRef, PROVIDERS, Provide,
-    ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection, ResolutionMode, Scope,
-    ServiceComponent, Singleton, StaticScope, Transient, TypeDescriptor, Wired, Wiring,
+    DependencyDescriptor, DescriptorFor, Dynamic, Injectable, Live, LiveRef, OverseerdDescriptor,
+    PROVIDERS, Provide, ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection,
+    Registration, RegistryFor, ResolutionMode, Scope, ServiceComponent, Singleton, StaticScope,
+    Transient, TypeDescriptor, Wired, Wiring,
 };
 pub use error::{Error, Result};
 pub use primitives::{Deferred, Fresh, FreshFromContainer, Lazy};
@@ -44,3 +45,9 @@ pub use root::{ROOT_RESOLVER_ID, ROOT_RESOLVER_NAME, RootResolver, root_resolver
 /// through a stable path.
 #[doc(hidden)]
 pub use linkme;
+
+/// Re-exported so macro-generated code can reach `inventory::collect!`/`submit!`/`iter`
+/// through a stable path — the `inventory` registration backend, selected on macOS or the
+/// `overseerd_hybrid` cfg.
+#[doc(hidden)]
+pub use inventory;

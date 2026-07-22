@@ -6,12 +6,12 @@ pub use component::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
     ComponentFactories, ComponentFactory, ComponentFactoryDescriptor, Dep, Dynamic, Injectable,
     Live, LiveRef, Provide, ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection,
-    ServiceComponent, Wired, Wiring,
+    Registration, ServiceComponent, Wired, Wiring,
 };
 
 pub use overseerd_core::{
-    Cardinality, DependencyDescriptor, ResolutionMode, Scope, Singleton, StaticScope, Transient,
-    TypeDescriptor,
+    Cardinality, DependencyDescriptor, DescriptorFor, OverseerdDescriptor, RegistryFor,
+    ResolutionMode, Scope, Singleton, StaticScope, Transient, TypeDescriptor,
 };
 
 /// Link-time registry of every discovered [`ComponentDescriptor`].

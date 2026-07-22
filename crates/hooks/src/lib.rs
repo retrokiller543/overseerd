@@ -31,7 +31,7 @@ use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
 use futures::FutureExt;
-use overseerd_core::{DependencyDescriptor, ResolverCtx, TypeDescriptor};
+use overseerd_core::{DependencyDescriptor, OverseerdDescriptor, ResolverCtx, TypeDescriptor};
 
 /// A kind of hook: the event a `#[hook(Kind)]` method reacts to.
 ///
@@ -91,6 +91,8 @@ pub struct HookDescriptor {
     /// The erased call.
     pub call: HookCall,
 }
+
+impl OverseerdDescriptor for HookDescriptor {}
 
 impl fmt::Debug for HookDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

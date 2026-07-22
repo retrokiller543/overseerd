@@ -20,7 +20,13 @@ overseerd-core = { workspace = true }
 overseerd-hooks = { workspace = true }
 arc-swap = { workspace = true }
 linkme = { workspace = true }
+inventory = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+
+# Sets the `overseerd_hybrid` cfg (target-correct here) so the registration read-side can branch on
+# the active backend if it ever needs to.
+[build-dependencies]
+overseerd-build = { workspace = true }

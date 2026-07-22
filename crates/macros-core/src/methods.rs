@@ -18,7 +18,7 @@ use crate::extend::{
     NoExt, ParseItem, ParseKeyed, ParseMethod, eat_comma, eat_eq, unknown_key_error,
 };
 use crate::hook::{self, HookInfo};
-use crate::inject::{factories_slice_ident, hooks_slice_ident};
+use crate::inject::registrations_slice_ident;
 use crate::paths::Paths;
 
 /// The base arguments of an impl-block macro: the common `factory_slice` key plus the
@@ -134,18 +134,24 @@ where
         }
     }
 
-    let factories_slice = args
+    let registrations_slice = args
         .factory_slice
-        .unwrap_or_else(|| factories_slice_ident(&self_ident));
+        .unwrap_or_else(|| registrations_slice_ident(&self_ident));
 
     let (marker, component) = match &init {
-        Some(info) => generate_init(&self_ty, &factories_slice, info, paths),
+        Some(info) => generate_init(&self_ty, &registrations_slice, info, paths),
         None => (quote!(), quote!()),
     };
 
-    let hooks_slice = hooks_slice_ident(&self_ident);
     let hook_tokens = hooks.iter().enumerate().map(|(index, info)| {
-        hook::generate_hook(&self_ty, &self_name, &hooks_slice, info, index, paths)
+        hook::generate_hook(
+            &self_ty,
+            &self_name,
+            &registrations_slice,
+            info,
+            index,
+            paths,
+        )
     });
 
     // The framework owns the generated (transport-generic) client: emit the capability-partitioned
@@ -229,7 +235,7 @@ fn parse_init(method: &ImplItemFn) -> syn::Result<InitInfo> {
 /// normalizer) plus its `ComponentFactoryDescriptor`, appended to the type's factory slice.
 fn generate_init(
     self_ty: &Type,
-    factories_slice: &syn::Ident,
+    registrations_slice: &syn::Ident,
     info: &InitInfo,
     paths: &Paths,
 ) -> (TokenStream, TokenStream) {
@@ -242,6 +248,9 @@ fn generate_init(
     let boxed_component = paths.core("BoxedComponent");
     let distributed_slice = paths.core("linkme::distributed_slice");
     let linkme_crate = paths.core("linkme");
+    let inventory = paths.core("inventory");
+    let registration = paths.core("Registration");
+    let descriptor_for = paths.core("DescriptorFor");
     let result = paths.core("DiResult");
 
     // A fixed-name `init` associated fn, always `async`, forwards to the marked constructor —
@@ -273,6 +282,29 @@ fn generate_init(
         }
     };
 
+    let factory_literal = quote! {
+        #component_factory_descriptor {
+            construct: __overseerd_init_factory,
+            dependencies: __overseerd_init_deps,
+            default: false,
+        }
+    };
+    // The explicit `#[init]` factory, appended to the type's registrations; it overrides the
+    // field-injection default.
+    let register = crate::backend::dual_backend(
+        quote! {
+            #inventory::submit! {
+                #descriptor_for::<#self_ty, #component_factory_descriptor>::new(#factory_literal)
+            }
+        },
+        quote! {
+            #[#distributed_slice(#registrations_slice)]
+            #[linkme(crate = #linkme_crate)]
+            static __OVERSEERD_INIT_FACTORY: #registration =
+                #registration::Factory(#factory_literal);
+        },
+    );
+
     // The constructor is a `Factory`: it knows its parameters, so it reports its own
     // dependency edges and drives construction. No hand-built dep list — each parameter's
     // `FromContainer` impl supplies its edge.
@@ -294,16 +326,7 @@ fn generate_init(
             #dispatch_factory(<#self_ty>::init, cx)
         }
 
-        // The explicit `#[init]` factory, appended to the type's factory slice; it overrides
-        // the field-injection default.
-        #[#distributed_slice(#factories_slice)]
-        #[linkme(crate = #linkme_crate)]
-        static __OVERSEERD_INIT_FACTORY: #component_factory_descriptor =
-            #component_factory_descriptor {
-                construct: __overseerd_init_factory,
-                dependencies: __overseerd_init_deps,
-                default: false,
-            };
+        #register
     };
 
     (marker, component)

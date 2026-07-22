@@ -214,6 +214,12 @@ pub use overseerd_app::{
 #[doc(hidden)]
 pub use linkme;
 
+/// Re-exported so macro-generated code can reach `inventory` (the alternate registration backend)
+/// through a stable path, mirroring the `linkme` re-export.
+#[cfg(not(target_family = "wasm"))]
+#[doc(hidden)]
+pub use inventory;
+
 /// Re-exported so `#[controller]`/`#[handlers]` generated code and users reach axum through a
 /// stable path without a separate dependency.
 #[cfg(not(target_family = "wasm"))]
