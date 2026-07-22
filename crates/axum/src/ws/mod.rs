@@ -113,6 +113,26 @@ impl<P: WebsocketProtocol> WsRoute<P> {
     }
 }
 
+/// One `#[handlers]` block's message-route builder, tagged with its controller type `C` and
+/// protocol `P` — the WebSocket analog of [`ControllerRoute`](crate::ControllerRoute). Wraps the
+/// bare builder fn pointer so it can be an [`OverseerdDescriptor`] and thus a
+/// `DescriptorFor<C, ControllerWsRoute<C, P>>` bucket element on the `inventory` backend. `Copy` is
+/// manual (a naive derive would wrongly demand `C: Copy` / `P: Copy`).
+pub struct ControllerWsRoute<C, P: WebsocketProtocol>(pub fn(std::sync::Arc<C>) -> Vec<WsRoute<P>>);
+
+impl<C, P: WebsocketProtocol> Clone for ControllerWsRoute<C, P> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<C, P: WebsocketProtocol> Copy for ControllerWsRoute<C, P> {}
+
+impl<C: 'static, P: WebsocketProtocol> overseerd_core::OverseerdDescriptor
+    for ControllerWsRoute<C, P>
+{
+}
+
 /// Rejects ambiguous destinations before calling [`WebsocketProtocol::build`]. Keeping this check
 /// in the framework preserves the original infallible public `build` contract for downstream
 /// protocols while preventing bundled or custom implementations from silently depending on link

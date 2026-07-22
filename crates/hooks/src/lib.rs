@@ -76,9 +76,13 @@ pub type HookCall =
         &'a (dyn Any + Send + Sync),
     ) -> Pin<Box<dyn Future<Output = Result<Box<dyn Any + Send>>> + Send + 'a>>;
 
-/// Static metadata for one hook, registered into its type's `{Type}Hooks` slice.
+/// Static metadata for one hook, registered into its type's registration set.
 #[derive(Clone, Copy)]
 pub struct HookDescriptor {
+    /// Source-position ordinal (the hook method's line), used to run a type's hooks in a stable
+    /// source order regardless of registration backend. `linkme` preserves source order via link
+    /// order; `inventory`'s linked list does not, so the accessor sorts by this.
+    pub ordinal: u32,
     /// The component/service the hook is defined on.
     pub component_ty: TypeDescriptor,
     /// The hook kind's [`NAME`](HookKind::NAME), for diagnostics.

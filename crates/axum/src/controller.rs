@@ -6,8 +6,30 @@
 //! [`AxumPlugin`](crate::AxumPlugin) folds the slice on `auto_discover` and merges each
 //! controller's [`axum::Router`] when the protocol is built.
 
+use std::sync::Arc;
+
 use overseerd_app::AppRuntime;
-use overseerd_core::TypeDescriptor;
+use overseerd_core::{OverseerdDescriptor, TypeDescriptor};
+
+/// One `#[handlers]` block's route-group builder, tagged with its controller type `C`.
+///
+/// The route registries hold bare `fn` pointers, which cannot implement [`OverseerdDescriptor`]
+/// (a primitive fn-pointer type is foreign and carries no local type, so the marker impl would
+/// violate the orphan rule). This local newtype is the HTTP analog of the RPC `RpcGroup`: it wraps
+/// the builder so it *can* be an `OverseerdDescriptor` and thus a `DescriptorFor<C, ControllerRoute<C>>`
+/// bucket element on the `inventory` backend. `Copy` is manual (a naive derive would wrongly demand
+/// `C: Copy`); the wrapped fn pointer is always `Copy`.
+pub struct ControllerRoute<C>(pub fn(Arc<C>, &AppRuntime) -> axum::Router);
+
+impl<C> Clone for ControllerRoute<C> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<C> Copy for ControllerRoute<C> {}
+
+impl<C: 'static> OverseerdDescriptor for ControllerRoute<C> {}
 
 /// A controller's link-time registration: its identity and a builder for its routes.
 ///

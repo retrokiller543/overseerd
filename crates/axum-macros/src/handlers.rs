@@ -439,6 +439,9 @@ impl ToTokens for AxumHandlers {
         let as_layer = paths.plugin("middleware::as_layer");
         let distributed_slice = paths.core("linkme::distributed_slice");
         let linkme_crate = paths.core("linkme");
+        let inventory = paths.core("inventory");
+        let descriptor_for = paths.core("DescriptorFor");
+        let controller_route = paths.plugin("ControllerRoute");
         let controller_trait = paths.plugin("Controller");
         let routes_slice = self
             .routes_slice
@@ -496,6 +499,24 @@ impl ToTokens for AxumHandlers {
             quote!(.route(#path, #chain))
         });
 
+        // One route-group builder per `#[handlers]` block, wrapped in `ControllerRoute<Self>` and
+        // registered into the controller's per-type route registry.
+        let register = overseerd_macros_core::backend::dual_backend(
+            quote! {
+                #inventory::submit! {
+                    #descriptor_for::<#self_ty, #controller_route<#self_ty>>::new(
+                        #controller_route(__overseerd_axum_route_group)
+                    )
+                }
+            },
+            quote! {
+                #[#distributed_slice(#routes_slice)]
+                #[linkme(crate = #linkme_crate)]
+                static __OVERSEERD_AXUM_ROUTE_GROUP: #controller_route<#self_ty> =
+                    #controller_route(__overseerd_axum_route_group);
+            },
+        );
+
         out.extend(quote! {
             const _: () = {
                 // A `#[get]`/`#[post]`/… block only belongs on a REST `#[controller]`; assert it so a
@@ -515,11 +536,7 @@ impl ToTokens for AxumHandlers {
                         #(#route_tokens)*
                 }
 
-                #[#distributed_slice(#routes_slice)]
-                #[linkme(crate = #linkme_crate)]
-                static __OVERSEERD_AXUM_ROUTE_GROUP:
-                    fn(::std::sync::Arc<#self_ty>, & #app_runtime) -> #axum::Router =
-                    __overseerd_axum_route_group;
+                #register
             };
         });
 
@@ -541,6 +558,9 @@ impl AxumHandlers {
         let self_ty = &cx.self_ty;
         let distributed_slice = paths.core("linkme::distributed_slice");
         let linkme_crate = paths.core("linkme");
+        let inventory = paths.core("inventory");
+        let descriptor_for = paths.core("DescriptorFor");
+        let controller_ws_route = paths.plugin("ControllerWsRoute");
         let ws_controller_trait = paths.plugin("WebsocketController");
         let ws_route = paths.plugin("WsRoute");
         let ws_routes_slice = self
@@ -555,6 +575,25 @@ impl AxumHandlers {
             .expect("message routes require a handlers protocol");
 
         let ws_route_p = quote!(#ws_route<#protocol>);
+
+        // One message-route builder per `#[handlers]` block, wrapped in `ControllerWsRoute<Self, P>`
+        // and registered into the controller's per-type ws-route registry.
+        let register = overseerd_macros_core::backend::dual_backend(
+            quote! {
+                #inventory::submit! {
+                    #descriptor_for::<#self_ty, #controller_ws_route<#self_ty, #protocol>>::new(
+                        #controller_ws_route(__overseerd_ws_route_group)
+                    )
+                }
+            },
+            quote! {
+                #[#distributed_slice(#ws_routes_slice)]
+                #[linkme(crate = #linkme_crate)]
+                static __OVERSEERD_WS_ROUTE_GROUP: #controller_ws_route<#self_ty, #protocol> =
+                    #controller_ws_route(__overseerd_ws_route_group);
+            },
+        );
+
         out.extend(quote! {
             const _: () = {
                 fn __overseerd_assert_ws_controller<
@@ -570,11 +609,7 @@ impl AxumHandlers {
                     ::std::vec![ #(#builders),* ]
                 }
 
-                #[#distributed_slice(#ws_routes_slice)]
-                #[linkme(crate = #linkme_crate)]
-                static __OVERSEERD_WS_ROUTE_GROUP:
-                    fn(::std::sync::Arc<#self_ty>) -> ::std::vec::Vec<#ws_route_p> =
-                    __overseerd_ws_route_group;
+                #register
             };
         });
     }

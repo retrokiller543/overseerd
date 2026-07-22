@@ -479,6 +479,7 @@ fn scheduler_startup_deps() -> Vec<DependencyDescriptor> {
 }
 
 static SCHEDULER_HOOKS: [HookDescriptor; 1] = [HookDescriptor {
+    ordinal: 0,
     component_ty: TypeDescriptor::of::<JobScheduler>(SCHEDULER_NAME),
     kind: <Startup as HookKind>::NAME,
     kind_ty: scheduler_startup_kind_ty,

@@ -147,6 +147,8 @@ impl<T: ComponentExt> ToTokens for Router<T> {
         let descriptor_trait = paths.core("Descriptor");
         let distributed_slice = paths.core("linkme::distributed_slice");
         let linkme_crate = paths.core("linkme");
+        let inventory = paths.core("inventory");
+        let descriptor_for = paths.core("DescriptorFor");
         let rpc_group = paths.plugin("RpcGroup");
         let service_component = paths.core("ServiceComponent");
         let service_descriptor = paths.plugin("ServiceDescriptor");
@@ -155,6 +157,48 @@ impl<T: ComponentExt> ToTokens for Router<T> {
         let type_descriptor = paths.core("TypeDescriptor");
         let inner = &self.inner;
 
+        // The service's own RPC groups — a single-kind per-type registry (no `Registration` merge),
+        // so the `linkme` accessor returns its slice directly while the `inventory` accessor
+        // materializes its bucket into a `OnceLock` cache. Both return `&'static [RpcGroup]`.
+        let registry = overseerd_macros_core::backend::registry_for_impl(
+            quote!(#ident),
+            quote!(#rpc_group),
+            paths,
+        );
+        let rpcs_infra = overseerd_macros_core::backend::dual_backend(
+            quote! {
+                #registry
+
+                impl #service_rpcs for #ident {
+                    fn rpc_groups() -> &'static [#rpc_group] {
+                        static CACHE: ::std::sync::OnceLock<::std::vec::Vec<#rpc_group>> =
+                            ::std::sync::OnceLock::new();
+
+                        CACHE
+                            .get_or_init(|| {
+                                #inventory::iter::<#descriptor_for<#ident, #rpc_group>>
+                                    .into_iter()
+                                    .map(|__entry| **__entry)
+                                    .collect()
+                            })
+                            .as_slice()
+                    }
+                }
+            },
+            quote! {
+                #[#distributed_slice]
+                #[linkme(crate = #linkme_crate)]
+                #[allow(non_upper_case_globals)]
+                pub static #rpcs_slice: [#rpc_group];
+
+                impl #service_rpcs for #ident {
+                    fn rpc_groups() -> &'static [#rpc_group] {
+                        &#rpcs_slice
+                    }
+                }
+            },
+        );
+
         out.extend(quote! {
             #client_struct
 
@@ -162,16 +206,7 @@ impl<T: ComponentExt> ToTokens for Router<T> {
                 const VERSION: ::core::option::Option<&'static str> = #version;
             }
 
-            #[#distributed_slice]
-            #[linkme(crate = #linkme_crate)]
-            #[allow(non_upper_case_globals)]
-            pub static #rpcs_slice: [#rpc_group];
-
-            impl #service_rpcs for #ident {
-                fn rpc_groups() -> &'static [#rpc_group] {
-                    &#rpcs_slice
-                }
-            }
+            #rpcs_infra
 
             const _: () = {
                 const __OVERSEERD_SERVICE_DESCRIPTOR: #service_descriptor =

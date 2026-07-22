@@ -90,10 +90,13 @@ pub fn registrations_infrastructure(
 
                 CACHE
                     .get_or_init(|| {
-                        #inventory::iter::<#descriptor_for<#self_ident, #hook_descriptor>>
-                            .into_iter()
-                            .map(|__entry| **__entry)
-                            .collect()
+                        let mut __hooks: ::std::vec::Vec<#hook_descriptor> =
+                            #inventory::iter::<#descriptor_for<#self_ident, #hook_descriptor>>
+                                .into_iter()
+                                .map(|__entry| **__entry)
+                                .collect();
+                        __hooks.sort_by_key(|__hook| __hook.ordinal);
+                        __hooks
                     })
                     .as_slice()
             }
@@ -130,11 +133,13 @@ pub fn registrations_infrastructure(
 
                 CACHE
                     .get_or_init(|| {
-                        #slice
+                        let mut __hooks: ::std::vec::Vec<#hook_descriptor> = #slice
                             .iter()
                             .filter_map(#registration::as_hook)
                             .copied()
-                            .collect()
+                            .collect();
+                        __hooks.sort_by_key(|__hook| __hook.ordinal);
+                        __hooks
                     })
                     .as_slice()
             }

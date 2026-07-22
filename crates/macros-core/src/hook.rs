@@ -7,7 +7,7 @@
 //! dependencies are NOT parameters — a hook reaches them through `&self`.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{FnArg, ImplItemFn, LitStr, Meta, Path, Type};
 
 use crate::attr;
@@ -176,8 +176,13 @@ pub fn generate_hook(
         }
     };
 
+    // Source-position ordinal: `line!()` resolved at the hook method's span, so a type's hooks run
+    // in source order on the `inventory` backend (which does not preserve registration order) just
+    // as they do on `linkme`.
+    let ordinal = quote_spanned!(method.span()=> ::core::line!());
     let hook_literal = quote! {
         #hook_descriptor {
+            ordinal: #ordinal,
             component_ty: #type_descriptor::of::<#self_ty>(#name),
             kind: <#kind as #hook_kind>::NAME,
             kind_ty: #kind_ty_fn,
