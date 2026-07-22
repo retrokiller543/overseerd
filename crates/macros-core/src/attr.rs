@@ -101,7 +101,13 @@ pub struct ComponentArgs<Ext: ParseKeyed = NoExt> {
     /// `singleton`/`connection`/`request`/`transient` are accepted as aliases for the
     /// like-named marker types. `None` means the default (singleton).
     pub scope: Option<syn::Path>,
-    /// Overrides the generated per-type factory slice name (`factory_slice = Ident`).
+    /// Overrides the generated per-type registration slice name (`factory_slice = Ident`).
+    ///
+    /// Since factories and hooks share one merged `{Type}Registrations` slice on the `linkme`
+    /// backend, this name governs **both** — so a type that overrides it must set the same
+    /// `factory_slice` on every one of its `#[component]` / `#[methods]` / `#[handlers]` blocks
+    /// (the consistency the `#[init]` factory already required, now extended to `#[hook]`s). Left
+    /// unset (the normal case) it defaults to `{Type}Registrations`.
     pub factory_slice: Option<Ident>,
     /// An explicit async factory path (`factory = path::to::fn`).
     pub factory: Option<syn::Path>,
