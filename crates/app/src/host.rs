@@ -487,6 +487,10 @@ pub enum CliError {
     #[error(transparent)]
     Clap(#[from] clap::Error),
 
+    /// Framework bootstrap failed before the app lifecycle began.
+    #[error(transparent)]
+    Bootstrap(#[from] BootstrapError),
+
     /// Application bootstrap or lifecycle dispatch failed.
     #[error(transparent)]
     Lifecycle(#[from] PhaseError),

@@ -213,6 +213,24 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// let app = Example::builder()?.build().await?;
 /// ```
 ///
+/// With the default `cli` feature, a named app declaring `serve` also generates native Clap
+/// `ExampleCli`/`ExampleCommand` types and `Example::run()`/`run_with(args)`. The application must
+/// declare a direct `clap` dependency with its `derive` feature so the generated types can be
+/// extended with ordinary Clap arguments and subcommands:
+///
+/// ```toml
+/// clap = { version = "4", features = ["derive"] }
+/// ```
+///
+/// A thin binary can then delegate to the generated host:
+///
+/// ```ignore
+/// #[tokio::main]
+/// async fn main() -> Result<(), overseerd::CliError> {
+///     Example::run().await
+/// }
+/// ```
+///
 /// The generated host's fallible `builder()` creates an `AppBuilder` from the declaration:
 /// `App::builder(name).auto_discover()`, a `with_component(..)` for each listed
 /// instance, a `config::<T>(path)` for each `configs` entry (`Type =>

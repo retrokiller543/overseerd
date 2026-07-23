@@ -144,7 +144,7 @@ categories.workspace = true
 default = ["cli", "di-check"]
 
 # Generate the standard application CLI and process runner for named app definitions.
-cli = ["overseerd-app/cli", "overseerd-macros/cli"]
+cli = ["dep:clap", "overseerd-app/cli", "overseerd-macros/cli"]
 
 # Re-export the native RPC daemon through the facade for convenience. The protocol crate owns
 # its own macros; the facade just enables its `facade` feature (so its codegen roots at
@@ -275,6 +275,7 @@ serde = { workspace = true }
 # hooks, the RPC daemon, and tokio. A browser client needs none of these, and several do not build
 # for wasm (linkme, `directories`, `notify`, tokio net), so they are compiled out there.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+clap = { workspace = true, optional = true }
 overseerd-core = { workspace = true }
 overseerd-di = { workspace = true }
 overseerd-hooks = { workspace = true }
