@@ -2,6 +2,10 @@ use overseerd::{
     App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, ExecutionMode, Plugin, Protocol,
     ProtocolPlugin, app,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static SERVE_CALLS: AtomicUsize = AtomicUsize::new(0);
+static HELP_SETUP_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Test protocol accumulated by the named application host.
 #[derive(Default)]
@@ -36,6 +40,25 @@ app! {
     }
 }
 
+async fn help_setup(context: BootstrapContext) -> std::io::Result<BootstrapContext> {
+    HELP_SETUP_CALLS.fetch_add(1, Ordering::SeqCst);
+
+    Ok(context)
+}
+
+async fn help_serve(_context: BootstrapContext, _app: App<TestPlugin>) -> std::io::Result<()> {
+    Ok(())
+}
+
+app! {
+    app HelpApplication {
+        name: "help-app-test",
+        protocol: TestPlugin,
+        setup = help_setup,
+        serve = help_serve,
+    }
+}
+
 async fn setup_lifecycle(mut context: BootstrapContext) -> std::io::Result<BootstrapContext> {
     context.insert(vec!["setup"]);
 
@@ -55,6 +78,8 @@ async fn before_lifecycle(
 }
 
 async fn serve_lifecycle(context: BootstrapContext, _app: App<TestPlugin>) -> std::io::Result<()> {
+    SERVE_CALLS.fetch_add(1, Ordering::SeqCst);
+
     assert_eq!(
         context.get::<Vec<&'static str>>(),
         Some(&vec!["setup", "configure", "before_build", "after_build"])
@@ -179,4 +204,53 @@ async fn named_app_rejects_component_construction_in_tooling_mode() {
         error.to_string(),
         "build phase failed: tooling mode cannot construct application components or protocols"
     );
+}
+
+#[test]
+fn generated_cli_exposes_native_clap_types() {
+    use clap::{CommandFactory as _, Parser as _};
+
+    let command = LifecycleApplicationCli::command();
+    let default_cli = LifecycleApplicationCli::try_parse_from(["lifecycle-app-test"])
+        .expect("default command parses");
+    let serve_cli = LifecycleApplicationCli::try_parse_from(["lifecycle-app-test", "serve"])
+        .expect("serve command parses");
+
+    assert_eq!(command.get_name(), "lifecycle-app-test");
+    assert!(default_cli.command.is_none());
+    assert_eq!(serve_cli.command, Some(LifecycleApplicationCommand::Serve));
+}
+
+#[tokio::test]
+async fn generated_cli_defaults_to_serve() {
+    SERVE_CALLS.store(0, Ordering::SeqCst);
+
+    let cli = LifecycleApplicationCli {
+        bootstrap: overseerd::BootstrapOptions::default(),
+        command: None,
+    };
+
+    LifecycleApplication::run_cli(cli)
+        .await
+        .expect("default CLI command serves");
+
+    assert_eq!(SERVE_CALLS.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn generated_cli_help_and_version_do_not_run_setup() {
+    HELP_SETUP_CALLS.store(0, Ordering::SeqCst);
+
+    for (argument, expected) in [
+        ("--help", clap::error::ErrorKind::DisplayHelp),
+        ("--version", clap::error::ErrorKind::DisplayVersion),
+    ] {
+        let error = HelpApplication::run_with(["help-app-test", argument])
+            .await
+            .expect_err("early output is returned to the caller");
+
+        assert!(matches!(error, overseerd::CliError::Clap(error) if error.kind() == expected));
+    }
+
+    assert_eq!(HELP_SETUP_CALLS.load(Ordering::SeqCst), 0);
 }

@@ -20,7 +20,7 @@
 //! never the app. The listed `services` are asserted `Wired` (under `di-check`).
 
 use proc_macro2::{Span, TokenStream};
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
@@ -468,6 +468,7 @@ fn expand_named(input: NamedApp) -> TokenStream {
         mut assembly,
     } = input;
     let phases = std::mem::take(&mut assembly.phases);
+    let application_name = assembly.name.clone();
     let protocol = assembly.protocol.clone();
     let paths = Paths::overseerd().resolve(assembly.overseerd.clone(), assembly.krate.clone());
     let app_builder = paths.core("AppBuilder");
@@ -480,6 +481,11 @@ fn expand_named(input: NamedApp) -> TokenStream {
     let lifecycle_phase = paths.core("LifecyclePhase");
     let phase_error = paths.core("PhaseError");
     let prepared_app = paths.core("PreparedApp");
+    let bootstrap_application = paths.core("bootstrap_application");
+    let bootstrap_options = paths.core("BootstrapOptions");
+    let cli_error = paths.core("CliError");
+    let configure_bootstrap = paths.core("configure_bootstrap");
+    let clap: Path = syn::parse_quote!(::clap);
     let builder = expand_builder(assembly);
     let setup_call = phase_result(
         phases.setup.as_ref(),
@@ -530,6 +536,75 @@ fn expand_named(input: NamedApp) -> TokenStream {
             }
         }
     });
+    let bootstrap_builder = if cfg!(feature = "cli") {
+        quote! {
+            let builder = #configure_bootstrap(&mut context, builder);
+        }
+    } else {
+        TokenStream::new()
+    };
+    let cli = if cfg!(feature = "cli") && phases.serve.is_some() {
+        let cli_ident = format_ident!("{}Cli", ident);
+        let command_ident = format_ident!("{}Command", ident);
+
+        quote! {
+            /// Generated application command line.
+            #[derive(Debug, #clap::Parser)]
+            #[command(name = #application_name, version, about = env!("CARGO_PKG_DESCRIPTION"))]
+            #visibility struct #cli_ident {
+                /// Framework bootstrap options.
+                #[command(flatten)]
+                pub bootstrap: #bootstrap_options,
+
+                /// Application command. Defaults to `serve` when omitted.
+                #[command(subcommand)]
+                pub command: Option<#command_ident>,
+            }
+
+            /// Generated application commands.
+            #[derive(Clone, Copy, Debug, Eq, PartialEq, #clap::Subcommand)]
+            #visibility enum #command_ident {
+                /// Build and serve the application.
+                Serve,
+            }
+
+            impl #ident {
+                /// Parses and dispatches process arguments.
+                pub async fn run() -> ::core::result::Result<(), #cli_error> {
+                    Self::run_with(::std::env::args_os()).await
+                }
+
+                /// Parses and dispatches an explicit argument iterator without exiting.
+                pub async fn run_with<I, T>(args: I) -> ::core::result::Result<(), #cli_error>
+                where
+                    I: ::core::iter::IntoIterator<Item = T>,
+                    T: ::core::convert::Into<::std::ffi::OsString> + ::core::clone::Clone,
+                {
+                    let cli = <#cli_ident as #clap::Parser>::try_parse_from(args)?;
+
+                    Self::run_cli(cli).await
+                }
+
+                /// Dispatches an already parsed generated CLI value.
+                pub async fn run_cli(cli: #cli_ident) -> ::core::result::Result<(), #cli_error> {
+                    let context = #bootstrap_application(
+                        #application_name,
+                        #execution_mode::Run,
+                        cli.bootstrap,
+                    )?;
+                    let (context, app) = Self::__overseerd_build_context(context).await?;
+
+                    match cli.command.unwrap_or(#command_ident::Serve) {
+                        #command_ident::Serve => Self::serve_with(context, app).await?,
+                    }
+
+                    Ok(())
+                }
+            }
+        }
+    } else {
+        TokenStream::new()
+    };
 
     quote! {
         #[doc = "Generated application host."]
@@ -558,9 +633,18 @@ fn expand_named(input: NamedApp) -> TokenStream {
             pub async fn prepare(
                 mode: #execution_mode,
             ) -> ::core::result::Result<(#bootstrap_context, #prepared_app<#protocol>), #phase_error> {
-                let mut context = Self::setup(mode).await?;
+                let context = #bootstrap_context::new(mode);
+
+                Self::__overseerd_prepare_context(context).await
+            }
+
+            async fn __overseerd_prepare_context(
+                context: #bootstrap_context,
+            ) -> ::core::result::Result<(#bootstrap_context, #prepared_app<#protocol>), #phase_error> {
+                let mut context = Self::__overseerd_setup_context(context).await?;
                 let builder = Self::builder()
                     .map_err(|source| #phase_error::new(#lifecycle_phase::Configure, source))?;
+                #bootstrap_builder
                 let builder = #configure_call;
                 let builder = #before_build_call;
                 let prepared = builder
@@ -581,7 +665,22 @@ fn expand_named(input: NamedApp) -> TokenStream {
                     ));
                 }
 
-                let (mut context, prepared) = Self::prepare(mode).await?;
+                let context = #bootstrap_context::new(mode);
+
+                Self::__overseerd_build_context(context).await
+            }
+
+            async fn __overseerd_build_context(
+                context: #bootstrap_context,
+            ) -> ::core::result::Result<(#bootstrap_context, #app<#protocol>), #phase_error> {
+                if context.mode().is_tooling() {
+                    return Err(#phase_error::new(
+                        #lifecycle_phase::Build,
+                        #host_error::ToolingConstruction,
+                    ));
+                }
+
+                let (mut context, prepared) = Self::__overseerd_prepare_context(context).await?;
                 let app = prepared
                     .build()
                     .await
@@ -601,6 +700,8 @@ fn expand_named(input: NamedApp) -> TokenStream {
                 Self::builder()
             }
         }
+
+        #cli
     }
 }
 
