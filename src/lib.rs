@@ -86,7 +86,7 @@ pub use overseerd_config::{
 // ---------------------------------------------------------------------------
 #[cfg(not(target_family = "wasm"))]
 pub use overseerd_app::{
-    App, AppBuilder, AppHost, AppRegistry, AppRuntime, BootstrapContext, ExecutionMode,
+    App, AppBuilder, AppHost, AppRegistry, AppRuntime, BootstrapContext, ExecutionMode, HostError,
     LifecyclePhase, LoggingConfig, NoopPlugin, NoopProtocol, PhaseError, Plugin, PreBuildContext,
     PreparedApp, Protocol, ProtocolPlugin, Serve, ServerConfig, ShutdownHandle, ShutdownSignal,
 };

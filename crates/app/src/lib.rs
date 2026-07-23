@@ -21,7 +21,7 @@ pub mod runtime;
 pub use app::{App, AppBuilder, PreparedApp};
 pub use builtins::{LoggingConfig, ServerConfig};
 pub use error::{Error, Result};
-pub use host::{AppHost, BootstrapContext, ExecutionMode, LifecyclePhase, PhaseError};
+pub use host::{AppHost, BootstrapContext, ExecutionMode, HostError, LifecyclePhase, PhaseError};
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use protocol::{
     NoopPlugin, NoopProtocol, Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve,
