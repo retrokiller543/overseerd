@@ -5,9 +5,9 @@
 
 use std::future::Future;
 
-use overseerd_config::{Cfg, ConfigProperties, ConfigStore};
-use overseerd_core::Scope;
-use overseerd_di::ComponentDescriptor;
+use overseerd_config::{Cfg, ConfigBinding, ConfigProperties, ConfigStore};
+use overseerd_core::{Descriptor, Scope, TypeDescriptor};
+use overseerd_di::{BoxedComponent, Component, ComponentDescriptor, Injectable};
 
 use crate::lifecycle::ShutdownSignal;
 use crate::registry::AppRegistry;
@@ -45,9 +45,15 @@ pub trait ProtocolPlugin: Plugin {
     /// `[Connection, Request]`; a request-only protocol opens `[Request]`.
     const SCOPES: &'static [&'static dyn Scope];
 
-    /// Validates protocol-owned configuration and descriptors before ordinary components are
-    /// constructed. Implementations may cache derived metadata for [`build`](Self::build).
-    fn pre_build(&mut self, context: &PreBuildContext<'_>) -> Result<(), Self::Error> {
+    /// Contributes protocol-owned components and configuration bindings before app validation.
+    fn pre_build(&mut self, context: &mut PreBuildContext<'_>) -> Result<(), Self::Error> {
+        let _ = context;
+
+        Ok(())
+    }
+
+    /// Validates finalized protocol-owned configuration and descriptors before construction.
+    fn validate(&mut self, context: &ValidationContext<'_>) -> Result<(), Self::Error> {
         let _ = context;
 
         Ok(())
@@ -59,14 +65,65 @@ pub trait ProtocolPlugin: Plugin {
     fn build(self, runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error>;
 }
 
-/// Read-only application state available during protocol pre-build validation.
+/// Mutable application state available for protocol contributions before validation.
 pub struct PreBuildContext<'a> {
+    registry: &'a mut AppRegistry,
+    instances: &'a mut Vec<BoxedComponent>,
+}
+
+impl<'a> PreBuildContext<'a> {
+    pub(crate) fn new(
+        registry: &'a mut AppRegistry,
+        instances: &'a mut Vec<BoxedComponent>,
+    ) -> Self {
+        Self {
+            registry,
+            instances,
+        }
+    }
+
+    /// Registers a component descriptor for construction.
+    pub fn component_descriptor(&mut self, descriptor: &ComponentDescriptor) {
+        self.registry.components.push(*descriptor);
+    }
+
+    /// Registers component type `T` from its static descriptor.
+    pub fn component<T>(&mut self)
+    where
+        T: Descriptor<ComponentDescriptor>,
+    {
+        self.registry
+            .components
+            .push(<T as Descriptor<ComponentDescriptor>>::DESCRIPTOR);
+    }
+
+    /// Registers a pre-built singleton component.
+    pub fn with_component<T: Component>(&mut self, value: T) {
+        self.registry
+            .components
+            .push(ComponentDescriptor::of::<T>());
+        self.instances.push(BoxedComponent {
+            ty: TypeDescriptor::of::<T>(T::NAME),
+            value: Box::new(Injectable::into_stored(value.into_handle())),
+        });
+    }
+
+    /// Binds configuration type `T` to `path` before config-store construction.
+    pub fn config<T: ConfigProperties>(&mut self, path: impl Into<String>) {
+        self.registry
+            .config_bindings
+            .push(ConfigBinding::of::<T>(path));
+    }
+}
+
+/// Read-only finalized application state available for protocol validation.
+pub struct ValidationContext<'a> {
     name: &'a str,
     registry: &'a AppRegistry,
     config: &'a ConfigStore,
 }
 
-impl<'a> PreBuildContext<'a> {
+impl<'a> ValidationContext<'a> {
     pub(crate) fn new(name: &'a str, registry: &'a AppRegistry, config: &'a ConfigStore) -> Self {
         Self {
             name,
@@ -90,7 +147,7 @@ impl<'a> PreBuildContext<'a> {
         &self.registry.components
     }
 
-    /// Resolves a prepared configuration binding by type and property path.
+    /// Resolves a finalized configuration binding by type and property path.
     pub fn config<T: ConfigProperties>(&self, path: &str) -> Option<Cfg<T>> {
         self.config.resolve_path::<Cfg<T>>(path)
     }
@@ -115,28 +172,21 @@ pub trait Serve<E>: Protocol {
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
-/// Protocol plugin for applications that only need lifecycle, validation, or tooling support.
-#[derive(Default)]
-pub struct NoopPlugin;
-
-impl Plugin for NoopPlugin {
+impl Plugin for () {
     fn register(&self, _registry: &mut AppRegistry) {}
 }
 
-impl ProtocolPlugin for NoopPlugin {
-    type Protocol = NoopProtocol;
+impl ProtocolPlugin for () {
+    type Protocol = ();
     type Error = crate::Error;
 
     const SCOPES: &'static [&'static dyn Scope] = &[];
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
-        Ok(NoopProtocol)
+        Ok(())
     }
 }
 
-/// Built protocol produced by [`NoopPlugin`].
-pub struct NoopProtocol;
-
-impl Protocol for NoopProtocol {
+impl Protocol for () {
     type Error = crate::Error;
 }

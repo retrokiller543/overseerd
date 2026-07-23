@@ -119,6 +119,7 @@ async fn main() -> overseerd::daemon::Result<()> {
         level: "info,overseerd=debug".to_string(),
         format: "full".to_string(),
         ansi: true,
+        ..LoggingConfig::default()
     };
     let log_sink = init_tracing(&logging, JobLogConfig::default()).expect("install tracing");
 

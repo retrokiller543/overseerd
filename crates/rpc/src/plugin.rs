@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, PreBuildContext, ProtocolPlugin};
+use overseerd_app::{
+    AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin, ValidationContext,
+};
 use overseerd_core::{Descriptor, Scope, TypeDescriptor};
 use overseerd_di::{ComponentDescriptor, ServiceComponent};
 use overseerd_transport::PeerInfo;
@@ -61,7 +63,7 @@ impl ProtocolPlugin for RpcPlugin {
 
     const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
 
-    fn pre_build(&mut self, _context: &PreBuildContext<'_>) -> crate::Result<()> {
+    fn validate(&mut self, _context: &ValidationContext<'_>) -> crate::Result<()> {
         let resolved = crate::routes::resolved_services(&self.services);
 
         crate::routes::validate_services(&resolved)?;

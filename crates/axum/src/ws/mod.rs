@@ -437,6 +437,7 @@ impl WsAdmission {
     }
 }
 
+/// Temporary protocol-level guard until generic extraction-time validation is available.
 pub(crate) fn validate_config(config: &crate::AxumConfig) -> crate::Result<()> {
     if config.max_websocket_message_bytes == 0 || config.max_websocket_frame_bytes == 0 {
         return Err(crate::Error::Config(

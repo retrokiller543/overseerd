@@ -42,6 +42,64 @@ pub struct LoggingConfig {
 
     /// Whether to colorize the output with ANSI escape codes.
     pub ansi: bool,
+
+    /// Span lifecycle events emitted by the formatter.
+    #[serde(default)]
+    pub span_events: SpanEvents,
+
+    /// Whether event targets are included in formatted output.
+    #[serde(default = "default_true")]
+    pub target: bool,
+
+    /// Whether event levels are included in formatted output.
+    #[serde(default = "default_true")]
+    pub level_display: bool,
+
+    /// Whether thread IDs are included in formatted output.
+    #[serde(default)]
+    pub thread_ids: bool,
+
+    /// Whether thread names are included in formatted output.
+    #[serde(default)]
+    pub thread_names: bool,
+
+    /// Whether source file paths are included in formatted output.
+    #[serde(default)]
+    pub file: bool,
+
+    /// Whether source line numbers are included in formatted output.
+    #[serde(default)]
+    pub line_number: bool,
+
+    /// Whether JSON output flattens event fields into the root object.
+    #[serde(default)]
+    pub flatten_event: bool,
+
+    /// Whether JSON output includes the current span and span list.
+    #[serde(default = "default_true")]
+    pub current_span: bool,
+}
+
+/// Span lifecycle events emitted by tracing formatters.
+#[derive(Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SpanEvents {
+    /// Do not synthesize span lifecycle events.
+    #[default]
+    None,
+    /// Emit an event when each span is created.
+    New,
+    /// Emit an event whenever a span is entered.
+    Enter,
+    /// Emit an event whenever a span is exited.
+    Exit,
+    /// Emit an event when each span closes.
+    Close,
+    /// Emit enter and exit events.
+    Active,
+    /// Emit new, enter, exit, and close events.
+    Full,
 }
 
 impl Default for ServerConfig {
@@ -59,6 +117,19 @@ impl Default for LoggingConfig {
             level: "info".to_string(),
             format: "full".to_string(),
             ansi: true,
+            span_events: SpanEvents::None,
+            target: true,
+            level_display: true,
+            thread_ids: false,
+            thread_names: false,
+            file: false,
+            line_number: false,
+            flatten_event: false,
+            current_span: true,
         }
     }
+}
+
+const fn default_true() -> bool {
+    true
 }

@@ -12,7 +12,7 @@ pub mod shutdown;
 #[cfg(feature = "tracing-subscriber")]
 pub mod logging;
 
-pub use config::{LoggingConfig, ServerConfig};
+pub use config::{LoggingConfig, ServerConfig, SpanEvents};
 
 #[cfg(feature = "tracing-subscriber")]
 pub use logging::{BoxedLayer, InitTracingError, init_tracing, init_tracing_with_layers};
@@ -21,7 +21,7 @@ pub use logging::{BoxedLayer, InitTracingError, init_tracing, init_tracing_with_
 mod tests {
     use overseerd_config::{ConfigManager, ConfigProperties, Toml};
 
-    use super::config::{LoggingConfig, ServerConfig};
+    use super::config::{LoggingConfig, ServerConfig, SpanEvents};
 
     #[test]
     fn server_config_round_trips_a_subtree() {
@@ -50,6 +50,15 @@ mod tests {
             level = "${BUILTINS_TEST_LEVEL:info}"
             format = "compact"
             ansi = false
+            span_events = "active"
+            target = false
+            level_display = false
+            thread_ids = true
+            thread_names = true
+            file = true
+            line_number = true
+            flatten_event = true
+            current_span = false
         "#;
 
         let tree = ConfigManager::<Toml>::from_str(TOML).expect("parse config");
@@ -61,6 +70,15 @@ mod tests {
                 level: "info".to_string(),
                 format: "compact".to_string(),
                 ansi: false,
+                span_events: SpanEvents::Active,
+                target: false,
+                level_display: false,
+                thread_ids: true,
+                thread_names: true,
+                file: true,
+                line_number: true,
+                flatten_event: true,
+                current_span: false,
             }
         );
     }
