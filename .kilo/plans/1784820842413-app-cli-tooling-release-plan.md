@@ -12,7 +12,7 @@ Coordinate epics `#141` and `#149` without implementing them as one change. Land
 4. Merge only after that issue's focused tests and workspace checks pass, then rebase/update the next issue branch from the integration branch.
 5. Open one final PR from the integration branch into `release/1.0.0` after both epics are complete.
 6. If an issue cannot fit in a reviewable PR, stop and split the GitHub issue before coding. Do not silently turn it into a large mixed PR.
-7. Prefix every commit that changes/removes public syntax or API with exactly `BREAKING CHANGE: `. Use `mise exec -- git ...` for commits.
+7. Follow Conventional Commits 1.0.0. Mark public breaking changes with `!` in the type/scope and a `BREAKING CHANGE: <description>` footer. Use `mise exec -- git ...` for commits.
 
 ## Fixed Decisions
 
