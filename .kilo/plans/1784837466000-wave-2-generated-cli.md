@@ -27,7 +27,7 @@ Only `#144` is implementation-ready below. Replan `#145` and `#146` from the mer
 - Clap is the CLI API. Do not introduce a protocol-neutral argument schema.
 - Add a default-on `cli` feature to the facade, `overseerd-app`, `overseerd-macros`, and `overseerd-macros-core`.
 - Clap references and generated runner APIs exist only under `cli`; named app definitions, lifecycle APIs, direct `App::builder`, and tooling preparation compile without it.
-- Re-export Clap from the framework under `cli`, and use the re-export in generated derive attributes so downstream apps do not need a duplicate direct Clap dependency.
+- Re-export Clap from the framework for shared runtime types, but require applications using generated CLI derives to declare a direct Clap dependency. This keeps generated `Parser`/`Args`/`Subcommand` types native and directly extensible by application code.
 - Finite CLI choices use enums: `LogFormat` and `ColorChoice`. Open filter grammars remain strings.
 - No subcommand means `serve`.
 - A named app gets generated `run()` and `run_with(args)` only when it declares a `serve` lifecycle phase. The framework cannot infer a protocol endpoint without protocol-specific semantics. Apps without `serve` keep builder/setup/prepare/build and can provide a custom main.
@@ -134,7 +134,7 @@ Do not invent arbitrary environment-to-config-field mapping. Existing `${ENV}` p
 
 ### 1. Feature And Public Types
 
-- Add workspace Clap dependency with only required features (`derive`, `std`, `help`, `usage`, `error-context`, `suggestions`, `color`; add `env` only if generated fields directly use Clap env parsing).
+- Add workspace Clap dependency with only required features (`derive`, `std`, `help`, `usage`, `error-context`, `suggestions`, `color`; add `env` only if generated fields directly use Clap env parsing). Document the matching direct downstream dependency required by generated derives.
 - Add and forward default-on `cli` features through facade/app/macro crates.
 - Keep Wasm builds free of native app/CLI dependencies through existing target gates.
 - Add public documented `ColorChoice`, typed `CliError`, and bootstrap accessors under `cli`.
@@ -201,7 +201,7 @@ Parser/expansion tests:
 - two named apps do not collide;
 - serve-capable app generates runner; app without serve does not;
 - package/app metadata appear in command output;
-- generated derive paths use framework Clap re-export.
+- generated types use native Clap derives and compile in a downstream-style target with a direct Clap dependency.
 
 CLI behavior tests using `run_with` or Clap parsing without process exits:
 
@@ -251,18 +251,92 @@ Also run focused feature combinations introduced by `cli`, then let PR `#163` CI
 
 ## Later Issue Boundaries
 
+### Settled Command Execution Model
+
+- Unify application and plugin commands under one `CliCommand<H>` trait implemented by the fully
+  parsed command node rather than a separate handler function plus associated `Args` type.
+- `CliCommand::run` takes `&self`; the parsed value owns its local arguments and nested command
+  tree. This supports arbitrary native Clap nesting such as `app api users list`.
+- Make a nested `commands` DSL the default application-facing API. The macro generates every
+  intermediate native Clap `Subcommand` enum and recursively delegates `phase()` and `run()` to the
+  selected leaf. A generated command tree may contain leaves with different lifecycle requirements.
+- A leaf value implements both native Clap `Args` and `CliCommand<H>`; it stores all of its parsed
+  command-local values and executes through `run(&self, context)`.
+- Support explicit nested and flattened inclusion of reusable command-set enums for plugins,
+  generated clients, and command packages. Hand-written nesting is therefore optional rather than
+  required.
+- The runner asks the selected parsed command for its `CommandPhase`, advances the host only to
+  that phase, then supplies `CommandContext<'_, H>`.
+- `CommandContext` exposes bootstrap/global CLI state at every phase and, when available, prepared
+  or built app state plus typed resolution from the app's global/root scope. Command-local Clap
+  values remain on `self`; framework/DI values come from the context.
+- Keep exactly one generated top-level `#[command(subcommand)]` field. Compose command sets through
+  native nested command values or flattened wrapper variants inside that one generated command
+  enum.
+- Use a separate `args` declaration only for flattened global argument groups. Move each parsed
+  global args value into `BootstrapContext` by type before lifecycle setup, making it available to
+  command execution and configuration.
+- Do not use untyped external subcommands or runtime mutation as the primary extension model.
+
+Conceptual trait shape:
+
+```rust
+pub trait CliCommand<H: AppHost> {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn phase(&self) -> CommandPhase;
+
+    fn run<'a>(
+        &'a self,
+        context: CommandContext<'a, H>,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send + 'a;
+}
+```
+
+Conceptual app declaration:
+
+```rust
+commands: {
+    migrate: MigrateCommand,
+    api: {
+        users: {
+            list: ListUsersCommand,
+            get: GetUserCommand,
+        },
+        groups: {
+            list: ListGroupsCommand,
+        },
+    },
+    rpc: nested overseerd::daemon::RpcCommands,
+    tooling: flatten ToolingCommands,
+}
+```
+
+`api` and `users` become generated namespace subcommands. `nested` mounts a reusable command set
+under the declared name; `flatten` contributes its commands as siblings at the current level.
+
 ### `#145` Typed Commands
 
-- Extend the generated command enum with app declarations.
-- Introduce typed phase requirements (`setup`, `configured`, `built`) and async adapters.
-- Dispatch setup-only commands without preparing/building, configured commands before component construction, and built commands without serving.
+- Extend the generated command enum with parsed command-node types from app declarations.
+- Introduce dynamic selected-leaf phase requirements (`setup`, `configured`, `built`) and the
+  lifecycle-aware `CommandContext`.
+- Dispatch setup-only commands without preparing/building, configured commands before component
+  construction, and built commands without serving.
+- Generate `CliCommand` delegation for the app-specific top-level enum while allowing user-owned
+  command nodes to implement it directly and recursively.
 - Add reserved-name and duplicate validation.
 - Replan exact configured-state ownership after `#144` merges.
 
 ### `#146` Plugin Extensions
 
 - Add Clap-native feature-gated extension traits.
-- Support flattened args, subcommands, typed extraction, phase requirements, and collision diagnostics.
+- Keep exactly one `#[command(subcommand)]` field on the generated parser. Compose app/plugin
+  command enums inside the single generated command enum through
+  `#[command(flatten)] Extension(ExtensionCommands)` variants.
+- Support multiple ordinary `#[command(flatten)]` extension `Args` fields on the parser, typed
+  extraction, phase requirements, and collision diagnostics.
+- Use the same `CliCommand` contract for application and plugin-owned command trees; do not add a
+  second plugin-specific command handler abstraction.
 - Let protocol extensions interpret bootstrap values during configure and provide serve endpoint semantics.
 - Demonstrate one in-repo implementation and one third-party-style test crate.
 - Keep non-`cli` plugin builds Clap-free.
