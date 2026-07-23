@@ -114,3 +114,29 @@ pub trait Serve<E>: Protocol {
         endpoint: E,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
+
+/// Protocol plugin for applications that only need lifecycle, validation, or tooling support.
+#[derive(Default)]
+pub struct NoopPlugin;
+
+impl Plugin for NoopPlugin {
+    fn register(&self, _registry: &mut AppRegistry) {}
+}
+
+impl ProtocolPlugin for NoopPlugin {
+    type Protocol = NoopProtocol;
+    type Error = crate::Error;
+
+    const SCOPES: &'static [&'static dyn Scope] = &[];
+
+    fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
+        Ok(NoopProtocol)
+    }
+}
+
+/// Built protocol produced by [`NoopPlugin`].
+pub struct NoopProtocol;
+
+impl Protocol for NoopProtocol {
+    type Error = crate::Error;
+}
