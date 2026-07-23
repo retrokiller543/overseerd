@@ -1,19 +1,16 @@
-//! `app!` expansion: assembles the app *and* validates it.
+//! `app!` expansion: defines a reusable application host or assembles a legacy builder.
 //!
 //! ```ignore
-//! let app = app! {
-//!     name: "example-daemon",
-//!     services: [Notifications, Echo],
-//!     configs: [ DbConfig => "app.db.reader", DbConfig => "app.db.writer" ],
-//!     managers: {
-//!         // a pre-built manager instance ...
-//!         directories: dirs,
-//!         // ... or a per-manager config block the macro constructs + configures:
-//!         config: { watch: true, sighup: true, debounce: std::time::Duration::from_millis(250) },
-//!     },
+//! app! {
+//!     pub app Example {
+//!         name: "example-daemon",
+//!         protocol: RpcPlugin,
+//!         services: [Notifications, Echo],
+//!         configs: [DbConfig => "app.db.reader", DbConfig => "app.db.writer"],
+//!     }
 //! }
-//! .build()
-//! .await?;
+//!
+//! let app = Example::builder().build().await?;
 //! ```
 //!
 //! Each `managers` entry is either an **instance** (any expression) or a **config block**
@@ -24,14 +21,32 @@
 
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
+use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{Expr, Ident, LitBool, LitStr, Token, Type, braced, bracketed};
+use syn::{Expr, Ident, LitBool, LitStr, Token, Type, Visibility, braced, bracketed};
 
 use crate::{di, paths::Paths};
 
-/// Parsed `app! { .. }`.
-pub struct AppInput {
+syn::custom_keyword!(app);
+
+/// Parsed input accepted by `app!`.
+pub(crate) enum AppInput {
+    /// A reusable named application definition.
+    Named(NamedApp),
+    /// The temporary expression-oriented application builder form.
+    Legacy(AppAssembly),
+}
+
+/// A reusable named application definition.
+pub(crate) struct NamedApp {
+    visibility: Visibility,
+    ident: Ident,
+    assembly: AppAssembly,
+}
+
+/// The protocol-specific builder assembly shared by both macro forms.
+pub(crate) struct AppAssembly {
     name: Expr,
     /// The protocol plugin type `P` the app installs (`protocol: SomeProtocolPlugin`). Required
     /// — `app!` is protocol-agnostic, so the protocol must be named.
@@ -77,7 +92,7 @@ impl Parse for ConfigSettings {
         let mut settings = ConfigSettings::default();
 
         while !input.is_empty() {
-            let key: Ident = input.parse()?;
+            let key = input.call(Ident::parse_any)?;
             input.parse::<Token![:]>()?;
 
             match key.to_string().as_str() {
@@ -118,7 +133,7 @@ impl Parse for DirSettings {
         let mut settings = DirSettings::default();
 
         while !input.is_empty() {
-            let key: Ident = input.parse()?;
+            let key = input.call(Ident::parse_any)?;
             input.parse::<Token![:]>()?;
 
             match key.to_string().as_str() {
@@ -173,6 +188,38 @@ impl Parse for ConfigEntry {
 
 impl Parse for AppInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(Token![pub]) || input.peek(app) {
+            return Ok(Self::Named(input.parse()?));
+        }
+
+        Ok(Self::Legacy(AppAssembly::parse_with(input, false)?))
+    }
+}
+
+impl Parse for NamedApp {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let visibility = input.parse()?;
+        input.parse::<app>()?;
+        let ident = input.parse()?;
+
+        let content;
+        braced!(content in input);
+        let assembly = AppAssembly::parse_with(&content, true)?;
+
+        if !input.is_empty() {
+            return Err(input.error("unexpected tokens after named app definition"));
+        }
+
+        Ok(Self {
+            visibility,
+            ident,
+            assembly,
+        })
+    }
+}
+
+impl AppAssembly {
+    fn parse_with(input: ParseStream, reject_duplicates: bool) -> syn::Result<Self> {
         let mut name = None;
         let mut protocol = None;
         let mut services = Vec::new();
@@ -185,12 +232,22 @@ impl Parse for AppInput {
         let mut error_handler = None;
         let mut overseerd = None;
         let mut krate = None;
+        let mut keys = std::collections::HashSet::new();
 
         while !input.is_empty() {
-            let key: Ident = input.parse()?;
+            let key = input.call(Ident::parse_any)?;
+            let key_name = key.to_string();
+
+            if reject_duplicates && !keys.insert(key_name.clone()) {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!("duplicate app key `{key_name}`"),
+                ));
+            }
+
             input.parse::<Token![:]>()?;
 
-            match key.to_string().as_str() {
+            match key_name.as_str() {
                 "name" => name = Some(input.parse()?),
                 "protocol" => protocol = Some(input.parse()?),
                 "services" => services = bracketed_list::<Type>(input)?,
@@ -224,7 +281,7 @@ impl Parse for AppInput {
             input.error("`app!` requires a `protocol: <ProtocolPlugin>` (e.g. the RPC daemon's)")
         })?;
 
-        Ok(AppInput {
+        Ok(Self {
             name,
             protocol,
             services,
@@ -238,6 +295,12 @@ impl Parse for AppInput {
             overseerd,
             krate,
         })
+    }
+}
+
+impl Parse for AppAssembly {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Self::parse_with(input, false)
     }
 }
 
@@ -301,7 +364,38 @@ fn bracketed_list<T: Parse>(input: ParseStream) -> syn::Result<Vec<T>> {
 }
 
 pub fn expand(input: AppInput) -> TokenStream {
-    let AppInput {
+    match input {
+        AppInput::Named(input) => expand_named(input),
+        AppInput::Legacy(input) => expand_builder(input),
+    }
+}
+
+fn expand_named(input: NamedApp) -> TokenStream {
+    let NamedApp {
+        visibility,
+        ident,
+        assembly,
+    } = input;
+    let protocol = assembly.protocol.clone();
+    let paths = Paths::overseerd().resolve(assembly.overseerd.clone(), assembly.krate.clone());
+    let app_builder = paths.core("AppBuilder");
+    let builder = expand_builder(assembly);
+
+    quote! {
+        #[doc = "Generated application host."]
+        #visibility struct #ident;
+
+        impl #ident {
+            /// Creates a new configured application builder.
+            pub fn builder() -> #app_builder<#protocol> {
+                #builder
+            }
+        }
+    }
+}
+
+fn expand_builder(input: AppAssembly) -> TokenStream {
+    let AppAssembly {
         name,
         protocol,
         services,
@@ -454,3 +548,6 @@ pub fn expand(input: AppInput) -> TokenStream {
 fn error(message: &str) -> TokenStream {
     syn::Error::new(Span::call_site(), message).to_compile_error()
 }
+
+#[cfg(test)]
+mod tests;
