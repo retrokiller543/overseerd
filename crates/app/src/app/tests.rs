@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd_config::{ConfigManager, Dynamic};
+use overseerd_config::{ConfigManager, Toml};
 use overseerd_core::TypeDescriptor;
 use overseerd_di::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
@@ -11,7 +11,10 @@ use overseerd_di::{
 };
 
 use super::App;
-use crate::{AppRegistry, AppRuntime, Plugin, PreBuildContext, Protocol, ProtocolPlugin};
+use crate::{
+    AppRegistry, AppRuntime, LoggingConfig, Plugin, PreBuildContext, Protocol, ProtocolPlugin,
+    ValidationContext,
+};
 
 static FACTORY_CALLS: AtomicUsize = AtomicUsize::new(0);
 static PRE_BUILD_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -23,6 +26,20 @@ struct BoundaryComponent;
 impl Component for BoundaryComponent {
     const ID: &'static str = "boundary_component";
     const NAME: &'static str = "BoundaryComponent";
+
+    type Handle = Arc<Self>;
+
+    fn into_handle(self) -> Self::Handle {
+        Arc::new(self)
+    }
+}
+
+/// Prebuilt component contributed by protocol preparation.
+struct SeededComponent;
+
+impl Component for SeededComponent {
+    const ID: &'static str = "seeded_component";
+    const NAME: &'static str = "SeededComponent";
 
     type Handle = Arc<Self>;
 
@@ -88,7 +105,15 @@ impl ProtocolPlugin for BoundaryPlugin {
 
     const SCOPES: &'static [&'static dyn overseerd_core::Scope] = &[];
 
-    fn pre_build(&mut self, context: &PreBuildContext<'_>) -> Result<(), Self::Error> {
+    fn pre_build(&mut self, context: &mut PreBuildContext<'_>) -> Result<(), Self::Error> {
+        context.component_descriptor(&BOUNDARY_COMPONENT);
+        context.with_component(SeededComponent);
+        context.config::<LoggingConfig>("logging");
+
+        Ok(())
+    }
+
+    fn validate(&mut self, context: &ValidationContext<'_>) -> Result<(), Self::Error> {
         PRE_BUILD_CALLS.fetch_add(1, Ordering::SeqCst);
 
         assert_eq!(context.name(), "prepare-boundary-test");
@@ -97,6 +122,20 @@ impl ProtocolPlugin for BoundaryPlugin {
                 .resolved_components()
                 .iter()
                 .any(|component| component.id == BoundaryComponent::ID)
+        );
+        assert!(
+            context
+                .resolved_components()
+                .iter()
+                .any(|component| component.id == SeededComponent::ID)
+        );
+        assert_eq!(
+            context
+                .config::<LoggingConfig>("logging")
+                .expect("protocol config binding is finalized")
+                .snapshot()
+                .level,
+            "debug"
         );
 
         Ok(())
@@ -116,8 +155,17 @@ async fn prepare_validates_without_constructing_components_or_protocol() {
     PROTOCOL_BUILD_CALLS.store(0, Ordering::SeqCst);
 
     let prepared = App::<BoundaryPlugin>::builder("prepare-boundary-test")
-        .config_source(ConfigManager::<Dynamic>::empty())
-        .component_descriptor(&BOUNDARY_COMPONENT)
+        .config_source(
+            ConfigManager::<Toml>::from_str(
+                r#"
+                    [logging]
+                    level = "debug"
+                    format = "compact"
+                    ansi = false
+                "#,
+            )
+            .expect("test config parses"),
+        )
         .prepare()
         .expect("application prepares");
 
@@ -130,4 +178,5 @@ async fn prepare_validates_without_constructing_components_or_protocol() {
     assert_eq!(FACTORY_CALLS.load(Ordering::SeqCst), 1);
     assert_eq!(PROTOCOL_BUILD_CALLS.load(Ordering::SeqCst), 1);
     assert!(app.container().get::<BoundaryComponent>().is_some());
+    assert!(app.container().get::<SeededComponent>().is_some());
 }

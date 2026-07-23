@@ -8,7 +8,9 @@ use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::Route;
-use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, PreBuildContext, ProtocolPlugin};
+use overseerd_app::{
+    AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin, ValidationContext,
+};
 use overseerd_config::{ConfigBinding, ContainerConfigExt};
 use overseerd_core::{Descriptor, Scope, TypeDescriptor};
 use overseerd_di::{BoxedComponent, Component, ComponentDescriptor};
@@ -112,7 +114,7 @@ impl ProtocolPlugin for AxumPlugin {
     // `Request` (parented at root); a ws message opens `Request` parented at its `Connection`.
     const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
 
-    fn pre_build(&mut self, context: &PreBuildContext<'_>) -> crate::Result<()> {
+    fn validate(&mut self, context: &ValidationContext<'_>) -> crate::Result<()> {
         #[cfg(feature = "ws")]
         if !self.ws_registrations.is_empty() {
             let config = context

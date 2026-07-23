@@ -25,7 +25,9 @@ use tracing::{debug, error, info};
 
 use crate::error::Error;
 use crate::lifecycle::{ShutdownHandle, ShutdownSignal};
-use crate::protocol::{Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve};
+use crate::protocol::{
+    Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve, ValidationContext,
+};
 use crate::registry::AppRegistry;
 use crate::runtime::AppRuntime;
 
@@ -229,6 +231,8 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
         registry.components.push(CONFIG_RELOADER_DESCRIPTOR);
         registry.components.push(HOOK_MANAGER_DESCRIPTOR);
 
+        protocol.pre_build(&mut PreBuildContext::new(&mut registry, &mut instances))?;
+
         // Finalize the config manager. Auto-discovery (gated on the builder's `auto_discover`)
         // registers `#[config(path)]` types and seeds defaults; explicit bindings fold in next.
         let explicit_bindings = std::mem::take(&mut registry.config_bindings);
@@ -271,7 +275,7 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
         let (config_store, reload_slots) = ConfigStore::build(&tree).map_err(Error::from)?;
         let config_store = Arc::new(config_store);
 
-        protocol.pre_build(&PreBuildContext::new(
+        protocol.validate(&ValidationContext::new(
             &self.name,
             &registry,
             config_store.as_ref(),

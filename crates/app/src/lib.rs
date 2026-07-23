@@ -19,12 +19,10 @@ pub mod registry;
 pub mod runtime;
 
 pub use app::{App, AppBuilder, PreparedApp};
-pub use builtins::{LoggingConfig, ServerConfig};
+pub use builtins::{LoggingConfig, ServerConfig, SpanEvents};
 pub use error::{Error, Result};
 pub use host::{AppHost, BootstrapContext, ExecutionMode, HostError, LifecyclePhase, PhaseError};
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
-pub use protocol::{
-    NoopPlugin, NoopProtocol, Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve,
-};
+pub use protocol::{Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve, ValidationContext};
 pub use registry::AppRegistry;
 pub use runtime::AppRuntime;
