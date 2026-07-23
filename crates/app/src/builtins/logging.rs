@@ -12,7 +12,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer, Registry, fmt};
 
-use crate::builtins::config::{LoggingConfig, SpanEvents};
+use crate::builtins::config::{LogFormat, LoggingConfig, SpanEvents};
 
 /// A type-erased subscriber layer that can be composed onto the framework subscriber, e.g.
 /// per-run job log capture. Boxed so callers in other crates can hand in a layer the
@@ -22,6 +22,7 @@ pub type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
 /// Errors raised while installing the global tracing subscriber from a
 /// [`LoggingConfig`].
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum InitTracingError {
     /// The configured `level` directive could not be parsed as an `EnvFilter`.
     #[error("invalid log level filter '{filter}': {source}")]
@@ -30,10 +31,6 @@ pub enum InitTracingError {
         #[source]
         source: tracing_subscriber::filter::ParseError,
     },
-
-    /// The configured `format` was not one of the supported variants.
-    #[error("unknown log format '{format}', expected one of: full, compact, pretty, json")]
-    UnknownFormat { format: String },
 
     /// A global subscriber was already installed for this process.
     #[error("a global tracing subscriber is already installed")]
@@ -101,22 +98,16 @@ fn fmt_layer(config: &LoggingConfig) -> Result<BoxedLayer, InitTracingError> {
         .with_file(config.file)
         .with_line_number(config.line_number);
 
-    let layer = match config.format.as_str() {
-        "full" => base.boxed(),
-        "compact" => base.compact().boxed(),
-        "pretty" => base.pretty().boxed(),
-        "json" => base
+    let layer = match config.format {
+        LogFormat::Full => base.boxed(),
+        LogFormat::Compact => base.compact().boxed(),
+        LogFormat::Pretty => base.pretty().boxed(),
+        LogFormat::Json => base
             .json()
             .flatten_event(config.flatten_event)
             .with_current_span(config.current_span)
             .with_span_list(config.current_span)
             .boxed(),
-
-        other => {
-            return Err(InitTracingError::UnknownFormat {
-                format: other.to_string(),
-            });
-        }
     };
 
     Ok(layer)
@@ -138,23 +129,6 @@ fn fmt_span(events: SpanEvents) -> FmtSpan {
 mod tests {
     use super::*;
     use crate::builtins::config::LoggingConfig;
-
-    #[test]
-    fn unknown_format_is_rejected() {
-        let config = LoggingConfig {
-            level: "info".to_string(),
-            format: "xml".to_string(),
-            ansi: false,
-            ..LoggingConfig::default()
-        };
-
-        let result = init_tracing(&config);
-
-        assert!(matches!(
-            result,
-            Err(InitTracingError::UnknownFormat { .. })
-        ));
-    }
 
     #[test]
     fn rust_log_overrides_configured_level_and_targets() {

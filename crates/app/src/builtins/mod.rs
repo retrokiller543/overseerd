@@ -12,7 +12,7 @@ pub mod shutdown;
 #[cfg(feature = "tracing-subscriber")]
 pub mod logging;
 
-pub use config::{LoggingConfig, ServerConfig, SpanEvents};
+pub use config::{LogFormat, LoggingConfig, ServerConfig, SpanEvents};
 
 #[cfg(feature = "tracing-subscriber")]
 pub use logging::{BoxedLayer, InitTracingError, init_tracing, init_tracing_with_layers};
@@ -21,7 +21,7 @@ pub use logging::{BoxedLayer, InitTracingError, init_tracing, init_tracing_with_
 mod tests {
     use overseerd_config::{ConfigManager, ConfigProperties, Toml};
 
-    use super::config::{LoggingConfig, ServerConfig, SpanEvents};
+    use super::config::{LogFormat, LoggingConfig, ServerConfig, SpanEvents};
 
     #[test]
     fn server_config_round_trips_a_subtree() {
@@ -50,6 +50,7 @@ mod tests {
             level = "${BUILTINS_TEST_LEVEL:info}"
             format = "compact"
             ansi = false
+
             span_events = "active"
             target = false
             level_display = false
@@ -68,7 +69,7 @@ mod tests {
             value,
             LoggingConfig {
                 level: "info".to_string(),
-                format: "compact".to_string(),
+                format: LogFormat::Compact,
                 ansi: false,
                 span_events: SpanEvents::Active,
                 target: false,
@@ -81,6 +82,22 @@ mod tests {
                 current_span: false,
             }
         );
+    }
+
+    #[test]
+    fn unknown_log_format_is_rejected_during_extraction() {
+        let tree = ConfigManager::<Toml>::from_str(
+            r#"
+                [logging]
+                level = "info"
+                format = "xml"
+                ansi = false
+            "#,
+        )
+        .expect("parse config");
+        let result = tree.get::<LoggingConfig>("logging");
+
+        assert!(result.is_err());
     }
 
     #[test]
