@@ -94,8 +94,31 @@ fn expands_named_host_and_builder() {
     let output = expand(input).to_string();
 
     assert!(output.contains("pub struct Example"));
-    assert!(output.contains("pub fn builder () -> :: overseerd :: AppBuilder < Protocol >"));
+    assert!(output.contains(
+        "pub fn builder () -> :: core :: result :: Result < :: overseerd :: AppBuilder < Protocol > , :: overseerd :: ConfigError >"
+    ));
+    assert!(output.contains("Result :: Ok"));
     assert_eq!(output.matches("with_component").count(), 1);
+}
+
+#[test]
+fn named_builder_propagates_directory_config_errors() {
+    let input = parse2::<AppInput>(quote! {
+        pub app Example {
+            name: "example",
+            protocol: Protocol,
+            managers: {
+                directories: { root: root() },
+                config: {},
+            },
+        }
+    })
+    .expect("named app parses");
+    let output = expand(input).to_string();
+
+    assert!(output.contains("ConfigManager :: < :: overseerd :: config :: Dynamic > :: load_from"));
+    assert!(output.contains("?"));
+    assert!(output.contains("Result < :: overseerd :: AppBuilder"));
 }
 
 #[test]

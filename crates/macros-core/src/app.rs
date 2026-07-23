@@ -10,7 +10,7 @@
 //!     }
 //! }
 //!
-//! let app = Example::builder().build().await?;
+//! let app = Example::builder()?.build().await?;
 //! ```
 //!
 //! Each `managers` entry is either an **instance** (any expression) or a **config block**
@@ -379,6 +379,7 @@ fn expand_named(input: NamedApp) -> TokenStream {
     let protocol = assembly.protocol.clone();
     let paths = Paths::overseerd().resolve(assembly.overseerd.clone(), assembly.krate.clone());
     let app_builder = paths.core("AppBuilder");
+    let config_error = paths.core("ConfigError");
     let builder = expand_builder(assembly);
 
     quote! {
@@ -387,8 +388,8 @@ fn expand_named(input: NamedApp) -> TokenStream {
 
         impl #ident {
             /// Creates a new configured application builder.
-            pub fn builder() -> #app_builder<#protocol> {
-                #builder
+            pub fn builder() -> ::core::result::Result<#app_builder<#protocol>, #config_error> {
+                ::core::result::Result::Ok(#builder)
             }
         }
     }
