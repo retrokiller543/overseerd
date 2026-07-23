@@ -476,6 +476,7 @@ fn expand_named(input: NamedApp) -> TokenStream {
     let app_host = paths.core("AppHost");
     let bootstrap_context = paths.core("BootstrapContext");
     let execution_mode = paths.core("ExecutionMode");
+    let host_error = paths.core("HostError");
     let lifecycle_phase = paths.core("LifecyclePhase");
     let phase_error = paths.core("PhaseError");
     let prepared_app = paths.core("PreparedApp");
@@ -565,6 +566,13 @@ fn expand_named(input: NamedApp) -> TokenStream {
             pub async fn build(
                 mode: #execution_mode,
             ) -> ::core::result::Result<(#bootstrap_context, #app<#protocol>), #phase_error> {
+                if mode.is_tooling() {
+                    return Err(#phase_error::new(
+                        #lifecycle_phase::Build,
+                        #host_error::ToolingConstruction,
+                    ));
+                }
+
                 let (mut context, prepared) = Self::prepare(mode).await?;
                 let app = prepared
                     .build()
@@ -603,7 +611,7 @@ fn phase_call(
         },
         Some(PhaseInput::Inline { arguments, body }) => quote! {
             {
-                #(let #arguments = #values;)*
+                let (#(#arguments,)*) = (#(#values,)*);
 
                 (async move #body)
                     .await
@@ -629,7 +637,7 @@ fn phase_result(
         },
         Some(PhaseInput::Inline { arguments, body }) => quote! {
             {
-                #(let #arguments = #values;)*
+                let (#(#arguments,)*) = (#(#values,)*);
 
                 (async move #body)
                     .await

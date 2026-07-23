@@ -121,6 +121,15 @@ pub struct PhaseError {
     source: Box<dyn std::error::Error + Send + Sync>,
 }
 
+/// Host-runner failures that occur outside user lifecycle callbacks.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum HostError {
+    /// Tooling execution attempted to construct ordinary components or a served protocol.
+    #[error("tooling mode cannot construct application components or protocols")]
+    ToolingConstruction,
+}
+
 impl PhaseError {
     /// Wraps a typed lifecycle error with its phase.
     pub fn new(

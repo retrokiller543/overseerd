@@ -70,13 +70,13 @@ app! {
         name: "lifecycle-app-test",
         protocol: TestPlugin,
         setup = setup_lifecycle,
-        configure(context, builder) {
-            context
+        configure(builder, context) {
+            builder
                 .get_mut::<Vec<&'static str>>()
                 .expect("lifecycle events exist")
                 .push("configure");
 
-            Ok::<_, std::io::Error>(builder)
+            Ok::<_, std::io::Error>(context)
         },
         before_build = before_lifecycle,
         after_build(context, app) {
@@ -166,4 +166,19 @@ async fn named_app_tags_lifecycle_errors_with_their_phase() {
 
     assert_eq!(error.phase(), overseerd::LifecyclePhase::Setup);
     assert_eq!(error.to_string(), "setup phase failed: setup failed");
+}
+
+#[tokio::test]
+async fn named_app_rejects_component_construction_in_tooling_mode() {
+    let result = LifecycleApplication::build(ExecutionMode::Tooling).await;
+    let error = match result {
+        Ok(_) => panic!("tooling mode unexpectedly constructed the application"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.phase(), overseerd::LifecyclePhase::Build);
+    assert_eq!(
+        error.to_string(),
+        "build phase failed: tooling mode cannot construct application components or protocols"
+    );
 }
