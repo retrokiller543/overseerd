@@ -38,8 +38,8 @@ pub struct LoggingConfig {
     /// An `EnvFilter`-style level directive (e.g. `"info"`, `"app=debug,info"`).
     pub level: String,
 
-    /// The output format: `"full"`, `"compact"`, `"pretty"`, or `"json"`.
-    pub format: String,
+    /// The formatter used for tracing output.
+    pub format: LogFormat,
 
     /// Whether to colorize the output with ANSI escape codes.
     pub ansi: bool,
@@ -91,8 +91,8 @@ impl LoggingConfig {
     }
 
     /// Selects the formatter output style.
-    pub fn with_format(mut self, format: impl Into<String>) -> Self {
-        self.format = format.into();
+    pub fn with_format(mut self, format: LogFormat) -> Self {
+        self.format = format;
 
         self
     }
@@ -110,6 +110,22 @@ impl LoggingConfig {
 
         self
     }
+}
+
+/// Formatter used for tracing output.
+#[derive(Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum LogFormat {
+    /// Standard human-readable event output.
+    #[default]
+    Full,
+    /// Condensed human-readable event output.
+    Compact,
+    /// Multi-line human-readable event output.
+    Pretty,
+    /// Structured JSON event output.
+    Json,
 }
 
 /// Span lifecycle events emitted by tracing formatters.
@@ -147,7 +163,7 @@ impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
             level: "info".to_string(),
-            format: "full".to_string(),
+            format: LogFormat::Full,
             ansi: true,
             span_events: SpanEvents::None,
             target: true,
