@@ -210,13 +210,14 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///     }
 /// }
 ///
-/// let app = Example::builder().build().await?;
+/// let app = Example::builder()?.build().await?;
 /// ```
 ///
-/// The generated host's `builder()` creates an `AppBuilder` from the declaration:
+/// The generated host's fallible `builder()` creates an `AppBuilder` from the declaration:
 /// `App::builder(name).auto_discover()`, a `with_component(..)` for each listed
 /// instance, a `config::<T>(path)` for each `configs` entry (`Type =>
-/// "property.path"`), and `config_source`/`directories` for any `managers` entries.
+/// "property.path"`), and `config_source`/`directories` for any `managers` entries. It returns
+/// a `Result` because loading a directory-backed configuration manager can fail.
 ///
 /// - `configs` binds the same config type at several property paths; a type with a
 ///   baked-in `#[config(path = "..")]` auto-registers and needs no entry.

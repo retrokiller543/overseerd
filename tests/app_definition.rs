@@ -33,10 +33,26 @@ app! {
     }
 }
 
+app! {
+    app DirectoryConfigApplication {
+        name: "named-directory-config-test",
+        protocol: TestPlugin,
+        managers: {
+            directories: { root: std::env::temp_dir() },
+            config: {},
+        },
+    }
+}
+
 fn assert_builder(_builder: AppBuilder<TestPlugin>) {}
 
 #[test]
 fn named_app_creates_independent_typed_builders() {
-    assert_builder(TestApplication::builder());
-    assert_builder(TestApplication::builder());
+    assert_builder(TestApplication::builder().expect("first builder"));
+    assert_builder(TestApplication::builder().expect("second builder"));
+}
+
+#[test]
+fn named_app_loads_directory_backed_config_fallibly() {
+    assert_builder(DirectoryConfigApplication::builder().expect("directory config loads"));
 }
