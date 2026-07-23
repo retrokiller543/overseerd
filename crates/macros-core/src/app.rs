@@ -24,7 +24,10 @@ use quote::quote;
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{Expr, Ident, LitBool, LitStr, Token, Type, Visibility, braced, bracketed};
+use syn::{
+    Block, Expr, Ident, LitBool, LitStr, Path, Token, Type, Visibility, braced, bracketed,
+    parenthesized,
+};
 
 use crate::{di, paths::Paths};
 
@@ -63,6 +66,21 @@ pub(crate) struct AppAssembly {
     overseerd: Option<syn::Path>,
     /// Override for the plugin own-types root (`crate: ::path`).
     krate: Option<syn::Path>,
+    phases: AppPhases,
+}
+
+#[derive(Default)]
+struct AppPhases {
+    setup: Option<PhaseInput>,
+    configure: Option<PhaseInput>,
+    before_build: Option<PhaseInput>,
+    after_build: Option<PhaseInput>,
+    serve: Option<PhaseInput>,
+}
+
+enum PhaseInput {
+    Path(Path),
+    Inline { arguments: Vec<Ident>, body: Block },
 }
 
 /// How a manager is supplied in the `managers` block: a pre-built instance, or settings the
@@ -232,6 +250,7 @@ impl AppAssembly {
         let mut error_handler = None;
         let mut overseerd = None;
         let mut krate = None;
+        let mut phases = AppPhases::default();
         let mut keys = std::collections::HashSet::new();
 
         while !input.is_empty() {
@@ -243,6 +262,35 @@ impl AppAssembly {
                     key.span(),
                     format!("duplicate app key `{key_name}`"),
                 ));
+            }
+
+            if matches!(
+                key_name.as_str(),
+                "setup" | "configure" | "before_build" | "after_build" | "serve"
+            ) {
+                if !reject_duplicates {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "lifecycle phases require a named app definition",
+                    ));
+                }
+
+                let phase = parse_phase(input, &key)?;
+
+                match key_name.as_str() {
+                    "setup" => phases.setup = Some(phase),
+                    "configure" => phases.configure = Some(phase),
+                    "before_build" => phases.before_build = Some(phase),
+                    "after_build" => phases.after_build = Some(phase),
+                    "serve" => phases.serve = Some(phase),
+                    _ => unreachable!(),
+                }
+
+                if input.peek(Token![,]) {
+                    input.parse::<Token![,]>()?;
+                }
+
+                continue;
             }
 
             input.parse::<Token![:]>()?;
@@ -294,8 +342,51 @@ impl AppAssembly {
             error_handler,
             overseerd,
             krate,
+            phases,
         })
     }
+}
+
+fn parse_phase(input: ParseStream, key: &Ident) -> syn::Result<PhaseInput> {
+    if input.peek(Token![=]) {
+        input.parse::<Token![=]>()?;
+
+        return Ok(PhaseInput::Path(input.parse()?));
+    }
+
+    if input.peek(syn::token::Paren) {
+        let arguments;
+        parenthesized!(arguments in input);
+        let arguments = Punctuated::<Ident, Token![,]>::parse_terminated(&arguments)?
+            .into_iter()
+            .collect::<Vec<_>>();
+        let body = input.parse()?;
+        let expected_arguments = if key == "setup" { 1 } else { 2 };
+
+        if arguments.len() != expected_arguments {
+            return Err(syn::Error::new(
+                key.span(),
+                format!(
+                    "`{key}` expects {expected_arguments} argument{}",
+                    if expected_arguments == 1 { "" } else { "s" }
+                ),
+            ));
+        }
+
+        return Ok(PhaseInput::Inline { arguments, body });
+    }
+
+    if input.peek(Token![:]) {
+        return Err(syn::Error::new(
+            key.span(),
+            "declarative lifecycle settings are reserved for the generated CLI bootstrap; use `phase = async_function` or `phase(args...) { ... }`",
+        ));
+    }
+
+    Err(syn::Error::new(
+        key.span(),
+        "expected `= async_function` or `(arguments...) { ... }` after lifecycle phase",
+    ))
 }
 
 impl Parse for AppAssembly {
@@ -374,13 +465,70 @@ fn expand_named(input: NamedApp) -> TokenStream {
     let NamedApp {
         visibility,
         ident,
-        assembly,
+        mut assembly,
     } = input;
+    let phases = std::mem::take(&mut assembly.phases);
     let protocol = assembly.protocol.clone();
     let paths = Paths::overseerd().resolve(assembly.overseerd.clone(), assembly.krate.clone());
     let app_builder = paths.core("AppBuilder");
     let config_error = paths.core("ConfigError");
+    let app = paths.core("App");
+    let app_host = paths.core("AppHost");
+    let bootstrap_context = paths.core("BootstrapContext");
+    let execution_mode = paths.core("ExecutionMode");
+    let lifecycle_phase = paths.core("LifecyclePhase");
+    let phase_error = paths.core("PhaseError");
+    let prepared_app = paths.core("PreparedApp");
     let builder = expand_builder(assembly);
+    let setup_call = phase_result(
+        phases.setup.as_ref(),
+        quote!(#bootstrap_context::new(mode)),
+        &[quote!(mode)],
+        quote!(#lifecycle_phase::Setup),
+        &phase_error,
+    );
+    let configure_call = phase_call(
+        phases.configure.as_ref(),
+        quote!(builder),
+        &[quote!(&mut context), quote!(builder)],
+        quote!(#lifecycle_phase::Configure),
+        &phase_error,
+    );
+    let before_build_call = phase_call(
+        phases.before_build.as_ref(),
+        quote!(builder),
+        &[quote!(&mut context), quote!(builder)],
+        quote!(#lifecycle_phase::BeforeBuild),
+        &phase_error,
+    );
+    let after_build_call = phase_call(
+        phases.after_build.as_ref(),
+        quote!(app),
+        &[quote!(&mut context), quote!(app)],
+        quote!(#lifecycle_phase::AfterBuild),
+        &phase_error,
+    );
+    let serve_method = phases.serve.as_ref().map(|serve| {
+        let serve_call = phase_call(
+            Some(serve),
+            quote!(()),
+            &[quote!(context), quote!(app)],
+            quote!(#lifecycle_phase::Serve),
+            &phase_error,
+        );
+
+        quote! {
+            /// Runs the application-defined serve lifecycle phase.
+            pub async fn serve_with(
+                context: #bootstrap_context,
+                app: #app<#protocol>,
+            ) -> ::core::result::Result<(), #phase_error> {
+                let output = #serve_call;
+
+                Ok(output)
+            }
+        }
+    });
 
     quote! {
         #[doc = "Generated application host."]
@@ -391,7 +539,104 @@ fn expand_named(input: NamedApp) -> TokenStream {
             pub fn builder() -> ::core::result::Result<#app_builder<#protocol>, #config_error> {
                 ::core::result::Result::Ok(#builder)
             }
+
+            /// Creates the lifecycle bootstrap context.
+            pub async fn setup(mode: #execution_mode) -> ::core::result::Result<#bootstrap_context, #phase_error> {
+                #setup_call
+            }
+
+            /// Configures and validates the app without constructing ordinary components.
+            pub async fn prepare(
+                mode: #execution_mode,
+            ) -> ::core::result::Result<(#bootstrap_context, #prepared_app<#protocol>), #phase_error> {
+                let mut context = Self::setup(mode).await?;
+                let builder = Self::builder()
+                    .map_err(|source| #phase_error::new(#lifecycle_phase::Configure, source))?;
+                let builder = #configure_call;
+                let builder = #before_build_call;
+                let prepared = builder
+                    .prepare()
+                    .map_err(|source| #phase_error::new(#lifecycle_phase::Prepare, source))?;
+
+                Ok((context, prepared))
+            }
+
+            /// Runs the host lifecycle through component and protocol construction.
+            pub async fn build(
+                mode: #execution_mode,
+            ) -> ::core::result::Result<(#bootstrap_context, #app<#protocol>), #phase_error> {
+                let (mut context, prepared) = Self::prepare(mode).await?;
+                let app = prepared
+                    .build()
+                    .await
+                    .map_err(|source| #phase_error::new(#lifecycle_phase::Build, source))?;
+                let app = #after_build_call;
+
+                Ok((context, app))
+            }
+
+            #serve_method
         }
+
+        impl #app_host for #ident {
+            type Protocol = #protocol;
+
+            fn builder() -> ::core::result::Result<#app_builder<#protocol>, #config_error> {
+                Self::builder()
+            }
+        }
+    }
+}
+
+fn phase_call(
+    phase: Option<&PhaseInput>,
+    default: TokenStream,
+    values: &[TokenStream],
+    lifecycle_phase: TokenStream,
+    phase_error: &Path,
+) -> TokenStream {
+    match phase {
+        Some(PhaseInput::Path(path)) => quote! {
+            #path(#(#values),*)
+                .await
+                .map_err(|source| #phase_error::new(#lifecycle_phase, source))?
+        },
+        Some(PhaseInput::Inline { arguments, body }) => quote! {
+            {
+                #(let #arguments = #values;)*
+
+                (async move #body)
+                    .await
+                    .map_err(|source| #phase_error::new(#lifecycle_phase, source))?
+            }
+        },
+        None => default,
+    }
+}
+
+fn phase_result(
+    phase: Option<&PhaseInput>,
+    default: TokenStream,
+    values: &[TokenStream],
+    lifecycle_phase: TokenStream,
+    phase_error: &Path,
+) -> TokenStream {
+    match phase {
+        Some(PhaseInput::Path(path)) => quote! {
+            #path(#(#values),*)
+                .await
+                .map_err(|source| #phase_error::new(#lifecycle_phase, source))
+        },
+        Some(PhaseInput::Inline { arguments, body }) => quote! {
+            {
+                #(let #arguments = #values;)*
+
+                (async move #body)
+                    .await
+                    .map_err(|source| #phase_error::new(#lifecycle_phase, source))
+            }
+        },
+        None => quote!(Ok(#default)),
     }
 }
 
@@ -409,6 +654,7 @@ fn expand_builder(input: AppAssembly) -> TokenStream {
         error_handler,
         overseerd,
         krate,
+        phases: _,
     } = input;
 
     // `app!` is a core macro; its emitted items are all core (`App`, `ConfigManager`, …),

@@ -133,3 +133,44 @@ fn keeps_legacy_expression_form() {
     assert!(output.starts_with('{'));
     assert!(output.contains("App :: < Protocol > :: builder"));
 }
+
+#[test]
+fn parses_external_and_inline_lifecycle_phases() {
+    let input = quote! {
+        pub app Example {
+            name: "example",
+            protocol: Protocol,
+            setup = setup,
+            configure(context, builder) { Ok(builder) },
+            before_build = before_build,
+            after_build(context, app) { Ok(app) },
+            serve = serve,
+        }
+    };
+
+    parse2::<AppInput>(input).expect("lifecycle phases parse");
+}
+
+#[test]
+fn rejects_invalid_lifecycle_phase_forms() {
+    assert!(
+        parse_error(quote! {
+            app Example {
+                name: "example",
+                protocol: Protocol,
+                setup: {},
+            }
+        })
+        .contains("declarative lifecycle settings are reserved")
+    );
+    assert!(
+        parse_error(quote! {
+            app Example {
+                name: "example",
+                protocol: Protocol,
+                setup(context, extra) { Ok(context) },
+            }
+        })
+        .contains("`setup` expects 1 argument")
+    );
+}
