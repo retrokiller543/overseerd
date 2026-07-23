@@ -1,4 +1,9 @@
-use std::{any::TypeId, collections::HashSet, fmt, sync::Arc};
+use std::{
+    any::TypeId,
+    collections::{HashMap, HashSet},
+    fmt,
+    sync::Arc,
+};
 
 use futures::FutureExt;
 use overseerd_config::{
@@ -20,7 +25,7 @@ use tracing::{debug, error, info};
 
 use crate::error::Error;
 use crate::lifecycle::{ShutdownHandle, ShutdownSignal};
-use crate::protocol::{Plugin, Protocol, ProtocolPlugin, Serve};
+use crate::protocol::{Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve};
 use crate::registry::AppRegistry;
 use crate::runtime::AppRuntime;
 
@@ -65,6 +70,27 @@ pub struct AppBuilder<P: ProtocolPlugin> {
     /// The protocol plugin: the builder-time accumulator for the installed protocol's
     /// own configuration.
     protocol: P,
+}
+
+/// A validated application assembly awaiting runtime component construction.
+///
+/// Preparation resolves registrations, configuration, protocol validation, and scope plans
+/// without invoking factory-backed application components or constructing the served protocol.
+pub struct PreparedApp<P: ProtocolPlugin> {
+    name: String,
+    registry: AppRegistry,
+    instances: Vec<BoxedComponent>,
+    protocol: P,
+    shutdown: ShutdownSignal,
+    root_resolver: RootResolver,
+    hook_manager: HookManager,
+    reloader: ConfigReloader,
+    reload_triggers: ReloadTriggers,
+    resolved: Arc<[ComponentDescriptor]>,
+    singletons: Vec<ComponentDescriptor>,
+    scope_registry: Arc<ScopeRegistry>,
+    scope_orders: Arc<HashMap<&'static str, Vec<ComponentDescriptor>>>,
+    resolvers: ResolverSet,
 }
 
 impl<P: ProtocolPlugin> AppBuilder<P> {
@@ -169,13 +195,13 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
         self
     }
 
-    /// Validates the registry, resolves all components, partitions them by scope, and
-    /// builds a ready-to-run [`App`].
-    pub async fn build(self) -> Result<App<P>, P::Error> {
+    /// Registers and validates the application without constructing ordinary components.
+    pub fn prepare(self) -> Result<PreparedApp<P>, P::Error> {
         debug!(target: "overseerd::app", app = %self.name, "building app");
 
         let mut registry = self.registry;
         let mut instances = self.instances;
+        let mut protocol = self.protocol;
 
         // Consumed by `serve`/`run`; its handle is seeded as a framework injectable.
         let shutdown = ShutdownSignal::new();
@@ -186,8 +212,7 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
 
         // The protocol plugin contributes its DI descriptors (for RPC, the connection-scoped
         // `PeerInfo` injectable) before validation.
-        let plugin = self.protocol;
-        plugin.register(&mut registry);
+        protocol.register(&mut registry);
 
         // Directories are framework-provided singletons: a manager plus one `Dir<K>` per kind.
         let dirs = match self.dirs {
@@ -244,8 +269,16 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
 
         // Build the config store — every bound `Cfg<T>` value, plus the reload slots.
         let (config_store, reload_slots) = ConfigStore::build(&tree).map_err(Error::from)?;
+        let config_store = Arc::new(config_store);
+
+        protocol.pre_build(&PreBuildContext::new(
+            &self.name,
+            &registry,
+            config_store.as_ref(),
+        ))?;
+
         let mut resolvers = ResolverSet::new();
-        resolvers.insert(Arc::new(config_store));
+        resolvers.insert(config_store);
 
         let reload_triggers = tree.triggers();
 
@@ -268,8 +301,68 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
                 .provider_order(&resolved)
                 .map_err(Error::from)?,
         ));
+
+        Ok(PreparedApp {
+            name: self.name,
+            registry,
+            instances,
+            protocol,
+            shutdown,
+            root_resolver,
+            hook_manager,
+            reloader,
+            reload_triggers,
+            resolved: Arc::from(resolved),
+            singletons: scopes.singletons,
+            scope_registry,
+            scope_orders: Arc::new(scopes.orders),
+            resolvers,
+        })
+    }
+
+    /// Validates, constructs, and finalizes a ready-to-run [`App`].
+    pub async fn build(self) -> Result<App<P>, P::Error> {
+        self.prepare()?.build().await
+    }
+}
+
+impl<P: ProtocolPlugin> PreparedApp<P> {
+    /// The configured application name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The validated effective application registry.
+    pub fn registry(&self) -> &AppRegistry {
+        &self.registry
+    }
+
+    /// The validated protocol accumulator awaiting runtime construction.
+    pub fn protocol(&self) -> &P {
+        &self.protocol
+    }
+
+    /// Constructs ordinary components and finalizes the application protocol.
+    pub async fn build(self) -> Result<App<P>, P::Error> {
+        let PreparedApp {
+            name,
+            registry,
+            instances,
+            protocol,
+            shutdown,
+            root_resolver,
+            hook_manager,
+            reloader,
+            reload_triggers,
+            resolved,
+            singletons,
+            scope_registry,
+            scope_orders,
+            resolvers,
+        } = self;
+
         let root = ScopeContainer::build_root(
-            &scopes.singletons,
+            &singletons,
             instances,
             resolvers,
             Arc::clone(&scope_registry),
@@ -286,25 +379,25 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
         root_resolver.attach(&root);
 
         info!(target: "overseerd::app",
-            app = %self.name,
+            app = %name,
             components = registry.components.len(),
             "app built"
         );
 
         let runtime = AppRuntime::new(
-            Arc::from(self.name.as_str()),
+            Arc::from(name.as_str()),
             root,
             scope_registry,
-            Arc::new(scopes.orders),
-            Arc::from(resolved),
+            scope_orders,
+            resolved,
             hook_manager,
         );
 
         // Hand off to the protocol plugin: it finalizes the served protocol.
-        let protocol = plugin.build(&runtime)?;
+        let protocol = protocol.build(&runtime)?;
 
         Ok(App {
-            name: self.name,
+            name,
             registry,
             runtime,
             protocol,
@@ -663,3 +756,6 @@ async fn run_shutdown(hooks: &HookManager, started: &HashSet<TypeId>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

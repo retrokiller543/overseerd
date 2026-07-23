@@ -5,7 +5,9 @@
 
 use std::future::Future;
 
+use overseerd_config::{Cfg, ConfigProperties, ConfigStore};
 use overseerd_core::Scope;
+use overseerd_di::ComponentDescriptor;
 
 use crate::lifecycle::ShutdownSignal;
 use crate::registry::AppRegistry;
@@ -43,10 +45,55 @@ pub trait ProtocolPlugin: Plugin {
     /// `[Connection, Request]`; a request-only protocol opens `[Request]`.
     const SCOPES: &'static [&'static dyn Scope];
 
+    /// Validates protocol-owned configuration and descriptors before ordinary components are
+    /// constructed. Implementations may cache derived metadata for [`build`](Self::build).
+    fn pre_build(&mut self, context: &PreBuildContext<'_>) -> Result<(), Self::Error> {
+        let _ = context;
+
+        Ok(())
+    }
+
     /// Finalizes the protocol from the accumulated builder state and the assembled
     /// runtime — for RPC, building the router from the discovered services and folding
     /// the middleware stack.
     fn build(self, runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error>;
+}
+
+/// Read-only application state available during protocol pre-build validation.
+pub struct PreBuildContext<'a> {
+    name: &'a str,
+    registry: &'a AppRegistry,
+    config: &'a ConfigStore,
+}
+
+impl<'a> PreBuildContext<'a> {
+    pub(crate) fn new(name: &'a str, registry: &'a AppRegistry, config: &'a ConfigStore) -> Self {
+        Self {
+            name,
+            registry,
+            config,
+        }
+    }
+
+    /// The configured application name.
+    pub fn name(&self) -> &str {
+        self.name
+    }
+
+    /// The validated application registry.
+    pub fn registry(&self) -> &AppRegistry {
+        self.registry
+    }
+
+    /// The effective component descriptors selected during validation.
+    pub fn resolved_components(&self) -> &[ComponentDescriptor] {
+        &self.registry.components
+    }
+
+    /// Resolves a prepared configuration binding by type and property path.
+    pub fn config<T: ConfigProperties>(&self, path: &str) -> Option<Cfg<T>> {
+        self.config.resolve_path::<Cfg<T>>(path)
+    }
 }
 
 /// A pluggable serve/dispatch layer over the app's DI runtime. There is exactly one

@@ -17,10 +17,10 @@ pub mod protocol;
 pub mod registry;
 pub mod runtime;
 
-pub use app::{App, AppBuilder};
+pub use app::{App, AppBuilder, PreparedApp};
 pub use builtins::{LoggingConfig, ServerConfig};
 pub use error::{Error, Result};
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
-pub use protocol::{Plugin, Protocol, ProtocolPlugin, Serve};
+pub use protocol::{Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve};
 pub use registry::AppRegistry;
 pub use runtime::AppRuntime;
