@@ -27,12 +27,12 @@ git switch -c feat/142-app-definition
 - PR `#143` also targets `feat/141-149-app-cli-tooling`.
 - Do not merge issue branches directly into `release/1.0.0`.
 - Use `mise exec -- git ...` for commits.
-- Prefix any commit that changes an existing public API with exactly `BREAKING CHANGE: `. Wave 1 adds APIs but does not remove expression-style `app!`, so its normal implementation commits need no breaking prefix unless implementation discovers an unavoidable break.
+- Follow Conventional Commits 1.0.0. Mark an existing public API break with `!` in the type/scope and a `BREAKING CHANGE: <description>` footer. Wave 1 adds APIs but does not remove expression-style `app!`, so its normal implementation commits need no breaking marker unless implementation discovers an unavoidable break.
 
 ## Scope Decisions
 
 - Expression-oriented `app! { name: ..., protocol: ... }` remains temporarily available inside the integration branch to avoid migrating roughly 25 examples/tests in parser PR `#142`.
-- Issue `#148` removes expression mode and migrates all call sites before the integration branch reaches `release/1.0.0`. That removal commit must use `BREAKING CHANGE: `.
+- Issue `#148` removes expression mode and migrates all call sites before the integration branch reaches `release/1.0.0`. That removal commit must use Conventional Commits breaking-change syntax.
 - PR `#142` does not parse lifecycle callbacks before they have runtime semantics. PR `#143` adds callback grammar and execution together.
 - One app has exactly one `ProtocolPlugin`.
 - `App` remains independent of process arguments and Clap.
