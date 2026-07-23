@@ -198,29 +198,25 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
     overseerd_macros_core::methods(attr.into(), item.into()).into()
 }
 
-/// Assembles an app and validates it from one declaration.
+/// Defines a reusable application host and its configured builder.
 ///
 /// ```ignore
-/// // Built earlier in `main`, so their values can also configure the transport.
-/// let config = ConfigManager::<Toml>::load_in(&dirs.dir(), &[])?;
-///
-/// let app = app! {
-///     name: "example-daemon",
-///     services: [Notifications, Echo],
-///     configs: [ DbConfig => "app.db.reader", DbConfig => "app.db.writer" ],
-///     managers: {
-///         config: config,        // hand in a pre-built `ConfigManager`
-///         directories: dirs,     // hand in a pre-built `DirectoriesManager`
-///     },
+/// app! {
+///     pub app Example {
+///         name: "example-daemon",
+///         protocol: overseerd::daemon::RpcPlugin,
+///         services: [Notifications, Echo],
+///         configs: [DbConfig => "app.db.reader", DbConfig => "app.db.writer"],
+///     }
 /// }
-/// .build()
-/// .await?;
+///
+/// let app = Example::builder().build().await?;
 /// ```
 ///
-/// Expands to an `AppBuilder` — `App::builder(name).auto_discover()`, a
-/// `with_component(..)` for each listed instance, a `config::<T>(path)` for each
-/// `configs` entry (`Type => "property.path"`), and `config_source`/`directories`
-/// for any `managers` entries — so it is what you use in `main`.
+/// The generated host's `builder()` creates an `AppBuilder` from the declaration:
+/// `App::builder(name).auto_discover()`, a `with_component(..)` for each listed
+/// instance, a `config::<T>(path)` for each `configs` entry (`Type =>
+/// "property.path"`), and `config_source`/`directories` for any `managers` entries.
 ///
 /// - `configs` binds the same config type at several property paths; a type with a
 ///   baked-in `#[config(path = "..")]` auto-registers and needs no entry.
@@ -235,6 +231,10 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// whole dependency graph (including trait-object and `#[service]` field
 /// dependencies, across crates) at compile time. The same declaration that wires the
 /// app validates it — there is no separate list to maintain.
+///
+/// The expression-oriented form remains temporarily available during the 1.0 migration.
+/// New applications should use a named definition; custom/local-value assembly should call
+/// `App::<P>::builder(..)` directly.
 #[proc_macro]
 pub fn app(input: TokenStream) -> TokenStream {
     overseerd_macros_core::app(input.into()).into()
