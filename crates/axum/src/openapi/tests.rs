@@ -125,6 +125,31 @@ fn overlapping_json_and_ui_paths_are_rejected() {
     );
 }
 
+#[cfg(feature = "openapi-redoc")]
+#[test]
+fn overlapping_paths_fail_during_app_prepare() {
+    let config = overseerd_config::ConfigManager::<overseerd_config::Toml>::from_str(
+        r#"
+            [axum.openapi]
+            enabled = true
+            ui = "redoc"
+            ui_path = "/docs"
+            json_path = "/docs/openapi.json"
+        "#,
+    )
+    .expect("config parses");
+    let result = crate::App::builder("invalid-openapi-config-test")
+        .config_source(config)
+        .prepare();
+
+    let error = match result {
+        Ok(_) => panic!("overlapping OpenAPI paths were not rejected during preparation"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, crate::Error::Config(_)), "got: {error}");
+}
+
 // When the selected UI's feature is absent, the UI is not mounted (JSON-only fallback), so
 // overlapping paths must NOT be rejected. Runs only in a build without `openapi-scalar`.
 #[cfg(not(feature = "openapi-scalar"))]
