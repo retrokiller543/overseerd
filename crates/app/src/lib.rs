@@ -22,7 +22,12 @@ pub use app::{App, AppBuilder, PreparedApp};
 pub use builtins::{LogFormat, LoggingConfig, ServerConfig, SpanEvents};
 pub use error::{Error, Result};
 pub use host::{AppHost, BootstrapContext, ExecutionMode, HostError, LifecyclePhase, PhaseError};
+#[cfg(feature = "cli")]
+pub use host::{BootstrapOptions, CliError, ColorChoice};
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use protocol::{Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve, ValidationContext};
 pub use registry::AppRegistry;
 pub use runtime::AppRuntime;
+
+#[cfg(feature = "cli")]
+pub use clap;

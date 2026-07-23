@@ -114,6 +114,7 @@ impl LoggingConfig {
 
 /// Formatter used for tracing output.
 #[derive(Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum LogFormat {

@@ -92,6 +92,9 @@ pub use overseerd_app::{
     ValidationContext,
 };
 
+#[cfg(all(not(target_family = "wasm"), feature = "cli"))]
+pub use overseerd_app::{BootstrapOptions, CliError, ColorChoice, clap};
+
 // The generic `App<P>` / `AppBuilder<P>` are at the root (protocol-agnostic core); the `app!`
 // macro builds `App::<P>::builder(..)` for the protocol named in its `protocol:` field. A
 // protocol's own surface (the RPC daemon's services, client, …) lives in its module
