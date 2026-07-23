@@ -82,11 +82,8 @@ Branch: `feat/142-app-definition`
 2. Refactor `crates/macros-core/src/app.rs` into focused parse/model/expand modules only as needed; avoid unrelated macro cleanup.
 3. Generate a named host type and thin phase adapter functions. Keep orchestration in runtime traits rather than generating a large state machine directly in tokens.
 4. Expose a builder escape hatch from the host so custom startup remains possible.
-5. Remove expression-oriented `app!` parsing and update its macro documentation. This is the breaking commit.
-6. Migrate only call sites needed to keep the workspace compiling:
-   - use direct `App::builder` in low-level tests;
-   - use a minimal named app where host reuse is actually exercised.
-   Full example/migration documentation remains `#148`.
+5. Retain expression-oriented `app!` temporarily so existing call sites keep compiling on the integration branch.
+6. Add a minimal named app where host reuse is exercised. Expression-form removal and all call-site migration belong to `#148`.
 7. Do not add Clap, commands, tooling JSON, or cargo tooling in this PR.
 
 PR 1 validation:
@@ -102,7 +99,7 @@ Acceptance:
 
 - Invalid syntax reports span-accurate compile errors.
 - A named host deterministically creates the same protocol-specific builder on repeated calls.
-- The workspace has no expression-style `app!` calls.
+- Existing expression-style `app!` calls remain source-compatible until `#148`.
 - Direct `App::builder` remains the documented low-level path.
 
 ### PR 2: `#143` Lifecycle And Prepare Boundary

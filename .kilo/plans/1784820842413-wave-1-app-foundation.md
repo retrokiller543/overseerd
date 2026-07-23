@@ -70,7 +70,7 @@ The generated surface is intentionally small:
 pub struct Homeledger;
 
 impl Homeledger {
-    pub fn builder() -> overseerd::AppBuilder<RpcPlugin>;
+    pub fn builder() -> Result<overseerd::AppBuilder<RpcPlugin>, overseerd::ConfigError>;
 }
 ```
 
@@ -205,8 +205,7 @@ Add a focused `crates/app/src/host.rs` module with sibling `host/tests.rs`:
 - `#[non_exhaustive] LifecyclePhase { Setup, Configure, BeforeBuild, Prepare, Build, AfterBuild, Serve }`.
 - `BootstrapContext`, constructed through methods rather than public field literals. In Wave 1 it stores execution mode and a typed extension map for setup-produced shared values; Wave 2 adds standard CLI/config bootstrap values without changing callback signatures.
 - `PhaseError` containing `LifecyclePhase` and boxed typed source, with `thiserror` display/source implementation.
-- Public `AppHost` trait containing associated `Protocol` and generated async lifecycle entry points needed by tests, embedding, and later tooling. Use stable Rust async trait patterns already accepted by the workspace; do not add `async-trait` unless object safety is concretely required.
-- Inherent generated methods delegate to the trait so normal users need not import it.
+- Public `AppHost` trait containing the associated `Protocol` and fallible builder contract. Generated async lifecycle entry points remain inherent methods until a concrete generic tooling caller requires them on the trait.
 
 Generated methods after PR 2:
 
@@ -294,7 +293,7 @@ Preparation safety tests use panic/counters to prove `prepare(Tooling)` does not
 
 Behavior preservation tests:
 
-- `AppBuilder::build()` and `AppBuilder::prepare().await?.build().await` produce equivalent registries/protocol behavior;
+- `AppBuilder::build().await` and `AppBuilder::prepare()?.build().await` produce equivalent registries/protocol behavior;
 - existing daemon, HTTP, config-trigger, middleware, and WebSocket tests remain green;
 - RPC duplicate service/path errors now arise during prepare;
 - Axum preparation catches preparation-safe config errors before runtime construction.
@@ -303,11 +302,11 @@ Behavior preservation tests:
 
 ```text
 cargo fmt --all -- --check
-cargo test -p overseerd-app
-cargo test -p overseerd-macros-core
-cargo test -p overseerd-rpc
-cargo test -p overseerd-axum --all-features
-cargo test --workspace --all-features
+cargo nextest run -p overseerd-app
+cargo nextest run -p overseerd-macros-core
+cargo nextest run -p overseerd-rpc
+cargo nextest run -p overseerd-axum --all-features
+cargo nextest run --workspace --all-features
 cargo clippy --workspace --all-targets --all-features
 cargo check --workspace --no-default-features
 ```

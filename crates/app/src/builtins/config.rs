@@ -33,6 +33,7 @@ pub struct ServerConfig {
 /// config subtree and injected as [`Cfg<LoggingConfig>`](overseerd_config::Cfg).
 #[config(overseerd = ::overseerd_config)]
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LoggingConfig {
     /// An `EnvFilter`-style level directive (e.g. `"info"`, `"app=debug,info"`).
     pub level: String,
@@ -78,6 +79,37 @@ pub struct LoggingConfig {
     /// Whether JSON output includes the current span and span list.
     #[serde(default = "default_true")]
     pub current_span: bool,
+}
+
+impl LoggingConfig {
+    /// Creates logging settings with the requested filter and default formatter options.
+    pub fn new(level: impl Into<String>) -> Self {
+        Self {
+            level: level.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Selects the formatter output style.
+    pub fn with_format(mut self, format: impl Into<String>) -> Self {
+        self.format = format.into();
+
+        self
+    }
+
+    /// Controls ANSI color output.
+    pub fn with_ansi(mut self, ansi: bool) -> Self {
+        self.ansi = ansi;
+
+        self
+    }
+
+    /// Selects synthetic span lifecycle events.
+    pub fn with_span_events(mut self, span_events: SpanEvents) -> Self {
+        self.span_events = span_events;
+
+        self
+    }
 }
 
 /// Span lifecycle events emitted by tracing formatters.
