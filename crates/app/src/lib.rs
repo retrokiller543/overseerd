@@ -12,6 +12,7 @@
 pub mod app;
 pub mod builtins;
 pub mod error;
+pub mod host;
 pub mod lifecycle;
 pub mod protocol;
 pub mod registry;
@@ -20,6 +21,7 @@ pub mod runtime;
 pub use app::{App, AppBuilder, PreparedApp};
 pub use builtins::{LoggingConfig, ServerConfig};
 pub use error::{Error, Result};
+pub use host::{AppHost, BootstrapContext, ExecutionMode, LifecyclePhase, PhaseError};
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use protocol::{Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve};
 pub use registry::AppRegistry;
