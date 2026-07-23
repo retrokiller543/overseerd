@@ -24,18 +24,12 @@ pub type BoxedLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
 #[derive(Debug, thiserror::Error)]
 pub enum InitTracingError {
     /// The configured `level` directive could not be parsed as an `EnvFilter`.
-    #[error("invalid log filter from {origin} ('{filter}'): {source}")]
+    #[error("invalid log level filter '{filter}': {source}")]
     Filter {
-        /// The configuration source containing the invalid directive.
-        origin: &'static str,
         filter: String,
         #[source]
         source: tracing_subscriber::filter::ParseError,
     },
-
-    /// `RUST_LOG` contained bytes that are not valid Unicode.
-    #[error("RUST_LOG contains non-Unicode data")]
-    InvalidRustLogUnicode,
 
     /// The configured `format` was not one of the supported variants.
     #[error("unknown log format '{format}', expected one of: full, compact, pretty, json")]
@@ -85,18 +79,11 @@ fn env_filter(
     config: &LoggingConfig,
     rust_log: Option<&OsStr>,
 ) -> Result<EnvFilter, InitTracingError> {
-    let (filter, origin) = match rust_log {
-        Some(value) => (
-            value
-                .to_str()
-                .ok_or(InitTracingError::InvalidRustLogUnicode)?,
-            EnvFilter::DEFAULT_ENV,
-        ),
-        None => (config.level.as_str(), "logging.level"),
-    };
+    let filter = rust_log
+        .and_then(OsStr::to_str)
+        .unwrap_or(config.level.as_str());
 
     EnvFilter::try_new(filter).map_err(|source| InitTracingError::Filter {
-        origin,
         filter: filter.to_owned(),
         source,
     })
@@ -190,12 +177,6 @@ mod tests {
 
         let result = env_filter(&config, None);
 
-        assert!(matches!(
-            result,
-            Err(InitTracingError::Filter {
-                origin: "logging.level",
-                ..
-            })
-        ));
+        assert!(matches!(result, Err(InitTracingError::Filter { .. })));
     }
 }
