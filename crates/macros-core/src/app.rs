@@ -483,8 +483,8 @@ fn expand_named(input: NamedApp) -> TokenStream {
     let builder = expand_builder(assembly);
     let setup_call = phase_result(
         phases.setup.as_ref(),
-        quote!(#bootstrap_context::new(mode)),
-        &[quote!(mode)],
+        quote!(context),
+        &[quote!(context)],
         quote!(#lifecycle_phase::Setup),
         &phase_error,
     );
@@ -543,6 +543,14 @@ fn expand_named(input: NamedApp) -> TokenStream {
 
             /// Creates the lifecycle bootstrap context.
             pub async fn setup(mode: #execution_mode) -> ::core::result::Result<#bootstrap_context, #phase_error> {
+                let context = #bootstrap_context::new(mode);
+
+                Self::__overseerd_setup_context(context).await
+            }
+
+            async fn __overseerd_setup_context(
+                context: #bootstrap_context,
+            ) -> ::core::result::Result<#bootstrap_context, #phase_error> {
                 #setup_call
             }
 

@@ -93,7 +93,10 @@ pub use overseerd_app::{
 };
 
 #[cfg(all(not(target_family = "wasm"), feature = "cli"))]
-pub use overseerd_app::{BootstrapOptions, CliError, ColorChoice, clap};
+pub use overseerd_app::{
+    BootstrapError, BootstrapOptions, BootstrapState, CliError, ColorChoice, bootstrap_application,
+    clap, configure_bootstrap,
+};
 
 // The generic `App<P>` / `AppBuilder<P>` are at the root (protocol-agnostic core); the `app!`
 // macro builds `App::<P>::builder(..)` for the protocol named in its `protocol:` field. A

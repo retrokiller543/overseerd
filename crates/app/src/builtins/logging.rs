@@ -46,6 +46,20 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), InitTracingError> {
     init_tracing_with_layers(config, Vec::new())
 }
 
+pub(crate) fn init_tracing_resolved(config: &LoggingConfig) -> Result<(), InitTracingError> {
+    let filter = EnvFilter::try_new(&config.level).map_err(|source| InitTracingError::Filter {
+        filter: config.level.clone(),
+        source,
+    })?;
+    let layers = vec![fmt_layer(config)?];
+
+    Registry::default()
+        .with(layers)
+        .with(filter)
+        .try_init()
+        .map_err(|_| InitTracingError::AlreadyInstalled)
+}
+
 /// Installs the process-global subscriber from `config`, composing `extra` layers on top of the
 /// framework's filtered `fmt` layer.
 ///

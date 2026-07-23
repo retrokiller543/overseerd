@@ -36,9 +36,7 @@ app! {
     }
 }
 
-async fn setup_lifecycle(mode: ExecutionMode) -> std::io::Result<BootstrapContext> {
-    let mut context = BootstrapContext::new(mode);
-
+async fn setup_lifecycle(mut context: BootstrapContext) -> std::io::Result<BootstrapContext> {
     context.insert(vec!["setup"]);
 
     Ok(context)
@@ -91,7 +89,7 @@ app! {
     }
 }
 
-async fn failing_setup(_mode: ExecutionMode) -> std::io::Result<BootstrapContext> {
+async fn failing_setup(_context: BootstrapContext) -> std::io::Result<BootstrapContext> {
     Err(std::io::Error::other("setup failed"))
 }
 
