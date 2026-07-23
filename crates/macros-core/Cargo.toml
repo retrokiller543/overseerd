@@ -11,6 +11,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
+default = ["cli"]
+cli = []
 # Emit the generated client (the `cfg!(feature = "client")` gate in client codegen).
 # Forwarded from the macro crates' `client` feature.
 client = []

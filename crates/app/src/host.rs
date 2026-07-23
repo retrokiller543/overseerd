@@ -6,6 +6,9 @@ use std::fmt;
 
 use crate::{AppBuilder, ProtocolPlugin};
 
+#[cfg(feature = "cli")]
+use crate::LogFormat;
+
 /// Selects whether a host is executing normally or preparing metadata for developer tooling.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -128,6 +131,88 @@ pub enum HostError {
     /// Tooling execution attempted to construct ordinary components or a served protocol.
     #[error("tooling mode cannot construct application components or protocols")]
     ToolingConstruction,
+}
+
+/// Controls when generated CLI output uses ANSI color.
+#[cfg(feature = "cli")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
+#[non_exhaustive]
+pub enum ColorChoice {
+    /// Detect color support from the current output stream.
+    #[default]
+    Auto,
+    /// Always emit ANSI color.
+    Always,
+    /// Never emit ANSI color.
+    Never,
+}
+
+/// Protocol-neutral options consumed during generated application bootstrap.
+#[cfg(feature = "cli")]
+#[derive(Clone, Debug, Default, Eq, PartialEq, clap::Args)]
+#[non_exhaustive]
+pub struct BootstrapOptions {
+    /// Configuration file or directory.
+    #[arg(short = 'c', long, global = true, value_name = "PATH")]
+    config: Option<std::path::PathBuf>,
+
+    /// Ordered configuration profile; may be repeated.
+    #[arg(short = 'p', long = "profile", global = true, value_name = "PROFILE")]
+    profiles: Vec<String>,
+
+    /// EnvFilter-compatible tracing directive.
+    #[arg(long, global = true, value_name = "FILTER")]
+    log: Option<String>,
+
+    /// Tracing output formatter.
+    #[arg(long, global = true, value_enum, value_name = "FORMAT")]
+    log_format: Option<LogFormat>,
+
+    /// ANSI color behavior.
+    #[arg(long, global = true, value_enum, value_name = "WHEN")]
+    color: Option<ColorChoice>,
+}
+
+#[cfg(feature = "cli")]
+impl BootstrapOptions {
+    /// Explicit configuration file or directory.
+    pub fn config(&self) -> Option<&std::path::Path> {
+        self.config.as_deref()
+    }
+
+    /// Ordered profiles selected on the command line.
+    pub fn profiles(&self) -> &[String] {
+        &self.profiles
+    }
+
+    /// Explicit tracing filter override.
+    pub fn log(&self) -> Option<&str> {
+        self.log.as_deref()
+    }
+
+    /// Explicit tracing formatter override.
+    pub fn log_format(&self) -> Option<LogFormat> {
+        self.log_format
+    }
+
+    /// Explicit color behavior override.
+    pub fn color(&self) -> Option<ColorChoice> {
+        self.color
+    }
+}
+
+/// Failures returned by generated CLI parsing and dispatch.
+#[cfg(feature = "cli")]
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum CliError {
+    /// Command-line arguments were invalid or requested early output such as help/version.
+    #[error(transparent)]
+    Clap(#[from] clap::Error),
+
+    /// Application bootstrap or lifecycle dispatch failed.
+    #[error(transparent)]
+    Lifecycle(#[from] PhaseError),
 }
 
 impl PhaseError {

@@ -11,7 +11,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = []
+default = ["cli"]
+cli = ["dep:clap", "overseerd-macros/cli"]
 di-check = [
     "overseerd-di/di-check",
     "overseerd-config/di-check",
@@ -33,3 +34,4 @@ serde = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, optional = true }
 thiserror = { workspace = true }
+clap = { workspace = true, optional = true }
