@@ -67,6 +67,30 @@ async fn old_signature_custom_protocol_mounts_without_adapter_methods() {
     assert_eq!(app.protocol().ws_endpoints()[0].path(), "/ws");
 }
 
+#[test]
+fn websocket_limits_fail_during_prepare_before_protocol_build() {
+    let config = overseerd_config::ConfigManager::<overseerd_config::Toml>::from_str(
+        r#"
+            [axum]
+            max_websocket_message_bytes = 0
+        "#,
+    )
+    .expect("config parses");
+    let builds_before = TEST_PROTOCOL_BUILDS.load(Ordering::Relaxed);
+    let result = crate::App::builder("invalid-ws-config-test")
+        .config_source(config)
+        .register_ws::<TestProtocol>("/ws")
+        .prepare();
+
+    let error = match result {
+        Ok(_) => panic!("zero WebSocket message limit was not rejected during preparation"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("must both be greater than zero"));
+    assert_eq!(TEST_PROTOCOL_BUILDS.load(Ordering::Relaxed), builds_before);
+}
+
 struct DuplicateProtocol;
 
 static DUPLICATE_PROTOCOL_BUILDS: AtomicUsize = AtomicUsize::new(0);

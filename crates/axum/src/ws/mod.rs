@@ -437,6 +437,24 @@ impl WsAdmission {
     }
 }
 
+pub(crate) fn validate_config(config: &crate::AxumConfig) -> crate::Result<()> {
+    if config.max_websocket_message_bytes == 0 || config.max_websocket_frame_bytes == 0 {
+        return Err(crate::Error::Config(
+            "WebSocket message and frame byte limits must both be greater than zero".to_owned(),
+        ));
+    }
+
+    if config.max_websocket_connections > tokio::sync::Semaphore::MAX_PERMITS {
+        return Err(crate::Error::Config(format!(
+            "max_websocket_connections ({}) exceeds Tokio's semaphore limit ({})",
+            config.max_websocket_connections,
+            tokio::sync::Semaphore::MAX_PERMITS
+        )));
+    }
+
+    Ok(())
+}
+
 /// A [`WebsocketProtocol`] that carries topic pub/sub: it frames a delivered message for one
 /// subscriber. This is the server-side companion to [`MessagingProtocol`](crate::messaging::MessagingProtocol)
 /// (which supplies the wire body and default codec); together they let the neutral
@@ -533,11 +551,7 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
         .expect("AxumConfig missing from config store; AxumPlugin should register it")
         .snapshot();
 
-    if config.max_websocket_message_bytes == 0 || config.max_websocket_frame_bytes == 0 {
-        return Err(crate::Error::Config(
-            "WebSocket message and frame byte limits must both be greater than zero".to_owned(),
-        ));
-    }
+    validate_config(&config)?;
 
     validate_unique_routes::<P>(&controllers, runtime)?;
 

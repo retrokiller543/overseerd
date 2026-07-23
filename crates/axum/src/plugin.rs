@@ -8,7 +8,7 @@ use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::Route;
-use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin};
+use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, PreBuildContext, ProtocolPlugin};
 use overseerd_config::{ConfigBinding, ContainerConfigExt};
 use overseerd_core::{Descriptor, Scope, TypeDescriptor};
 use overseerd_di::{BoxedComponent, Component, ComponentDescriptor};
@@ -111,6 +111,30 @@ impl ProtocolPlugin for AxumPlugin {
     // Root→leaf: `Connection` (WebSocket-only) outlives `Request`. A plain HTTP request opens only
     // `Request` (parented at root); a ws message opens `Request` parented at its `Connection`.
     const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
+
+    fn pre_build(&mut self, context: &PreBuildContext<'_>) -> crate::Result<()> {
+        #[cfg(feature = "ws")]
+        if !self.ws_registrations.is_empty() {
+            let config = context
+                .config::<AxumConfig>(AXUM_CONFIG_PATH)
+                .expect("AxumConfig missing from config store; AxumPlugin should register it")
+                .snapshot();
+
+            crate::ws::validate_config(&config)?;
+        }
+
+        #[cfg(feature = "openapi")]
+        {
+            let config = context
+                .config::<crate::OpenApiConfig>(crate::AXUM_OPENAPI_CONFIG_PATH)
+                .expect("OpenApiConfig missing from config store; AxumPlugin should register it")
+                .snapshot();
+
+            crate::openapi::validate_config(&config)?;
+        }
+
+        Ok(())
+    }
 
     fn build(self, runtime: &AppRuntime) -> crate::Result<Axum> {
         let config = runtime
