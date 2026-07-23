@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin};
+use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, PreBuildContext, ProtocolPlugin};
 use overseerd_core::{Descriptor, Scope, TypeDescriptor};
 use overseerd_di::{ComponentDescriptor, ServiceComponent};
 use overseerd_transport::PeerInfo;
@@ -39,6 +39,7 @@ static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
 #[derive(Default)]
 pub struct RpcPlugin {
     services: Vec<ServiceDescriptor>,
+    resolved_services: Option<Vec<crate::routes::ResolvedService>>,
     layers: Vec<LayerApplier>,
     error_handler: Option<Arc<dyn ErrorHandler>>,
     limits: RpcLimits,
@@ -60,9 +61,26 @@ impl ProtocolPlugin for RpcPlugin {
 
     const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
 
-    fn build(self, runtime: &AppRuntime) -> crate::Result<Rpc> {
+    fn pre_build(&mut self, _context: &PreBuildContext<'_>) -> crate::Result<()> {
         let resolved = crate::routes::resolved_services(&self.services);
+
         crate::routes::validate_services(&resolved)?;
+        self.resolved_services = Some(resolved);
+
+        Ok(())
+    }
+
+    fn build(self, runtime: &AppRuntime) -> crate::Result<Rpc> {
+        let resolved = match self.resolved_services {
+            Some(resolved) => resolved,
+            None => {
+                let resolved = crate::routes::resolved_services(&self.services);
+
+                crate::routes::validate_services(&resolved)?;
+
+                resolved
+            }
+        };
 
         // Does any real component depend on the peer? If not, the connection scope need
         // not exist solely to hold it; handlers still reach the peer via the `Peer`
@@ -194,3 +212,6 @@ impl RpcAppBuilder for AppBuilder<RpcPlugin> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests;
