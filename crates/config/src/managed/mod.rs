@@ -60,6 +60,7 @@ pub use source::{ConfigManager, Dynamic, Format, FormatId, ReloadTriggers, Toml}
 
 /// Errors from loading, merging, and binding configuration.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ConfigError {
     #[error("failed to read config file '{}': {source}", .path.display())]
     Io {
@@ -74,6 +75,10 @@ pub enum ConfigError {
         #[source]
         source: crate::TemplateError,
     },
+
+    /// The selected source file has no parser in the active format.
+    #[error("unsupported config file format for '{}'", .path.display())]
+    UnsupportedFormat { path: PathBuf },
 
     #[error("no configuration found at path '{path}'")]
     MissingPath { path: String },
