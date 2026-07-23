@@ -7,7 +7,12 @@ use std::fmt;
 use crate::{AppBuilder, ProtocolPlugin};
 
 #[cfg(feature = "cli")]
-use crate::LogFormat;
+use overseerd_config::{ConfigManager, Dynamic};
+#[cfg(feature = "cli")]
+use overseerd_dirs::DirectoriesManager;
+
+#[cfg(feature = "cli")]
+use crate::{LogFormat, LoggingConfig};
 
 /// Selects whether a host is executing normally or preparing metadata for developer tooling.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,6 +118,24 @@ impl BootstrapContext {
             .ok()
             .map(|value| *value)
     }
+
+    /// Resolved framework bootstrap state, when generated CLI bootstrap has run.
+    #[cfg(feature = "cli")]
+    pub fn bootstrap(&self) -> Option<&BootstrapState> {
+        self.get()
+    }
+
+    /// Mutable resolved framework bootstrap state.
+    #[cfg(feature = "cli")]
+    pub fn bootstrap_mut(&mut self) -> Option<&mut BootstrapState> {
+        self.get_mut()
+    }
+
+    /// Replaces this context's generated CLI bootstrap state.
+    #[cfg(feature = "cli")]
+    pub fn set_bootstrap(&mut self, state: BootstrapState) {
+        self.insert(state);
+    }
 }
 
 /// A lifecycle failure tagged with the phase that produced it.
@@ -145,6 +168,260 @@ pub enum ColorChoice {
     Always,
     /// Never emit ANSI color.
     Never,
+}
+
+/// Resolved framework-owned state produced by generated CLI bootstrap.
+#[cfg(feature = "cli")]
+pub struct BootstrapState {
+    options: BootstrapOptions,
+    config_path: std::path::PathBuf,
+    profiles: Vec<String>,
+    directories: DirectoriesManager,
+    config: Option<ConfigManager<Dynamic>>,
+    logging: LoggingConfig,
+    color: ColorChoice,
+    tracing_installed: bool,
+}
+
+#[cfg(feature = "cli")]
+impl BootstrapState {
+    /// Parsed protocol-neutral command-line options.
+    pub fn options(&self) -> &BootstrapOptions {
+        &self.options
+    }
+
+    /// Effective config file or directory.
+    pub fn config_path(&self) -> &std::path::Path {
+        &self.config_path
+    }
+
+    /// Effective ordered profile list.
+    pub fn profiles(&self) -> &[String] {
+        &self.profiles
+    }
+
+    /// Effective tracing configuration after CLI/environment overrides.
+    pub fn logging(&self) -> &LoggingConfig {
+        &self.logging
+    }
+
+    /// Effective generated CLI color behavior.
+    pub fn color(&self) -> ColorChoice {
+        self.color
+    }
+
+    /// Whether generated bootstrap installed the global tracing subscriber.
+    pub fn tracing_installed(&self) -> bool {
+        self.tracing_installed
+    }
+
+    /// Resolved application directories.
+    pub fn directories(&self) -> &DirectoriesManager {
+        &self.directories
+    }
+
+    /// Moves the merged config manager into an application builder once.
+    pub fn take_config(&mut self) -> Option<ConfigManager<Dynamic>> {
+        self.config.take()
+    }
+}
+
+/// Failures from generated framework bootstrap.
+#[cfg(feature = "cli")]
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BootstrapError {
+    /// Safe platform directories could not be resolved.
+    #[error("failed to resolve application directories: {0}")]
+    Directories(#[source] std::io::Error),
+
+    /// Configuration loading or extraction failed.
+    #[error(transparent)]
+    Config(#[from] overseerd_config::ConfigError),
+
+    /// An environment-provided log format was not recognized.
+    #[error("unknown log format '{value}', expected one of: full, compact, pretty, json")]
+    LogFormat { value: String },
+
+    /// The generated bootstrap could not install tracing.
+    #[cfg(feature = "tracing-subscriber")]
+    #[error(transparent)]
+    Tracing(#[from] crate::builtins::InitTracingError),
+}
+
+#[cfg(feature = "cli")]
+#[derive(Default)]
+struct BootstrapEnvironment {
+    config: Option<std::ffi::OsString>,
+    profiles: Option<String>,
+    rust_log: Option<String>,
+    log_format: Option<String>,
+    no_color: bool,
+    color_force: Option<String>,
+}
+
+#[cfg(feature = "cli")]
+impl BootstrapEnvironment {
+    fn capture() -> Self {
+        Self {
+            config: std::env::var_os("OVERSEERD_CONFIG"),
+            profiles: std::env::var("OVERSEERD_PROFILES").ok(),
+            rust_log: std::env::var("RUST_LOG").ok(),
+            log_format: std::env::var("OVERSEERD_LOG_FORMAT").ok(),
+            no_color: std::env::var_os("NO_COLOR").is_some(),
+            color_force: std::env::var("CLICOLOR_FORCE").ok(),
+        }
+    }
+}
+
+/// Resolves generated application bootstrap without parsing process arguments.
+#[cfg(feature = "cli")]
+pub fn bootstrap_application(
+    application: &str,
+    mode: ExecutionMode,
+    options: BootstrapOptions,
+) -> Result<BootstrapContext, BootstrapError> {
+    bootstrap_application_with_env(application, mode, options, BootstrapEnvironment::capture())
+}
+
+/// Applies generated bootstrap managers to a protocol-specific application builder.
+#[cfg(feature = "cli")]
+pub fn configure_bootstrap<P: ProtocolPlugin>(
+    context: &mut BootstrapContext,
+    builder: AppBuilder<P>,
+) -> AppBuilder<P> {
+    let Some(state) = context.bootstrap_mut() else {
+        return builder;
+    };
+    let builder = builder.directories(state.directories().clone());
+
+    match state.take_config() {
+        Some(config) => builder.config_source(config),
+        None => builder,
+    }
+}
+
+#[cfg(feature = "cli")]
+fn bootstrap_application_with_env(
+    application: &str,
+    mode: ExecutionMode,
+    options: BootstrapOptions,
+    environment: BootstrapEnvironment,
+) -> Result<BootstrapContext, BootstrapError> {
+    let directories =
+        DirectoriesManager::try_for_app(application).map_err(BootstrapError::Directories)?;
+    let config_path = options
+        .config()
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| environment.config.as_ref().map(std::path::PathBuf::from))
+        .unwrap_or_else(|| directories.config_path());
+    let profiles = effective_profiles(&options, environment.profiles.as_deref());
+    let config = if config_path.is_file() || config_path.extension().is_some() {
+        ConfigManager::<Dynamic>::load_file(&config_path, &profiles)?
+    } else {
+        ConfigManager::<Dynamic>::load_in_explicit(&config_path, &profiles)?
+    }
+    .with_directories(&directories)
+    .auto_discover()
+    .with_config::<LoggingConfig>("logging");
+    let mut logging = config.get_config::<LoggingConfig>("logging")?;
+
+    if let Some(filter) = options.log().or(environment.rust_log.as_deref()) {
+        logging.level = filter.to_owned();
+    }
+
+    if let Some(format) = options.log_format() {
+        logging.format = format;
+    } else if let Some(format) = environment.log_format.as_deref() {
+        logging.format = parse_log_format(format)?;
+    }
+
+    let color = effective_color(options.color(), &environment);
+
+    match color {
+        ColorChoice::Always => logging.ansi = true,
+        ColorChoice::Never => logging.ansi = false,
+        ColorChoice::Auto => {}
+    }
+
+    let tracing_installed = if mode.is_run() {
+        #[cfg(feature = "tracing-subscriber")]
+        {
+            crate::builtins::logging::init_tracing_resolved(&logging)?;
+
+            true
+        }
+
+        #[cfg(not(feature = "tracing-subscriber"))]
+        false
+    } else {
+        false
+    };
+
+    let state = BootstrapState {
+        options,
+        config_path,
+        profiles,
+        directories,
+        config: Some(config),
+        logging,
+        color,
+        tracing_installed,
+    };
+    let mut context = BootstrapContext::new(mode);
+
+    context.set_bootstrap(state);
+
+    Ok(context)
+}
+
+#[cfg(feature = "cli")]
+fn effective_profiles(options: &BootstrapOptions, environment: Option<&str>) -> Vec<String> {
+    if !options.profiles().is_empty() {
+        return options.profiles().to_vec();
+    }
+
+    environment
+        .into_iter()
+        .flat_map(|profiles| profiles.split(','))
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(feature = "cli")]
+fn effective_color(cli: Option<ColorChoice>, environment: &BootstrapEnvironment) -> ColorChoice {
+    if let Some(color) = cli {
+        return color;
+    }
+
+    if environment.no_color {
+        return ColorChoice::Never;
+    }
+
+    if environment
+        .color_force
+        .as_deref()
+        .is_some_and(|value| value != "0")
+    {
+        return ColorChoice::Always;
+    }
+
+    ColorChoice::Auto
+}
+
+#[cfg(feature = "cli")]
+fn parse_log_format(value: &str) -> Result<LogFormat, BootstrapError> {
+    match value {
+        "full" => Ok(LogFormat::Full),
+        "compact" => Ok(LogFormat::Compact),
+        "pretty" => Ok(LogFormat::Pretty),
+        "json" => Ok(LogFormat::Json),
+        _ => Err(BootstrapError::LogFormat {
+            value: value.to_owned(),
+        }),
+    }
 }
 
 /// Protocol-neutral options consumed during generated application bootstrap.

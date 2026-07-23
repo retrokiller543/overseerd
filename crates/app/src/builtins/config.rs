@@ -14,6 +14,7 @@
 //! so `overseerd-config`'s re-export of `ConfigProperties` is all the override needs.)
 
 use serde::Deserialize;
+use std::fmt;
 
 use overseerd_macros::config;
 
@@ -36,12 +37,15 @@ pub struct ServerConfig {
 #[non_exhaustive]
 pub struct LoggingConfig {
     /// An `EnvFilter`-style level directive (e.g. `"info"`, `"app=debug,info"`).
+    #[default = "info"]
     pub level: String,
 
     /// The formatter used for tracing output.
+    #[default = "full"]
     pub format: LogFormat,
 
     /// Whether to colorize the output with ANSI escape codes.
+    #[default = "true"]
     pub ansi: bool,
 
     /// Span lifecycle events emitted by the formatter.
@@ -127,6 +131,19 @@ pub enum LogFormat {
     Pretty,
     /// Structured JSON event output.
     Json,
+}
+
+impl fmt::Display for LogFormat {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Full => "full",
+            Self::Compact => "compact",
+            Self::Pretty => "pretty",
+            Self::Json => "json",
+        };
+
+        formatter.write_str(value)
+    }
 }
 
 /// Span lifecycle events emitted by tracing formatters.
