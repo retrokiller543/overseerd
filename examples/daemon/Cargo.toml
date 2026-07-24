@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 overseerd = { path = "../..", features = ["daemon", "tracing-subscriber"] }
+clap.workspace = true
 tokio = { workspace = true }
 serde = { workspace = true }
 tracing.workspace = true

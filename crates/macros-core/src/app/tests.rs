@@ -22,6 +22,26 @@ fn parses_named_app_visibilities() {
 }
 
 #[test]
+fn rejects_non_documentation_attributes_on_named_apps() {
+    let error = match parse2::<AppInput>(quote! {
+        #[cfg(feature = "disabled")]
+        app Example {
+            name: "example",
+            protocol: Protocol,
+        }
+    }) {
+        Ok(_) => panic!("partial generated cfg attributes unexpectedly parsed"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("only documentation attributes are supported on generated applications")
+    );
+}
+
+#[test]
 fn parses_complete_named_app() {
     let input = quote! {
         pub app Example {
@@ -94,6 +114,16 @@ fn expands_named_host_and_builder() {
     let output = expand(input).to_string();
 
     assert!(output.contains("pub struct Example"));
+    assert!(
+        output.contains("Stage : :: overseerd :: AppStage < Protocol > = :: overseerd :: Initial")
+    );
+    assert!(output.contains("impl Example < :: overseerd :: Initial >"));
+    assert!(output.contains("impl Example < :: overseerd :: Setup >"));
+    assert!(output.contains("impl Example < :: overseerd :: PreBuild >"));
+    assert!(output.contains("impl Example < :: overseerd :: Built >"));
+    assert!(!output.contains("__overseerd_setup"));
+    assert!(!output.contains("__overseerd_prepare"));
+    assert!(!output.contains("__overseerd_build"));
     assert!(output.contains(
         "pub fn builder () -> :: core :: result :: Result < :: overseerd :: AppBuilder < Protocol > , :: overseerd :: ConfigError >"
     ));
