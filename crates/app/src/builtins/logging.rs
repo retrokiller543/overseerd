@@ -54,13 +54,12 @@ pub(crate) fn init_tracing_resolved(
         filter: config.level.clone(),
         source,
     })?;
-    let mut layers = vec![fmt_layer(config)?];
+    let mut layers = vec![fmt_layer(config)?.with_filter(filter).boxed()];
 
     layers.extend(extra);
 
     Registry::default()
         .with(layers)
-        .with(filter)
         .try_init()
         .map_err(|_| InitTracingError::AlreadyInstalled)
 }
@@ -79,14 +78,13 @@ pub fn init_tracing_with_layers(
     let rust_log = std::env::var_os(EnvFilter::DEFAULT_ENV);
     let filter = env_filter(config, rust_log.as_deref())?;
 
-    // Compose every layer over the bare registry so each stays typed `Layer<Registry>` (boxed
-    // layers cannot re-type themselves), then apply the env filter globally on top.
-    let mut layers: Vec<BoxedLayer> = vec![fmt_layer(config)?];
+    // Filter only console formatting. Extension layers enforce their own capture policies and may
+    // intentionally observe events that are more verbose than terminal output.
+    let mut layers: Vec<BoxedLayer> = vec![fmt_layer(config)?.with_filter(filter).boxed()];
     layers.extend(extra);
 
     Registry::default()
         .with(layers)
-        .with(filter)
         .try_init()
         .map_err(|_| InitTracingError::AlreadyInstalled)
 }
