@@ -14,6 +14,7 @@
 //! so `overseerd-config`'s re-export of `ConfigProperties` is all the override needs.)
 
 use serde::Deserialize;
+use std::fmt;
 
 use overseerd_macros::config;
 
@@ -33,15 +34,138 @@ pub struct ServerConfig {
 /// config subtree and injected as [`Cfg<LoggingConfig>`](overseerd_config::Cfg).
 #[config(overseerd = ::overseerd_config)]
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LoggingConfig {
     /// An `EnvFilter`-style level directive (e.g. `"info"`, `"app=debug,info"`).
+    #[default = "info"]
     pub level: String,
 
-    /// The output format: `"full"`, `"compact"`, `"pretty"`, or `"json"`.
-    pub format: String,
+    /// The formatter used for tracing output.
+    #[default = "full"]
+    pub format: LogFormat,
 
     /// Whether to colorize the output with ANSI escape codes.
+    #[default = "true"]
     pub ansi: bool,
+
+    /// Span lifecycle events emitted by the formatter.
+    #[serde(default)]
+    pub span_events: SpanEvents,
+
+    /// Whether event targets are included in formatted output.
+    #[serde(default = "default_true")]
+    pub target: bool,
+
+    /// Whether event levels are included in formatted output.
+    #[serde(default = "default_true")]
+    pub level_display: bool,
+
+    /// Whether thread IDs are included in formatted output.
+    #[serde(default)]
+    pub thread_ids: bool,
+
+    /// Whether thread names are included in formatted output.
+    #[serde(default)]
+    pub thread_names: bool,
+
+    /// Whether source file paths are included in formatted output.
+    #[serde(default)]
+    pub file: bool,
+
+    /// Whether source line numbers are included in formatted output.
+    #[serde(default)]
+    pub line_number: bool,
+
+    /// Whether JSON output flattens event fields into the root object.
+    #[serde(default)]
+    pub flatten_event: bool,
+
+    /// Whether JSON output includes the current span and span list.
+    #[serde(default = "default_true")]
+    pub current_span: bool,
+}
+
+impl LoggingConfig {
+    /// Creates logging settings with the requested filter and default formatter options.
+    pub fn new(level: impl Into<String>) -> Self {
+        Self {
+            level: level.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Selects the formatter output style.
+    pub fn with_format(mut self, format: LogFormat) -> Self {
+        self.format = format;
+
+        self
+    }
+
+    /// Controls ANSI color output.
+    pub fn with_ansi(mut self, ansi: bool) -> Self {
+        self.ansi = ansi;
+
+        self
+    }
+
+    /// Selects synthetic span lifecycle events.
+    pub fn with_span_events(mut self, span_events: SpanEvents) -> Self {
+        self.span_events = span_events;
+
+        self
+    }
+}
+
+/// Formatter used for tracing output.
+#[derive(Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum LogFormat {
+    /// Standard human-readable event output.
+    #[default]
+    Full,
+    /// Condensed human-readable event output.
+    Compact,
+    /// Multi-line human-readable event output.
+    Pretty,
+    /// Structured JSON event output.
+    Json,
+}
+
+impl fmt::Display for LogFormat {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            Self::Full => "full",
+            Self::Compact => "compact",
+            Self::Pretty => "pretty",
+            Self::Json => "json",
+        };
+
+        formatter.write_str(value)
+    }
+}
+
+/// Span lifecycle events emitted by tracing formatters.
+#[derive(Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SpanEvents {
+    /// Do not synthesize span lifecycle events.
+    #[default]
+    None,
+    /// Emit an event when each span is created.
+    New,
+    /// Emit an event whenever a span is entered.
+    Enter,
+    /// Emit an event whenever a span is exited.
+    Exit,
+    /// Emit an event when each span closes.
+    Close,
+    /// Emit enter and exit events.
+    Active,
+    /// Emit new, enter, exit, and close events.
+    Full,
 }
 
 impl Default for ServerConfig {
@@ -57,8 +181,21 @@ impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
             level: "info".to_string(),
-            format: "full".to_string(),
+            format: LogFormat::Full,
             ansi: true,
+            span_events: SpanEvents::None,
+            target: true,
+            level_display: true,
+            thread_ids: false,
+            thread_names: false,
+            file: false,
+            line_number: false,
+            flatten_event: false,
+            current_span: true,
         }
     }
+}
+
+const fn default_true() -> bool {
+    true
 }

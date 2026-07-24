@@ -164,8 +164,63 @@ impl<F: Format> ConfigManager<F> {
     /// skipped; a malformed one is an error.
     #[instrument(target = "overseerd::config", level = "debug", skip(dir, profiles), fields(dir = %dir.display()))]
     pub fn load_in(dir: &Path, profiles: &[String]) -> Result<Self, ConfigError> {
-        let parsers = F::parsers();
         let active = resolve_profiles(profiles);
+
+        Self::load_in_profiles(dir, &active)
+    }
+
+    /// Loads base and profile files from `dir` without consulting `OVERSEERD_PROFILES`.
+    ///
+    /// This is the deterministic counterpart to [`load_in`](Self::load_in) used when a
+    /// higher-precedence caller, such as the generated CLI, supplied the complete profile list.
+    pub fn load_in_explicit(dir: &Path, profiles: &[String]) -> Result<Self, ConfigError> {
+        Self::load_in_profiles(dir, profiles)
+    }
+
+    /// Loads one exact base file followed by sibling `<stem>-<profile>.<ext>` overlays.
+    ///
+    /// The base file is required. Missing profile files are skipped, and the selected file
+    /// extension must be supported by this manager's format.
+    pub fn load_file(path: &Path, profiles: &[String]) -> Result<Self, ConfigError> {
+        let parsers = F::parsers();
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        let stem = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .ok_or_else(|| ConfigError::UnsupportedFormat {
+                path: path.to_path_buf(),
+            })?;
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .ok_or_else(|| ConfigError::UnsupportedFormat {
+                path: path.to_path_buf(),
+            })?;
+        let parser = parser_for(path, &parsers)?;
+        let mut root = ConfigValue::Table(Vec::new());
+        let mut sources = Vec::new();
+
+        merge_required_file(&mut root, path, parser)?;
+        sources.push(path.to_path_buf());
+
+        for profile in profiles {
+            let profile_path = parent.join(format!("{stem}-{profile}.{extension}"));
+
+            if !profile_path.exists() {
+                trace!(target: "overseerd::config", path = %profile_path.display(), "config profile absent, skipping");
+
+                continue;
+            }
+
+            merge_required_file(&mut root, &profile_path, parser)?;
+            sources.push(profile_path);
+        }
+
+        Ok(Self::wrap(root, sources))
+    }
+
+    fn load_in_profiles(dir: &Path, active: &[String]) -> Result<Self, ConfigError> {
+        let parsers = F::parsers();
 
         let mut root = ConfigValue::Table(Vec::new());
         let mut sources = Vec::new();
@@ -174,7 +229,7 @@ impl<F: Format> ConfigManager<F> {
 
         merge_stem(&mut root, dir, "application", &parsers, &mut sources)?;
 
-        for profile in &active {
+        for profile in active {
             let stem = format!("application-{profile}");
 
             merge_stem(&mut root, dir, &stem, &parsers, &mut sources)?;
@@ -607,6 +662,37 @@ fn merge_file(
     Ok(())
 }
 
+fn parser_for(path: &Path, parsers: &[(&'static str, Parser)]) -> Result<Parser, ConfigError> {
+    let extension = path.extension().and_then(|extension| extension.to_str());
+
+    parsers
+        .iter()
+        .find(|(candidate, _)| Some(*candidate) == extension)
+        .map(|(_, parser)| *parser)
+        .ok_or_else(|| ConfigError::UnsupportedFormat {
+            path: path.to_path_buf(),
+        })
+}
+
+fn merge_required_file(
+    root: &mut ConfigValue,
+    path: &Path,
+    parser: Parser,
+) -> Result<(), ConfigError> {
+    let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let parsed = parser(&text).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })?;
+
+    merge_into(root, parsed);
+
+    Ok(())
+}
+
 /// Navigates a dotted `path` through `root`, creating an empty table for each missing
 /// segment, and returns a mutable reference to the node at that path. Returns `None` if a
 /// segment traverses a non-table (a conflicting scalar/array already occupies the path).
@@ -709,3 +795,6 @@ fn merge_into(base: &mut ConfigValue, overlay: ConfigValue) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

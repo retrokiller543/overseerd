@@ -12,15 +12,32 @@
 pub mod app;
 pub mod builtins;
 pub mod error;
+pub mod host;
 pub mod lifecycle;
 pub mod protocol;
 pub mod registry;
 pub mod runtime;
 
-pub use app::{App, AppBuilder};
-pub use builtins::{LoggingConfig, ServerConfig};
+pub use app::{App, AppBuilder, PreparedApp};
+pub use builtins::{LogFormat, LoggingConfig, ServerConfig, SpanEvents};
 pub use error::{Error, Result};
+pub use host::{
+    AppHost, AppStage, BootstrapContext, Built, ExecutionMode, HostError, Initial, LifecyclePhase,
+    PhaseError, PreBuild, Setup, build_host, build_host_context, build_prepared_host, prepare_host,
+    prepare_host_context, prepare_setup_host_context, resolve_host_dependency, serve_host,
+    setup_host, setup_host_context,
+};
+#[cfg(feature = "cli")]
+pub use host::{
+    BootstrapError, BootstrapOptions, BootstrapPolicy, BootstrapState, CliCommand,
+    CliDefinitionError, CliError, ColorChoice, CommandContext, CommandContextError, CommandError,
+    CommandPhase, bootstrap_application, bootstrap_application_with_policy,
+    configure_bootstrap_config, configure_bootstrap_directories, finalize_bootstrap, validate_cli,
+};
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
-pub use protocol::{Plugin, Protocol, ProtocolPlugin, Serve};
+pub use protocol::{Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve, ValidationContext};
 pub use registry::AppRegistry;
 pub use runtime::AppRuntime;
+
+#[cfg(feature = "cli")]
+pub use clap;

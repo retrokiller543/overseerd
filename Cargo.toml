@@ -29,12 +29,12 @@ overseerd-dirs = { path = "crates/dirs", version = "0.20.0" }
 overseerd-hooks = { path = "crates/hooks", version = "0.20.0" }
 overseerd-jobs = { path = "crates/jobs", version = "0.20.0" }
 overseerd-jobs-macros = { path = "crates/jobs-macros", version = "0.20.0" }
-overseerd-app = { path = "crates/app", version = "0.20.0" }
+overseerd-app = { path = "crates/app", version = "0.20.0", default-features = false }
 overseerd-build = { path = "crates/overseerd-build", version = "0.20.0" }
 overseerd-client = { path = "crates/client", version = "0.20.0" }
 overseerd-rpc = { path = "crates/rpc", version = "0.20.0" }
-overseerd-macros = { path = "crates/macros", version = "0.20.0" }
-overseerd-macros-core = { path = "crates/macros-core", version = "0.20.0" }
+overseerd-macros = { path = "crates/macros", version = "0.20.0", default-features = false }
+overseerd-macros-core = { path = "crates/macros-core", version = "0.20.0", default-features = false }
 overseerd-rpc-macros = { path = "crates/rpc-macros", version = "0.20.0" }
 overseerd-transport = { path = "crates/transport", version = "0.20.0" }
 overseerd-axum = { path = "crates/axum", version = "0.20.0" }
@@ -45,6 +45,7 @@ overseerd-axum-stomp = { path = "crates/axum-stomp", version = "0.20.0" }
 # Common dependencies
 arc-swap = "1.9.1"
 bitflags = "2"
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context", "suggestions", "color"] }
 # The axum HTTP protocol. No TLS feature is enabled, keeping `openssl`/`rsa` out of the
 # dependency tree (project rule); terminate TLS at a reverse proxy instead.
 axum = "0.8"
@@ -140,7 +141,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = ["di-check"]
+default = ["cli", "di-check"]
+
+# Generate the standard application CLI and process runner for named app definitions.
+cli = ["dep:clap", "overseerd-app/cli", "overseerd-macros/cli", "overseerd-jobs?/cli"]
 
 # Re-export the native RPC daemon through the facade for convenience. The protocol crate owns
 # its own macros; the facade just enables its `facade` feature (so its codegen roots at
@@ -271,6 +275,7 @@ serde = { workspace = true }
 # hooks, the RPC daemon, and tokio. A browser client needs none of these, and several do not build
 # for wasm (linkme, `directories`, `notify`, tokio net), so they are compiled out there.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+clap = { workspace = true, optional = true }
 overseerd-core = { workspace = true }
 overseerd-di = { workspace = true }
 overseerd-hooks = { workspace = true }

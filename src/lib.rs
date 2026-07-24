@@ -86,8 +86,21 @@ pub use overseerd_config::{
 // ---------------------------------------------------------------------------
 #[cfg(not(target_family = "wasm"))]
 pub use overseerd_app::{
-    App, AppBuilder, AppRegistry, AppRuntime, LoggingConfig, Plugin, Protocol, ProtocolPlugin,
-    Serve, ServerConfig, ShutdownHandle, ShutdownSignal,
+    App, AppBuilder, AppHost, AppRegistry, AppRuntime, AppStage, BootstrapContext, Built,
+    ExecutionMode, HostError, Initial, LifecyclePhase, LogFormat, LoggingConfig, PhaseError,
+    Plugin, PreBuild, PreBuildContext, PreparedApp, Protocol, ProtocolPlugin, Serve, ServerConfig,
+    Setup, ShutdownHandle, ShutdownSignal, SpanEvents, ValidationContext, build_host,
+    build_host_context, build_prepared_host, prepare_host, prepare_host_context,
+    prepare_setup_host_context, resolve_host_dependency, serve_host, setup_host,
+    setup_host_context,
+};
+
+#[cfg(all(not(target_family = "wasm"), feature = "cli"))]
+pub use overseerd_app::{
+    BootstrapError, BootstrapOptions, BootstrapPolicy, BootstrapState, CliCommand,
+    CliDefinitionError, CliError, ColorChoice, CommandContext, CommandContextError, CommandError,
+    CommandPhase, bootstrap_application, bootstrap_application_with_policy, clap,
+    configure_bootstrap_config, configure_bootstrap_directories, finalize_bootstrap, validate_cli,
 };
 
 // The generic `App<P>` / `AppBuilder<P>` are at the root (protocol-agnostic core); the `app!`
@@ -355,6 +368,9 @@ pub mod prelude {
         DirectoriesManager, Fresh, FreshFromContainer, Injectable, Lazy, Plugin, Protocol,
         ProtocolPlugin, RuntimeDescriptor, Scope, Serve, ServiceComponent,
     };
+
+    #[cfg(all(not(target_family = "wasm"), feature = "cli"))]
+    pub use crate::{CliCommand, CommandContext, CommandPhase};
 }
 
 #[cfg(test)]

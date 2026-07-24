@@ -101,12 +101,14 @@ jobs:
       - *cache
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
       - name: cargo check workspace
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
         run: cargo check --workspace --all-targets --all-features --locked
-      - name: cargo test workspace
+      - name: cargo nextest run
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
-        run: cargo test --workspace --all-features --locked
+        run: cargo nextest run --workspace --all-features --locked
 
   # The axum client is intentionally transport-generic on wasm. Check both the backend-free SDK
   # surface and the default browser fetch backend so optional dependency and capability bounds do

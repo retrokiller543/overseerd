@@ -198,43 +198,160 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
     overseerd_macros_core::methods(attr.into(), item.into()).into()
 }
 
-/// Assembles an app and validates it from one declaration.
+/// Defines a reusable application host and its configured builder.
 ///
 /// ```ignore
-/// // Built earlier in `main`, so their values can also configure the transport.
-/// let config = ConfigManager::<Toml>::load_in(&dirs.dir(), &[])?;
-///
-/// let app = app! {
-///     name: "example-daemon",
-///     services: [Notifications, Echo],
-///     configs: [ DbConfig => "app.db.reader", DbConfig => "app.db.writer" ],
-///     managers: {
-///         config: config,        // hand in a pre-built `ConfigManager`
-///         directories: dirs,     // hand in a pre-built `DirectoriesManager`
-///     },
+/// app! {
+///     pub app Example {
+///         name: "example-daemon",
+///         protocol: overseerd::daemon::RpcPlugin,
+///         services: [Notifications, Echo],
+///         configs: [DbConfig => "app.db.reader", DbConfig => "app.db.writer"],
+///     }
 /// }
-/// .build()
-/// .await?;
+///
+/// let built = Example::new(ExecutionMode::Run).build().await?;
+/// let app = built.app();
 /// ```
 ///
-/// Expands to an `AppBuilder` — `App::builder(name).auto_discover()`, a
-/// `with_component(..)` for each listed instance, a `config::<T>(path)` for each
-/// `configs` entry (`Type => "property.path"`), and `config_source`/`directories`
-/// for any `managers` entries — so it is what you use in `main`.
+/// Named applications are compile-time lifecycle state machines. `Example` defaults to
+/// `Example<Initial>`; consuming transitions produce `Example<Setup>`, `Example<PreBuild>`, and
+/// `Example<Built>`. Each stage exposes only valid operations. Initial and intermediate stages
+/// also provide explicit fast-forward transitions that still execute every skipped phase in order:
+///
+/// - `Initial` stores only `ExecutionMode`; no CLI state, directories, config, builder, DI
+///   components, runtime, or protocol have been created.
+/// - `Setup` stores `BootstrapContext`; the setup hook and tracing finalization have completed, but
+///   no builder has been prepared or validated.
+/// - `PreBuild` stores `BootstrapContext` and `PreparedApp`; bootstrap managers were applied,
+///   configure hooks ran, directories and config were resolved, protocol/framework descriptors
+///   were registered, the graph and scopes were validated, and construction plans were computed.
+///   Ordinary components, the root container, runtime, and protocol have not been constructed.
+/// - `Built` stores `BootstrapContext` and `App`; singleton components and the root container were
+///   constructed, hooks and the root resolver were attached, the runtime and protocol were
+///   finalized, and `after_build` ran. Serving and startup hooks have not started.
+///
+/// ```ignore
+/// let setup = Example::new(ExecutionMode::Run).setup().await?;
+/// let prepared = setup.prepare().await?;
+/// let built = prepared.build().await?;
+/// built.serve().await?;
+///
+/// // Explicitly runs setup, prepare, build, then serve.
+/// Example::new(ExecutionMode::Run).serve().await?;
+/// ```
+///
+/// The generated initial stage implements `AppHost`, so custom runtimes can drive the public
+/// generic `setup_host`, `prepare_host`, and `build_host` utilities or consume the stage-owned
+/// `BootstrapContext`, `PreparedApp`, and built `App` through `into_parts()`.
+///
+/// With the default `cli` feature, a named app declaring `serve` or application commands also
+/// generates native Clap `ExampleCli`/`ExampleCommand` types and
+/// `Example::run()`/`run_with(args)`. The application must declare a direct `clap` dependency with
+/// its `derive` feature so command types can derive `clap::Args`:
+///
+/// ```toml
+/// clap = { version = "4", features = ["derive"] }
+/// ```
+///
+/// A thin binary can then delegate to the generated host:
+///
+/// ```ignore
+/// #[tokio::main]
+/// async fn main() -> Result<(), overseerd::CliError> {
+///     Example::run().await
+/// }
+/// ```
+///
+/// Command-local arguments live on command types implementing `CliCommand<Example>`. Nested
+/// command blocks generate native intermediate Clap `Subcommand` enums, while a separate `args`
+/// block flattens shared argument groups into the generated parser and stores them by type in the
+/// command's `BootstrapContext`. Fields that must also parse after a subcommand use Clap's
+/// `#[arg(global = true)]` setting:
+///
+/// ```ignore
+/// #[derive(clap::Args)]
+/// struct MigrateCommand {
+///     #[arg(long)]
+///     dry_run: bool,
+/// }
+///
+/// #[derive(clap::Args)]
+/// struct OutputArgs {
+///     #[arg(long, global = true)]
+///     format: Option<String>,
+/// }
+///
+/// impl CliCommand<Example> for MigrateCommand {
+///     type Error = MigrationError;
+///
+///     fn phase(&self) -> CommandPhase {
+///         CommandPhase::Built
+///     }
+///
+///     async fn run(
+///         &self,
+///         context: CommandContext<Example>,
+///     ) -> Result<(), Self::Error> {
+///         let app = context.app().expect("built command context");
+///         // Resolve migration dependencies from `app.container()`.
+///         Ok(())
+///     }
+/// }
+///
+/// app! {
+///     app Example {
+///         name: "example-daemon",
+///         protocol: RpcPlugin,
+///         args: { output: OutputArgs },
+///         commands: {
+///             #[command(alias = "db", display_order = 10)]
+///             migrate: MigrateCommand,
+///             api: { users: { list: ListUsersCommand } },
+///         },
+///     }
+/// }
+/// ```
+///
+/// Inline `serve` phases may request typed DI dependencies after the explicit context and app
+/// parameters. Each additional typed parameter is resolved from the built root container before
+/// the phase body runs:
+///
+/// ```ignore
+/// serve(context, app, server: Cfg<ServerConfig>) {
+///     let transport = TcpTransport::bind((server.bind.as_str(), server.port)).await?;
+///     app.serve(transport).await
+/// }
+/// ```
+///
+/// Command entries accept native non-structural `#[command(...)]` metadata such as aliases,
+/// visibility, display order, help text, usage customization, and local parser behavior. Settings
+/// that replace or flatten generated variants are rejected because they would bypass typed
+/// dispatch. When the generated host is public, its command and argument types must be at least as
+/// visible as the host because they appear in the generated public parser enums.
+///
+/// The generated host's fallible `builder()` creates an `AppBuilder` from the declaration:
+/// `App::builder(name).auto_discover()`, a `with_component(..)` for each listed
+/// instance, a `config::<T>(path)` for each `configs` entry (`Type =>
+/// "property.path"`), and `config_source`/`directories` for any `managers` entries. It returns
+/// a `Result` because loading a directory-backed configuration manager can fail.
 ///
 /// - `configs` binds the same config type at several property paths; a type with a
 ///   baked-in `#[config(path = "..")]` auto-registers and needs no entry.
 /// - `managers` hands in instances built earlier in `main`: `config: <binding>` a
-///   [`ConfigManager`](overseerd_core::ConfigManager), `directories: <binding>` a
-///   [`DirectoriesManager`](overseerd_core::DirectoriesManager). Both are optional —
+///   `ConfigManager`, `directories: <binding>` a `DirectoriesManager`. Both are optional —
 ///   omitted, the builder constructs defaults (config loaded from the `Dir<Config>`
 ///   directory, directories derived from the app name).
 ///
 /// The listed `services` are additionally required to be
-/// [`Wired`](overseerd_core::Wired) under the `di-check` feature, asserting their
+/// `Wired` under the `di-check` feature, asserting their
 /// whole dependency graph (including trait-object and `#[service]` field
 /// dependencies, across crates) at compile time. The same declaration that wires the
 /// app validates it — there is no separate list to maintain.
+///
+/// The expression-oriented form remains temporarily available during the 1.0 migration.
+/// New applications should use a named definition; custom/local-value assembly should call
+/// `App::<P>::builder(..)` directly.
 #[proc_macro]
 pub fn app(input: TokenStream) -> TokenStream {
     overseerd_macros_core::app(input.into()).into()

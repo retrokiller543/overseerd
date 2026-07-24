@@ -115,11 +115,7 @@ async fn main() -> overseerd::daemon::Result<()> {
     // framework subscriber and layers a bounded in-memory capture sink onto it, driven by
     // config. The returned sink is handed to the scheduler below. (`init_tracing` returns a
     // no-op sink instead when `JobLogConfig::enabled` is false.)
-    let logging = LoggingConfig {
-        level: "info,overseerd=debug".to_string(),
-        format: "full".to_string(),
-        ansi: true,
-    };
+    let logging = LoggingConfig::new("info,overseerd=debug");
     let log_sink = init_tracing(&logging, JobLogConfig::default()).expect("install tracing");
 
     // Bind no config files — this example needs none.
