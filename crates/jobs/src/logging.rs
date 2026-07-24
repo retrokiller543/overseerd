@@ -9,6 +9,8 @@
 
 use std::sync::Arc;
 
+#[cfg(feature = "cli")]
+use overseerd_app::BootstrapContext;
 use overseerd_app::builtins::{
     BoxedLayer, InitTracingError, LoggingConfig, init_tracing_with_layers,
 };
@@ -48,4 +50,29 @@ pub fn init_tracing(
     init_tracing_with_layers(config, vec![layer])?;
 
     Ok(sink)
+}
+
+/// Adds per-run job log capture to generated CLI bootstrap before tracing is installed.
+///
+/// Call this from the app's `setup` phase. Generated bootstrap installs the formatting layer and
+/// all contributed extension layers after setup returns.
+#[cfg(feature = "cli")]
+pub fn configure_bootstrap_tracing(
+    context: &mut BootstrapContext,
+    job_log: JobLogConfig,
+) -> Arc<dyn JobLogSink> {
+    if !job_log.enabled {
+        return Arc::new(NoopJobLogStore);
+    }
+
+    let capture_level = job_log.capture_level;
+    let store = Arc::new(InMemoryJobLogStore::new(job_log));
+    let sink: Arc<dyn JobLogSink> = store;
+    let layer: BoxedLayer = Box::new(JobLogLayer::new(Arc::clone(&sink), capture_level));
+
+    if let Some(bootstrap) = context.bootstrap_mut() {
+        bootstrap.add_tracing_layer(layer);
+    }
+
+    sink
 }

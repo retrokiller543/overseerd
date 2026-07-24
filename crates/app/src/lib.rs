@@ -24,8 +24,9 @@ pub use error::{Error, Result};
 pub use host::{AppHost, BootstrapContext, ExecutionMode, HostError, LifecyclePhase, PhaseError};
 #[cfg(feature = "cli")]
 pub use host::{
-    BootstrapError, BootstrapOptions, BootstrapState, CliError, ColorChoice, bootstrap_application,
-    configure_bootstrap,
+    BootstrapError, BootstrapOptions, BootstrapPolicy, BootstrapState, CliError, ColorChoice,
+    bootstrap_application, bootstrap_application_with_policy, configure_bootstrap_config,
+    configure_bootstrap_directories, finalize_bootstrap,
 };
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use protocol::{Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve, ValidationContext};

@@ -3,7 +3,10 @@ use std::error::Error as _;
 use super::{BootstrapContext, ExecutionMode, LifecyclePhase, PhaseError};
 
 #[cfg(feature = "cli")]
-use super::{BootstrapEnvironment, BootstrapOptions, ColorChoice, bootstrap_application_with_env};
+use super::{
+    BootstrapEnvironment, BootstrapOptions, BootstrapPolicy, ColorChoice,
+    bootstrap_application_with_env,
+};
 
 #[cfg(feature = "cli")]
 use crate::LogFormat;
@@ -155,12 +158,14 @@ fn bootstrap_cli_values_override_environment_and_profile_config() {
         log_format: Some(String::from("pretty")),
         no_color: true,
         color_force: None,
+        stdout_terminal: false,
     };
 
     let context = bootstrap_application_with_env(
         "bootstrap-precedence-test",
         ExecutionMode::Tooling,
         options,
+        BootstrapPolicy::default(),
         environment,
     )
     .expect("bootstrap resolves");
@@ -213,12 +218,14 @@ fn bootstrap_uses_environment_when_cli_values_are_absent() {
         log_format: Some(String::from("pretty")),
         no_color: true,
         color_force: Some(String::from("1")),
+        stdout_terminal: true,
     };
 
     let context = bootstrap_application_with_env(
         "bootstrap-environment-test",
         ExecutionMode::Tooling,
         options,
+        BootstrapPolicy::default(),
         environment,
     )
     .expect("bootstrap resolves");
@@ -231,4 +238,150 @@ fn bootstrap_uses_environment_when_cli_values_are_absent() {
     assert_eq!(state.color(), ColorChoice::Never);
 
     std::fs::remove_dir_all(directory).expect("remove config directory");
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn bootstrap_auto_color_follows_terminal_capability() {
+    let directory = std::env::temp_dir().join(format!(
+        "overseerd-bootstrap-terminal-{}",
+        std::process::id()
+    ));
+    let config = directory.join("application.toml");
+
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).expect("create config directory");
+    std::fs::write(&config, "").expect("write base config");
+
+    for (terminal, ansi) in [(false, false), (true, true)] {
+        let options = BootstrapOptions {
+            config: Some(config.clone()),
+            profiles: Vec::new(),
+            log: None,
+            log_format: None,
+            color: Some(ColorChoice::Auto),
+        };
+        let environment = BootstrapEnvironment {
+            stdout_terminal: terminal,
+            ..BootstrapEnvironment::default()
+        };
+        let context = bootstrap_application_with_env(
+            "bootstrap-terminal-test",
+            ExecutionMode::Tooling,
+            options,
+            BootstrapPolicy::default(),
+            environment,
+        )
+        .expect("bootstrap resolves");
+
+        assert_eq!(
+            context
+                .bootstrap()
+                .expect("bootstrap state exists")
+                .logging()
+                .ansi,
+            ansi
+        );
+    }
+
+    std::fs::remove_dir_all(directory).expect("remove config directory");
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn bootstrap_treats_existing_dotted_path_as_directory() {
+    let directory = std::env::temp_dir().join(format!(
+        "overseerd-bootstrap-directory-{}.d",
+        std::process::id()
+    ));
+
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).expect("create dotted config directory");
+    std::fs::write(directory.join("application.toml"), "").expect("write base config");
+
+    let options = BootstrapOptions {
+        config: Some(directory.clone()),
+        profiles: Vec::new(),
+        log: None,
+        log_format: None,
+        color: None,
+    };
+    let context = bootstrap_application_with_env(
+        "bootstrap-dotted-directory-test",
+        ExecutionMode::Tooling,
+        options,
+        BootstrapPolicy::default(),
+        BootstrapEnvironment::default(),
+    )
+    .expect("dotted directory loads");
+
+    assert_eq!(
+        context
+            .bootstrap()
+            .expect("bootstrap state exists")
+            .config_path(),
+        directory
+    );
+
+    std::fs::remove_dir_all(directory).expect("remove config directory");
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn bootstrap_rejects_missing_explicit_config_path() {
+    let path = std::env::temp_dir().join(format!(
+        "overseerd-bootstrap-missing-{}.toml",
+        std::process::id()
+    ));
+    let options = BootstrapOptions {
+        config: Some(path.clone()),
+        profiles: Vec::new(),
+        log: None,
+        log_format: None,
+        color: None,
+    };
+    let result = bootstrap_application_with_env(
+        "bootstrap-missing-path-test",
+        ExecutionMode::Tooling,
+        options,
+        BootstrapPolicy::default(),
+        BootstrapEnvironment::default(),
+    );
+    let error = match result {
+        Ok(_) => panic!("missing explicit config path was accepted"),
+        Err(error) => error,
+    };
+
+    assert!(
+        matches!(error, super::BootstrapError::MissingConfigPath { path: error_path } if error_path == path)
+    );
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn declaration_owned_config_skips_generated_config_loading() {
+    let path = std::env::temp_dir().join(format!(
+        "overseerd-bootstrap-ignored-{}.toml",
+        std::process::id()
+    ));
+    let options = BootstrapOptions {
+        config: Some(path.clone()),
+        profiles: Vec::new(),
+        log: Some(String::from("debug")),
+        log_format: None,
+        color: None,
+    };
+    let context = bootstrap_application_with_env(
+        "bootstrap-declaration-config-test",
+        ExecutionMode::Tooling,
+        options,
+        BootstrapPolicy::new(false, false),
+        BootstrapEnvironment::default(),
+    )
+    .expect("declaration-owned config bypasses generated loading");
+    let state = context.bootstrap().expect("bootstrap state exists");
+
+    assert_eq!(state.config_path(), path);
+    assert!(state.directories().is_none());
+    assert_eq!(state.logging().level, "debug");
 }
