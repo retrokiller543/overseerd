@@ -4,11 +4,7 @@ use super::{ConfigManager, Toml};
 use crate::managed::ConfigError;
 
 fn temp_config_dir(test: &str) -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "overseerd-config-{test}-{}-{}",
-        std::process::id(),
-        std::thread::current().name().unwrap_or("test")
-    ));
+    let path = std::env::temp_dir().join(format!("overseerd-config-{test}-{}", std::process::id()));
 
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).expect("create temporary config directory");

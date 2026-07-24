@@ -560,6 +560,12 @@ fn expand_named(input: NamedApp) -> TokenStream {
             let builder = #configure_bootstrap_config(&mut context, builder);
         }
     });
+    let bootstrap_finalize = cfg!(feature = "cli").then(|| {
+        quote! {
+            #finalize_bootstrap(&mut context)
+                .map_err(|source| #phase_error::new(#lifecycle_phase::Setup, source))?;
+        }
+    });
     let cli = if cfg!(feature = "cli") && phases.serve.is_some() {
         let Some(cli_application_name) = cli_application_name else {
             return syn::Error::new_spanned(
@@ -682,8 +688,7 @@ fn expand_named(input: NamedApp) -> TokenStream {
                 context: #bootstrap_context,
             ) -> ::core::result::Result<(#bootstrap_context, #prepared_app<#protocol>), #phase_error> {
                 let mut context = Self::__overseerd_setup_context(context).await?;
-                #finalize_bootstrap(&mut context)
-                    .map_err(|source| #phase_error::new(#lifecycle_phase::Setup, source))?;
+                #bootstrap_finalize
                 let builder = Self::builder()
                     .map_err(|source| #phase_error::new(#lifecycle_phase::Configure, source))?;
                 #bootstrap_directories
