@@ -469,6 +469,17 @@ fn expand_named(input: NamedApp) -> TokenStream {
     } = input;
     let phases = std::mem::take(&mut assembly.phases);
     let application_name = assembly.name.clone();
+    let cli_application_name = match &application_name {
+        Expr::Lit(expression) => match &expression.lit {
+            syn::Lit::Str(name) => Some(name.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    let has_config_manager = assembly.config_manager.is_some();
+    let has_directories_manager = assembly.directories_manager.is_some();
+    let bootstrap_owns_config = !has_config_manager;
+    let bootstrap_owns_directories = !has_directories_manager;
     let protocol = assembly.protocol.clone();
     let paths = Paths::overseerd().resolve(assembly.overseerd.clone(), assembly.krate.clone());
     let app_builder = paths.core("AppBuilder");
@@ -481,10 +492,13 @@ fn expand_named(input: NamedApp) -> TokenStream {
     let lifecycle_phase = paths.core("LifecyclePhase");
     let phase_error = paths.core("PhaseError");
     let prepared_app = paths.core("PreparedApp");
-    let bootstrap_application = paths.core("bootstrap_application");
+    let bootstrap_application_with_policy = paths.core("bootstrap_application_with_policy");
     let bootstrap_options = paths.core("BootstrapOptions");
+    let bootstrap_policy = paths.core("BootstrapPolicy");
     let cli_error = paths.core("CliError");
-    let configure_bootstrap = paths.core("configure_bootstrap");
+    let configure_bootstrap_config = paths.core("configure_bootstrap_config");
+    let configure_bootstrap_directories = paths.core("configure_bootstrap_directories");
+    let finalize_bootstrap = paths.core("finalize_bootstrap");
     let clap: Path = syn::parse_quote!(::clap);
     let builder = expand_builder(assembly);
     let setup_call = phase_result(
@@ -536,21 +550,31 @@ fn expand_named(input: NamedApp) -> TokenStream {
             }
         }
     });
-    let bootstrap_builder = if cfg!(feature = "cli") {
+    let bootstrap_directories = (cfg!(feature = "cli") && !has_directories_manager).then(|| {
         quote! {
-            let builder = #configure_bootstrap(&mut context, builder);
+            let builder = #configure_bootstrap_directories(&mut context, builder);
         }
-    } else {
-        TokenStream::new()
-    };
+    });
+    let bootstrap_config = (cfg!(feature = "cli") && !has_config_manager).then(|| {
+        quote! {
+            let builder = #configure_bootstrap_config(&mut context, builder);
+        }
+    });
     let cli = if cfg!(feature = "cli") && phases.serve.is_some() {
+        let Some(cli_application_name) = cli_application_name else {
+            return syn::Error::new_spanned(
+                application_name,
+                "named apps with `serve` require a string literal `name` for generated CLI metadata",
+            )
+            .to_compile_error();
+        };
         let cli_ident = format_ident!("{}Cli", ident);
         let command_ident = format_ident!("{}Command", ident);
 
         quote! {
             /// Generated application command line.
             #[derive(Debug, #clap::Parser)]
-            #[command(name = #application_name, version, about = env!("CARGO_PKG_DESCRIPTION"))]
+            #[command(name = #cli_application_name, version, about = env!("CARGO_PKG_DESCRIPTION"))]
             #visibility struct #cli_ident {
                 /// Framework bootstrap options.
                 #[command(flatten)]
@@ -571,7 +595,19 @@ fn expand_named(input: NamedApp) -> TokenStream {
             impl #ident {
                 /// Parses and dispatches process arguments.
                 pub async fn run() -> ::core::result::Result<(), #cli_error> {
-                    Self::run_with(::std::env::args_os()).await
+                    match Self::run_with(::std::env::args_os()).await {
+                        Err(#cli_error::Clap(error))
+                            if matches!(
+                                error.kind(),
+                                #clap::error::ErrorKind::DisplayHelp
+                                    | #clap::error::ErrorKind::DisplayVersion
+                            ) => {
+                                error.print()?;
+
+                                Ok(())
+                            }
+                        result => result,
+                    }
                 }
 
                 /// Parses and dispatches an explicit argument iterator without exiting.
@@ -587,10 +623,14 @@ fn expand_named(input: NamedApp) -> TokenStream {
 
                 /// Dispatches an already parsed generated CLI value.
                 pub async fn run_cli(cli: #cli_ident) -> ::core::result::Result<(), #cli_error> {
-                    let context = #bootstrap_application(
-                        #application_name,
+                    let context = #bootstrap_application_with_policy(
+                        #cli_application_name,
                         #execution_mode::Run,
                         cli.bootstrap,
+                        #bootstrap_policy::new(
+                            #bootstrap_owns_directories,
+                            #bootstrap_owns_config,
+                        ),
                     )?;
                     let (context, app) = Self::__overseerd_build_context(context).await?;
 
@@ -642,9 +682,12 @@ fn expand_named(input: NamedApp) -> TokenStream {
                 context: #bootstrap_context,
             ) -> ::core::result::Result<(#bootstrap_context, #prepared_app<#protocol>), #phase_error> {
                 let mut context = Self::__overseerd_setup_context(context).await?;
+                #finalize_bootstrap(&mut context)
+                    .map_err(|source| #phase_error::new(#lifecycle_phase::Setup, source))?;
                 let builder = Self::builder()
                     .map_err(|source| #phase_error::new(#lifecycle_phase::Configure, source))?;
-                #bootstrap_builder
+                #bootstrap_directories
+                #bootstrap_config
                 let builder = #configure_call;
                 let builder = #before_build_call;
                 let prepared = builder

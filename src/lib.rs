@@ -94,8 +94,9 @@ pub use overseerd_app::{
 
 #[cfg(all(not(target_family = "wasm"), feature = "cli"))]
 pub use overseerd_app::{
-    BootstrapError, BootstrapOptions, BootstrapState, CliError, ColorChoice, bootstrap_application,
-    clap, configure_bootstrap,
+    BootstrapError, BootstrapOptions, BootstrapPolicy, BootstrapState, CliError, ColorChoice,
+    bootstrap_application, bootstrap_application_with_policy, clap, configure_bootstrap_config,
+    configure_bootstrap_directories, finalize_bootstrap,
 };
 
 // The generic `App<P>` / `AppBuilder<P>` are at the root (protocol-agnostic core); the `app!`

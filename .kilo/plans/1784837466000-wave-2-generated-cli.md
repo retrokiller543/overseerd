@@ -129,6 +129,12 @@ Do not invent arbitrary environment-to-config-field mapping. Existing `${ENV}` p
 - Add a narrow public config-manager constructor/API for exact-file plus profile loading; do not expose raw tree mutation solely for CLI overrides.
 - CLI log/color overrides are bootstrap values and do not mutate the general config tree in `#144`. They are inserted into `BootstrapContext` and used for tracing. General typed config overlays may be designed later if command/plugin needs establish a concrete requirement.
 - Generated default setup passes the resolved directories and config manager into `Host::builder` configuration. Existing declaration-provided `managers` remain authoritative only when custom setup/configure paths explicitly use them; avoid loading two competing managers.
+- Explicit declaration `managers.directories` and `managers.config` are authoritative for their
+  corresponding builder fields. Generated bootstrap does not replace them; it still resolves
+  bootstrap metadata/logging for setup and CLI state.
+- Tracing installation occurs after custom setup returns. Setup/plugin helpers may contribute
+  `BoxedLayer` values to `BootstrapState`; generated finalization installs formatting, filtering,
+  and every contributed layer exactly once.
 
 ## PR `#144` Implementation Increments
 

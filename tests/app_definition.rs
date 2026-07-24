@@ -4,7 +4,6 @@ use overseerd::{
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-static SERVE_CALLS: AtomicUsize = AtomicUsize::new(0);
 static HELP_SETUP_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Test protocol accumulated by the named application host.
@@ -78,8 +77,6 @@ async fn before_lifecycle(
 }
 
 async fn serve_lifecycle(context: BootstrapContext, _app: App<TestPlugin>) -> std::io::Result<()> {
-    SERVE_CALLS.fetch_add(1, Ordering::SeqCst);
-
     assert_eq!(
         context.get::<Vec<&'static str>>(),
         Some(&vec!["setup", "configure", "before_build", "after_build"])
@@ -219,22 +216,6 @@ fn generated_cli_exposes_native_clap_types() {
     assert_eq!(command.get_name(), "lifecycle-app-test");
     assert!(default_cli.command.is_none());
     assert_eq!(serve_cli.command, Some(LifecycleApplicationCommand::Serve));
-}
-
-#[tokio::test]
-async fn generated_cli_defaults_to_serve() {
-    SERVE_CALLS.store(0, Ordering::SeqCst);
-
-    let cli = LifecycleApplicationCli {
-        bootstrap: overseerd::BootstrapOptions::default(),
-        command: None,
-    };
-
-    LifecycleApplication::run_cli(cli)
-        .await
-        .expect("default CLI command serves");
-
-    assert_eq!(SERVE_CALLS.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

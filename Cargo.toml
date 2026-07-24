@@ -144,7 +144,7 @@ categories.workspace = true
 default = ["cli", "di-check"]
 
 # Generate the standard application CLI and process runner for named app definitions.
-cli = ["dep:clap", "overseerd-app/cli", "overseerd-macros/cli"]
+cli = ["dep:clap", "overseerd-app/cli", "overseerd-macros/cli", "overseerd-jobs?/cli"]
 
 # Re-export the native RPC daemon through the facade for convenience. The protocol crate owns
 # its own macros; the facade just enables its `facade` feature (so its codegen roots at

@@ -12,6 +12,7 @@ categories.workspace = true
 
 [features]
 default = []
+cli = ["overseerd-app/cli"]
 di-check = [
     "overseerd-app/di-check",
     "overseerd-di/di-check",

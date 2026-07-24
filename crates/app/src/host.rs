@@ -4,6 +4,9 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt;
 
+#[cfg(feature = "cli")]
+use std::io::IsTerminal as _;
+
 use crate::{AppBuilder, ProtocolPlugin};
 
 #[cfg(feature = "cli")]
@@ -176,11 +179,13 @@ pub struct BootstrapState {
     options: BootstrapOptions,
     config_path: std::path::PathBuf,
     profiles: Vec<String>,
-    directories: DirectoriesManager,
+    directories: Option<DirectoriesManager>,
     config: Option<ConfigManager<Dynamic>>,
     logging: LoggingConfig,
     color: ColorChoice,
     tracing_installed: bool,
+    #[cfg(feature = "tracing-subscriber")]
+    tracing_layers: Vec<crate::builtins::BoxedLayer>,
 }
 
 #[cfg(feature = "cli")]
@@ -216,13 +221,19 @@ impl BootstrapState {
     }
 
     /// Resolved application directories.
-    pub fn directories(&self) -> &DirectoriesManager {
-        &self.directories
+    pub fn directories(&self) -> Option<&DirectoriesManager> {
+        self.directories.as_ref()
     }
 
     /// Moves the merged config manager into an application builder once.
     pub fn take_config(&mut self) -> Option<ConfigManager<Dynamic>> {
         self.config.take()
+    }
+
+    /// Adds a tracing layer before generated bootstrap installs the global subscriber.
+    #[cfg(feature = "tracing-subscriber")]
+    pub fn add_tracing_layer(&mut self, layer: crate::builtins::BoxedLayer) {
+        self.tracing_layers.push(layer);
     }
 }
 
@@ -243,6 +254,10 @@ pub enum BootstrapError {
     #[error("unknown log format '{value}', expected one of: full, compact, pretty, json")]
     LogFormat { value: String },
 
+    /// An explicit config path did not identify an existing file or directory.
+    #[error("explicit config path '{}' does not exist", .path.display())]
+    MissingConfigPath { path: std::path::PathBuf },
+
     /// The generated bootstrap could not install tracing.
     #[cfg(feature = "tracing-subscriber")]
     #[error(transparent)]
@@ -258,6 +273,7 @@ struct BootstrapEnvironment {
     log_format: Option<String>,
     no_color: bool,
     color_force: Option<String>,
+    stdout_terminal: bool,
 }
 
 #[cfg(feature = "cli")]
@@ -270,6 +286,7 @@ impl BootstrapEnvironment {
             log_format: std::env::var("OVERSEERD_LOG_FORMAT").ok(),
             no_color: std::env::var_os("NO_COLOR").is_some(),
             color_force: std::env::var("CLICOLOR_FORCE").ok(),
+            stdout_terminal: std::io::stdout().is_terminal(),
         }
     }
 }
@@ -281,19 +298,77 @@ pub fn bootstrap_application(
     mode: ExecutionMode,
     options: BootstrapOptions,
 ) -> Result<BootstrapContext, BootstrapError> {
-    bootstrap_application_with_env(application, mode, options, BootstrapEnvironment::capture())
+    bootstrap_application_with_policy(application, mode, options, BootstrapPolicy::default())
 }
 
-/// Applies generated bootstrap managers to a protocol-specific application builder.
+/// Resolves generated bootstrap with explicit declaration-manager ownership.
 #[cfg(feature = "cli")]
-pub fn configure_bootstrap<P: ProtocolPlugin>(
+pub fn bootstrap_application_with_policy(
+    application: &str,
+    mode: ExecutionMode,
+    options: BootstrapOptions,
+    policy: BootstrapPolicy,
+) -> Result<BootstrapContext, BootstrapError> {
+    bootstrap_application_with_env(
+        application,
+        mode,
+        options,
+        policy,
+        BootstrapEnvironment::capture(),
+    )
+}
+
+/// Selects which framework managers generated bootstrap owns.
+#[cfg(feature = "cli")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BootstrapPolicy {
+    directories: bool,
+    config: bool,
+}
+
+#[cfg(feature = "cli")]
+impl BootstrapPolicy {
+    /// Creates a policy from generated directory/config ownership flags.
+    pub const fn new(directories: bool, config: bool) -> Self {
+        Self {
+            directories,
+            config,
+        }
+    }
+}
+
+#[cfg(feature = "cli")]
+impl Default for BootstrapPolicy {
+    fn default() -> Self {
+        Self::new(true, true)
+    }
+}
+
+/// Applies generated bootstrap directories to a protocol-specific application builder.
+#[cfg(feature = "cli")]
+pub fn configure_bootstrap_directories<P: ProtocolPlugin>(
     context: &mut BootstrapContext,
     builder: AppBuilder<P>,
 ) -> AppBuilder<P> {
     let Some(state) = context.bootstrap_mut() else {
         return builder;
     };
-    let builder = builder.directories(state.directories().clone());
+
+    match state.directories().cloned() {
+        Some(directories) => builder.directories(directories),
+        None => builder,
+    }
+}
+
+/// Applies the generated bootstrap config source to a protocol-specific application builder.
+#[cfg(feature = "cli")]
+pub fn configure_bootstrap_config<P: ProtocolPlugin>(
+    context: &mut BootstrapContext,
+    builder: AppBuilder<P>,
+) -> AppBuilder<P> {
+    let Some(state) = context.bootstrap_mut() else {
+        return builder;
+    };
 
     match state.take_config() {
         Some(config) => builder.config_source(config),
@@ -301,30 +376,80 @@ pub fn configure_bootstrap<P: ProtocolPlugin>(
     }
 }
 
+/// Installs generated tracing after custom setup has contributed optional layers.
+#[cfg(feature = "cli")]
+pub fn finalize_bootstrap(context: &mut BootstrapContext) -> Result<(), BootstrapError> {
+    let mode = context.mode();
+    let Some(state) = context.bootstrap_mut() else {
+        return Ok(());
+    };
+
+    if !mode.is_run() || state.tracing_installed {
+        return Ok(());
+    }
+
+    #[cfg(feature = "tracing-subscriber")]
+    {
+        let layers = std::mem::take(&mut state.tracing_layers);
+
+        crate::builtins::logging::init_tracing_resolved(&state.logging, layers)?;
+        state.tracing_installed = true;
+    }
+
+    Ok(())
+}
+
 #[cfg(feature = "cli")]
 fn bootstrap_application_with_env(
     application: &str,
     mode: ExecutionMode,
     options: BootstrapOptions,
+    policy: BootstrapPolicy,
     environment: BootstrapEnvironment,
 ) -> Result<BootstrapContext, BootstrapError> {
-    let directories =
-        DirectoriesManager::try_for_app(application).map_err(BootstrapError::Directories)?;
-    let config_path = options
+    let directories = if policy.directories || policy.config {
+        Some(DirectoriesManager::try_for_app(application).map_err(BootstrapError::Directories)?)
+    } else {
+        None
+    };
+    let selected_config = options
         .config()
         .map(std::path::Path::to_path_buf)
-        .or_else(|| environment.config.as_ref().map(std::path::PathBuf::from))
-        .unwrap_or_else(|| directories.config_path());
+        .or_else(|| environment.config.as_ref().map(std::path::PathBuf::from));
+    let config_path = selected_config
+        .clone()
+        .or_else(|| directories.as_ref().map(DirectoriesManager::config_path))
+        .unwrap_or_default();
     let profiles = effective_profiles(&options, environment.profiles.as_deref());
-    let config = if config_path.is_file() || config_path.extension().is_some() {
-        ConfigManager::<Dynamic>::load_file(&config_path, &profiles)?
+    let config = if !policy.config {
+        None
+    } else if config_path.is_dir() || selected_config.is_none() {
+        Some(ConfigManager::<Dynamic>::load_in_explicit(
+            &config_path,
+            &profiles,
+        )?)
+    } else if config_path.is_file() {
+        Some(ConfigManager::<Dynamic>::load_file(
+            &config_path,
+            &profiles,
+        )?)
     } else {
-        ConfigManager::<Dynamic>::load_in_explicit(&config_path, &profiles)?
-    }
-    .with_directories(&directories)
-    .auto_discover()
-    .with_config::<LoggingConfig>("logging");
-    let mut logging = config.get_config::<LoggingConfig>("logging")?;
+        return Err(BootstrapError::MissingConfigPath { path: config_path });
+    };
+    let config = config.map(|config| {
+        let config = match &directories {
+            Some(directories) => config.with_directories(directories),
+            None => config,
+        };
+
+        config
+            .auto_discover()
+            .with_config::<LoggingConfig>("logging")
+    });
+    let mut logging = match &config {
+        Some(config) => config.get_config::<LoggingConfig>("logging")?,
+        None => LoggingConfig::default(),
+    };
 
     if let Some(filter) = options.log().or(environment.rust_log.as_deref()) {
         logging.level = filter.to_owned();
@@ -341,32 +466,20 @@ fn bootstrap_application_with_env(
     match color {
         ColorChoice::Always => logging.ansi = true,
         ColorChoice::Never => logging.ansi = false,
-        ColorChoice::Auto => {}
+        ColorChoice::Auto => logging.ansi = environment.stdout_terminal,
     }
-
-    let tracing_installed = if mode.is_run() {
-        #[cfg(feature = "tracing-subscriber")]
-        {
-            crate::builtins::logging::init_tracing_resolved(&logging)?;
-
-            true
-        }
-
-        #[cfg(not(feature = "tracing-subscriber"))]
-        false
-    } else {
-        false
-    };
 
     let state = BootstrapState {
         options,
         config_path,
         profiles,
         directories,
-        config: Some(config),
+        config,
         logging,
         color,
-        tracing_installed,
+        tracing_installed: false,
+        #[cfg(feature = "tracing-subscriber")]
+        tracing_layers: Vec::new(),
     };
     let mut context = BootstrapContext::new(mode);
 
@@ -486,6 +599,10 @@ pub enum CliError {
     /// Command-line arguments were invalid or requested early output such as help/version.
     #[error(transparent)]
     Clap(#[from] clap::Error),
+
+    /// Rendering process-facing help or version output failed.
+    #[error("failed to render command-line output: {0}")]
+    Output(#[from] std::io::Error),
 
     /// Framework bootstrap failed before the app lifecycle began.
     #[error(transparent)]

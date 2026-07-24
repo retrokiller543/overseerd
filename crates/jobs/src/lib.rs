@@ -140,6 +140,8 @@ pub use log::{
     InMemoryJobLogStore, JobLogConfig, JobLogLayer, JobLogLevel, JobLogRecord, JobLogSink,
     NoopJobLogStore,
 };
+#[cfg(all(feature = "cli", feature = "tracing-subscriber"))]
+pub use logging::configure_bootstrap_tracing;
 #[cfg(feature = "tracing-subscriber")]
 pub use logging::init_tracing;
 pub use metrics::JobMetrics;

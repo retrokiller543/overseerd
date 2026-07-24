@@ -46,12 +46,17 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), InitTracingError> {
     init_tracing_with_layers(config, Vec::new())
 }
 
-pub(crate) fn init_tracing_resolved(config: &LoggingConfig) -> Result<(), InitTracingError> {
+pub(crate) fn init_tracing_resolved(
+    config: &LoggingConfig,
+    extra: Vec<BoxedLayer>,
+) -> Result<(), InitTracingError> {
     let filter = EnvFilter::try_new(&config.level).map_err(|source| InitTracingError::Filter {
         filter: config.level.clone(),
         source,
     })?;
-    let layers = vec![fmt_layer(config)?];
+    let mut layers = vec![fmt_layer(config)?];
+
+    layers.extend(extra);
 
     Registry::default()
         .with(layers)

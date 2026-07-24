@@ -174,3 +174,38 @@ fn rejects_invalid_lifecycle_phase_forms() {
         .contains("`setup` expects 1 argument")
     );
 }
+
+#[test]
+fn generated_cli_requires_literal_application_name() {
+    let input = parse2::<AppInput>(quote! {
+        app DynamicName {
+            name: String::from("dynamic"),
+            protocol: Protocol,
+            serve = serve,
+        }
+    })
+    .expect("app syntax parses");
+    let output = expand(input).to_string();
+
+    assert!(output.contains("require a string literal `name`"));
+}
+
+#[test]
+fn generated_cli_preserves_explicit_manager_policy() {
+    let input = parse2::<AppInput>(quote! {
+        app ExplicitManagers {
+            name: "explicit-managers",
+            protocol: Protocol,
+            managers: {
+                directories: directories,
+                config: config,
+            },
+            serve = serve,
+        }
+    })
+    .expect("app syntax parses");
+    let output = expand(input).to_string();
+
+    assert!(!output.contains("configure_bootstrap_directories"));
+    assert!(!output.contains("configure_bootstrap_config"));
+}
