@@ -175,6 +175,7 @@ fn rejects_invalid_lifecycle_phase_forms() {
     );
 }
 
+#[cfg(feature = "cli")]
 #[test]
 fn generated_cli_requires_literal_application_name() {
     let input = parse2::<AppInput>(quote! {
@@ -208,4 +209,20 @@ fn generated_cli_preserves_explicit_manager_policy() {
 
     assert!(!output.contains("configure_bootstrap_directories"));
     assert!(!output.contains("configure_bootstrap_config"));
+}
+
+#[cfg(not(feature = "cli"))]
+#[test]
+fn named_app_without_cli_omits_bootstrap_helpers() {
+    let input = parse2::<AppInput>(quote! {
+        app NoCli {
+            name: "no-cli",
+            protocol: Protocol,
+        }
+    })
+    .expect("app syntax parses");
+    let output = expand(input).to_string();
+
+    assert!(!output.contains("finalize_bootstrap"));
+    assert!(!output.contains("configure_bootstrap"));
 }
