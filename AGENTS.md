@@ -36,3 +36,17 @@ Test modules always live in their own file, never inline in an impl file. For a 
 sibling `foo/tests.rs` (a `foo.rs` file may keep its `foo/tests.rs` submodule without becoming
 `foo/mod.rs`). This keeps impl files clean and avoids the `clippy::items_after_test_module` lint.
 Most modules with tests therefore gain a `<module>/tests.rs` file. 
+
+## Code organization
+
+- Apply the boy-scout rule when touching code: improve nearby structure rather than adding to an
+  already difficult file or function.
+- Treat files around 400 lines as a strong decomposition signal, not a hard limit. Split large files
+  into cohesive directory modules when practical.
+- Keep functions small enough to understand independently. Extract reusable logical steps instead of
+  extending long orchestration functions.
+- Put substantial feature-gated concerns in dedicated cfg-gated modules rather than scattering many
+  item-level `cfg` attributes through a large shared module.
+- When an issue is discovered outside the immediate change, fix it if the change is low-risk and can
+  be verified without regressions. Otherwise record a concrete, discoverable follow-up for future
+  work rather than silently ignoring it.
