@@ -4,7 +4,9 @@ use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::{AppBuilder, ProtocolPlugin};
+mod application;
+
+pub use application::*;
 
 #[cfg(feature = "cli")]
 mod cli;
@@ -134,6 +136,9 @@ pub enum HostError {
     /// Tooling execution attempted to construct ordinary components or a served protocol.
     #[error("tooling mode cannot construct application components or protocols")]
     ToolingConstruction,
+    /// A host without a serve phase was asked to serve.
+    #[error("application host does not define a serve phase")]
+    ServeUnavailable,
 }
 
 impl PhaseError {
@@ -152,15 +157,6 @@ impl PhaseError {
     pub fn phase(&self) -> LifecyclePhase {
         self.phase
     }
-}
-
-/// Static builder contract implemented by every generated named application host.
-pub trait AppHost {
-    /// The single protocol plugin configured by this host.
-    type Protocol: ProtocolPlugin;
-
-    /// Creates a fresh protocol-specific application builder.
-    fn builder() -> Result<AppBuilder<Self::Protocol>, overseerd_config::ConfigError>;
 }
 
 #[cfg(test)]

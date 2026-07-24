@@ -149,36 +149,67 @@ fn named_app_loads_directory_backed_config_fallibly() {
 
 #[tokio::test]
 async fn named_app_runs_lifecycle_phases_in_order() {
-    let (context, prepared) = LifecycleApplication::prepare(ExecutionMode::Tooling)
+    let setup = LifecycleApplication::new(ExecutionMode::Run)
+        .setup()
         .await
-        .expect("application prepares");
+        .expect("application sets up");
 
-    assert!(context.mode().is_tooling());
     assert_eq!(
-        context.get::<Vec<&'static str>>(),
+        setup.context().get::<Vec<&'static str>>(),
+        Some(&vec!["setup"])
+    );
+
+    let prepared = setup.prepare().await.expect("application prepares");
+
+    assert!(prepared.context().mode().is_run());
+    assert_eq!(
+        prepared.context().get::<Vec<&'static str>>(),
         Some(&vec!["setup", "configure", "before_build"])
     );
 
-    let (context, app) = LifecycleApplication::build(ExecutionMode::Run)
-        .await
-        .expect("application builds");
+    let built = prepared.build().await.expect("application builds");
 
     assert_eq!(
-        context.get::<Vec<&'static str>>(),
+        built.context().get::<Vec<&'static str>>(),
         Some(&vec!["setup", "configure", "before_build", "after_build"])
     );
-    assert_eq!(app.name, "lifecycle-app-test");
+    assert_eq!(built.app().name, "lifecycle-app-test");
 
+    built.serve().await.expect("serve phase runs");
+}
+
+#[tokio::test]
+async fn named_app_explicitly_fast_forwards_lifecycle_stages() {
+    let prepared = LifecycleApplication::new(ExecutionMode::Tooling)
+        .prepare()
+        .await
+        .expect("application fast-forwards to pre-build");
+
+    assert!(prepared.context().mode().is_tooling());
+    assert_eq!(
+        prepared.context().get::<Vec<&'static str>>(),
+        Some(&vec!["setup", "configure", "before_build"])
+    );
+
+    let (_, prepared) = prepared.into_parts();
     let _: App<TestPlugin> = prepared.build().await.expect("prepared app builds");
 
-    LifecycleApplication::serve_with(context, app)
+    let built = LifecycleApplication::new(ExecutionMode::Run)
+        .build()
         .await
-        .expect("serve phase runs");
+        .expect("application fast-forwards to built");
+
+    assert_eq!(
+        built.context().get::<Vec<&'static str>>(),
+        Some(&vec!["setup", "configure", "before_build", "after_build"])
+    );
 }
 
 #[tokio::test]
 async fn named_app_tags_lifecycle_errors_with_their_phase() {
-    let result = FailingLifecycleApplication::prepare(ExecutionMode::Run).await;
+    let result = FailingLifecycleApplication::new(ExecutionMode::Run)
+        .prepare()
+        .await;
     let error = match result {
         Ok(_) => panic!("setup phase unexpectedly succeeded"),
         Err(error) => error,
@@ -190,8 +221,17 @@ async fn named_app_tags_lifecycle_errors_with_their_phase() {
 
 #[tokio::test]
 async fn named_app_rejects_component_construction_in_tooling_mode() {
-    let result = LifecycleApplication::build(ExecutionMode::Tooling).await;
-    let error = match result {
+    let prepared = LifecycleApplication::new(ExecutionMode::Tooling)
+        .prepare()
+        .await
+        .expect("tooling lifecycle prepares and validates");
+
+    assert_eq!(
+        prepared.context().get::<Vec<&'static str>>(),
+        Some(&vec!["setup", "configure", "before_build"])
+    );
+
+    let error = match prepared.build().await {
         Ok(_) => panic!("tooling mode unexpectedly constructed the application"),
         Err(error) => error,
     };
@@ -215,7 +255,10 @@ fn generated_cli_exposes_native_clap_types() {
 
     assert_eq!(command.get_name(), "lifecycle-app-test");
     assert!(default_cli.command.is_none());
-    assert_eq!(serve_cli.command, Some(LifecycleApplicationCommand::Serve));
+    assert!(matches!(
+        serve_cli.command,
+        Some(LifecycleApplicationCommand::Serve)
+    ));
 }
 
 #[tokio::test]

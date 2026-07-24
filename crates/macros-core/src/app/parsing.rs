@@ -6,9 +6,10 @@ use syn::punctuated::Punctuated;
 use syn::{Ident, LitBool, Token, Type, braced, bracketed, parenthesized};
 
 use super::model::{
-    AppPhases, ConfigEntry, ConfigSettings, DirSettings, ManagerSource, PhaseInput,
+    AppPhases, CliDeclarations, ConfigEntry, ConfigSettings, DirSettings, ManagerSource,
+    PhaseArgument, PhaseInput,
 };
-use super::{AppAssembly, AppInput, NamedApp};
+use super::{AppAssembly, AppInput, NamedApp, command};
 
 syn::custom_keyword!(app);
 
@@ -92,7 +93,7 @@ impl Parse for ConfigEntry {
 
 impl Parse for AppInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.peek(Token![pub]) || input.peek(app) {
+        if input.peek(Token![#]) || input.peek(Token![pub]) || input.peek(app) {
             return Ok(Self::Named(input.parse()?));
         }
 
@@ -102,6 +103,7 @@ impl Parse for AppInput {
 
 impl Parse for NamedApp {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        let attributes = input.call(syn::Attribute::parse_outer)?;
         let visibility = input.parse()?;
 
         input.parse::<app>()?;
@@ -117,7 +119,17 @@ impl Parse for NamedApp {
             return Err(input.error("unexpected tokens after named app definition"));
         }
 
+        for attribute in &attributes {
+            if !attribute.path().is_ident("doc") {
+                return Err(syn::Error::new_spanned(
+                    attribute,
+                    "only documentation attributes are supported on generated applications",
+                ));
+            }
+        }
+
         Ok(Self {
+            attributes,
             visibility,
             ident,
             assembly,
@@ -140,6 +152,7 @@ impl AppAssembly {
         let mut overseerd = None;
         let mut krate = None;
         let mut phases = AppPhases::default();
+        let mut cli = CliDeclarations::default();
         let mut keys = HashSet::new();
 
         while !input.is_empty() {
@@ -186,13 +199,21 @@ impl AppAssembly {
                 "error_handler" => error_handler = Some(input.parse()?),
                 "overseerd" => overseerd = Some(input.parse()?),
                 "crate" => krate = Some(input.parse()?),
+                "args" | "commands" if !reject_duplicates => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "CLI declarations require a named app definition",
+                    ));
+                }
+                "args" => cli.args = command::parse_args(input)?,
+                "commands" => cli.commands = command::parse_commands(input)?,
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
                             "unknown `app!` key `{other}`, expected `name`, `protocol`, \
                              `services`, `components`, `configs`, `managers`, `middleware`, \
-                             `guards`, `error_handler`, `overseerd`, or `crate`"
+                             `guards`, `error_handler`, `args`, `commands`, `overseerd`, or `crate`"
                         ),
                     ));
                 }
@@ -222,6 +243,7 @@ impl AppAssembly {
             overseerd,
             krate,
             phases,
+            cli,
         })
     }
 }
@@ -262,13 +284,15 @@ fn parse_phase(input: ParseStream, key: &Ident) -> syn::Result<PhaseInput> {
 
         parenthesized!(arguments in input);
 
-        let arguments = Punctuated::<Ident, Token![,]>::parse_terminated(&arguments)?
+        let arguments = Punctuated::<PhaseArgument, Token![,]>::parse_terminated(&arguments)?
             .into_iter()
             .collect::<Vec<_>>();
         let body = input.parse()?;
         let expected_arguments = if key == "setup" { 1 } else { 2 };
 
-        if arguments.len() != expected_arguments {
+        if arguments.len() < expected_arguments
+            || (key != "serve" && arguments.len() != expected_arguments)
+        {
             return Err(syn::Error::new(
                 key.span(),
                 format!(
@@ -276,6 +300,24 @@ fn parse_phase(input: ParseStream, key: &Ident) -> syn::Result<PhaseInput> {
                     if expected_arguments == 1 { "" } else { "s" }
                 ),
             ));
+        }
+
+        for argument in &arguments[..expected_arguments] {
+            if argument.ty.is_some() {
+                return Err(syn::Error::new(
+                    argument.ident.span(),
+                    "lifecycle context and app parameters cannot declare injected types",
+                ));
+            }
+        }
+
+        for argument in &arguments[expected_arguments..] {
+            if argument.ty.is_none() {
+                return Err(syn::Error::new(
+                    argument.ident.span(),
+                    "additional serve parameters require an injectable type",
+                ));
+            }
         }
 
         return Ok(PhaseInput::Inline { arguments, body });
@@ -292,6 +334,21 @@ fn parse_phase(input: ParseStream, key: &Ident) -> syn::Result<PhaseInput> {
         key.span(),
         "expected `= async_function` or `(arguments...) { ... }` after lifecycle phase",
     ))
+}
+
+impl Parse for PhaseArgument {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let ident = input.call(Ident::parse_any)?;
+        let ty = if input.peek(Token![:]) {
+            input.parse::<Token![:]>()?;
+
+            Some(input.parse()?)
+        } else {
+            None
+        };
+
+        Ok(Self { ident, ty })
+    }
 }
 
 fn parse_managers(

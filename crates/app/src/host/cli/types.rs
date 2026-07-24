@@ -2,6 +2,7 @@ use overseerd_config::{ConfigManager, Dynamic};
 use overseerd_dirs::DirectoriesManager;
 
 use super::super::{BootstrapContext, PhaseError};
+use super::{CliDefinitionError, CommandContextError, CommandError};
 use crate::{LogFormat, LoggingConfig};
 
 /// Controls when generated CLI output uses ANSI color.
@@ -193,6 +194,9 @@ impl BootstrapOptions {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CliError {
+    /// Generated or flattened Clap declarations conflict structurally.
+    #[error(transparent)]
+    Definition(#[from] CliDefinitionError),
     /// Command-line arguments were invalid or requested early output such as help/version.
     #[error(transparent)]
     Clap(#[from] clap::Error),
@@ -205,4 +209,10 @@ pub enum CliError {
     /// Application bootstrap or lifecycle dispatch failed.
     #[error(transparent)]
     Lifecycle(#[from] PhaseError),
+    /// An application-defined command failed.
+    #[error(transparent)]
+    Command(#[from] CommandError),
+    /// Generated command dispatch received inconsistent lifecycle state.
+    #[error(transparent)]
+    CommandContext(#[from] CommandContextError),
 }

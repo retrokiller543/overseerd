@@ -21,23 +21,55 @@ pub(super) fn expand(input: AppAssembly) -> TokenStream {
         overseerd,
         krate,
         phases: _,
+        cli: _,
     } = input;
     let paths = Paths::overseerd().resolve(overseerd, krate);
+
+    expand_with_paths(
+        &name,
+        &protocol,
+        &services,
+        &components,
+        &configs,
+        &config_manager,
+        &directories_manager,
+        &middleware,
+        &guards,
+        &error_handler,
+        &paths,
+    )
+}
+
+/// Expands a builder using paths already resolved by a named host.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn expand_with_paths(
+    name: &syn::Expr,
+    protocol: &syn::Type,
+    services: &[syn::Type],
+    components: &[syn::Expr],
+    configs: &[super::model::ConfigEntry],
+    config_manager: &Option<ManagerSource<ConfigSettings>>,
+    directories_manager: &Option<ManagerSource<DirSettings>>,
+    middleware: &[syn::Expr],
+    guards: &[syn::Expr],
+    error_handler: &Option<syn::Expr>,
+    paths: &Paths,
+) -> TokenStream {
     let config_tys = configs.iter().map(|entry| &entry.ty);
     let config_paths = configs.iter().map(|entry| &entry.path);
     let app_ty = paths.core("App");
-    let assertion = expand_service_assertion(&services, &paths);
+    let assertion = expand_service_assertion(services, paths);
     let (directories_binding, directories_call, directories_available) =
-        match expand_directories(&directories_manager, &paths) {
+        match expand_directories(directories_manager, paths) {
             Ok(expansion) => expansion,
             Err(error) => return error,
         };
     let (config_binding, config_call) =
-        match expand_config(&config_manager, directories_available, &paths) {
+        match expand_config(config_manager, directories_available, paths) {
             Ok(expansion) => expansion,
             Err(error) => return error,
         };
-    let error_handler = error_handler.into_iter();
+    let error_handler = error_handler.iter();
 
     quote! {
         {

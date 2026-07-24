@@ -1,4 +1,4 @@
-use syn::{Block, Expr, Ident, LitStr, Path, Type, Visibility};
+use syn::{Attribute, Block, Expr, Ident, LitStr, Path, Type, Visibility};
 
 /// Parsed input accepted by `app!`.
 pub(crate) enum AppInput {
@@ -10,6 +10,7 @@ pub(crate) enum AppInput {
 
 /// A reusable named application definition.
 pub(crate) struct NamedApp {
+    pub(super) attributes: Vec<Attribute>,
     pub(super) visibility: Visibility,
     pub(super) ident: Ident,
     pub(super) assembly: AppAssembly,
@@ -30,6 +31,39 @@ pub(crate) struct AppAssembly {
     pub(super) overseerd: Option<Path>,
     pub(super) krate: Option<Path>,
     pub(super) phases: AppPhases,
+    #[cfg_attr(not(feature = "cli"), allow(dead_code))]
+    pub(super) cli: CliDeclarations,
+}
+
+/// Application-owned global argument groups and command tree.
+#[derive(Default)]
+#[cfg_attr(not(feature = "cli"), allow(dead_code))]
+pub(super) struct CliDeclarations {
+    pub(super) args: Vec<GlobalArgsEntry>,
+    pub(super) commands: Vec<CommandEntry>,
+}
+
+/// One flattened global Clap argument group.
+#[cfg_attr(not(feature = "cli"), allow(dead_code))]
+pub(super) struct GlobalArgsEntry {
+    pub(super) attributes: Vec<Attribute>,
+    pub(super) alias: Ident,
+    pub(super) ty: Type,
+}
+
+/// One application command or nested command namespace.
+#[cfg_attr(not(feature = "cli"), allow(dead_code))]
+pub(super) struct CommandEntry {
+    pub(super) attributes: Vec<Attribute>,
+    pub(super) name: Ident,
+    pub(super) kind: CommandEntryKind,
+}
+
+/// The value associated with a command name.
+#[cfg_attr(not(feature = "cli"), allow(dead_code))]
+pub(super) enum CommandEntryKind {
+    Leaf(Type),
+    Namespace(Vec<CommandEntry>),
 }
 
 /// Application lifecycle phase definitions.
@@ -45,7 +79,16 @@ pub(super) struct AppPhases {
 /// A lifecycle phase implemented by a function or inline block.
 pub(super) enum PhaseInput {
     Path(Path),
-    Inline { arguments: Vec<Ident>, body: Block },
+    Inline {
+        arguments: Vec<PhaseArgument>,
+        body: Block,
+    },
+}
+
+/// One named lifecycle value or typed dependency resolved for an inline phase.
+pub(super) struct PhaseArgument {
+    pub(super) ident: Ident,
+    pub(super) ty: Option<Type>,
 }
 
 /// How a manager is supplied in the `managers` block.

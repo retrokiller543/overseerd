@@ -22,6 +22,7 @@
 mod builder;
 #[cfg(feature = "cli")]
 mod cli;
+mod command;
 mod model;
 mod named;
 mod parsing;

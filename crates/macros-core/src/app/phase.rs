@@ -18,15 +18,19 @@ pub(super) fn call(
                 .await
                 .map_err(|source| #phase_error::new(#lifecycle_phase, source))?
         },
-        Some(PhaseInput::Inline { arguments, body }) => quote! {
-            {
-                let (#(#arguments,)*) = (#(#values,)*);
+        Some(PhaseInput::Inline { arguments, body }) => {
+            let arguments = arguments.iter().map(|argument| &argument.ident);
 
-                (async move #body)
-                    .await
-                    .map_err(|source| #phase_error::new(#lifecycle_phase, source))?
+            quote! {
+                {
+                    let (#(#arguments,)*) = (#(#values,)*);
+
+                    (async move #body)
+                        .await
+                        .map_err(|source| #phase_error::new(#lifecycle_phase, source))?
+                }
             }
-        },
+        }
         None => default,
     }
 }
@@ -45,15 +49,19 @@ pub(super) fn result(
                 .await
                 .map_err(|source| #phase_error::new(#lifecycle_phase, source))
         },
-        Some(PhaseInput::Inline { arguments, body }) => quote! {
-            {
-                let (#(#arguments,)*) = (#(#values,)*);
+        Some(PhaseInput::Inline { arguments, body }) => {
+            let arguments = arguments.iter().map(|argument| &argument.ident);
 
-                (async move #body)
-                    .await
-                    .map_err(|source| #phase_error::new(#lifecycle_phase, source))
+            quote! {
+                {
+                    let (#(#arguments,)*) = (#(#values,)*);
+
+                    (async move #body)
+                        .await
+                        .map_err(|source| #phase_error::new(#lifecycle_phase, source))
+                }
             }
-        },
+        }
         None => quote!(Ok(#default)),
     }
 }
