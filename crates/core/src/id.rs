@@ -7,6 +7,11 @@ const SEPARATOR: u8 = b'/';
 /// Namespace reserved for framework-owned stable identities.
 pub const FRAMEWORK_NAMESPACE: &str = "overseerd";
 
+/// Runtime namespace comparisons shared by category-safe namespaced ID types.
+///
+/// Concrete ID types retain their inherent const namespace accessors because Rust does not yet
+/// support const trait methods. This trait provides only the runtime abstraction needed for
+/// cross-category namespace policy.
 pub trait NamespacedIdType {
     /// Returns the identifier's owning namespace, prefer the const variant over this, this is mainly used for comparisons at runtime via trait delegation.
     #[doc(hidden)]
@@ -43,7 +48,15 @@ pub enum IdErrorKind {
 impl fmt::Display for IdErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
-            Self::MissingNamespace => "must contain at least two non-empty '/'-separated segments",
+            Self::MissingNamespace => {
+                write!(
+                    f,
+                    "must contain at least two non-empty '{}' separated segments",
+                    char::from(SEPARATOR)
+                )?;
+
+                return Ok(());
+            }
             Self::InvalidSegmentStart => {
                 "each segment must start with a lowercase ASCII letter or digit"
             }
@@ -251,6 +264,13 @@ macro_rules! namespaced_id_type {
             #[inline(always)]
             fn fmt(&self, formatter: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                 formatter.write_str(self.value)
+            }
+        }
+
+        impl ::core::convert::AsRef<str> for $name {
+            #[inline(always)]
+            fn as_ref(&self) -> &str {
+                self.as_str()
             }
         }
 

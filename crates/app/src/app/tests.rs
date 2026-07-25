@@ -103,7 +103,7 @@ impl ProtocolPlugin for BoundaryPlugin {
     type Protocol = BoundaryProtocol;
     type Error = crate::Error;
 
-    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::new(&[]);
+    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
 
     fn pre_build(&mut self, context: &mut PreBuildContext<'_>) -> Result<(), Self::Error> {
         context.component_descriptor(&BOUNDARY_COMPONENT);

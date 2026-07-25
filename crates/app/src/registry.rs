@@ -93,7 +93,7 @@ impl AppRegistry {
     ) -> crate::Result<()> {
         self.component_registry()
             .validate_with_scope_reachability(|consumer, dependency| {
-                topology.is_reachable(consumer, dependency)
+                topology.is_reachable(&consumer, &dependency)
             })?;
 
         let components = self.resolved_components()?;

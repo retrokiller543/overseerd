@@ -33,15 +33,15 @@ impl ScopeParent {
     }
 
     /// Returns the stable identity of this parent.
-    pub fn id(self) -> ScopeId {
+    pub const fn id(&self) -> ScopeId {
         match self {
-            Self::Root => Singleton.id(),
-            Self::Boundary(id) => id,
+            Self::Root => Singleton::ID,
+            Self::Boundary(id) => *id,
         }
     }
 
     /// Returns whether this parent is the implicit application root.
-    pub const fn is_root(self) -> bool {
+    pub const fn is_root(&self) -> bool {
         matches!(self, Self::Root)
     }
 }
@@ -72,27 +72,27 @@ impl ScopeBoundary {
     }
 
     /// Returns the stable identity of this boundary.
-    pub const fn id(self) -> ScopeId {
+    pub const fn id(&self) -> ScopeId {
         self.id
     }
 
     /// Returns the scope lifetime metadata and diagnostic label.
-    pub const fn scope(self) -> &'static dyn Scope {
+    pub const fn scope(&self) -> &'static dyn Scope {
         self.scope
     }
 
     /// Returns the immutable diagnostic label captured from the static scope declaration.
-    pub const fn name(self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         self.name
     }
 
     /// Returns the immutable lifetime rank captured from the static scope declaration.
-    pub const fn rank(self) -> u8 {
+    pub const fn rank(&self) -> u8 {
         self.rank
     }
 
     /// Returns this boundary's only valid parent.
-    pub const fn parent(self) -> ScopeParent {
+    pub const fn parent(&self) -> ScopeParent {
         self.parent
     }
 }
@@ -119,19 +119,30 @@ pub struct ScopeTopology {
 }
 
 impl ScopeTopology {
+    /// Creates an empty topology for protocols without scoped boundaries.
+    pub const fn empty() -> Self {
+        Self::new(&[])
+    }
+
     /// Creates a topology declaration from static scope boundaries.
     pub const fn new(boundaries: &'static [ScopeBoundary]) -> Self {
         Self { boundaries }
     }
 
     /// Returns the boundaries in declaration order.
-    pub const fn boundaries(self) -> &'static [ScopeBoundary] {
+    pub const fn boundaries(&self) -> &'static [ScopeBoundary] {
         self.boundaries
     }
 
     /// Validates and owns this topology for deterministic planning and lookup.
-    pub fn prepare(self) -> Result<PreparedScopeTopology, ScopeTopologyError> {
+    pub fn prepare(&self) -> Result<PreparedScopeTopology, ScopeTopologyError> {
         PreparedScopeTopology::new(self.boundaries)
+    }
+}
+
+impl Default for ScopeTopology {
+    fn default() -> Self {
+        Self::empty()
     }
 }
 
@@ -165,52 +176,52 @@ impl PreparedScopeTopology {
     }
 
     /// Returns the declared boundary with `id`, if present.
-    pub fn boundary(&self, id: ScopeId) -> Option<&ScopeBoundary> {
+    pub fn boundary(&self, id: &ScopeId) -> Option<&ScopeBoundary> {
         let index = self
             .boundaries
-            .binary_search_by_key(&id, |boundary| boundary.id())
+            .binary_search_by_key(id, |boundary| boundary.id())
             .ok()?;
 
         self.boundaries.get(index)
     }
 
     /// Returns whether `id` names a declared non-root boundary.
-    pub fn contains(&self, id: ScopeId) -> bool {
+    pub fn contains(&self, id: &ScopeId) -> bool {
         self.boundary(id).is_some()
     }
 
     /// Returns the declared parent of `id`, if `id` is a boundary.
-    pub fn parent_of(&self, id: ScopeId) -> Option<ScopeParent> {
+    pub fn parent_of(&self, id: &ScopeId) -> Option<ScopeParent> {
         self.boundary(id).map(|boundary| boundary.parent())
     }
 
     /// Iterates from a boundary's immediate parent through the implicit root.
     ///
     /// An undeclared ID and the root itself have no ancestors.
-    pub fn ancestors(&self, id: ScopeId) -> impl Iterator<Item = ScopeId> + '_ {
-        let first = self.parent_of(id).map(ScopeParent::id);
+    pub fn ancestors(&self, id: &ScopeId) -> impl Iterator<Item = ScopeId> + '_ {
+        let first = self.parent_of(id).map(|parent| parent.id());
 
         std::iter::successors(first, move |parent| {
-            self.parent_of(*parent).map(ScopeParent::id)
+            self.parent_of(parent).map(|parent| parent.id())
         })
     }
 
     /// Returns whether `ancestor` is a strict ancestor of `descendant`.
     ///
     /// The implicit root is an ancestor of every declared boundary.
-    pub fn is_ancestor(&self, ancestor: ScopeId, descendant: ScopeId) -> bool {
+    pub fn is_ancestor(&self, ancestor: &ScopeId, descendant: &ScopeId) -> bool {
         self.ancestors(descendant)
-            .any(|candidate| candidate == ancestor)
+            .any(|candidate| candidate == *ancestor)
     }
 
     /// Returns whether a consumer boundary can reach a dependency boundary.
     ///
     /// A dependency is reachable when it is the consumer itself or one of its
     /// ancestors. This makes siblings unreachable regardless of lifetime rank.
-    pub fn is_reachable(&self, consumer: ScopeId, dependency: ScopeId) -> bool {
-        let root = Singleton.id();
-        let consumer_exists = consumer == root || self.contains(consumer);
-        let dependency_exists = dependency == root || self.contains(dependency);
+    pub fn is_reachable(&self, consumer: &ScopeId, dependency: &ScopeId) -> bool {
+        let root = Singleton::ID;
+        let consumer_exists = *consumer == root || self.contains(consumer);
+        let dependency_exists = *dependency == root || self.contains(dependency);
 
         consumer_exists
             && dependency_exists
@@ -271,8 +282,8 @@ pub enum ScopeTopologyError {
 }
 
 fn validate_ids(boundaries: &[ScopeBoundary]) -> Result<(), ScopeTopologyError> {
-    let root = Singleton.id();
-    let transient = Transient.id();
+    let root = Singleton::ID;
+    let transient = Transient::ID;
 
     for (index, boundary) in boundaries.iter().enumerate() {
         let id = boundary.id();
@@ -300,7 +311,7 @@ fn validate_parents(boundaries: &[ScopeBoundary]) -> Result<(), ScopeTopologyErr
             return Err(ScopeTopologyError::SelfParent { id });
         }
 
-        if find_boundary(boundaries, parent).is_none() {
+        if find_boundary(boundaries, &parent).is_none() {
             return Err(ScopeTopologyError::MissingParent { id, parent });
         }
     }
@@ -322,7 +333,7 @@ fn validate_cycles(boundaries: &[ScopeBoundary]) -> Result<(), ScopeTopologyErro
 
             path.push(current);
 
-            let current_boundary = find_boundary(boundaries, current)
+            let current_boundary = find_boundary(boundaries, &current)
                 .expect("parent existence is validated before cycle detection");
 
             match current_boundary.parent() {
@@ -340,7 +351,7 @@ fn validate_parent_ranks(boundaries: &[ScopeBoundary]) -> Result<(), ScopeTopolo
         let parent = boundary.parent().id();
         let parent_rank = match boundary.parent() {
             ScopeParent::Root => Singleton.rank(),
-            ScopeParent::Boundary(parent) => find_boundary(boundaries, parent)
+            ScopeParent::Boundary(parent) => find_boundary(boundaries, &parent)
                 .expect("parent existence is validated before rank ordering")
                 .rank(),
         };
@@ -359,9 +370,9 @@ fn validate_parent_ranks(boundaries: &[ScopeBoundary]) -> Result<(), ScopeTopolo
     Ok(())
 }
 
-fn find_boundary(boundaries: &[ScopeBoundary], id: ScopeId) -> Option<&ScopeBoundary> {
+fn find_boundary<'a>(boundaries: &'a [ScopeBoundary], id: &ScopeId) -> Option<&'a ScopeBoundary> {
     let index = boundaries
-        .binary_search_by_key(&id, |boundary| boundary.id())
+        .binary_search_by_key(id, |boundary| boundary.id())
         .ok()?;
 
     boundaries.get(index)

@@ -22,6 +22,16 @@ pub(crate) struct SeedDestination {
     pub(crate) type_name: &'static str,
 }
 
+/// Descriptor groups used while computing scope-local construction orders.
+struct DescriptorPartitions {
+    singletons: Vec<ComponentDescriptor>,
+    transient: HashMap<TypeId, ComponentDescriptor>,
+    by_scope: HashMap<ScopeId, Vec<ComponentDescriptor>>,
+    descriptors_by_scope: HashMap<ScopeId, Vec<ComponentDescriptor>>,
+    factoryless_by_scope: HashMap<ScopeId, HashSet<TypeId>>,
+    seed_destinations: HashMap<TypeId, SeedDestination>,
+}
+
 impl ScopePlan {
     /// Partitions resolved descriptors and computes each boundary's local factory order.
     pub(crate) fn partition(
@@ -29,58 +39,96 @@ impl ScopePlan {
         providers: &[ProviderDescriptor],
         topology: &PreparedScopeTopology,
     ) -> crate::Result<Self> {
-        let mut singletons = Vec::new();
-        let mut transient = HashMap::new();
-        let mut by_scope: HashMap<ScopeId, Vec<ComponentDescriptor>> = HashMap::new();
-        let mut descriptors_by_scope: HashMap<ScopeId, Vec<ComponentDescriptor>> = HashMap::new();
-        let mut factoryless_by_scope: HashMap<ScopeId, HashSet<TypeId>> = HashMap::new();
-        let mut seed_destinations = HashMap::new();
+        let partitions = DescriptorPartitions::classify(resolved, topology)?;
+        let orders = partitions.orders(topology, providers)?;
+
+        Ok(Self {
+            singletons: partitions.singletons,
+            transient: partitions.transient,
+            orders,
+            seed_destinations: partitions.seed_destinations,
+        })
+    }
+}
+
+impl DescriptorPartitions {
+    fn classify(
+        resolved: &[ComponentDescriptor],
+        topology: &PreparedScopeTopology,
+    ) -> crate::Result<Self> {
+        let mut partitions = Self {
+            singletons: Vec::new(),
+            transient: HashMap::new(),
+            by_scope: HashMap::new(),
+            descriptors_by_scope: HashMap::new(),
+            factoryless_by_scope: HashMap::new(),
+            seed_destinations: HashMap::new(),
+        };
 
         for component in resolved {
-            let scope = component.scope.id();
-
-            if scope == <Transient as StaticScope>::ID {
-                transient.insert(component.ty.type_id, *component);
-
-                continue;
-            }
-
-            if scope == <Singleton as StaticScope>::ID {
-                singletons.push(*component);
-
-                continue;
-            }
-
-            if !topology.contains(scope) {
-                return Err(crate::Error::UndeclaredScope {
-                    component: (component.ty.type_name)().to_string(),
-                    scope,
-                });
-            }
-
-            descriptors_by_scope
-                .entry(scope)
-                .or_default()
-                .push(*component);
-
-            if component.effective_factory()?.is_some() {
-                by_scope.entry(scope).or_default().push(*component);
-            } else {
-                factoryless_by_scope
-                    .entry(scope)
-                    .or_default()
-                    .insert(component.ty.type_id);
-                seed_destinations.insert(
-                    component.ty.type_id,
-                    SeedDestination {
-                        scope,
-                        type_name: (component.ty.type_name)(),
-                    },
-                );
-            }
+            partitions.classify_component(*component, topology)?;
         }
 
-        let root: HashSet<TypeId> = singletons
+        Ok(partitions)
+    }
+
+    fn classify_component(
+        &mut self,
+        component: ComponentDescriptor,
+        topology: &PreparedScopeTopology,
+    ) -> crate::Result<()> {
+        let scope = component.scope.id();
+
+        if scope == Transient::ID {
+            self.transient.insert(component.ty.type_id, component);
+
+            return Ok(());
+        }
+
+        if scope == Singleton::ID {
+            self.singletons.push(component);
+
+            return Ok(());
+        }
+
+        if !topology.contains(&scope) {
+            return Err(crate::Error::UndeclaredScope {
+                component: (component.ty.type_name)().to_string(),
+                scope,
+            });
+        }
+
+        self.descriptors_by_scope
+            .entry(scope)
+            .or_default()
+            .push(component);
+
+        if component.effective_factory()?.is_some() {
+            self.by_scope.entry(scope).or_default().push(component);
+        } else {
+            self.factoryless_by_scope
+                .entry(scope)
+                .or_default()
+                .insert(component.ty.type_id);
+            self.seed_destinations.insert(
+                component.ty.type_id,
+                SeedDestination {
+                    scope,
+                    type_name: (component.ty.type_name)(),
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    fn orders(
+        &self,
+        topology: &PreparedScopeTopology,
+        providers: &[ProviderDescriptor],
+    ) -> crate::Result<HashMap<ScopeId, Vec<ComponentDescriptor>>> {
+        let root = self
+            .singletons
             .iter()
             .map(|component| component.ty.type_id)
             .collect();
@@ -88,32 +136,9 @@ impl ScopePlan {
 
         for boundary in topology.boundaries() {
             let scope = boundary.id();
-            let mut prebuilt = root.clone();
-
-            for ancestor in topology.ancestors(scope) {
-                if ancestor == <Singleton as StaticScope>::ID {
-                    continue;
-                }
-
-                prebuilt.extend(
-                    descriptors_by_scope
-                        .get(&ancestor)
-                        .into_iter()
-                        .flatten()
-                        .map(|component| component.ty.type_id),
-                );
-            }
-
-            prebuilt.extend(
-                factoryless_by_scope
-                    .get(&scope)
-                    .into_iter()
-                    .flatten()
-                    .copied(),
-            );
-
-            let local = by_scope.get(&scope).map_or(&[][..], Vec::as_slice);
-            let order = topological_sort(local, &prebuilt, providers, &transient)?
+            let prebuilt = self.prebuilt(&scope, &root, topology);
+            let local = self.by_scope.get(&scope).map_or(&[][..], Vec::as_slice);
+            let order = topological_sort(local, &prebuilt, providers, &self.transient)?
                 .into_iter()
                 .copied()
                 .collect();
@@ -121,12 +146,40 @@ impl ScopePlan {
             orders.insert(scope, order);
         }
 
-        Ok(Self {
-            singletons,
-            transient,
-            orders,
-            seed_destinations,
-        })
+        Ok(orders)
+    }
+
+    fn prebuilt(
+        &self,
+        scope: &ScopeId,
+        root: &HashSet<TypeId>,
+        topology: &PreparedScopeTopology,
+    ) -> HashSet<TypeId> {
+        let mut prebuilt = root.clone();
+
+        for ancestor in topology.ancestors(scope) {
+            if ancestor == Singleton::ID {
+                continue;
+            }
+
+            prebuilt.extend(
+                self.descriptors_by_scope
+                    .get(&ancestor)
+                    .into_iter()
+                    .flatten()
+                    .map(|component| component.ty.type_id),
+            );
+        }
+
+        prebuilt.extend(
+            self.factoryless_by_scope
+                .get(scope)
+                .into_iter()
+                .flatten()
+                .copied(),
+        );
+
+        prebuilt
     }
 }
 
