@@ -1,4 +1,4 @@
-use super::diagnostic::CompositionDiagnostics;
+use super::diagnostic::{CompositionDiagnostic, CompositionDiagnostics};
 use super::graph;
 use super::selection::{self, Directives};
 use super::{
@@ -287,7 +287,10 @@ fn resolve_phase(
 
     let mut effective = selection.plugins;
     let graph = graph::validate(phase, &effective, prior, &mut diagnostics);
-    if diagnostics.is_empty() {
+    if !diagnostics
+        .iter()
+        .any(CompositionDiagnostic::makes_graph_ambiguous)
+    {
         diagnostics.extend(graph::cycles(phase, &effective, &graph));
     }
 

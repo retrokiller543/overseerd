@@ -638,6 +638,47 @@ fn structural_errors_do_not_emit_cascade_cycle_diagnostics() {
 }
 
 #[test]
+fn unrelated_validation_errors_do_not_hide_independent_cycles() {
+    let diagnostics = resolve_early_plugins(
+        PROTOCOL,
+        [
+            install_with(
+                "test/consumer",
+                early(0),
+                [relation(
+                    RelationKind::Requires,
+                    plugin_target("test/missing"),
+                )],
+            ),
+            install_with(
+                "test/alpha",
+                early(1),
+                [relation(RelationKind::Before, plugin_target("test/beta"))],
+            ),
+            install_with(
+                "test/beta",
+                early(2),
+                [relation(RelationKind::Before, plugin_target("test/alpha"))],
+            ),
+        ],
+    )
+    .expect_err("independent failures are aggregated");
+
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|item| matches!(item, CompositionDiagnostic::MissingDependency { .. }))
+    );
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|item| matches!(item, CompositionDiagnostic::Cycle { .. }))
+    );
+}
+
+#[test]
 fn deep_cycles_return_typed_diagnostics_without_recursive_traversal() {
     const NODE_COUNT: usize = 4_096;
 

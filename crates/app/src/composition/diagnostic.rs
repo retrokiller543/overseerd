@@ -228,6 +228,15 @@ pub enum CompositionDiagnostic {
     },
 }
 
+impl CompositionDiagnostic {
+    pub(crate) const fn makes_graph_ambiguous(&self) -> bool {
+        matches!(
+            self,
+            Self::DuplicatePlugin { .. } | Self::DuplicateSlot { .. }
+        )
+    }
+}
+
 /// A deterministic non-empty report of independent composition failures.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompositionDiagnostics {
