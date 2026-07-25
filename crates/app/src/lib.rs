@@ -11,6 +11,7 @@
 
 pub mod app;
 pub mod builtins;
+pub mod composition;
 pub mod error;
 pub mod host;
 pub mod lifecycle;
@@ -20,6 +21,14 @@ pub mod runtime;
 
 pub use app::{App, AppBuilder, PreparedApp};
 pub use builtins::{LogFormat, LoggingConfig, ServerConfig, SpanEvents};
+pub use composition::{
+    CompositionDiagnostic, CompositionDiagnostics, CompositionDirective, CompositionEdge,
+    CompositionPhase, CompositionTarget, ContributionId, ContributionProvenance, Contributor,
+    EarlyPluginPlan, IdErrorKind, InstallationOrigin, InstallationProvenance, InvalidCompositionId,
+    PluginDeclaration, PluginId, PluginRelation, PluginResolutionPlan, PluginSlotId, ProtocolId,
+    RelationKind, RelationTarget, ReplacementDecision, ResolvedPlugin, SlotPolicy,
+    SuppressionDecision, extend_late_plugins, resolve_early_plugins,
+};
 pub use error::{Error, Result};
 pub use host::{
     AppHost, AppStage, BootstrapContext, Built, ExecutionMode, HostError, Initial, LifecyclePhase,
