@@ -3,15 +3,34 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd_core::{ResolverSet, TypeDescriptor};
+use overseerd_core::{ResolverSet, ScopeId, TypeDescriptor};
 
 use super::*;
 
 /// A throwaway intermediate scope for exercising child-container construction
 /// without depending on any protocol's concrete scopes.
 struct TestScope;
+struct SameNameScope;
 
 impl Scope for TestScope {
+    fn id(&self) -> ScopeId {
+        ScopeId::new("test/container").expect("valid test scope ID")
+    }
+
+    fn rank(&self) -> u8 {
+        1
+    }
+
+    fn name(&self) -> &'static str {
+        "Test"
+    }
+}
+
+impl Scope for SameNameScope {
+    fn id(&self) -> ScopeId {
+        ScopeId::new("test/same-name").expect("valid test scope ID")
+    }
+
     fn rank(&self) -> u8 {
         1
     }
@@ -37,18 +56,25 @@ async fn root() -> Arc<ScopeContainer> {
 }
 
 #[tokio::test]
-async fn empty_child_scope_is_skipped() {
+async fn empty_child_scope_retains_its_identity() {
     let root = root().await;
+    let registry = registry();
 
-    let child =
-        ScopeContainer::open_child(&TestScope, Arc::clone(&root), registry(), &[], Vec::new())
-            .await
-            .expect("open child");
+    let child = ScopeContainer::open_child(
+        &TestScope,
+        Arc::clone(&root),
+        Arc::clone(&registry),
+        &[],
+        Vec::new(),
+    )
+    .await
+    .expect("open child");
 
-    assert!(
-        Arc::ptr_eq(&root, &child),
-        "empty child scope should reuse the parent container"
-    );
+    assert!(!Arc::ptr_eq(&root, &child));
+    assert_eq!(child.scope().id(), TestScope.id());
+    assert!(child.belongs_to_registry(&registry));
+    assert!(!child.belongs_to_registry(&self::registry()));
+    assert!(!child.can_access(&SameNameScope));
 }
 
 #[tokio::test]

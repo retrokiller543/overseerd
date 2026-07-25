@@ -33,8 +33,8 @@ pub use descriptors::{
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor, Dep,
     DependencyDescriptor, DescriptorFor, Dynamic, Injectable, Live, LiveRef, OverseerdDescriptor,
     PROVIDERS, Provide, ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection,
-    Registration, RegistryFor, ResolutionMode, Scope, ServiceComponent, Singleton, StaticScope,
-    Transient, TypeDescriptor, Wired, Wiring,
+    Registration, RegistryFor, ResolutionMode, Scope, ScopeId, ServiceComponent, Singleton,
+    StaticScope, Transient, TypeDescriptor, Wired, Wiring,
 };
 pub use error::{Error, Result};
 pub use primitives::{Deferred, Fresh, FreshFromContainer, Lazy};

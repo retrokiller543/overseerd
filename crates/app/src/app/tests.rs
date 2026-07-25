@@ -13,7 +13,7 @@ use overseerd_di::{
 use super::App;
 use crate::{
     AppRegistry, AppRuntime, LoggingConfig, Plugin, PreBuildContext, Protocol, ProtocolPlugin,
-    ValidationContext,
+    ScopeTopology, ValidationContext,
 };
 
 static FACTORY_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -103,7 +103,7 @@ impl ProtocolPlugin for BoundaryPlugin {
     type Protocol = BoundaryProtocol;
     type Error = crate::Error;
 
-    const SCOPES: &'static [&'static dyn overseerd_core::Scope] = &[];
+    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::new(&[]);
 
     fn pre_build(&mut self, context: &mut PreBuildContext<'_>) -> Result<(), Self::Error> {
         context.component_descriptor(&BOUNDARY_COMPONENT);

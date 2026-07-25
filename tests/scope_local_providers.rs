@@ -8,14 +8,15 @@ use std::{
 };
 
 use overseerd::{
-    ComponentDescriptor, Descriptor, PROVIDERS, ResolverSet, ScopeContainer, ScopeRegistry,
-    StaticScope, component, injectable, topological_sort,
+    ComponentDescriptor, Descriptor, PROVIDERS, ResolverSet, ScopeContainer, ScopeId,
+    ScopeRegistry, StaticScope, component, injectable, topological_sort,
 };
 
 /// A throwaway child scope for scope-local provider selection tests.
 struct ChildScope;
 
 impl StaticScope for ChildScope {
+    const ID: ScopeId = overseerd::namespaced_id!(ScopeId, "test/provider-child");
     const RANK: u8 = 1;
     const NAME: &'static str = "Child";
 }

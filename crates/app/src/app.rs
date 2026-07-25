@@ -11,11 +11,11 @@ use overseerd_config::{
     ConfigReloader, ConfigStore, ReloadTriggers, spawn_reload_triggers, stop_reload_triggers,
 };
 use overseerd_core::{
-    Descriptor, ResolverCtx, ResolverSet, Scope, Singleton as SingletonScope, TypeDescriptor,
+    Descriptor, ResolverCtx, ResolverSet, Singleton as SingletonScope, TypeDescriptor,
 };
 use overseerd_di::{
-    BoxedComponent, Component, ComponentDescriptor, Injectable, ProviderDescriptor, RootResolver,
-    ScopeContainer, ScopeRegistry, root_resolver_descriptor, topological_sort,
+    BoxedComponent, Component, ComponentDescriptor, Injectable, RootResolver, ScopeContainer,
+    ScopeRegistry, root_resolver_descriptor,
 };
 use overseerd_dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp};
 use overseerd_hooks::{
@@ -29,7 +29,8 @@ use crate::protocol::{
     Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve, ValidationContext,
 };
 use crate::registry::AppRegistry;
-use crate::runtime::AppRuntime;
+use crate::runtime::{AppRuntime, RuntimeScopePlan};
+use crate::scope::{PreparedScopeTopology, ScopePlan, SeedDestination};
 
 /// The framework-provided singleton injectable for triggering graceful shutdown.
 static SHUTDOWN_HANDLE_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
@@ -91,7 +92,9 @@ pub struct PreparedApp<P: ProtocolPlugin> {
     resolved: Arc<[ComponentDescriptor]>,
     singletons: Vec<ComponentDescriptor>,
     scope_registry: Arc<ScopeRegistry>,
-    scope_orders: Arc<HashMap<&'static str, Vec<ComponentDescriptor>>>,
+    scope_topology: Arc<PreparedScopeTopology>,
+    scope_orders: Arc<HashMap<overseerd_core::ScopeId, Vec<ComponentDescriptor>>>,
+    seed_destinations: Arc<HashMap<std::any::TypeId, SeedDestination>>,
     resolvers: ResolverSet,
 }
 
@@ -252,7 +255,9 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
 
         registry.config_bindings = tree.bindings().to_vec();
 
-        registry.validate()?;
+        let scope_topology = Arc::new(P::SCOPE_TOPOLOGY.prepare().map_err(Error::from)?);
+
+        registry.validate_with_scope_topology(&scope_topology)?;
 
         // Collapse to the effective component set (explicit factories override defaults).
         let resolved = registry.resolved_components()?;
@@ -269,7 +274,7 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
             value: Box::new(Injectable::into_stored(hook_manager.clone())),
         });
 
-        let scopes = ScopePlan::partition(&resolved, &registry.providers, P::SCOPES)?;
+        let scopes = ScopePlan::partition(&resolved, &registry.providers, &scope_topology)?;
 
         // Build the config store — every bound `Cfg<T>` value, plus the reload slots.
         let (config_store, reload_slots) = ConfigStore::build(&tree).map_err(Error::from)?;
@@ -319,7 +324,9 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
             resolved: Arc::from(resolved),
             singletons: scopes.singletons,
             scope_registry,
+            scope_topology,
             scope_orders: Arc::new(scopes.orders),
+            seed_destinations: Arc::new(scopes.seed_destinations),
             resolvers,
         })
     }
@@ -346,6 +353,11 @@ impl<P: ProtocolPlugin> PreparedApp<P> {
         &self.protocol
     }
 
+    /// The validated protocol-owned scope topology used for planning and runtime opening.
+    pub fn scope_topology(&self) -> &PreparedScopeTopology {
+        &self.scope_topology
+    }
+
     /// Constructs ordinary components and finalizes the application protocol.
     pub async fn build(self) -> Result<App<P>, P::Error> {
         let PreparedApp {
@@ -361,7 +373,9 @@ impl<P: ProtocolPlugin> PreparedApp<P> {
             resolved,
             singletons,
             scope_registry,
+            scope_topology,
             scope_orders,
+            seed_destinations,
             resolvers,
         } = self;
 
@@ -392,7 +406,7 @@ impl<P: ProtocolPlugin> PreparedApp<P> {
             Arc::from(name.as_str()),
             root,
             scope_registry,
-            scope_orders,
+            RuntimeScopePlan::new(scope_topology, scope_orders, seed_destinations),
             resolved,
             hook_manager,
         );
@@ -472,77 +486,6 @@ fn seed_dir<K: DirKind>(
         ty: TypeDescriptor::of::<Dir<K>>(<Dir<K> as Component>::NAME),
         value: Box::new(dirs.dir::<K>()),
     });
-}
-
-/// The per-scope construction plan computed once at app build.
-///
-/// Agnostic: the intermediate scopes come from the protocol's declared chain (`P::SCOPES`),
-/// and the per-scope construction `orders` are keyed by scope name.
-struct ScopePlan {
-    singletons: Vec<ComponentDescriptor>,
-    transient: std::collections::HashMap<TypeId, ComponentDescriptor>,
-    orders: std::collections::HashMap<&'static str, Vec<ComponentDescriptor>>,
-}
-
-impl ScopePlan {
-    /// Splits the resolved components by scope and precomputes the construction order for
-    /// each scope in the protocol's chain. A factory-less scoped component (e.g. a seeded
-    /// peer) is treated as prebuilt. A constructable component whose scope is not in the
-    /// chain (nor a singleton/transient) is a build error.
-    fn partition(
-        resolved: &[ComponentDescriptor],
-        providers: &[ProviderDescriptor],
-        scopes: &[&'static dyn Scope],
-    ) -> crate::Result<Self> {
-        let singleton_rank = SingletonScope.rank();
-
-        let mut singletons = Vec::new();
-        let mut transient = std::collections::HashMap::new();
-        let mut by_scope: std::collections::HashMap<&'static str, Vec<ComponentDescriptor>> =
-            std::collections::HashMap::new();
-        let mut prebuilt: HashSet<TypeId> = HashSet::new();
-
-        for c in resolved {
-            if c.scope.is_transient() {
-                transient.insert(c.ty.type_id, *c);
-            } else if c.scope.rank() == singleton_rank {
-                singletons.push(*c);
-            } else if c.effective_factory()?.is_some() {
-                by_scope.entry(c.scope.name()).or_default().push(*c);
-            } else {
-                prebuilt.insert(c.ty.type_id);
-            }
-        }
-
-        prebuilt.extend(singletons.iter().map(|c| c.ty.type_id));
-
-        let mut orders = std::collections::HashMap::new();
-
-        for scope in scopes {
-            let components = by_scope.remove(scope.name()).unwrap_or_default();
-            let order: Vec<ComponentDescriptor> =
-                topological_sort(&components, &prebuilt, providers, &transient)?
-                    .into_iter()
-                    .copied()
-                    .collect();
-
-            prebuilt.extend(order.iter().map(|c| c.ty.type_id));
-            orders.insert(scope.name(), order);
-        }
-
-        if let Some((scope, components)) = by_scope.iter().next() {
-            return Err(crate::Error::UndeclaredScope {
-                component: components[0].name.to_string(),
-                scope,
-            });
-        }
-
-        Ok(Self {
-            singletons,
-            transient,
-            orders,
-        })
-    }
 }
 
 /// A fully assembled app, ready to serve its protocol.

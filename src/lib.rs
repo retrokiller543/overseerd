@@ -15,9 +15,9 @@
 #[cfg(not(target_family = "wasm"))]
 pub use overseerd_core::*;
 
-/// Component lifetime scopes: the [`Scope`] trait a protocol's scope chain is built from,
-/// plus the marker types. A component selects one with `#[component(scope = Request)]`; a
-/// `#[component]` defaults to [`Singleton`](scope::Singleton).
+/// Component lifetime scopes: the [`Scope`] trait a protocol's topology is built from,
+/// plus the universal marker types. A protocol-scoped component selects a marker from that
+/// protocol's module; a `#[component]` defaults to [`Singleton`](scope::Singleton).
 ///
 /// The core defines only the universal anchors [`Singleton`](scope::Singleton) and
 /// [`Transient`](scope::Transient); `Connection` and `Request` are RPC-protocol scopes from
@@ -93,11 +93,11 @@ pub use overseerd_app::{
     InstallationProvenance, InvalidCompositionId, LifecyclePhase, LogFormat, LoggingConfig,
     PhaseError, Plugin, PluginDeclaration, PluginId, PluginRelation, PluginResolutionPlan,
     PluginSlotId, PreBuild, PreBuildContext, PreparedApp, Protocol, ProtocolId, ProtocolPlugin,
-    RelationKind, RelationTarget, ReplacementDecision, ResolvedPlugin, Serve, ServerConfig, Setup,
-    ShutdownHandle, ShutdownSignal, SlotPolicy, SpanEvents, SuppressionDecision, ValidationContext,
-    build_host, build_host_context, build_prepared_host, extend_late_plugins, prepare_host,
-    prepare_host_context, prepare_setup_host_context, resolve_early_plugins,
-    resolve_host_dependency, serve_host, setup_host, setup_host_context,
+    RelationKind, RelationTarget, ReplacementDecision, ResolvedPlugin, ScopeTopology, Serve,
+    ServerConfig, Setup, ShutdownHandle, ShutdownSignal, SlotPolicy, SpanEvents,
+    SuppressionDecision, ValidationContext, build_host, build_host_context, build_prepared_host,
+    extend_late_plugins, prepare_host, prepare_host_context, prepare_setup_host_context,
+    resolve_early_plugins, resolve_host_dependency, serve_host, setup_host, setup_host_context,
 };
 
 #[cfg(all(not(target_family = "wasm"), feature = "cli"))]
@@ -334,7 +334,7 @@ pub mod axum {
         #[cfg(not(target_family = "wasm"))]
         pub use super::axum::{Router, http};
         #[cfg(not(target_family = "wasm"))]
-        pub use super::scope::Request;
+        pub use super::scope::HttpRequest;
         #[cfg(not(target_family = "wasm"))]
         pub use super::{
             App, AxumAppBuilder, AxumAppServe, AxumConfig, AxumPlugin, Controller, Inject,
@@ -342,10 +342,10 @@ pub mod axum {
 
         #[cfg(all(feature = "json-ws", not(target_family = "wasm")))]
         pub use super::JsonWs;
-        /// WebSocket controller imports (`#[controller(ws = ..)]` + `#[message]`, the per-connection
-        /// [`Connection`](super::scope::Connection) scope), available with the `ws` feature.
+        /// WebSocket controller imports (`#[controller(ws = ..)]` + `#[message]`) and the explicit
+        /// connection/message scope markers, available with the `ws` feature.
         #[cfg(all(feature = "ws", not(target_family = "wasm")))]
-        pub use super::scope::Connection;
+        pub use super::scope::{WebsocketConnection, WebsocketMessage};
         #[cfg(all(feature = "ws", not(target_family = "wasm")))]
         pub use super::{WebsocketController, WebsocketProtocol, message};
 

@@ -1,9 +1,9 @@
 use std::any::TypeId;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 mod order;
 
-use overseerd_core::{Cardinality, ResolutionMode, Scope, Singleton};
+use overseerd_core::{Cardinality, ResolutionMode, Scope, ScopeId, Singleton};
 
 use crate::descriptors::{COMPONENTS, ComponentDescriptor, PROVIDERS, ProviderDescriptor};
 use crate::error::Error;
@@ -82,18 +82,44 @@ impl ComponentRegistry {
         Ok(chosen)
     }
 
-    /// Validates the component graph: unique ids, satisfiable dependencies, and the
-    /// captive-dependency scope rule.
+    /// Validates the component graph using the legacy rank-based scope model.
+    ///
+    /// This entry point remains suitable for direct DI users without an explicit
+    /// scope topology. Equal-or-higher-ranked scopes are treated as reachable, so
+    /// callers with branching scope paths should use
+    /// [`validate_with_scope_reachability`](Self::validate_with_scope_reachability).
     pub fn validate(&self) -> crate::Result<()> {
+        self.validate_with_scope_access(scope_allows_by_rank)
+    }
+
+    /// Validates the component graph against caller-defined scope reachability.
+    ///
+    /// The predicate receives the consumer and dependency stable scope IDs and
+    /// should return `true` only when the dependency's boundary is the consumer's
+    /// boundary or an ancestor reachable from it. Transient dependencies remain
+    /// universally constructible and do not invoke the predicate.
+    pub fn validate_with_scope_reachability(
+        &self,
+        can_reach: impl Fn(ScopeId, ScopeId) -> bool,
+    ) -> crate::Result<()> {
+        self.validate_with_scope_access(|consumer, dependency| {
+            scope_allows_with(consumer, dependency, &can_reach)
+        })
+    }
+
+    fn validate_with_scope_access(
+        &self,
+        can_access: impl Fn(&dyn Scope, &dyn Scope) -> bool,
+    ) -> crate::Result<()> {
         let components = self.resolved_components()?;
 
         self.validate_component_ids(&components)?;
-        self.validate_dependencies(&components)?;
+        self.validate_dependencies_with(&components, &can_access)?;
         self.validate_provider_qualifiers(&components)?;
-        self.validate_deferred_dependencies(&components)?;
-        self.validate_fresh_dependencies(&components)?;
+        self.validate_deferred_dependencies_with(&components, &can_access)?;
+        self.validate_fresh_dependencies_with(&components, &can_access)?;
         self.provider_order(&components)?;
-        self.validate_scopes(&components)?;
+        self.validate_scopes_with(&components, &can_access)?;
 
         Ok(())
     }
@@ -102,6 +128,14 @@ impl ComponentRegistry {
     /// only on equal-or-longer-lived non-transient components. Checked against
     /// [`Scope::rank`], not by matching each label.
     pub fn validate_scopes(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
+        self.validate_scopes_with(components, &scope_allows_by_rank)
+    }
+
+    fn validate_scopes_with(
+        &self,
+        components: &[ComponentDescriptor],
+        can_access: &impl Fn(&dyn Scope, &dyn Scope) -> bool,
+    ) -> crate::Result<()> {
         let scope_of: HashMap<TypeId, &'static dyn Scope> =
             components.iter().map(|c| (c.ty.type_id, c.scope)).collect();
 
@@ -115,25 +149,13 @@ impl ComponentRegistry {
 
                 let dep_id = dep.ty.type_id;
 
-                let dep_scopes: Vec<(&'static dyn Scope, &'static str)> =
-                    match scope_of.get(&dep_id) {
-                        Some(scope) => vec![(*scope, (dep.ty.type_name)())],
-
-                        None => self
-                            .providers
-                            .iter()
-                            .filter(|p| p.trait_ty.type_id == dep_id)
-                            .filter_map(|p| {
-                                scope_of
-                                    .get(&p.concrete_ty.type_id)
-                                    .map(|scope| (*scope, (p.concrete_ty.type_name)()))
-                            })
-                            .collect(),
-                    };
+                let dep_scopes = match scope_of.get(&dep_id) {
+                    Some(scope) => vec![(*scope, (dep.ty.type_name)())],
+                    None => self.selected_dependency_scopes(c, &dep, components, can_access),
+                };
 
                 for (dep_scope, dep_name) in dep_scopes {
-                    if dep.resolution != ResolutionMode::Fresh && !scope_allows(c.scope, dep_scope)
-                    {
+                    if dep.resolution != ResolutionMode::Fresh && !can_access(c.scope, dep_scope) {
                         return Err(Error::ScopeViolation {
                             component: c.name.to_string(),
                             dependency: dep_name.to_string(),
@@ -162,16 +184,19 @@ impl ComponentRegistry {
     /// Validates that every non-config single dependency is satisfiable by a
     /// component or trait provider.
     pub fn validate_dependencies(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
+        self.validate_dependencies_with(components, &scope_allows_by_rank)
+    }
+
+    fn validate_dependencies_with(
+        &self,
+        components: &[ComponentDescriptor],
+        can_access: &impl Fn(&dyn Scope, &dyn Scope) -> bool,
+    ) -> crate::Result<()> {
         let available: HashSet<TypeId> = components.iter().map(|c| c.ty.type_id).collect();
-
-        // Per trait: (total providers, primary providers).
-        let mut provider_counts: HashMap<TypeId, (usize, usize)> = HashMap::new();
-
-        for p in &self.providers {
-            let counts = provider_counts.entry(p.trait_ty.type_id).or_default();
-            counts.0 += 1;
-            counts.1 += usize::from(p.primary);
-        }
+        let by_type: HashMap<TypeId, ComponentDescriptor> = components
+            .iter()
+            .map(|component| (component.ty.type_id, *component))
+            .collect();
 
         for c in components {
             for dep in c.dependencies() {
@@ -181,14 +206,21 @@ impl ComponentRegistry {
                 }
 
                 let dep_id = dep.ty.type_id;
-                let providers = provider_counts.get(&dep_id).copied();
+                let matching: Vec<_> = self
+                    .providers
+                    .iter()
+                    .filter(|provider| provider.trait_ty.type_id == dep_id)
+                    .filter(|provider| {
+                        dep.qualifier
+                            .is_none_or(|qualifier| provider.qualifier == qualifier)
+                    })
+                    .copied()
+                    .collect();
+                let visible =
+                    self.visible_provider_groups(c.scope, &matching, &by_type, can_access);
 
                 if let Some(qualifier) = dep.qualifier {
-                    let found = dep.dynamic
-                        || self
-                            .providers
-                            .iter()
-                            .any(|p| p.trait_ty.type_id == dep_id && p.qualifier == qualifier);
+                    let found = dep.dynamic || !visible.is_empty();
 
                     if !found {
                         return Err(Error::MissingDependency {
@@ -205,9 +237,8 @@ impl ComponentRegistry {
 
                 if dep.cardinality == Cardinality::One
                     && !dep.dynamic
-                    && let Some((total, primary)) = providers
-                    && total > 1
-                    && primary != 1
+                    && !matching.is_empty()
+                    && select_from_scope_groups(&visible, dep.qualifier).is_err()
                 {
                     return Err(Error::AmbiguousProvider((dep.ty.type_name)().to_string()));
                 }
@@ -215,7 +246,10 @@ impl ComponentRegistry {
                 let must_exist =
                     dep.cardinality.requires_provider() && !dep.optional && !dep.dynamic;
 
-                if must_exist && !available.contains(&dep_id) && providers.is_none() {
+                if must_exist
+                    && !available.contains(&dep_id)
+                    && (matching.is_empty() || visible.is_empty())
+                {
                     return Err(Error::MissingDependency {
                         component: c.name.to_string(),
                         type_name: (dep.ty.type_name)().to_string(),
@@ -236,11 +270,11 @@ impl ComponentRegistry {
         &self,
         components: &[ComponentDescriptor],
     ) -> crate::Result<()> {
-        let scope_of: HashMap<TypeId, &'static str> = components
+        let scope_of: HashMap<TypeId, ScopeId> = components
             .iter()
-            .map(|component| (component.ty.type_id, component.scope.name()))
+            .map(|component| (component.ty.type_id, component.scope.id()))
             .collect();
-        let mut seen: HashSet<(TypeId, &str, &str)> = HashSet::new();
+        let mut seen: HashSet<(TypeId, &str, ScopeId)> = HashSet::new();
 
         for provider in &self.providers {
             let Some(scope) = scope_of.get(&provider.concrete_ty.type_id).copied() else {
@@ -265,6 +299,14 @@ impl ComponentRegistry {
     pub fn validate_deferred_dependencies(
         &self,
         components: &[ComponentDescriptor],
+    ) -> crate::Result<()> {
+        self.validate_deferred_dependencies_with(components, &scope_allows_by_rank)
+    }
+
+    fn validate_deferred_dependencies_with(
+        &self,
+        components: &[ComponentDescriptor],
+        can_access: &impl Fn(&dyn Scope, &dyn Scope) -> bool,
     ) -> crate::Result<()> {
         let by_type: HashMap<TypeId, ComponentDescriptor> = components
             .iter()
@@ -319,26 +361,23 @@ impl ComponentRegistry {
                         // `resolve_built`.
                         //
                         // Runtime walks each scope *container* individually, so the
-                        // group key is scope identity — its stable `name` — keyed
-                        // within `rank` for chain ordering. `rank` alone is a
+                        // group key is stable scope identity, keyed within `rank`
+                        // for chain ordering. `rank` alone is a
                         // lifetime order, not an identity: distinct scopes may share
                         // a rank yet resolve through separate containers, so keying
                         // by rank would merge equal-rank siblings and report a false
                         // ambiguity that runtime never sees.
-                        let consumer_rank = consumer.scope.rank();
-                        let mut by_scope: std::collections::BTreeMap<
-                            (u8, &'static str),
-                            Vec<ProviderDescriptor>,
-                        > = std::collections::BTreeMap::new();
+                        let mut by_scope: BTreeMap<(u8, ScopeId), Vec<ProviderDescriptor>> =
+                            BTreeMap::new();
 
                         for provider in candidates {
                             let Some(concrete) = by_type.get(&provider.concrete_ty.type_id) else {
                                 continue;
                             };
 
-                            if concrete.scope.rank() >= consumer_rank {
+                            if can_access(consumer.scope, concrete.scope) {
                                 by_scope
-                                    .entry((concrete.scope.rank(), concrete.scope.name()))
+                                    .entry((concrete.scope.rank(), concrete.scope.id()))
                                     .or_default()
                                     .push(*provider);
                             }
@@ -397,6 +436,14 @@ impl ComponentRegistry {
         &self,
         components: &[ComponentDescriptor],
     ) -> crate::Result<()> {
+        self.validate_fresh_dependencies_with(components, &scope_allows_by_rank)
+    }
+
+    fn validate_fresh_dependencies_with(
+        &self,
+        components: &[ComponentDescriptor],
+        can_access: &impl Fn(&dyn Scope, &dyn Scope) -> bool,
+    ) -> crate::Result<()> {
         let by_type: HashMap<TypeId, ComponentDescriptor> = components
             .iter()
             .map(|component| (component.ty.type_id, *component))
@@ -412,7 +459,7 @@ impl ComponentRegistry {
                 .into_iter()
                 .filter(|dependency| dependency.resolution == ResolutionMode::Fresh)
             {
-                let targets = self.fresh_targets(&dependency, &by_type);
+                let targets = self.fresh_targets(consumer, &dependency, &by_type, can_access)?;
 
                 for target in targets {
                     // The consumer retains a fresh instance permanently, so the
@@ -420,7 +467,7 @@ impl ComponentRegistry {
                     // the same lifetime rule an eager edge follows. Collection shapes
                     // skip inaccessible providers at runtime, so only validate the
                     // accessible subset.
-                    if !scope_allows(consumer.scope, target.scope) {
+                    if !can_access(consumer.scope, target.scope) {
                         if dependency.cardinality == Cardinality::One {
                             return Err(Error::InvalidFreshDependency {
                                 component: consumer.name.to_string(),
@@ -438,24 +485,23 @@ impl ComponentRegistry {
                     for target_dependency in target.dependencies().into_iter().filter(|edge| {
                         edge.resolution == ResolutionMode::Eager && !edge.dynamic && !edge.config
                     }) {
-                        let dependency_scopes: Vec<_> =
-                            match scope_of.get(&target_dependency.ty.type_id) {
-                                Some(scope) => vec![*scope],
-                                None => self
-                                    .providers
-                                    .iter()
-                                    .filter(|provider| {
-                                        provider.trait_ty.type_id == target_dependency.ty.type_id
-                                    })
-                                    .filter_map(|provider| {
-                                        scope_of.get(&provider.concrete_ty.type_id).copied()
-                                    })
-                                    .collect(),
-                            };
+                        let dependency_scopes = match scope_of.get(&target_dependency.ty.type_id) {
+                            Some(scope) => vec![*scope],
+                            None => self
+                                .selected_dependency_scopes(
+                                    consumer,
+                                    &target_dependency,
+                                    components,
+                                    can_access,
+                                )
+                                .into_iter()
+                                .map(|(scope, _)| scope)
+                                .collect(),
+                        };
 
                         if dependency_scopes
                             .iter()
-                            .any(|scope| !scope_allows(consumer.scope, *scope))
+                            .any(|scope| !can_access(consumer.scope, *scope))
                         {
                             return Err(Error::InvalidFreshDependency {
                                 component: consumer.name.to_string(),
@@ -476,14 +522,17 @@ impl ComponentRegistry {
 
     fn fresh_targets(
         &self,
+        consumer: &ComponentDescriptor,
         dependency: &overseerd_core::DependencyDescriptor,
         by_type: &HashMap<TypeId, ComponentDescriptor>,
-    ) -> Vec<ComponentDescriptor> {
+        can_access: &impl Fn(&dyn Scope, &dyn Scope) -> bool,
+    ) -> crate::Result<Vec<ComponentDescriptor>> {
         if let Some(component) = by_type.get(&dependency.ty.type_id) {
-            return vec![*component];
+            return Ok(vec![*component]);
         }
 
-        self.providers
+        let matching: Vec<_> = self
+            .providers
             .iter()
             .filter(|provider| provider.trait_ty.type_id == dependency.ty.type_id)
             .filter(|provider| {
@@ -491,9 +540,99 @@ impl ComponentRegistry {
                     .qualifier
                     .is_none_or(|qualifier| provider.qualifier == qualifier)
             })
+            .copied()
+            .collect();
+        let groups = self.visible_provider_groups(consumer.scope, &matching, by_type, can_access);
+
+        if dependency.cardinality == Cardinality::One {
+            let selected = select_from_scope_groups(&groups, dependency.qualifier)
+                .map_err(|()| Error::AmbiguousProvider((dependency.ty.type_name)().to_string()))?;
+
+            return Ok(selected
+                .and_then(|provider| by_type.get(&provider.concrete_ty.type_id).copied())
+                .into_iter()
+                .collect());
+        }
+
+        Ok(groups
+            .values()
+            .flatten()
             .filter_map(|provider| by_type.get(&provider.concrete_ty.type_id).copied())
-            .collect()
+            .collect())
     }
+
+    fn selected_dependency_scopes(
+        &self,
+        consumer: &ComponentDescriptor,
+        dependency: &overseerd_core::DependencyDescriptor,
+        components: &[ComponentDescriptor],
+        can_access: &impl Fn(&dyn Scope, &dyn Scope) -> bool,
+    ) -> Vec<(&'static dyn Scope, &'static str)> {
+        let by_type: HashMap<TypeId, ComponentDescriptor> = components
+            .iter()
+            .map(|component| (component.ty.type_id, *component))
+            .collect();
+        let matching: Vec<_> = self
+            .providers
+            .iter()
+            .filter(|provider| provider.trait_ty.type_id == dependency.ty.type_id)
+            .filter(|provider| {
+                dependency
+                    .qualifier
+                    .is_none_or(|qualifier| provider.qualifier == qualifier)
+            })
+            .copied()
+            .collect();
+        let groups = self.visible_provider_groups(consumer.scope, &matching, &by_type, can_access);
+
+        if dependency.cardinality != Cardinality::One {
+            return groups
+                .values()
+                .flatten()
+                .filter_map(|provider| {
+                    let component = by_type.get(&provider.concrete_ty.type_id)?;
+
+                    Some((component.scope, (provider.concrete_ty.type_name)()))
+                })
+                .collect();
+        }
+
+        select_from_scope_groups(&groups, dependency.qualifier)
+            .ok()
+            .flatten()
+            .and_then(|provider| {
+                let component = by_type.get(&provider.concrete_ty.type_id)?;
+
+                Some(vec![(component.scope, (provider.concrete_ty.type_name)())])
+            })
+            .unwrap_or_default()
+    }
+
+    fn visible_provider_groups(
+        &self,
+        consumer: &'static dyn Scope,
+        providers: &[ProviderDescriptor],
+        by_type: &HashMap<TypeId, ComponentDescriptor>,
+        can_access: &impl Fn(&dyn Scope, &dyn Scope) -> bool,
+    ) -> BTreeMap<(u8, ScopeId), Vec<ProviderDescriptor>> {
+        let mut groups = BTreeMap::new();
+
+        for provider in providers {
+            let Some(component) = by_type.get(&provider.concrete_ty.type_id) else {
+                continue;
+            };
+
+            if can_access(consumer, component.scope) {
+                groups
+                    .entry((component.scope.rank(), component.scope.id()))
+                    .or_insert_with(Vec::new)
+                    .push(*provider);
+            }
+        }
+
+        groups
+    }
+
     /// Validates and topologically orders all providers independently per trait.
     pub fn provider_order(
         &self,
@@ -503,17 +642,60 @@ impl ComponentRegistry {
     }
 }
 
-/// Whether a `consumer`-scoped component may hold a `dependency`-scoped one.
-fn scope_allows(consumer: &dyn Scope, dependency: &dyn Scope) -> bool {
+fn select_from_scope_groups(
+    groups: &BTreeMap<(u8, ScopeId), Vec<ProviderDescriptor>>,
+    qualifier: Option<&str>,
+) -> Result<Option<ProviderDescriptor>, ()> {
+    for providers in groups.values() {
+        let selected = match qualifier {
+            Some(_) => providers.first().copied(),
+            None => crate::container::select_single_provider(providers),
+        };
+
+        if let Some(provider) = selected {
+            return Ok(Some(provider));
+        }
+
+        if !providers.is_empty() && qualifier.is_none() {
+            continue;
+        }
+    }
+
+    if groups.is_empty() {
+        return Ok(None);
+    }
+
+    Err(())
+}
+
+/// Whether a `consumer`-scoped component may hold a `dependency`-scoped one under
+/// the topology-neutral legacy rank model.
+fn scope_allows_by_rank(consumer: &dyn Scope, dependency: &dyn Scope) -> bool {
     if dependency.is_transient() {
         return true;
     }
 
     if consumer.is_transient() {
-        return dependency.rank() == Singleton.rank();
+        return dependency.id() == Singleton.id();
     }
 
     dependency.rank() >= consumer.rank()
+}
+
+fn scope_allows_with(
+    consumer: &dyn Scope,
+    dependency: &dyn Scope,
+    can_reach: &impl Fn(ScopeId, ScopeId) -> bool,
+) -> bool {
+    if dependency.is_transient() {
+        return true;
+    }
+
+    if consumer.is_transient() {
+        return dependency.id() == Singleton.id();
+    }
+
+    can_reach(consumer.id(), dependency.id())
 }
 
 #[cfg(test)]
@@ -537,6 +719,10 @@ mod tests {
     struct Request;
 
     impl Scope for Connection {
+        fn id(&self) -> ScopeId {
+            ScopeId::new("test/connection").expect("valid test scope ID")
+        }
+
         fn rank(&self) -> u8 {
             2
         }
@@ -547,6 +733,10 @@ mod tests {
     }
 
     impl Scope for Request {
+        fn id(&self) -> ScopeId {
+            ScopeId::new("test/request").expect("valid test scope ID")
+        }
+
         fn rank(&self) -> u8 {
             1
         }
@@ -564,11 +754,13 @@ mod tests {
     struct SiblingB;
 
     impl StaticScope for SiblingA {
+        const ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/sibling-a");
         const RANK: u8 = 3;
         const NAME: &'static str = "SiblingA";
     }
 
     impl StaticScope for SiblingB {
+        const ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/sibling-b");
         const RANK: u8 = 3;
         const NAME: &'static str = "SiblingB";
     }
@@ -1275,3 +1467,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "registry/reachability_tests.rs"]
+mod reachability_tests;

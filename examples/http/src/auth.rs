@@ -17,7 +17,7 @@ use overseerd::axum::axum::http::{StatusCode, header};
 use overseerd::axum::axum::middleware::Next;
 use overseerd::axum::axum::response::{IntoResponse, Response};
 use overseerd::axum::prelude::*;
-use overseerd::axum::{AxumMiddleware, RequestMeta};
+use overseerd::axum::{AxumMiddleware, HttpRequest, RequestMeta};
 use overseerd::{component, methods};
 
 /// A plain `axum::middleware::from_fn` closure — standard, un-wrapped axum middleware,
@@ -75,7 +75,7 @@ impl AxumMiddleware for RequireAuth {
 /// The worked example: a request-scoped component that reads the bearer token from
 /// [`RequestMeta`], fetches the user once, and is then shared — via the request scope's
 /// per-type caching — by every handler that injects it, with no second fetch.
-#[component(scope = Request)]
+#[component(scope = HttpRequest)]
 struct AuthenticatedUser {
     #[default]
     name: Option<String>,

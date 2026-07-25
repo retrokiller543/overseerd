@@ -83,8 +83,9 @@ pub use utoipa;
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub use ws::{
     ControllerWsRoute, SOCKET_SEND_TIMEOUT, WS_CONTROLLERS, WebsocketController, WebsocketHandler,
-    WebsocketProtocol, WsConnectionMeta, WsConnectionSettings, WsControllerDescriptor,
-    WsDispatchError, WsFuture, WsHandlerFn, WsIdle, WsRespond, WsRoute, WsShutdown,
+    WebsocketProtocol, WebsocketUpgradeMeta, WsConnectionMeta, WsConnectionSettings,
+    WsControllerDescriptor, WsDispatchError, WsFuture, WsHandlerFn, WsIdle, WsRespond, WsRoute,
+    WsShutdown,
 };
 
 /// The `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements so
@@ -179,7 +180,9 @@ pub use overseerd_di::ScopeContainer;
 /// DI construction primitives needed by downstream protocol implementations that seed message
 /// scope metadata or implement injectable authentication adapters.
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
-pub use overseerd_di::{BoxedComponent, Component, FromContainer, Injectable, Provide, Wiring};
+pub use overseerd_di::{
+    BoxedComponent, Component, ComponentDescriptor, FromContainer, Injectable, Provide, Wiring,
+};
 
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub use overseerd_core::TypeDescriptor;
@@ -188,9 +191,16 @@ pub use overseerd_core::TypeDescriptor;
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub use overseerd_di::Error as DiError;
 
-/// Standard HTTP and WebSocket scope markers available to downstream protocol implementations.
+/// The standard HTTP request scope marker.
+#[cfg(not(target_family = "wasm"))]
+pub use scope::{HttpRequest, HttpRequest as HttpRequestScope};
+
+/// Standard WebSocket scope markers available to downstream protocol implementations.
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
-pub use scope::{Connection as ConnectionScope, Request as RequestScope};
+pub use scope::{
+    WebsocketConnection, WebsocketConnection as WebsocketConnectionScope, WebsocketMessage,
+    WebsocketMessage as WebsocketMessageScope,
+};
 
 /// The axum app type: an [`App`](overseerd_app::App) specialized to [`AxumPlugin`].
 /// `App::builder(name)` resolves through this alias without a turbofish.

@@ -2,7 +2,13 @@
 
 use stomp_parser::client::ClientFrame;
 
-use crate::server::{ensure_connect_host, send_header_seed};
+use overseerd_axum::{AxumAppBuilder, WebsocketProtocol};
+
+use crate::Stomp;
+use crate::server::{
+    STOMP_HEADERS_DESCRIPTOR, STOMP_PRINCIPAL_DESCRIPTOR, STOMP_SESSION_DESCRIPTOR,
+    ensure_connect_host, send_header_seed,
+};
 
 #[test]
 fn host_is_injected_so_a_hostless_connect_parses() {
@@ -53,4 +59,46 @@ fn send_header_seed_carries_custom_headers_through() {
             ("correlation-id".to_owned(), "abc-123".to_owned()),
         ]
     );
+}
+
+#[test]
+fn stomp_registers_every_message_seed_at_the_message_destination() {
+    let mut registry = overseerd_axum::AppRegistry::default();
+
+    <Stomp as WebsocketProtocol>::register(&mut registry);
+
+    for descriptor in [
+        STOMP_HEADERS_DESCRIPTOR,
+        STOMP_SESSION_DESCRIPTOR,
+        STOMP_PRINCIPAL_DESCRIPTOR,
+    ] {
+        assert_eq!(
+            descriptor.scope.id(),
+            overseerd_axum::scope::WEBSOCKET_MESSAGE_SCOPE_ID
+        );
+        assert!(
+            descriptor
+                .effective_factory()
+                .expect("seed descriptor is unambiguous")
+                .is_none()
+        );
+        assert!(
+            registry
+                .components
+                .iter()
+                .any(|registered| registered.ty.type_id == descriptor.ty.type_id)
+        );
+    }
+}
+
+#[tokio::test]
+async fn stomp_seed_descriptors_allow_app_validation() {
+    let app = overseerd_axum::App::builder("stomp-seed-validation")
+        .register_ws::<Stomp>("/stomp")
+        .build()
+        .await;
+
+    if let Err(error) = app {
+        panic!("STOMP app failed to build: {error}");
+    }
 }

@@ -290,7 +290,7 @@ impl ProtocolPlugin for PanickingPlugin {
     type Protocol = PanickingProtocol;
     type Error = overseerd_app::Error;
 
-    const SCOPES: &'static [&'static dyn overseerd::Scope] = &[];
+    const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::new(&[]);
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
         Ok(PanickingProtocol)

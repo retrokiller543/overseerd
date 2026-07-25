@@ -11,6 +11,7 @@
 
 pub mod dependency;
 pub mod descriptor;
+pub mod id;
 pub mod resolver;
 pub mod scope;
 pub mod types;
@@ -19,6 +20,10 @@ pub use dependency::{Cardinality, DependencyDescriptor, ResolutionMode};
 pub use descriptor::{
     Descriptor, DescriptorFor, OverseerdDescriptor, RegistryFor, RuntimeDescriptor,
 };
+pub use id::{FRAMEWORK_NAMESPACE, IdErrorKind, InvalidNamespacedId, NamespacedIdType};
 pub use resolver::{Resolver, ResolverCtx, ResolverCtxExt, ResolverSet};
-pub use scope::{Scope, Singleton, StaticScope, Transient};
+pub use scope::{
+    InvalidScopeId, InvalidScopeIdReason, SINGLETON_SCOPE_ID, SINGLETON_SCOPE_NAME, Scope, ScopeId,
+    Singleton, StaticScope, TRANSIENT_SCOPE_ID, TRANSIENT_SCOPE_NAME, Transient,
+};
 pub use types::{TypeDescriptor, type_id_of};

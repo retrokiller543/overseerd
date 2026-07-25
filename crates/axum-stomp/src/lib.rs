@@ -85,7 +85,8 @@ pub struct Stomp {
     #[cfg(not(target_family = "wasm"))]
     pub(crate) broker: Arc<server::Broker>,
 
-    /// The runtime, kept to open per-message [`Request`](crate::scope::Request) scopes while serving.
+    /// The runtime, kept to open per-message
+    /// [`WebsocketMessage`](overseerd_axum::WebsocketMessage) scopes while serving.
     #[cfg(not(target_family = "wasm"))]
     pub(crate) runtime: AppRuntime,
 

@@ -295,7 +295,7 @@ async fn same_middleware_type_shares_one_instance_across_attach_points() {
 // and is reused (not re-fetched) across multiple injections within one request.
 // ---------------------------------------------------------------------------
 
-#[component(scope = Request)]
+#[component(scope = HttpRequest)]
 struct AuthUser {
     #[default]
     token: Option<String>,

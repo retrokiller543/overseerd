@@ -1,7 +1,7 @@
 //! End-to-end test of a **WebSocket controller**: build the app, serve it on an ephemeral port,
 //! connect a real ws client (`tokio-tungstenite`), and exercise both a plain `#[message]` handler
 //! and one that mixes the JSON payload with route-level `Inject` DI — proving ws handlers get the
-//! same request-scoped dependency injection as REST routes. The server is shut down at the end so
+//! message-scoped dependency injection. The server is shut down at the end so
 //! the test never hangs.
 
 use std::sync::Arc;
@@ -32,15 +32,15 @@ impl Greeter {
     }
 }
 
-/// A per-request component — for ws, "request" means one inbound message — resolved through DI.
-#[component(scope = Request)]
-struct RequestTicket {
+/// A per-message component resolved through DI for one inbound WebSocket message.
+#[component(scope = WebsocketMessage)]
+struct MessageTicket {
     #[default]
     id: u64,
 }
 
 #[methods]
-impl RequestTicket {
+impl MessageTicket {
     #[init]
     async fn init() -> Self {
         Self { id: 4242 }
@@ -78,9 +78,9 @@ impl Sock {
         Greeting { message, count }
     }
 
-    /// Mixes the JSON payload with an injected, request-scoped `RequestTicket`.
+    /// Mixes the JSON payload with an injected, message-scoped `MessageTicket`.
     #[message("ticket")]
-    async fn ticket(&self, msg: Who, Inject(ticket): Inject<Arc<RequestTicket>>) -> Ticketed {
+    async fn ticket(&self, msg: Who, Inject(ticket): Inject<Arc<MessageTicket>>) -> Ticketed {
         let (message, _) = self.greeter.greet(&msg.who);
 
         Ticketed {
@@ -124,7 +124,7 @@ async fn ws_controller_dispatches_and_injects() {
     assert_eq!(reply["ok"]["message"], "Hello, world!");
     assert_eq!(reply["ok"]["count"], 1);
 
-    // DI handler: the injected request-scoped ticket is resolved per message.
+    // DI handler: the injected message-scoped ticket is resolved per message.
     socket
         .send(Message::Text(
             r#"{"dest":"ticket","id":2,"payload":{"who":"di"}}"#.into(),

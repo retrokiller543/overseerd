@@ -1,9 +1,9 @@
 //! Component lifetime scopes.
 //!
-//! A scope is a pure *label* describing where a component instance is stored and how
-//! long it lives. It is modelled as the object-safe [`Scope`] trait (rather than a
-//! fixed enum) so a protocol can declare its own lifetimes and carry them as a
-//! `&'static [&'static dyn Scope]` chain.
+//! A scope describes where a component instance is stored and how long it lives. Stable
+//! identity is distinct from its human-readable display label and lifetime rank. Scopes
+//! are modelled as the object-safe [`Scope`] trait (rather than a fixed enum) so a
+//! protocol can declare its own lifetimes and carry them as trait objects.
 //!
 //! The core knows only the two *universal anchors*: [`Singleton`] (one instance for the
 //! whole application — the longest-lived scope, so [`u8::MAX`] rank) and [`Transient`]
@@ -12,10 +12,33 @@
 //! bounds hold by construction. Connection/request and any other protocol-shaped
 //! lifetimes live in their protocol's crate, not here.
 
-/// Ergonomic authoring sugar for a zero-sized scope: provide the three associated
-/// constants and a [`Scope`] impl follows via the blanket impl below. Plugin and user
+pub use crate::id::{IdErrorKind as InvalidScopeIdReason, InvalidNamespacedId as InvalidScopeId};
+
+crate::namespaced_id_type!(
+    /// A stable namespaced scope identity.
+    pub struct ScopeId,
+    "scope"
+);
+
+/// Stable identity of the framework-owned application root scope.
+pub const SINGLETON_SCOPE_ID: ScopeId = crate::namespaced_id!(ScopeId, "overseerd/singleton");
+
+/// Framework-local name of the application root scope.
+pub const SINGLETON_SCOPE_NAME: &str = SINGLETON_SCOPE_ID.name();
+
+/// Stable identity of the framework-owned transient construction scope.
+pub const TRANSIENT_SCOPE_ID: ScopeId = crate::namespaced_id!(ScopeId, "overseerd/transient");
+
+/// Framework-local name of the transient construction scope.
+pub const TRANSIENT_SCOPE_NAME: &str = TRANSIENT_SCOPE_ID.name();
+
+/// Ergonomic authoring sugar for a zero-sized scope: provide its stable ID, display
+/// label, and rank, and a [`Scope`] impl follows via the blanket impl below. Plugin and user
 /// scopes (`Connection`, `Request`, a custom `#[scope]`) declare themselves this way.
 pub trait StaticScope: Send + Sync + 'static {
+    /// Stable identity used to distinguish this scope from every other scope.
+    const ID: ScopeId;
+
     /// A rank defining the lifetime of the scope relative to others. Longer-lived scopes rank higher.
     /// There are only two ranks reserved for the framework, and both are the two extremes of the `u8`
     /// range: [`Singleton`] occupies [`u8::MAX`] and [`Transient`] [`u8::MIN`].
@@ -28,6 +51,10 @@ pub trait StaticScope: Send + Sync + 'static {
 }
 
 impl<T: StaticScope> Scope for T {
+    fn id(&self) -> ScopeId {
+        Self::ID
+    }
+
     fn rank(&self) -> u8 {
         Self::RANK
     }
@@ -50,6 +77,9 @@ impl<T: StaticScope> Scope for T {
 /// longer-lived component may not depend on a shorter-lived one) is enforced against
 /// [`rank`](Self::rank).
 pub trait Scope: Send + Sync + 'static {
+    /// Stable identity used for scope comparisons and validation.
+    fn id(&self) -> ScopeId;
+
     /// Lifetime rank: longer-lived scopes rank higher. A non-transient component may
     /// depend only on equal-or-higher-ranked non-transient components.
     ///
@@ -60,7 +90,7 @@ pub trait Scope: Send + Sync + 'static {
     /// logic.
     fn rank(&self) -> u8;
 
-    /// Stable identifier, for debug/display and build-time scope-chain validation.
+    /// Human-readable display label used in diagnostics.
     fn name(&self) -> &'static str;
 
     /// Whether this scope rebuilds its instance on every resolution rather than
@@ -80,12 +110,17 @@ pub struct Singleton;
 pub struct Transient;
 
 impl StaticScope for Singleton {
+    const ID: ScopeId = SINGLETON_SCOPE_ID;
     const RANK: u8 = u8::MAX;
     const NAME: &'static str = "Singleton";
 }
 
 impl StaticScope for Transient {
+    const ID: ScopeId = TRANSIENT_SCOPE_ID;
     const RANK: u8 = u8::MIN;
     const NAME: &'static str = "Transient";
     const IS_TRANSIENT: bool = true;
 }
+
+#[cfg(test)]
+mod tests;

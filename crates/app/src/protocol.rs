@@ -6,12 +6,13 @@
 use std::future::Future;
 
 use overseerd_config::{Cfg, ConfigBinding, ConfigProperties, ConfigStore};
-use overseerd_core::{Descriptor, Scope, TypeDescriptor};
+use overseerd_core::{Descriptor, TypeDescriptor};
 use overseerd_di::{BoxedComponent, Component, ComponentDescriptor, Injectable};
 
 use crate::lifecycle::ShutdownSignal;
 use crate::registry::AppRegistry;
 use crate::runtime::AppRuntime;
+use crate::scope::ScopeTopology;
 
 /// A general extension unit applied to an app while it is built.
 ///
@@ -40,10 +41,11 @@ pub trait ProtocolPlugin: Plugin {
     /// The plugin's error type; must absorb agnostic build failures.
     type Error: std::error::Error + Send + Sync + 'static + From<crate::Error>;
 
-    /// The session scope chain this protocol opens, root→leaf by rank, *excluding* the
-    /// universal `Singleton` (root) and `Transient` (per-resolve). RPC opens
-    /// `[Connection, Request]`; a request-only protocol opens `[Request]`.
-    const SCOPES: &'static [&'static dyn Scope];
+    /// The protocol-owned scope boundaries and their declared parent paths.
+    ///
+    /// The universal singleton root is implicit, and transient components do not
+    /// occupy an openable boundary.
+    const SCOPE_TOPOLOGY: ScopeTopology;
 
     /// Contributes protocol-owned components and configuration bindings before app validation.
     fn pre_build(&mut self, context: &mut PreBuildContext<'_>) -> Result<(), Self::Error> {
@@ -180,7 +182,7 @@ impl ProtocolPlugin for () {
     type Protocol = ();
     type Error = crate::Error;
 
-    const SCOPES: &'static [&'static dyn Scope] = &[];
+    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::new(&[]);
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
         Ok(())

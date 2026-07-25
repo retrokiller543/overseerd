@@ -5,7 +5,7 @@ use std::sync::Arc;
 use overseerd_app::{
     AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin, ValidationContext,
 };
-use overseerd_core::{Descriptor, Scope, TypeDescriptor};
+use overseerd_core::{Descriptor, TypeDescriptor};
 use overseerd_di::{ComponentDescriptor, ServiceComponent};
 use overseerd_transport::PeerInfo;
 use tower::{Layer, Service};
@@ -15,7 +15,7 @@ use crate::extract::ErrorResponse;
 use crate::middleware::{ErrorHandler, Guard, GuardLayer, RouterService, RpcRequest, RpcService};
 use crate::protocol::{Rpc, RpcLimits};
 use crate::router::RpcRouter;
-use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
+use crate::scope::{Connection as ConnectionScope, SCOPE_TOPOLOGY};
 
 /// A registered middleware step: wraps the current dispatch service in one more layer.
 /// Collected in registration order and applied outermost-first when the app is built.
@@ -24,7 +24,9 @@ type LayerApplier = Box<dyn FnOnce(RpcService) -> RpcService + Send>;
 /// The framework-provided connection-scoped injectable for the remote peer.
 ///
 /// Seeded into every connection scope with the actual `PeerInfo`, so a connection-scoped
-/// component can depend on `Arc<PeerInfo>` (e.g. to authenticate in its constructor).
+/// component can depend on `PeerInfo` (e.g. to authenticate in its constructor). This
+/// descriptor intentionally has no factory: it declares the connection scope as the only
+/// valid runtime seed destination.
 static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
     "__overseerd_peer_info",
     "PeerInfo",
@@ -61,7 +63,7 @@ impl ProtocolPlugin for RpcPlugin {
     type Protocol = Rpc;
     type Error = crate::Error;
 
-    const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
+    const SCOPE_TOPOLOGY: overseerd_app::ScopeTopology = SCOPE_TOPOLOGY;
 
     fn validate(&mut self, _context: &ValidationContext<'_>) -> crate::Result<()> {
         let resolved = crate::routes::resolved_services(&self.services);

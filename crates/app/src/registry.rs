@@ -10,6 +10,7 @@ use overseerd_di::{
 };
 
 use crate::error::Error;
+use crate::scope::PreparedScopeTopology;
 
 /// Holds the *agnostic* component, provider, and config-binding descriptors of an app —
 /// declarations only. Runtime instances live in the
@@ -76,6 +77,24 @@ impl AppRegistry {
     /// config-binding rules.
     pub fn validate(&self) -> crate::Result<()> {
         self.component_registry().validate()?;
+
+        let components = self.resolved_components()?;
+
+        self.validate_configs(&components)?;
+
+        Ok(())
+    }
+
+    /// Validates the component graph against a prepared protocol-owned scope topology,
+    /// then applies the application configuration-binding rules.
+    pub fn validate_with_scope_topology(
+        &self,
+        topology: &PreparedScopeTopology,
+    ) -> crate::Result<()> {
+        self.component_registry()
+            .validate_with_scope_reachability(|consumer, dependency| {
+                topology.is_reachable(consumer, dependency)
+            })?;
 
         let components = self.resolved_components()?;
 

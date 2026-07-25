@@ -1,10 +1,10 @@
 //! Per-message DI seeds: the frame's [`StompHeaders`] and the connection's [`StompSession`].
 //!
 //! Both are **by-value injectables** (`Injectable<Target = Self>`, like `PeerInfo`): the serve loop
-//! seeds them into each message's [`Request`](crate::scope::Request) scope, and a `#[message]`
+//! seeds them into each message's [`WebsocketMessage`](overseerd_axum::WebsocketMessage) scope, and a `#[message]`
 //! handler reaches them with `Inject<StompHeaders>` / `Inject<StompSession>` — the same DI a REST
 //! route gets. Their manual [`ComponentDescriptor`]s are registered by the plugin so the container
-//! knows the type exists at `Request` rank.
+//! knows each type's exact seed destination.
 
 use std::sync::Arc;
 
