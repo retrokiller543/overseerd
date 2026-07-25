@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::diagnostic::{CompositionDiagnostic, CompositionEdge, CompositionTarget};
 use super::resolver::ResolvedPlugin;
@@ -397,82 +397,112 @@ fn cycle_diagnostics(
 }
 
 fn strongly_connected_components(graph: &Graph, nodes: &BTreeSet<PluginId>) -> Vec<Vec<PluginId>> {
-    let mut state = TarjanState::default();
+    let mut visited = BTreeSet::new();
+    let mut finish_order = Vec::with_capacity(nodes.len());
 
     for node in nodes {
-        if !state.indices.contains_key(node) {
-            visit(*node, graph, nodes, &mut state);
+        if visited.insert(*node) {
+            collect_finish_order(*node, graph, nodes, &mut visited, &mut finish_order);
         }
     }
 
-    state.components.sort_by_key(|component| component[0]);
+    let reverse = reverse_graph(graph, nodes);
+    let mut assigned = BTreeSet::new();
+    let mut components = Vec::new();
 
-    state.components
-}
-
-#[derive(Default)]
-struct TarjanState {
-    next_index: usize,
-    indices: BTreeMap<PluginId, usize>,
-    lowlinks: BTreeMap<PluginId, usize>,
-    stack: Vec<PluginId>,
-    on_stack: BTreeSet<PluginId>,
-    components: Vec<Vec<PluginId>>,
-}
-
-fn visit(node: PluginId, graph: &Graph, nodes: &BTreeSet<PluginId>, state: &mut TarjanState) {
-    let index = state.next_index;
-
-    state.next_index += 1;
-    state.indices.insert(node, index);
-    state.lowlinks.insert(node, index);
-    state.stack.push(node);
-    state.on_stack.insert(node);
-
-    for successor in graph.get(&node).into_iter().flat_map(|items| items.keys()) {
-        if !nodes.contains(successor) {
+    for node in finish_order.into_iter().rev() {
+        if !assigned.insert(node) {
             continue;
         }
 
-        if !state.indices.contains_key(successor) {
-            visit(*successor, graph, nodes, state);
-            let successor_lowlink = state.lowlinks[successor];
-            let node_lowlink = state.lowlinks[&node];
+        let mut component = collect_component(node, &reverse, &mut assigned);
 
-            state
-                .lowlinks
-                .insert(node, node_lowlink.min(successor_lowlink));
-        } else if state.on_stack.contains(successor) {
-            let successor_index = state.indices[successor];
-            let node_lowlink = state.lowlinks[&node];
-
-            state
-                .lowlinks
-                .insert(node, node_lowlink.min(successor_index));
-        }
+        component.sort();
+        components.push(component);
     }
 
-    if state.lowlinks[&node] == state.indices[&node] {
-        finish_component(node, state);
+    components.sort_by_key(|component| component[0]);
+
+    components
+}
+
+fn collect_finish_order(
+    start: PluginId,
+    graph: &Graph,
+    nodes: &BTreeSet<PluginId>,
+    visited: &mut BTreeSet<PluginId>,
+    finish_order: &mut Vec<PluginId>,
+) {
+    let mut stack = vec![(start, successors(start, graph, nodes), 0)];
+
+    while let Some((node, adjacent, index)) = stack.last_mut() {
+        if let Some(successor) = adjacent.get(*index).copied() {
+            *index += 1;
+
+            if visited.insert(successor) {
+                stack.push((successor, successors(successor, graph, nodes), 0));
+            }
+
+            continue;
+        }
+
+        finish_order.push(*node);
+        stack.pop();
     }
 }
 
-fn finish_component(node: PluginId, state: &mut TarjanState) {
-    let mut component = Vec::new();
+fn successors(node: PluginId, graph: &Graph, nodes: &BTreeSet<PluginId>) -> Vec<PluginId> {
+    graph
+        .get(&node)
+        .into_iter()
+        .flat_map(|items| items.keys())
+        .filter(|successor| nodes.contains(successor))
+        .copied()
+        .collect()
+}
 
-    loop {
-        let member = state.stack.pop().expect("active SCC node exists");
+fn reverse_graph(
+    graph: &Graph,
+    nodes: &BTreeSet<PluginId>,
+) -> BTreeMap<PluginId, BTreeSet<PluginId>> {
+    let mut reverse: BTreeMap<_, BTreeSet<_>> =
+        nodes.iter().map(|node| (*node, BTreeSet::new())).collect();
 
-        state.on_stack.remove(&member);
-        component.push(member);
+    for (source, destinations) in graph {
+        if !nodes.contains(source) {
+            continue;
+        }
 
-        if member == node {
-            break;
+        for destination in destinations.keys().filter(|node| nodes.contains(node)) {
+            reverse
+                .get_mut(destination)
+                .expect("reverse graph node exists")
+                .insert(*source);
         }
     }
 
-    component.sort();
-    state.components.push(component);
+    reverse
+}
+
+fn collect_component(
+    start: PluginId,
+    reverse: &BTreeMap<PluginId, BTreeSet<PluginId>>,
+    assigned: &mut BTreeSet<PluginId>,
+) -> Vec<PluginId> {
+    let mut component = Vec::new();
+    let mut stack = vec![start];
+
+    while let Some(node) = stack.pop() {
+        component.push(node);
+
+        for predecessor in reverse[&node].iter().rev() {
+            if assigned.insert(*predecessor) {
+                stack.push(*predecessor);
+            }
+        }
+    }
+
+    component
 }
 
 fn representative_cycle(
@@ -482,15 +512,12 @@ fn representative_cycle(
 ) -> Vec<CompositionEdge> {
     let start = component[0];
     let members: BTreeSet<_> = component.iter().copied().collect();
-    let mut visited = BTreeSet::from([start]);
-    let mut path = Vec::new();
+    let path = cycle_path(start, graph, &members);
 
-    let found = search_cycle(start, start, graph, &members, &mut visited, &mut path);
-
-    assert!(found, "strongly connected component contains a cycle");
-
-    path.into_iter()
-        .map(|(from, to)| {
+    path.windows(2)
+        .map(|edge| {
+            let from = edge[0];
+            let to = edge[1];
             let kinds = graph[&from][&to].iter().copied().collect();
 
             CompositionEdge::new(
@@ -502,40 +529,66 @@ fn representative_cycle(
         .collect()
 }
 
-fn search_cycle(
-    current: PluginId,
-    start: PluginId,
-    graph: &Graph,
-    members: &BTreeSet<PluginId>,
-    visited: &mut BTreeSet<PluginId>,
-    path: &mut Vec<(PluginId, PluginId)>,
-) -> bool {
-    for successor in graph
-        .get(&current)
-        .into_iter()
-        .flat_map(|items| items.keys())
-        .filter(|id| members.contains(id))
-    {
-        if *successor == start {
-            path.push((current, start));
-
-            return true;
+fn cycle_path(start: PluginId, graph: &Graph, members: &BTreeSet<PluginId>) -> Vec<PluginId> {
+    for successor in successors(start, graph, members) {
+        if successor == start {
+            return vec![start, start];
         }
 
-        if !visited.insert(*successor) {
-            continue;
+        if let Some(mut path) = breadth_first_path(successor, start, graph, members) {
+            path.insert(0, start);
+
+            return path;
         }
-
-        path.push((current, *successor));
-
-        if search_cycle(*successor, start, graph, members, visited, path) {
-            return true;
-        }
-
-        path.pop();
     }
 
-    false
+    unreachable!("strongly connected component contains a representative cycle")
+}
+
+fn breadth_first_path(
+    from: PluginId,
+    to: PluginId,
+    graph: &Graph,
+    members: &BTreeSet<PluginId>,
+) -> Option<Vec<PluginId>> {
+    let mut queue = VecDeque::from([from]);
+    let mut visited = BTreeSet::from([from]);
+    let mut parent = BTreeMap::new();
+
+    while let Some(node) = queue.pop_front() {
+        for successor in successors(node, graph, members) {
+            if successor == to {
+                parent.insert(to, node);
+
+                return Some(reconstruct_path(from, to, &parent));
+            }
+
+            if visited.insert(successor) {
+                parent.insert(successor, node);
+                queue.push_back(successor);
+            }
+        }
+    }
+
+    None
+}
+
+fn reconstruct_path(
+    from: PluginId,
+    to: PluginId,
+    parent: &BTreeMap<PluginId, PluginId>,
+) -> Vec<PluginId> {
+    let mut path = vec![to];
+    let mut current = to;
+
+    while current != from {
+        current = parent[&current];
+        path.push(current);
+    }
+
+    path.reverse();
+
+    path
 }
 
 fn display_cycle(steps: &[CompositionEdge]) -> String {

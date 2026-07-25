@@ -81,6 +81,7 @@ pub(super) fn select(
     phase: CompositionPhase,
     directives: &Directives<'_>,
     prior: &[ResolvedPlugin],
+    prior_suppressions: &[SuppressionDecision],
     diagnostics: &mut Vec<CompositionDiagnostic>,
 ) -> Selection {
     validate_plugin_ids(
@@ -99,6 +100,7 @@ pub(super) fn select(
         &directives.replacements,
         &directives.suppressions,
         prior,
+        prior_suppressions,
         diagnostics,
     )
 }
@@ -199,6 +201,7 @@ fn validate_slots<'a>(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn select_plugins(
     phase: CompositionPhase,
     declarations: &[&PluginDeclaration],
@@ -206,11 +209,17 @@ fn select_plugins(
     replacements: &BTreeMap<PluginSlotId, Vec<&PluginDeclaration>>,
     suppressions: &BTreeMap<PluginSlotId, Vec<InstallationProvenance>>,
     prior: &[ResolvedPlugin],
+    prior_suppressions: &[SuppressionDecision],
     diagnostics: &mut Vec<CompositionDiagnostic>,
 ) -> Selection {
     let prior_slots: BTreeMap<_, _> = prior
         .iter()
         .filter_map(|plugin| plugin.slot().map(|(slot, policy)| (slot, (plugin, policy))))
+        .collect();
+    let prior_slot_ids: std::collections::BTreeSet<_> = prior_slots
+        .keys()
+        .copied()
+        .chain(prior_suppressions.iter().map(|decision| decision.slot()))
         .collect();
     let mut selected: BTreeMap<PluginId, ResolvedPlugin> = declarations
         .iter()
@@ -226,7 +235,7 @@ fn select_plugins(
 
     if phase == CompositionPhase::Late {
         for (slot, declaration) in &base_slots {
-            if prior_slots.contains_key(slot) {
+            if prior_slot_ids.contains(slot) {
                 diagnostics.push(CompositionDiagnostic::LateSlotMutation {
                     slot: *slot,
                     provenance: declaration.provenance(),
@@ -239,7 +248,7 @@ fn select_plugins(
         phase,
         &base_slots,
         replacements,
-        &prior_slots,
+        &prior_slot_ids,
         &mut selected,
         &mut decisions,
         diagnostics,
@@ -249,7 +258,7 @@ fn select_plugins(
         &base_slots,
         replacements,
         suppressions,
-        &prior_slots,
+        &prior_slot_ids,
         &mut selected,
         &mut disabled,
         diagnostics,
@@ -267,7 +276,7 @@ fn apply_replacements(
     phase: CompositionPhase,
     base_slots: &BTreeMap<PluginSlotId, &PluginDeclaration>,
     replacements: &BTreeMap<PluginSlotId, Vec<&PluginDeclaration>>,
-    prior_slots: &BTreeMap<PluginSlotId, (&ResolvedPlugin, SlotPolicy)>,
+    prior_slots: &std::collections::BTreeSet<PluginSlotId>,
     selected: &mut BTreeMap<PluginId, ResolvedPlugin>,
     decisions: &mut Vec<ReplacementDecision>,
     diagnostics: &mut Vec<CompositionDiagnostic>,
@@ -292,7 +301,7 @@ fn apply_replacements(
 
         let replacement = replacement_declarations[0];
 
-        if phase == CompositionPhase::Late && prior_slots.contains_key(slot) {
+        if phase == CompositionPhase::Late && prior_slots.contains(slot) {
             diagnostics.push(CompositionDiagnostic::LateSlotMutation {
                 slot: *slot,
                 provenance: replacement.provenance(),
@@ -349,7 +358,7 @@ fn apply_suppressions(
     base_slots: &BTreeMap<PluginSlotId, &PluginDeclaration>,
     replacements: &BTreeMap<PluginSlotId, Vec<&PluginDeclaration>>,
     suppressions: &BTreeMap<PluginSlotId, Vec<InstallationProvenance>>,
-    prior_slots: &BTreeMap<PluginSlotId, (&ResolvedPlugin, SlotPolicy)>,
+    prior_slots: &std::collections::BTreeSet<PluginSlotId>,
     selected: &mut BTreeMap<PluginId, ResolvedPlugin>,
     disabled: &mut Vec<SuppressionDecision>,
     diagnostics: &mut Vec<CompositionDiagnostic>,
@@ -367,7 +376,7 @@ fn apply_suppressions(
             continue;
         }
 
-        if phase == CompositionPhase::Late && prior_slots.contains_key(slot) {
+        if phase == CompositionPhase::Late && prior_slots.contains(slot) {
             diagnostics.push(CompositionDiagnostic::LateSlotMutation {
                 slot: *slot,
                 provenance: sites[0],

@@ -135,6 +135,20 @@ fn contribution_identity_is_local_to_explicit_contributor() {
 }
 
 #[test]
+fn relation_order_and_duplicates_do_not_change_declaration_identity() {
+    let before = relation(RelationKind::Before, plugin_target("test/beta"));
+    let requires = relation(RelationKind::Requires, slot_target("test/router"));
+    let left = PluginDeclaration::new(plugin_id("test/alpha"), early(0))
+        .with_relations([requires, before, requires]);
+    let right = PluginDeclaration::new(plugin_id("test/alpha"), early(0))
+        .relates(before)
+        .relates(requires);
+
+    assert_eq!(left, right);
+    assert_eq!(left.relations(), &[requires, before]);
+}
+
+#[test]
 fn independent_plugins_use_lexical_identity_order() {
     let plan = resolve_early_plugins(
         PROTOCOL,
@@ -558,6 +572,99 @@ fn late_plugins_cannot_mutate_or_reorder_early_capabilities() {
             .iter()
             .any(|item| matches!(item, CompositionDiagnostic::LateOrderingBeforeEarly { .. }))
     );
+}
+
+#[test]
+fn late_plugins_cannot_reintroduce_an_early_suppressed_slot() {
+    let slot = slot_id("test/openapi");
+    let early_plan = resolve_early_plugins(
+        PROTOCOL,
+        [
+            CompositionDirective::install(
+                PluginDeclaration::new(plugin_id("test/openapi"), early(0))
+                    .provides(slot, SlotPolicy::Optional),
+            ),
+            CompositionDirective::suppress(slot, early(1)),
+        ],
+    )
+    .expect("early slot suppresses");
+    let diagnostics = extend_late_plugins(
+        &early_plan,
+        [CompositionDirective::install(
+            PluginDeclaration::new(plugin_id("test/late-openapi"), late(0))
+                .provides(slot, SlotPolicy::Optional),
+        )],
+    )
+    .expect_err("late declaration cannot restore suppressed early slot");
+
+    assert!(matches!(
+        diagnostics.as_slice(),
+        [CompositionDiagnostic::LateSlotMutation { .. }]
+    ));
+}
+
+#[test]
+fn structural_errors_do_not_emit_cascade_cycle_diagnostics() {
+    let diagnostics = resolve_early_plugins(
+        PROTOCOL,
+        [
+            install_with(
+                "test/alpha",
+                early(0),
+                [relation(RelationKind::Before, plugin_target("test/beta"))],
+            ),
+            install_with(
+                "test/beta",
+                early(1),
+                [relation(RelationKind::Before, plugin_target("test/alpha"))],
+            ),
+            install("test/alpha", early(2)),
+        ],
+    )
+    .expect_err("duplicate identity makes graph ambiguous");
+
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|item| matches!(item, CompositionDiagnostic::DuplicatePlugin { .. }))
+    );
+    assert!(
+        !diagnostics
+            .as_slice()
+            .iter()
+            .any(|item| matches!(item, CompositionDiagnostic::Cycle { .. }))
+    );
+}
+
+#[test]
+fn deep_cycles_return_typed_diagnostics_without_recursive_traversal() {
+    const NODE_COUNT: usize = 4_096;
+
+    let ids: Vec<_> = (0..NODE_COUNT)
+        .map(|index| {
+            let text: &'static str = Box::leak(format!("deep/plugin-{index:04}").into_boxed_str());
+
+            plugin_id(text)
+        })
+        .collect();
+    let directives: Vec<_> = ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            let target = ids[(index + 1) % NODE_COUNT];
+
+            CompositionDirective::install(PluginDeclaration::new(*id, early(index as u32)).relates(
+                relation(RelationKind::Before, RelationTarget::Plugin(target)),
+            ))
+        })
+        .collect();
+    let diagnostics = resolve_early_plugins(PROTOCOL, directives).expect_err("cycle fails");
+
+    assert!(matches!(
+        diagnostics.as_slice(),
+        [CompositionDiagnostic::Cycle { members, .. }] if members.len() == NODE_COUNT
+    ));
 }
 
 #[test]
