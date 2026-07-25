@@ -13,6 +13,7 @@ pub(super) struct Selection {
     pub(super) plugins: Vec<ResolvedPlugin>,
     pub(super) replacements: Vec<ReplacementDecision>,
     pub(super) suppressions: Vec<SuppressionDecision>,
+    pub(super) graph_ambiguous: bool,
 }
 
 /// Canonical structural directives for one resolution phase.
@@ -84,14 +85,14 @@ pub(super) fn select(
     prior_suppressions: &[SuppressionDecision],
     diagnostics: &mut Vec<CompositionDiagnostic>,
 ) -> Selection {
-    validate_plugin_ids(
+    let duplicate_plugins = validate_plugin_ids(
         prior,
         &directives.declarations,
         &directives.replacements,
         diagnostics,
     );
 
-    let base_slots = validate_slots(&directives.declarations, diagnostics);
+    let (base_slots, duplicate_slots) = validate_slots(&directives.declarations, diagnostics);
 
     select_plugins(
         phase,
@@ -101,6 +102,7 @@ pub(super) fn select(
         &directives.suppressions,
         prior,
         prior_suppressions,
+        duplicate_plugins || duplicate_slots,
         diagnostics,
     )
 }
@@ -110,8 +112,9 @@ fn validate_plugin_ids<'a>(
     declarations: &[&'a PluginDeclaration],
     replacements: &BTreeMap<PluginSlotId, Vec<&'a PluginDeclaration>>,
     diagnostics: &mut Vec<CompositionDiagnostic>,
-) {
+) -> bool {
     let mut by_id: BTreeMap<PluginId, Vec<InstallationProvenance>> = BTreeMap::new();
+    let mut duplicates = false;
 
     for plugin in prior {
         by_id
@@ -143,6 +146,8 @@ fn validate_plugin_ids<'a>(
     for (id, sites) in &mut by_id {
         sites.sort();
 
+        duplicates |= sites.len() > 1;
+
         for pair in sites.windows(2) {
             diagnostics.push(CompositionDiagnostic::DuplicatePlugin {
                 id: *id,
@@ -151,6 +156,8 @@ fn validate_plugin_ids<'a>(
             });
         }
     }
+
+    duplicates
 }
 
 fn framework_owns(provenance: InstallationProvenance) -> bool {
@@ -167,8 +174,9 @@ fn framework_owns(provenance: InstallationProvenance) -> bool {
 fn validate_slots<'a>(
     declarations: &[&'a PluginDeclaration],
     diagnostics: &mut Vec<CompositionDiagnostic>,
-) -> BTreeMap<PluginSlotId, &'a PluginDeclaration> {
+) -> (BTreeMap<PluginSlotId, &'a PluginDeclaration>, bool) {
     let mut providers: BTreeMap<PluginSlotId, Vec<&PluginDeclaration>> = BTreeMap::new();
+    let mut duplicates = false;
 
     for declaration in declarations.iter().copied() {
         let Some((slot, _)) = declaration.slot() else {
@@ -180,6 +188,7 @@ fn validate_slots<'a>(
 
     for (slot, declarations) in &mut providers {
         declarations.sort_by_key(|declaration| (declaration.id(), declaration.provenance()));
+        duplicates |= declarations.len() > 1;
 
         for pair in declarations.windows(2) {
             let first = pair[0];
@@ -195,10 +204,12 @@ fn validate_slots<'a>(
         }
     }
 
-    providers
+    let slots = providers
         .into_iter()
         .map(|(slot, declarations)| (slot, declarations[0]))
-        .collect()
+        .collect();
+
+    (slots, duplicates)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -210,6 +221,7 @@ fn select_plugins(
     suppressions: &BTreeMap<PluginSlotId, Vec<InstallationProvenance>>,
     prior: &[ResolvedPlugin],
     prior_suppressions: &[SuppressionDecision],
+    mut graph_ambiguous: bool,
     diagnostics: &mut Vec<CompositionDiagnostic>,
 ) -> Selection {
     let prior_slots: BTreeMap<_, _> = prior
@@ -236,6 +248,7 @@ fn select_plugins(
     if phase == CompositionPhase::Late {
         for (slot, declaration) in &base_slots {
             if prior_slot_ids.contains(slot) {
+                graph_ambiguous = true;
                 diagnostics.push(CompositionDiagnostic::LateSlotMutation {
                     slot: *slot,
                     provenance: declaration.provenance(),
@@ -244,7 +257,7 @@ fn select_plugins(
         }
     }
 
-    apply_replacements(
+    graph_ambiguous |= apply_replacements(
         phase,
         &base_slots,
         replacements,
@@ -253,7 +266,7 @@ fn select_plugins(
         &mut decisions,
         diagnostics,
     );
-    apply_suppressions(
+    graph_ambiguous |= apply_suppressions(
         phase,
         &base_slots,
         replacements,
@@ -268,6 +281,7 @@ fn select_plugins(
         plugins: selected.into_values().collect(),
         replacements: decisions,
         suppressions: disabled,
+        graph_ambiguous,
     }
 }
 
@@ -280,9 +294,12 @@ fn apply_replacements(
     selected: &mut BTreeMap<PluginId, ResolvedPlugin>,
     decisions: &mut Vec<ReplacementDecision>,
     diagnostics: &mut Vec<CompositionDiagnostic>,
-) {
+) -> bool {
+    let mut graph_ambiguous = false;
+
     for (slot, replacement_declarations) in replacements {
         if replacement_declarations.len() > 1 {
+            graph_ambiguous = true;
             let sites: Vec<_> = replacement_declarations
                 .iter()
                 .map(|plugin| plugin.provenance())
@@ -350,6 +367,8 @@ fn apply_replacements(
         );
         decisions.push(ReplacementDecision::new(*slot, target, replacement));
     }
+
+    graph_ambiguous
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -362,7 +381,9 @@ fn apply_suppressions(
     selected: &mut BTreeMap<PluginId, ResolvedPlugin>,
     disabled: &mut Vec<SuppressionDecision>,
     diagnostics: &mut Vec<CompositionDiagnostic>,
-) {
+) -> bool {
+    let mut graph_ambiguous = false;
+
     for (slot, sites) in suppressions {
         if sites.len() > 1 {
             for pair in sites.windows(2) {
@@ -386,6 +407,7 @@ fn apply_suppressions(
         }
 
         if let Some(replacement) = replacements.get(slot).and_then(|items| items.first()) {
+            graph_ambiguous = true;
             diagnostics.push(CompositionDiagnostic::ConflictingSlotDirectives {
                 slot: *slot,
                 first: replacement.provenance().min(sites[0]),
@@ -418,4 +440,6 @@ fn apply_suppressions(
         selected.remove(&target.id());
         disabled.push(SuppressionDecision::new(*slot, target, sites[0]));
     }
+
+    graph_ambiguous
 }

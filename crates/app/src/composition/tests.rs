@@ -683,6 +683,46 @@ fn competing_slot_directives_do_not_emit_cascade_cycles() {
 }
 
 #[test]
+fn duplicate_suppressions_do_not_hide_independent_cycles() {
+    let slot = slot_id("test/openapi");
+    let diagnostics = resolve_early_plugins(
+        PROTOCOL,
+        [
+            CompositionDirective::install(
+                PluginDeclaration::new(plugin_id("test/openapi"), early(0))
+                    .provides(slot, SlotPolicy::Optional),
+            ),
+            CompositionDirective::suppress(slot, early(1)),
+            CompositionDirective::suppress(slot, early(2)),
+            install_with(
+                "test/alpha",
+                early(3),
+                [relation(RelationKind::Before, plugin_target("test/beta"))],
+            ),
+            install_with(
+                "test/beta",
+                early(4),
+                [relation(RelationKind::Before, plugin_target("test/alpha"))],
+            ),
+        ],
+    )
+    .expect_err("independent failures are aggregated");
+
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|item| matches!(item, CompositionDiagnostic::MultipleSuppressions { .. }))
+    );
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|item| matches!(item, CompositionDiagnostic::Cycle { .. }))
+    );
+}
+
+#[test]
 fn unrelated_validation_errors_do_not_hide_independent_cycles() {
     let diagnostics = resolve_early_plugins(
         PROTOCOL,
