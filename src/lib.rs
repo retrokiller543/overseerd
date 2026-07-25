@@ -87,12 +87,17 @@ pub use overseerd_config::{
 #[cfg(not(target_family = "wasm"))]
 pub use overseerd_app::{
     App, AppBuilder, AppHost, AppRegistry, AppRuntime, AppStage, BootstrapContext, Built,
-    ExecutionMode, HostError, Initial, LifecyclePhase, LogFormat, LoggingConfig, PhaseError,
-    Plugin, PreBuild, PreBuildContext, PreparedApp, Protocol, ProtocolPlugin, Serve, ServerConfig,
-    Setup, ShutdownHandle, ShutdownSignal, SpanEvents, ValidationContext, build_host,
-    build_host_context, build_prepared_host, prepare_host, prepare_host_context,
-    prepare_setup_host_context, resolve_host_dependency, serve_host, setup_host,
-    setup_host_context,
+    CompositionDiagnostic, CompositionDiagnostics, CompositionDirective, CompositionEdge,
+    CompositionPhase, CompositionTarget, ContributionId, ContributionProvenance, Contributor,
+    EarlyPluginPlan, ExecutionMode, HostError, IdErrorKind, Initial, InstallationOrigin,
+    InstallationProvenance, InvalidCompositionId, LifecyclePhase, LogFormat, LoggingConfig,
+    PhaseError, Plugin, PluginDeclaration, PluginId, PluginRelation, PluginResolutionPlan,
+    PluginSlotId, PreBuild, PreBuildContext, PreparedApp, Protocol, ProtocolId, ProtocolPlugin,
+    RelationKind, RelationTarget, ReplacementDecision, ResolvedPlugin, Serve, ServerConfig, Setup,
+    ShutdownHandle, ShutdownSignal, SlotPolicy, SpanEvents, SuppressionDecision, ValidationContext,
+    build_host, build_host_context, build_prepared_host, extend_late_plugins, prepare_host,
+    prepare_host_context, prepare_setup_host_context, resolve_early_plugins,
+    resolve_host_dependency, serve_host, setup_host, setup_host_context,
 };
 
 #[cfg(all(not(target_family = "wasm"), feature = "cli"))]
