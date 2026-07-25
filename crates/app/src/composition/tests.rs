@@ -723,6 +723,37 @@ fn duplicate_suppressions_do_not_hide_independent_cycles() {
 }
 
 #[test]
+fn duplicate_suppressions_remove_the_provider_before_cycle_analysis() {
+    let slot = slot_id("test/openapi");
+    let diagnostics = resolve_early_plugins(
+        PROTOCOL,
+        [
+            CompositionDirective::install(
+                PluginDeclaration::new(plugin_id("test/openapi"), early(0))
+                    .provides(slot, SlotPolicy::Optional)
+                    .relates(relation(
+                        RelationKind::Before,
+                        plugin_target("test/consumer"),
+                    )),
+            ),
+            CompositionDirective::suppress(slot, early(1)),
+            CompositionDirective::suppress(slot, early(2)),
+            install_with(
+                "test/consumer",
+                early(3),
+                [relation(RelationKind::Before, slot_target("test/openapi"))],
+            ),
+        ],
+    )
+    .expect_err("duplicate suppressions remain diagnostic");
+
+    assert!(matches!(
+        diagnostics.as_slice(),
+        [CompositionDiagnostic::MultipleSuppressions { .. }]
+    ));
+}
+
+#[test]
 fn unrelated_validation_errors_do_not_hide_independent_cycles() {
     let diagnostics = resolve_early_plugins(
         PROTOCOL,

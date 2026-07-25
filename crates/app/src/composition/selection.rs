@@ -393,8 +393,6 @@ fn apply_suppressions(
                     second: pair[1],
                 });
             }
-
-            continue;
         }
 
         if phase == CompositionPhase::Late && prior_slots.contains(slot) {
