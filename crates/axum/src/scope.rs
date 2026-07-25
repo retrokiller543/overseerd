@@ -8,20 +8,6 @@
 use overseerd_app::{ScopeBoundary, ScopeParent, ScopeTopology};
 use overseerd_core::{ScopeId, StaticScope};
 
-/// Stable identity of the HTTP request scope.
-pub const HTTP_REQUEST_SCOPE_ID: ScopeId =
-    overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-http-request");
-
-/// Stable identity of the WebSocket connection scope.
-#[cfg(feature = "ws")]
-pub const WEBSOCKET_CONNECTION_SCOPE_ID: ScopeId =
-    overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-websocket-connection");
-
-/// Stable identity of the WebSocket message scope.
-#[cfg(feature = "ws")]
-pub const WEBSOCKET_MESSAGE_SCOPE_ID: ScopeId =
-    overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-websocket-message");
-
 /// One inbound HTTP request.
 pub struct HttpRequest;
 
@@ -34,21 +20,22 @@ pub struct WebsocketConnection;
 pub struct WebsocketMessage;
 
 impl StaticScope for HttpRequest {
-    const ID: ScopeId = HTTP_REQUEST_SCOPE_ID;
+    const ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-http-request");
     const RANK: u8 = 100;
     const NAME: &'static str = "HttpRequest";
 }
 
 #[cfg(feature = "ws")]
 impl StaticScope for WebsocketConnection {
-    const ID: ScopeId = WEBSOCKET_CONNECTION_SCOPE_ID;
+    const ID: ScopeId =
+        overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-websocket-connection");
     const RANK: u8 = 200;
     const NAME: &'static str = "WebsocketConnection";
 }
 
 #[cfg(feature = "ws")]
 impl StaticScope for WebsocketMessage {
-    const ID: ScopeId = WEBSOCKET_MESSAGE_SCOPE_ID;
+    const ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-websocket-message");
     const RANK: u8 = 100;
     const NAME: &'static str = "WebsocketMessage";
 }
@@ -61,10 +48,7 @@ static AXUM_SCOPE_BOUNDARIES: [ScopeBoundary; 1] =
 static AXUM_SCOPE_BOUNDARIES: [ScopeBoundary; 3] = [
     ScopeBoundary::new(&HttpRequest, ScopeParent::Root),
     ScopeBoundary::new(&WebsocketConnection, ScopeParent::Root),
-    ScopeBoundary::new(
-        &WebsocketMessage,
-        ScopeParent::Boundary(WEBSOCKET_CONNECTION_SCOPE_ID),
-    ),
+    ScopeBoundary::new(&WebsocketMessage, ScopeParent::of::<WebsocketConnection>()),
 ];
 
 /// Axum-owned scope topology for HTTP and optional WebSocket traffic.

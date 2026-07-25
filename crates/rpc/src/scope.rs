@@ -9,20 +9,6 @@
 use overseerd_app::{ScopeBoundary, ScopeParent, ScopeTopology};
 use overseerd_core::{ScopeId, StaticScope};
 
-/// Stable identity of the RPC connection scope.
-pub const CONNECTION_SCOPE_ID: ScopeId =
-    overseerd_core::namespaced_id!(ScopeId, "overseerd/rpc-connection");
-
-/// Display name of the RPC connection scope.
-pub const CONNECTION_SCOPE_NAME: &str = "Connection";
-
-/// Stable identity of the RPC request scope.
-pub const REQUEST_SCOPE_ID: ScopeId =
-    overseerd_core::namespaced_id!(ScopeId, "overseerd/rpc-request");
-
-/// Display name of the RPC request scope.
-pub const REQUEST_SCOPE_NAME: &str = "Request";
-
 /// A per-connection scope: a live session between the daemon and one remote peer.
 /// Outlives the requests multiplexed over it, so it ranks above [`Request`].
 pub struct Connection;
@@ -31,20 +17,20 @@ pub struct Connection;
 pub struct Request;
 
 impl StaticScope for Connection {
-    const ID: ScopeId = CONNECTION_SCOPE_ID;
+    const ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "overseerd/rpc-connection");
     const RANK: u8 = 200;
-    const NAME: &'static str = CONNECTION_SCOPE_NAME;
+    const NAME: &'static str = "Connection";
 }
 
 impl StaticScope for Request {
-    const ID: ScopeId = REQUEST_SCOPE_ID;
+    const ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "overseerd/rpc-request");
     const RANK: u8 = 100;
-    const NAME: &'static str = REQUEST_SCOPE_NAME;
+    const NAME: &'static str = "Request";
 }
 
 static RPC_SCOPE_BOUNDARIES: [ScopeBoundary; 2] = [
     ScopeBoundary::new(&Connection, ScopeParent::Root),
-    ScopeBoundary::new(&Request, ScopeParent::Boundary(CONNECTION_SCOPE_ID)),
+    ScopeBoundary::new(&Request, ScopeParent::of::<Connection>()),
 ];
 
 /// RPC-owned scope topology: `root -> connection -> request`.

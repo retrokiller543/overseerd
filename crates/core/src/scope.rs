@@ -20,18 +20,6 @@ crate::namespaced_id_type!(
     "scope"
 );
 
-/// Stable identity of the framework-owned application root scope.
-pub const SINGLETON_SCOPE_ID: ScopeId = crate::namespaced_id!(ScopeId, "overseerd/singleton");
-
-/// Framework-local name of the application root scope.
-pub const SINGLETON_SCOPE_NAME: &str = SINGLETON_SCOPE_ID.name();
-
-/// Stable identity of the framework-owned transient construction scope.
-pub const TRANSIENT_SCOPE_ID: ScopeId = crate::namespaced_id!(ScopeId, "overseerd/transient");
-
-/// Framework-local name of the transient construction scope.
-pub const TRANSIENT_SCOPE_NAME: &str = TRANSIENT_SCOPE_ID.name();
-
 /// Ergonomic authoring sugar for a zero-sized scope: provide its stable ID, display
 /// label, and rank, and a [`Scope`] impl follows via the blanket impl below. Plugin and user
 /// scopes (`Connection`, `Request`, a custom `#[scope]`) declare themselves this way.
@@ -110,13 +98,13 @@ pub struct Singleton;
 pub struct Transient;
 
 impl StaticScope for Singleton {
-    const ID: ScopeId = SINGLETON_SCOPE_ID;
+    const ID: ScopeId = crate::namespaced_id!(ScopeId, "overseerd/singleton");
     const RANK: u8 = u8::MAX;
     const NAME: &'static str = "Singleton";
 }
 
 impl StaticScope for Transient {
-    const ID: ScopeId = TRANSIENT_SCOPE_ID;
+    const ID: ScopeId = crate::namespaced_id!(ScopeId, "overseerd/transient");
     const RANK: u8 = u8::MIN;
     const NAME: &'static str = "Transient";
     const IS_TRANSIENT: bool = true;

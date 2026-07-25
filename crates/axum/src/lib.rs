@@ -185,7 +185,7 @@ pub use overseerd_di::{
 };
 
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
-pub use overseerd_core::TypeDescriptor;
+pub use overseerd_core::{StaticScope, TypeDescriptor};
 
 /// The DI error returned while resolving protocol-owned connection dependencies.
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]

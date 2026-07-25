@@ -1,7 +1,7 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
-use overseerd_core::{SINGLETON_SCOPE_ID, ScopeId, TRANSIENT_SCOPE_ID};
+use overseerd_core::{ScopeId, Singleton, StaticScope, Transient};
 use overseerd_di::{ComponentDescriptor, ProviderDescriptor, topological_sort};
 
 use super::PreparedScopeTopology;
@@ -39,13 +39,13 @@ impl ScopePlan {
         for component in resolved {
             let scope = component.scope.id();
 
-            if scope == TRANSIENT_SCOPE_ID {
+            if scope == <Transient as StaticScope>::ID {
                 transient.insert(component.ty.type_id, *component);
 
                 continue;
             }
 
-            if scope == SINGLETON_SCOPE_ID {
+            if scope == <Singleton as StaticScope>::ID {
                 singletons.push(*component);
 
                 continue;
@@ -91,7 +91,7 @@ impl ScopePlan {
             let mut prebuilt = root.clone();
 
             for ancestor in topology.ancestors(scope) {
-                if ancestor == SINGLETON_SCOPE_ID {
+                if ancestor == <Singleton as StaticScope>::ID {
                     continue;
                 }
 

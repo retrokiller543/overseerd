@@ -23,7 +23,6 @@ pub use descriptor::{
 pub use id::{FRAMEWORK_NAMESPACE, IdErrorKind, InvalidNamespacedId, NamespacedIdType};
 pub use resolver::{Resolver, ResolverCtx, ResolverCtxExt, ResolverSet};
 pub use scope::{
-    InvalidScopeId, InvalidScopeIdReason, SINGLETON_SCOPE_ID, SINGLETON_SCOPE_NAME, Scope, ScopeId,
-    Singleton, StaticScope, TRANSIENT_SCOPE_ID, TRANSIENT_SCOPE_NAME, Transient,
+    InvalidScopeId, InvalidScopeIdReason, Scope, ScopeId, Singleton, StaticScope, Transient,
 };
 pub use types::{TypeDescriptor, type_id_of};

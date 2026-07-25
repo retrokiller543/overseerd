@@ -5,17 +5,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use overseerd_app::{App, ProtocolPlugin, ScopeParent};
 use overseerd_config::{ConfigManager, Dynamic};
-use overseerd_core::TypeDescriptor;
+use overseerd_core::{StaticScope, TypeDescriptor};
 use overseerd_di::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
     ComponentFactoryDescriptor, Injectable, Singleton,
 };
 
 use super::{RpcAppBuilder, RpcPlugin};
-use crate::scope::{
-    CONNECTION_SCOPE_ID, Connection as ConnectionScope, REQUEST_SCOPE_ID, Request as RequestScope,
-    SCOPE_TOPOLOGY,
-};
+use crate::scope::{Connection as ConnectionScope, Request as RequestScope, SCOPE_TOPOLOGY};
 use crate::{Error, ServiceDescriptor};
 
 static FACTORY_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -107,15 +104,15 @@ fn empty_service_fails_during_prepare_before_component_construction() {
 fn rpc_scope_topology_declares_connection_and_request_path() {
     let topology = SCOPE_TOPOLOGY.prepare().expect("RPC topology is valid");
     let connection = topology
-        .boundary(CONNECTION_SCOPE_ID)
+        .boundary(<ConnectionScope as StaticScope>::ID)
         .expect("connection boundary is declared");
     let request = topology
-        .boundary(REQUEST_SCOPE_ID)
+        .boundary(<RequestScope as StaticScope>::ID)
         .expect("request boundary is declared");
 
     assert_eq!(RpcPlugin::SCOPE_TOPOLOGY.boundaries().len(), 2);
     assert_eq!(connection.parent(), ScopeParent::Root);
-    assert_eq!(request.parent(), ScopeParent::Boundary(CONNECTION_SCOPE_ID));
+    assert_eq!(request.parent(), ScopeParent::of::<ConnectionScope>());
 }
 
 #[tokio::test]
@@ -166,8 +163,8 @@ async fn peer_info_seed_opens_only_at_connection_destination() {
     assert!(matches!(
         error,
         overseerd_app::Error::InvalidSeedDestination {
-            expected: CONNECTION_SCOPE_ID,
-            actual: REQUEST_SCOPE_ID,
+            expected: <ConnectionScope as StaticScope>::ID,
+            actual: <RequestScope as StaticScope>::ID,
             ..
         }
     ));
@@ -177,5 +174,5 @@ async fn peer_info_seed_opens_only_at_connection_destination() {
         .await
         .expect("request opens under its declared connection parent");
 
-    assert_eq!(request.scope().id(), REQUEST_SCOPE_ID);
+    assert_eq!(request.scope().id(), <RequestScope as StaticScope>::ID);
 }
