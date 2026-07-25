@@ -194,14 +194,14 @@ impl PluginDeclaration {
         let mut relations = self.relations.into_vec();
 
         relations.push(relation);
-        self.relations = relations.into_boxed_slice();
+        self.relations = canonical_relations(relations);
 
         self
     }
 
     /// Adds several dependency, conflict, or ordering relations.
     pub fn with_relations(mut self, relations: impl IntoIterator<Item = PluginRelation>) -> Self {
-        self.relations = relations.into_iter().collect();
+        self.relations = canonical_relations(relations);
 
         self
     }
@@ -225,6 +225,17 @@ impl PluginDeclaration {
     pub fn relations(&self) -> &[PluginRelation] {
         &self.relations
     }
+}
+
+fn canonical_relations(
+    relations: impl IntoIterator<Item = PluginRelation>,
+) -> Box<[PluginRelation]> {
+    let mut relations: Vec<_> = relations.into_iter().collect();
+
+    relations.sort();
+    relations.dedup();
+
+    relations.into_boxed_slice()
 }
 
 /// An explicit plugin install, slot replacement, or optional-slot suppression.

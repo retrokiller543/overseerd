@@ -277,13 +277,19 @@ fn resolve_phase(
 ) -> Result<PluginResolutionPlan, CompositionDiagnostics> {
     let mut diagnostics = Vec::new();
     let directives = Directives::collect(phase, directives, &mut diagnostics);
-    let selection = selection::select(phase, &directives, prior, &mut diagnostics);
+    let selection = selection::select(
+        phase,
+        &directives,
+        prior,
+        prior_suppressions,
+        &mut diagnostics,
+    );
 
     let mut effective = selection.plugins;
     let graph = graph::validate(phase, &effective, prior, &mut diagnostics);
-    let cycles = graph::cycles(phase, &effective, &graph);
-
-    diagnostics.extend(cycles);
+    if diagnostics.is_empty() {
+        diagnostics.extend(graph::cycles(phase, &effective, &graph));
+    }
 
     if !diagnostics.is_empty() {
         return Err(CompositionDiagnostics::new(diagnostics));
