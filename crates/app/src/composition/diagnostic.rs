@@ -232,7 +232,12 @@ impl CompositionDiagnostic {
     pub(crate) const fn makes_graph_ambiguous(&self) -> bool {
         matches!(
             self,
-            Self::DuplicatePlugin { .. } | Self::DuplicateSlot { .. }
+            Self::DuplicatePlugin { .. }
+                | Self::DuplicateSlot { .. }
+                | Self::MultipleReplacements { .. }
+                | Self::MultipleSuppressions { .. }
+                | Self::ConflictingSlotDirectives { .. }
+                | Self::LateSlotMutation { .. }
         )
     }
 }
