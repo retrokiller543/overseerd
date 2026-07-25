@@ -22,6 +22,11 @@ pub enum ScopeParent {
 }
 
 impl ScopeParent {
+    /// Creates a parent reference to a static scope type.
+    pub const fn of<T: StaticScope>() -> Self {
+        Self::Boundary(T::ID)
+    }
+
     /// Creates a parent reference to another declared boundary.
     pub const fn boundary(id: ScopeId) -> Self {
         Self::Boundary(id)

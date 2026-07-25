@@ -140,7 +140,7 @@ async fn open_rejects_undeclared_and_wrong_parent_boundaries() {
         Error::InvalidScopeParent {
             child: REQUEST_ID,
             expected: SESSION_ID,
-            actual: overseerd_core::SINGLETON_SCOPE_ID,
+            actual: <overseerd_core::Singleton as StaticScope>::ID,
         }
     ));
 }
@@ -170,15 +170,15 @@ async fn open_rejects_foreign_runtime_and_noncanonical_root_parents() {
         foreign_error,
         Error::ForeignScopeParent {
             child: SESSION_ID,
-            parent: overseerd_core::SINGLETON_SCOPE_ID,
+            parent: <overseerd_core::Singleton as StaticScope>::ID,
         }
     ));
     assert!(matches!(
         alternate_error,
         Error::InvalidScopeParent {
             child: SESSION_ID,
-            expected: overseerd_core::SINGLETON_SCOPE_ID,
-            actual: overseerd_core::SINGLETON_SCOPE_ID,
+            expected: <overseerd_core::Singleton as StaticScope>::ID,
+            actual: <overseerd_core::Singleton as StaticScope>::ID,
         }
     ));
 }

@@ -74,7 +74,7 @@ fn stomp_registers_every_message_seed_at_the_message_destination() {
     ] {
         assert_eq!(
             descriptor.scope.id(),
-            overseerd_axum::scope::WEBSOCKET_MESSAGE_SCOPE_ID
+            <overseerd_axum::WebsocketMessage as overseerd_axum::StaticScope>::ID
         );
         assert!(
             descriptor
