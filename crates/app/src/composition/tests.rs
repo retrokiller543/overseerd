@@ -638,6 +638,51 @@ fn structural_errors_do_not_emit_cascade_cycle_diagnostics() {
 }
 
 #[test]
+fn competing_slot_directives_do_not_emit_cascade_cycles() {
+    let slot = slot_id("test/router");
+    let diagnostics = resolve_early_plugins(
+        PROTOCOL,
+        [
+            CompositionDirective::install(
+                PluginDeclaration::new(plugin_id("test/default-router"), early(0))
+                    .provides(slot, SlotPolicy::Replaceable)
+                    .relates(relation(
+                        RelationKind::Before,
+                        plugin_target("test/consumer"),
+                    )),
+            ),
+            CompositionDirective::replace(
+                slot,
+                PluginDeclaration::new(plugin_id("test/router-a"), early(1)),
+            ),
+            CompositionDirective::replace(
+                slot,
+                PluginDeclaration::new(plugin_id("test/router-b"), early(2)),
+            ),
+            install_with(
+                "test/consumer",
+                early(3),
+                [relation(RelationKind::Before, slot_target("test/router"))],
+            ),
+        ],
+    )
+    .expect_err("competing replacements fail");
+
+    assert!(
+        diagnostics
+            .as_slice()
+            .iter()
+            .any(|item| matches!(item, CompositionDiagnostic::MultipleReplacements { .. }))
+    );
+    assert!(
+        !diagnostics
+            .as_slice()
+            .iter()
+            .any(|item| matches!(item, CompositionDiagnostic::Cycle { .. }))
+    );
+}
+
+#[test]
 fn unrelated_validation_errors_do_not_hide_independent_cycles() {
     let diagnostics = resolve_early_plugins(
         PROTOCOL,
