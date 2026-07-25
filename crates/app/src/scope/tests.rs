@@ -80,6 +80,14 @@ fn declaration_is_const_and_preparation_canonicalizes_boundaries() {
 }
 
 #[test]
+fn empty_topology_is_const_constructible_and_default() {
+    const EMPTY: ScopeTopology = ScopeTopology::empty();
+
+    assert!(EMPTY.boundaries().is_empty());
+    assert!(ScopeTopology::default().boundaries().is_empty());
+}
+
+#[test]
 fn duplicate_display_names_do_not_alias_stable_ids() {
     static BOUNDARIES: [ScopeBoundary; 2] = [
         ScopeBoundary::new(&HTTP, ScopeParent::Root),
@@ -91,11 +99,11 @@ fn duplicate_display_names_do_not_alias_stable_ids() {
     assert_eq!(HTTP.name(), MESSAGE.name());
     assert_ne!(HTTP_ID, MESSAGE_ID);
     assert_eq!(
-        topology.boundary(HTTP_ID).map(|boundary| boundary.id()),
+        topology.boundary(&HTTP_ID).map(|boundary| boundary.id()),
         Some(HTTP_ID)
     );
     assert_eq!(
-        topology.boundary(MESSAGE_ID).map(|boundary| boundary.id()),
+        topology.boundary(&MESSAGE_ID).map(|boundary| boundary.id()),
         Some(MESSAGE_ID)
     );
 }
@@ -104,16 +112,16 @@ fn duplicate_display_names_do_not_alias_stable_ids() {
 fn boundary_lookup_and_parent_queries_include_implicit_root() {
     let topology = prepare(&AXUM_BOUNDARIES);
 
-    assert!(topology.contains(HTTP_ID));
-    assert!(!topology.contains(Singleton.id()));
-    assert_eq!(topology.parent_of(HTTP_ID), Some(ScopeParent::Root));
+    assert!(topology.contains(&HTTP_ID));
+    assert!(!topology.contains(&Singleton.id()));
+    assert_eq!(topology.parent_of(&HTTP_ID), Some(ScopeParent::Root));
     assert_eq!(
-        topology.parent_of(MESSAGE_ID),
+        topology.parent_of(&MESSAGE_ID),
         Some(ScopeParent::Boundary(CONNECTION_ID))
     );
-    assert_eq!(topology.parent_of(MISSING_ID), None);
+    assert_eq!(topology.parent_of(&MISSING_ID), None);
     assert_eq!(
-        topology.ancestors(MESSAGE_ID).collect::<Vec<_>>(),
+        topology.ancestors(&MESSAGE_ID).collect::<Vec<_>>(),
         [CONNECTION_ID, Singleton.id()]
     );
 }
@@ -130,16 +138,16 @@ fn reachability_follows_ancestry_instead_of_rank() {
     let topology = prepare(&BOUNDARIES);
     let root = Singleton.id();
 
-    assert!(topology.is_ancestor(CONNECTION_ID, MESSAGE_ID));
-    assert!(topology.is_ancestor(root, MESSAGE_ID));
-    assert!(!topology.is_ancestor(MESSAGE_ID, MESSAGE_ID));
-    assert!(topology.is_reachable(MESSAGE_ID, MESSAGE_ID));
-    assert!(topology.is_reachable(MESSAGE_ID, CONNECTION_ID));
-    assert!(topology.is_reachable(MESSAGE_ID, root));
-    assert!(!topology.is_reachable(HTTP_ID, CONNECTION_ID));
-    assert!(!topology.is_reachable(MESSAGE_ID, SIBLING_ID));
-    assert!(!topology.is_reachable(MISSING_ID, root));
-    assert!(!topology.is_reachable(MESSAGE_ID, MISSING_ID));
+    assert!(topology.is_ancestor(&CONNECTION_ID, &MESSAGE_ID));
+    assert!(topology.is_ancestor(&root, &MESSAGE_ID));
+    assert!(!topology.is_ancestor(&MESSAGE_ID, &MESSAGE_ID));
+    assert!(topology.is_reachable(&MESSAGE_ID, &MESSAGE_ID));
+    assert!(topology.is_reachable(&MESSAGE_ID, &CONNECTION_ID));
+    assert!(topology.is_reachable(&MESSAGE_ID, &root));
+    assert!(!topology.is_reachable(&HTTP_ID, &CONNECTION_ID));
+    assert!(!topology.is_reachable(&MESSAGE_ID, &SIBLING_ID));
+    assert!(!topology.is_reachable(&MISSING_ID, &root));
+    assert!(!topology.is_reachable(&MESSAGE_ID, &MISSING_ID));
 }
 
 #[test]

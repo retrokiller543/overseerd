@@ -182,7 +182,7 @@ impl ProtocolPlugin for () {
     type Protocol = ();
     type Error = crate::Error;
 
-    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::new(&[]);
+    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
         Ok(())

@@ -37,6 +37,7 @@ fn scope_ids_validate_namespaced_ascii_paths() {
     let unicode = ScopeId::new("acme/routér").expect_err("unicode is rejected");
 
     assert_eq!(valid.as_str(), "acme/rpc.request-v2");
+    assert_eq!(valid.as_ref(), "acme/rpc.request-v2");
     assert_eq!(valid.namespace(), "acme");
     assert_eq!(valid.name(), "rpc.request-v2");
     assert_eq!(valid.local_path(), "rpc.request-v2");

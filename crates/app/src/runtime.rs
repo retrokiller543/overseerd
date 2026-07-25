@@ -118,7 +118,7 @@ impl AppRuntime {
         let boundary = self
             .scope_plan
             .topology
-            .boundary(child)
+            .boundary(&child)
             .ok_or(crate::Error::UndeclaredScopeOpen { scope: child })?;
 
         self.validate_parent(child, boundary.parent(), &parent)?;

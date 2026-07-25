@@ -59,7 +59,7 @@ impl ProtocolPlugin for TestPlugin {
     type Protocol = TestProtocol;
     type Error = overseerd_app::Error;
 
-    const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::new(&[]);
+    const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
         PROTOCOL_BUILDS.fetch_add(1, Ordering::SeqCst);

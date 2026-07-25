@@ -104,10 +104,10 @@ fn empty_service_fails_during_prepare_before_component_construction() {
 fn rpc_scope_topology_declares_connection_and_request_path() {
     let topology = SCOPE_TOPOLOGY.prepare().expect("RPC topology is valid");
     let connection = topology
-        .boundary(<ConnectionScope as StaticScope>::ID)
+        .boundary(&<ConnectionScope as StaticScope>::ID)
         .expect("connection boundary is declared");
     let request = topology
-        .boundary(<RequestScope as StaticScope>::ID)
+        .boundary(&<RequestScope as StaticScope>::ID)
         .expect("request boundary is declared");
 
     assert_eq!(RpcPlugin::SCOPE_TOPOLOGY.boundaries().len(), 2);

@@ -12,7 +12,7 @@ fn http_request_has_stable_identity_and_root_parent() {
     assert_eq!(HttpRequest.name(), "HttpRequest");
     assert!(
         topology
-            .parent_of(<HttpRequest as StaticScope>::ID)
+            .parent_of(&<HttpRequest as StaticScope>::ID)
             .expect("HTTP request boundary exists")
             .is_root()
     );
@@ -36,11 +36,11 @@ fn websocket_scopes_are_distinct_and_messages_descend_from_connections() {
         <WebsocketMessage as StaticScope>::ID
     );
     assert!(topology.is_ancestor(
-        <WebsocketConnection as StaticScope>::ID,
-        <WebsocketMessage as StaticScope>::ID
+        &<WebsocketConnection as StaticScope>::ID,
+        &<WebsocketMessage as StaticScope>::ID
     ));
     assert!(!topology.is_reachable(
-        <HttpRequest as StaticScope>::ID,
-        <WebsocketConnection as StaticScope>::ID
+        &<HttpRequest as StaticScope>::ID,
+        &<WebsocketConnection as StaticScope>::ID
     ));
 }

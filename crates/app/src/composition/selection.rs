@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use overseerd_core::NamespacedIdType;
+
 use super::diagnostic::CompositionDiagnostic;
 use super::model::DirectiveKind;
 use super::resolver::{ReplacementDecision, ResolvedPlugin, SuppressionDecision};
@@ -128,7 +130,9 @@ fn validate_plugin_ids<'a>(
         .copied()
         .chain(replacements.values().flatten().copied())
     {
-        if declaration.id().namespace() == overseerd_core::FRAMEWORK_NAMESPACE
+        if declaration
+            .id()
+            .is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE)
             && !framework_owns(declaration.provenance())
         {
             diagnostics.push(CompositionDiagnostic::ReservedNamespace {
@@ -164,7 +168,7 @@ fn framework_owns(provenance: InstallationProvenance) -> bool {
     match provenance.origin() {
         InstallationOrigin::Framework => true,
         InstallationOrigin::ProtocolDefault(protocol) => {
-            protocol.namespace() == overseerd_core::FRAMEWORK_NAMESPACE
+            protocol.is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE)
         }
         InstallationOrigin::ApplicationDeclaration
         | InstallationOrigin::ApplicationConfiguration => false,
