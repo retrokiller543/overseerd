@@ -1,9 +1,6 @@
 use super::*;
 
-const PROTOCOL: ProtocolId = match ProtocolId::new("test/protocol") {
-    Ok(id) => id,
-    Err(_) => panic!("valid protocol id"),
-};
+const PROTOCOL: ProtocolId = overseerd_core::namespaced_id!(ProtocolId, "test/protocol");
 
 fn plugin_id(value: &'static str) -> PluginId {
     PluginId::new(value).expect("valid test plugin id")
@@ -87,6 +84,10 @@ fn stable_ids_validate_namespaced_ascii_paths() {
     let unicode = PluginId::new("acme/routér").expect_err("unicode is rejected");
 
     assert_eq!(valid.as_str(), "acme/rpc.router-v2");
+    assert_eq!(valid.namespace(), "acme");
+    assert_eq!(valid.name(), "rpc.router-v2");
+    assert_eq!(valid.local_path(), "rpc.router-v2");
+    assert_eq!(missing.category(), "plugin");
     assert_eq!(valid.to_string(), "acme/rpc.router-v2");
     assert_eq!(missing.kind(), IdErrorKind::MissingNamespace);
     assert_eq!(uppercase.kind(), IdErrorKind::InvalidSegmentStart);

@@ -18,6 +18,7 @@ pub mod lifecycle;
 pub mod protocol;
 pub mod registry;
 pub mod runtime;
+pub mod scope;
 
 pub use app::{App, AppBuilder, PreparedApp};
 pub use builtins::{LogFormat, LoggingConfig, ServerConfig, SpanEvents};
@@ -47,6 +48,9 @@ pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use protocol::{Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve, ValidationContext};
 pub use registry::AppRegistry;
 pub use runtime::AppRuntime;
+pub use scope::{
+    PreparedScopeTopology, ScopeBoundary, ScopeParent, ScopeTopology, ScopeTopologyError,
+};
 
 #[cfg(feature = "cli")]
 pub use clap;

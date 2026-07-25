@@ -11,7 +11,7 @@ pub use component::{
 
 pub use overseerd_core::{
     Cardinality, DependencyDescriptor, DescriptorFor, OverseerdDescriptor, RegistryFor,
-    ResolutionMode, Scope, Singleton, StaticScope, Transient, TypeDescriptor,
+    ResolutionMode, Scope, ScopeId, Singleton, StaticScope, Transient, TypeDescriptor,
 };
 
 /// Link-time registry of every discovered [`ComponentDescriptor`].

@@ -11,12 +11,12 @@ use overseerd_app::AppRuntime;
 use overseerd_core::TypeDescriptor;
 use overseerd_di::ScopeContainer;
 
-#[cfg(feature = "tungstenite")]
-use super::WsConnectionMeta;
 use super::{
     WebsocketProtocol, WsAdmission, WsControllerDescriptor, WsFuture, WsHandlerFn, WsIdle, WsRoute,
     WsShutdown, mount_ws,
 };
+#[cfg(feature = "tungstenite")]
+use super::{WebsocketUpgradeMeta, WsConnectionMeta};
 use crate::AxumAppBuilder as _;
 
 static TEST_PROTOCOL_BUILDS: AtomicUsize = AtomicUsize::new(0);
@@ -264,8 +264,14 @@ impl WebsocketProtocol for RequiredSubprotocol {
             .selected_subprotocol()
             .unwrap_or_default()
             .to_owned();
+        let upgrade = connection
+            .extract::<WebsocketUpgradeMeta>()
+            .await
+            .expect("upgrade metadata resolves");
 
-        let _ = socket.send(Message::Text(selected.into())).await;
+        let _ = socket
+            .send(Message::Text(format!("{selected}|{}", upgrade.uri).into()))
+            .await;
         let _ = (self, shutdown);
     }
 }
@@ -296,7 +302,7 @@ async fn required_subprotocol_is_negotiated_and_seeded() {
         .expect("selected protocol message")
         .expect("valid selected protocol message");
 
-    assert_eq!(message.into_text().expect("text frame"), "test.v1");
+    assert_eq!(message.into_text().expect("text frame"), "test.v1|/ws");
     assert!(
         tokio_tungstenite_wasm::connect(&url).await.is_err(),
         "required protocol rejects a client that offers none"

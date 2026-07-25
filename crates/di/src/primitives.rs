@@ -358,10 +358,7 @@ where
         return Ok(from_boxed::<Arc<T>>(&boxed));
     }
 
-    let provider = match qualifier {
-        Some(qualifier) => registry.qualified_provider(target, qualifier),
-        None => registry.single_provider(target),
-    };
+    let provider = registry.fresh_provider(scope, target, qualifier);
     let Some(provider) = provider else {
         return Ok(None);
     };

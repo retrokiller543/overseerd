@@ -1,30 +1,74 @@
 //! The axum protocol's component scopes.
 //!
-//! HTTP is request-oriented: axum does not surface a connection lifecycle to plain HTTP
-//! handlers, so an HTTP request opens a single [`Request`] scope parented directly at the
-//! [`Singleton`](overseerd_core::Singleton) root. A **WebSocket** connection, by contrast, is
-//! long-lived and multiplexes many messages, so it opens a [`Connection`] scope once per upgraded
-//! socket and a fresh [`Request`] scope per inbound message parented at it — mirroring the RPC
-//! connection/request chain. `Connection` therefore only matters for WebSocket controllers; a plain
-//! HTTP app never opens it. Both slot between the universal `Singleton` (root) and
-//! [`Transient`](overseerd_core::Transient) anchors.
+//! Plain HTTP and WebSocket traffic are separate topology branches. Each HTTP request opens an
+//! [`HttpRequest`] scope directly below the application root. With WebSocket support enabled, each
+//! upgraded socket opens one [`WebsocketConnection`] scope below the root and each inbound
+//! application message opens a [`WebsocketMessage`] child below that connection.
 
-use overseerd_core::StaticScope;
+use overseerd_app::{ScopeBoundary, ScopeParent, ScopeTopology};
+use overseerd_core::{ScopeId, StaticScope};
 
-/// A per-connection scope: one live WebSocket connection. Outlives the messages multiplexed over
-/// it, so it ranks above [`Request`]. Only opened for WebSocket controllers — a plain HTTP request
-/// parents its [`Request`] scope at the singleton root directly.
-pub struct Connection;
+/// Stable identity of the HTTP request scope.
+pub const HTTP_REQUEST_SCOPE_ID: ScopeId =
+    overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-http-request");
 
-/// A per-request scope: one inbound HTTP request, or one inbound WebSocket message.
-pub struct Request;
+/// Stable identity of the WebSocket connection scope.
+#[cfg(feature = "ws")]
+pub const WEBSOCKET_CONNECTION_SCOPE_ID: ScopeId =
+    overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-websocket-connection");
 
-impl StaticScope for Connection {
-    const RANK: u8 = 200;
-    const NAME: &'static str = "Connection";
-}
+/// Stable identity of the WebSocket message scope.
+#[cfg(feature = "ws")]
+pub const WEBSOCKET_MESSAGE_SCOPE_ID: ScopeId =
+    overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-websocket-message");
 
-impl StaticScope for Request {
+/// One inbound HTTP request.
+pub struct HttpRequest;
+
+/// One live upgraded WebSocket connection.
+#[cfg(feature = "ws")]
+pub struct WebsocketConnection;
+
+/// One inbound application message on a WebSocket connection.
+#[cfg(feature = "ws")]
+pub struct WebsocketMessage;
+
+impl StaticScope for HttpRequest {
+    const ID: ScopeId = HTTP_REQUEST_SCOPE_ID;
     const RANK: u8 = 100;
-    const NAME: &'static str = "Request";
+    const NAME: &'static str = "HttpRequest";
 }
+
+#[cfg(feature = "ws")]
+impl StaticScope for WebsocketConnection {
+    const ID: ScopeId = WEBSOCKET_CONNECTION_SCOPE_ID;
+    const RANK: u8 = 200;
+    const NAME: &'static str = "WebsocketConnection";
+}
+
+#[cfg(feature = "ws")]
+impl StaticScope for WebsocketMessage {
+    const ID: ScopeId = WEBSOCKET_MESSAGE_SCOPE_ID;
+    const RANK: u8 = 100;
+    const NAME: &'static str = "WebsocketMessage";
+}
+
+#[cfg(not(feature = "ws"))]
+static AXUM_SCOPE_BOUNDARIES: [ScopeBoundary; 1] =
+    [ScopeBoundary::new(&HttpRequest, ScopeParent::Root)];
+
+#[cfg(feature = "ws")]
+static AXUM_SCOPE_BOUNDARIES: [ScopeBoundary; 3] = [
+    ScopeBoundary::new(&HttpRequest, ScopeParent::Root),
+    ScopeBoundary::new(&WebsocketConnection, ScopeParent::Root),
+    ScopeBoundary::new(
+        &WebsocketMessage,
+        ScopeParent::Boundary(WEBSOCKET_CONNECTION_SCOPE_ID),
+    ),
+];
+
+/// Axum-owned scope topology for HTTP and optional WebSocket traffic.
+pub const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::new(&AXUM_SCOPE_BOUNDARIES);
+
+#[cfg(test)]
+mod tests;

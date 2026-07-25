@@ -12,7 +12,7 @@ use overseerd_app::{
     AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin, ValidationContext,
 };
 use overseerd_config::{ConfigBinding, ContainerConfigExt};
-use overseerd_core::{Descriptor, Scope, TypeDescriptor};
+use overseerd_core::{Descriptor, TypeDescriptor};
 use overseerd_di::{BoxedComponent, Component, ComponentDescriptor};
 use tower::{Layer, Service};
 
@@ -22,7 +22,7 @@ use crate::extract::ScopeHandle;
 use crate::middleware::{AxumMiddleware, MiddlewareApplier, as_layer};
 use crate::protocol::Axum;
 use crate::request_meta::{REQUEST_META_DESCRIPTOR, RequestMeta};
-use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
+use crate::scope::{HttpRequest as HttpRequestScope, SCOPE_TOPOLOGY};
 
 /// The axum HTTP protocol plugin.
 ///
@@ -88,9 +88,10 @@ impl Plugin for AxumPlugin {
             .push(ConfigBinding::of::<AxumConfig>(AXUM_CONFIG_PATH));
         registry.components.push(REQUEST_META_DESCRIPTOR);
         #[cfg(feature = "ws")]
-        registry
-            .components
-            .push(crate::ws::WS_CONNECTION_META_DESCRIPTOR);
+        registry.components.extend([
+            crate::ws::WEBSOCKET_UPGRADE_META_DESCRIPTOR,
+            crate::ws::WS_CONNECTION_META_DESCRIPTOR,
+        ]);
 
         #[cfg(feature = "openapi")]
         registry
@@ -110,14 +111,12 @@ impl ProtocolPlugin for AxumPlugin {
     type Protocol = Axum;
     type Error = crate::Error;
 
-    // Root→leaf: `Connection` (WebSocket-only) outlives `Request`. A plain HTTP request opens only
-    // `Request` (parented at root); a ws message opens `Request` parented at its `Connection`.
-    const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
+    const SCOPE_TOPOLOGY: overseerd_app::ScopeTopology = SCOPE_TOPOLOGY;
 
-    fn validate(&mut self, context: &ValidationContext<'_>) -> crate::Result<()> {
+    fn validate(&mut self, _context: &ValidationContext<'_>) -> crate::Result<()> {
         #[cfg(feature = "ws")]
         if !self.ws_registrations.is_empty() {
-            let config = context
+            let config = _context
                 .config::<AxumConfig>(AXUM_CONFIG_PATH)
                 .expect("AxumConfig missing from config store; AxumPlugin should register it")
                 .snapshot();
@@ -127,7 +126,7 @@ impl ProtocolPlugin for AxumPlugin {
 
         #[cfg(feature = "openapi")]
         {
-            let config = context
+            let config = _context
                 .config::<crate::OpenApiConfig>(crate::AXUM_OPENAPI_CONFIG_PATH)
                 .expect("OpenApiConfig missing from config store; AxumPlugin should register it")
                 .snapshot();
@@ -203,7 +202,7 @@ impl ProtocolPlugin for AxumPlugin {
             }));
         }
 
-        // The bridge: a per-request layer that opens the Request scope (parented at the
+        // The bridge: a per-request layer that opens the HttpRequest scope (parented at the
         // singleton root) and inserts its handle into the request extensions. `Inject`
         // reads it back out; a scope-build failure degrades to 500 rather than panicking.
         // Also seeds `RequestMeta` (method/URI/headers/cookies) so request-scoped components
@@ -228,7 +227,7 @@ impl ProtocolPlugin for AxumPlugin {
                     };
 
                     match scope_runtime
-                        .open_scope(&RequestScope, parent, vec![seed])
+                        .open_scope(&HttpRequestScope, parent, vec![seed])
                         .await
                     {
                         Ok(scope) => {

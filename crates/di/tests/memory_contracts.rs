@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::executor::block_on;
-use overseerd_core::{ResolverSet, Scope, Singleton, TypeDescriptor};
+use overseerd_core::{ResolverSet, Scope, ScopeId, Singleton, TypeDescriptor};
 use overseerd_di::{
     BoxedComponent, Component, ComponentDescriptor, Injectable, ScopeContainer, ScopeRegistry,
 };
@@ -211,6 +211,10 @@ struct Layer2;
 struct Layer3;
 
 impl Scope for Layer1 {
+    fn id(&self) -> ScopeId {
+        ScopeId::new("test/layer-1").expect("valid test scope ID")
+    }
+
     fn rank(&self) -> u8 {
         1
     }
@@ -221,6 +225,10 @@ impl Scope for Layer1 {
 }
 
 impl Scope for Layer2 {
+    fn id(&self) -> ScopeId {
+        ScopeId::new("test/layer-2").expect("valid test scope ID")
+    }
+
     fn rank(&self) -> u8 {
         2
     }
@@ -231,6 +239,10 @@ impl Scope for Layer2 {
 }
 
 impl Scope for Layer3 {
+    fn id(&self) -> ScopeId {
+        ScopeId::new("test/layer-3").expect("valid test scope ID")
+    }
+
     fn rank(&self) -> u8 {
         3
     }

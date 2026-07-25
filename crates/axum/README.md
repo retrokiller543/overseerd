@@ -13,6 +13,14 @@ injection into axum via the [`Inject`] extractor — a per-request scope layer t
 route handlers freely mix native axum extractors with DI. The bridge is deliberately thin and
 one-directional: nothing in `overseerd-di` or `overseerd-core` knows axum exists.
 
+Axum declares two distinct scope paths rather than treating every inbound operation as a generic
+request: `root -> HttpRequest` for HTTP, and, with `ws`,
+`root -> WebsocketConnection -> WebsocketMessage`. Components select the concrete marker they need,
+for example `#[component(scope = HttpRequest)]` or
+`#[component(scope = WebsocketMessage)]`. `RequestMeta` is seeded only into `HttpRequest`;
+WebSocket connection components use `WebsocketUpgradeMeta` for the upgrade request and
+`WsConnectionMeta` for negotiated connection state.
+
 Beyond plain REST it owns the HTTP-side extras that mirror the RPC protocol for the web: WebSocket
 controllers ([`WebsocketController`], `#[controller(ws = ..)]`), a STOMP 1.2 pub/sub [`Broker`] with
 a typed `#[topics]` contract, the `multipart/form-data` extractor, NDJSON/raw stream framing, and a

@@ -41,7 +41,7 @@ impl Greeter {
 }
 
 /// A per-request ticket: a request-scoped component, so each request gets a fresh instance.
-#[component(scope = Request)]
+#[component(scope = HttpRequest)]
 pub struct RequestTicket {
     #[default]
     pub id: u64,

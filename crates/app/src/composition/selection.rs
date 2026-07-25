@@ -128,7 +128,7 @@ fn validate_plugin_ids<'a>(
         .copied()
         .chain(replacements.values().flatten().copied())
     {
-        if declaration.id().as_str().starts_with("overseerd/")
+        if declaration.id().namespace() == overseerd_core::FRAMEWORK_NAMESPACE
             && !framework_owns(declaration.provenance())
         {
             diagnostics.push(CompositionDiagnostic::ReservedNamespace {
@@ -164,7 +164,7 @@ fn framework_owns(provenance: InstallationProvenance) -> bool {
     match provenance.origin() {
         InstallationOrigin::Framework => true,
         InstallationOrigin::ProtocolDefault(protocol) => {
-            protocol.as_str().starts_with("overseerd/")
+            protocol.namespace() == overseerd_core::FRAMEWORK_NAMESPACE
         }
         InstallationOrigin::ApplicationDeclaration
         | InstallationOrigin::ApplicationConfiguration => false,

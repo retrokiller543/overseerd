@@ -35,8 +35,8 @@ use overseerd_axum::client::{
 };
 #[cfg(not(target_family = "wasm"))]
 use overseerd_axum::{
-    MessageReply, RequestScope, SOCKET_SEND_TIMEOUT, WebsocketProtocol, WsControllerDescriptor,
-    WsDispatchError, WsHandlerFn, WsIdle, WsRespond, WsShutdown,
+    MessageReply, SOCKET_SEND_TIMEOUT, WebsocketMessageScope, WebsocketProtocol,
+    WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsIdle, WsRespond, WsShutdown,
 };
 use overseerd_axum::{MessagingProtocol, TopicCodec};
 
@@ -45,7 +45,7 @@ pub type WsValue = serde_json::Value;
 
 /// The baseline JSON-envelope protocol: a flat destination → handler table, point-to-point
 /// request/response over one socket. Holds a clone of the [`AppRuntime`] so it can open a fresh
-/// per-message [`Request`](crate::scope::Request) scope for handler DI.
+/// per-message [`WebsocketMessage`](overseerd_axum::WebsocketMessage) scope for handler DI.
 pub struct JsonWs {
     #[cfg(not(target_family = "wasm"))]
     routes: HashMap<&'static str, WsHandlerFn<Self>>,
@@ -234,8 +234,9 @@ impl JsonWs {
     /// Routes one inbound text frame and renders its reply. Returns `None` for a frame that can't be
     /// parsed at all (no `dest` to correlate a reply against) — it is dropped with a warning.
     ///
-    /// Opens a fresh per-message [`Request`](crate::scope::Request) scope parented at the socket's
-    /// `connection` scope, so a handler's `Inject<T>` resolves request-scoped components per message
+    /// Opens a fresh per-message [`WebsocketMessage`](overseerd_axum::WebsocketMessage) scope
+    /// parented at the socket's connection scope, so a handler's `Inject<T>` resolves
+    /// message-scoped components per message
     /// (and connection-/singleton-scoped ones through the chain).
     async fn handle_text(&self, text: &str, connection: &Arc<ScopeContainer>) -> Option<String> {
         let inbound: Inbound = match serde_json::from_str(text) {
@@ -251,7 +252,7 @@ impl JsonWs {
         let result = match self.routes.get(inbound.dest.as_str()) {
             Some(handler) => match self
                 .runtime
-                .open_scope(&RequestScope, Arc::clone(connection), Vec::new())
+                .open_scope(&WebsocketMessageScope, Arc::clone(connection), Vec::new())
                 .await
             {
                 Ok(scope) => handler(inbound.payload, scope).await,
@@ -266,7 +267,6 @@ impl JsonWs {
     }
 }
 
-#[cfg(not(target_family = "wasm"))]
 #[cfg(not(target_family = "wasm"))]
 impl<R> WsRespond<R> for JsonWs
 where

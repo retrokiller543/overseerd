@@ -166,11 +166,17 @@ pub async fn setup_host<H: AppHost>(mode: ExecutionMode) -> Result<BootstrapCont
 pub async fn setup_host_context<H: AppHost>(
     context: BootstrapContext,
 ) -> Result<BootstrapContext, PhaseError> {
-    let mut context = H::setup(context).await?;
+    let context = H::setup(context).await?;
 
     #[cfg(feature = "cli")]
-    super::finalize_bootstrap(&mut context)
-        .map_err(|source| PhaseError::new(LifecyclePhase::Setup, source))?;
+    let context = {
+        let mut context = context;
+
+        super::finalize_bootstrap(&mut context)
+            .map_err(|source| PhaseError::new(LifecyclePhase::Setup, source))?;
+
+        context
+    };
 
     Ok(context)
 }
@@ -216,11 +222,13 @@ pub async fn prepare_host_context<H: AppHost>(
 pub async fn prepare_setup_host_context<H: AppHost>(
     mut context: BootstrapContext,
 ) -> Result<(BootstrapContext, PreparedApp<H::Protocol>), PhaseError> {
-    let mut builder =
+    let builder =
         H::builder().map_err(|source| PhaseError::new(LifecyclePhase::Configure, source))?;
 
     #[cfg(feature = "cli")]
-    {
+    let builder = {
+        let mut builder = builder;
+
         if H::BOOTSTRAP_OWNS_DIRECTORIES {
             builder = super::configure_bootstrap_directories(&mut context, builder);
         }
@@ -228,7 +236,9 @@ pub async fn prepare_setup_host_context<H: AppHost>(
         if H::BOOTSTRAP_OWNS_CONFIG {
             builder = super::configure_bootstrap_config(&mut context, builder);
         }
-    }
+
+        builder
+    };
 
     let builder = H::configure(&mut context, builder).await?;
     let builder = H::before_build(&mut context, builder).await?;

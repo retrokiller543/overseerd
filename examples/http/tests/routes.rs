@@ -34,7 +34,7 @@ struct Counter {
 }
 
 /// A per-request component, reachable only via route-level `Inject`.
-#[component(scope = Request)]
+#[component(scope = HttpRequest)]
 struct Ticket {
     #[default]
     id: u64,

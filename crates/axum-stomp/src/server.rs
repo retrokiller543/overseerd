@@ -33,13 +33,15 @@ use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
 use overseerd_axum::axum::extract::ws::{Message, WebSocket};
-use overseerd_axum::{AppRuntime, BoxedComponent, ScopeContainer, TypeDescriptor};
+use overseerd_axum::{
+    AppRuntime, BoxedComponent, ComponentDescriptor, ScopeContainer, TypeDescriptor,
+    WebsocketMessageScope,
+};
 use stomp_parser::client::ClientFrame;
 use stomp_parser::headers::{HeaderValue, StompVersion, StompVersions};
 use stomp_parser::server::{ConnectedFrameBuilder, ErrorFrame, ReceiptFrameBuilder};
 use tokio::sync::mpsc;
 
-use overseerd_axum::RequestScope;
 use overseerd_axum::{
     MessageReply, PubSubProtocol, SOCKET_SEND_TIMEOUT, WebsocketProtocol, WsControllerDescriptor,
     WsDispatchError, WsHandlerFn, WsIdle, WsRespond, WsShutdown,
@@ -56,6 +58,27 @@ pub use headers::{StompHeaders, StompSession};
 // The protocol-generic pub/sub runtime lives in `crate::ws::pubsub`; re-exported here so the STOMP
 // serve loop and the crate's historical `ws::stomp::*` surface keep naming them unchanged.
 pub use overseerd_axum::{ConnectionId, Publisher, SubscriptionRegistry, TopicBus};
+
+static STOMP_HEADERS_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    "__overseerd_stomp_headers",
+    "StompHeaders",
+    TypeDescriptor::of::<StompHeaders>("StompHeaders"),
+    &WebsocketMessageScope,
+);
+
+static STOMP_SESSION_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    "__overseerd_stomp_session",
+    "StompSession",
+    TypeDescriptor::of::<StompSession>("StompSession"),
+    &WebsocketMessageScope,
+);
+
+static STOMP_PRINCIPAL_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    "__overseerd_stomp_principal",
+    "StompPrincipal",
+    TypeDescriptor::of::<StompPrincipal>("StompPrincipal"),
+    &WebsocketMessageScope,
+);
 
 /// STOMP's protocol-specific instantiation of the neutral topic bus.
 pub type StompTopicBus = TopicBus<Stomp>;
@@ -139,6 +162,11 @@ impl WebsocketProtocol for Stomp {
 
     fn register(registry: &mut overseerd_axum::AppRegistry) {
         overseerd_axum::register_topic_bus::<Self>(registry);
+        registry.components.extend([
+            STOMP_HEADERS_DESCRIPTOR,
+            STOMP_SESSION_DESCRIPTOR,
+            STOMP_PRINCIPAL_DESCRIPTOR,
+        ]);
     }
 
     fn build(
@@ -453,9 +481,12 @@ impl Stomp {
                     headers,
                 };
 
-                self.route_send(message, conn_id, connection, principal, reply)
-                    .await;
-                self.send_receipt(tx, receipt).await;
+                if self
+                    .route_send(message, conn_id, connection, principal, reply)
+                    .await
+                {
+                    self.send_receipt(tx, receipt).await;
+                }
 
                 Continue(())
             }
@@ -489,7 +520,7 @@ impl Stomp {
         connection: &Arc<ScopeContainer>,
         principal: &StompPrincipal,
         reply: ReplyContext<'_>,
-    ) {
+    ) -> bool {
         let InboundMessage {
             destination,
             body,
@@ -499,7 +530,7 @@ impl Stomp {
         let Some(handler) = self.app_routes.get(destination.as_str()) else {
             self.broker.publish(&destination, &body, &[]);
 
-            return;
+            return true;
         };
 
         let seeds = vec![
@@ -519,15 +550,20 @@ impl Stomp {
 
         let scope = match self
             .runtime
-            .open_scope(&RequestScope, Arc::clone(connection), seeds)
+            .open_scope(&WebsocketMessageScope, Arc::clone(connection), seeds)
             .await
         {
             Ok(scope) => scope,
 
             Err(error) => {
                 tracing::error!(target: "overseerd::axum", %error, "STOMP message scope build failed");
+                self.deliver_error_reply(
+                    &WsDispatchError::Inject("message scope construction failed".to_owned()),
+                    &reply,
+                )
+                .await;
 
-                return;
+                return false;
             }
         };
 
@@ -550,6 +586,8 @@ impl Stomp {
                 self.deliver_error_reply(&error, &reply).await;
             }
         }
+
+        true
     }
 
     /// Routes a request handler's reply back to the requester on its own connection: a directed

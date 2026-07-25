@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd_app::App;
+use overseerd_app::{App, ProtocolPlugin, ScopeParent};
 use overseerd_config::{ConfigManager, Dynamic};
 use overseerd_core::TypeDescriptor;
 use overseerd_di::{
@@ -12,6 +12,10 @@ use overseerd_di::{
 };
 
 use super::{RpcAppBuilder, RpcPlugin};
+use crate::scope::{
+    CONNECTION_SCOPE_ID, Connection as ConnectionScope, REQUEST_SCOPE_ID, Request as RequestScope,
+    SCOPE_TOPOLOGY,
+};
 use crate::{Error, ServiceDescriptor};
 
 static FACTORY_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -97,4 +101,81 @@ fn empty_service_fails_during_prepare_before_component_construction() {
 
     assert!(matches!(error, Error::EmptyService(service) if service == "EmptyService"));
     assert_eq!(FACTORY_CALLS.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn rpc_scope_topology_declares_connection_and_request_path() {
+    let topology = SCOPE_TOPOLOGY.prepare().expect("RPC topology is valid");
+    let connection = topology
+        .boundary(CONNECTION_SCOPE_ID)
+        .expect("connection boundary is declared");
+    let request = topology
+        .boundary(REQUEST_SCOPE_ID)
+        .expect("request boundary is declared");
+
+    assert_eq!(RpcPlugin::SCOPE_TOPOLOGY.boundaries().len(), 2);
+    assert_eq!(connection.parent(), ScopeParent::Root);
+    assert_eq!(request.parent(), ScopeParent::Boundary(CONNECTION_SCOPE_ID));
+}
+
+#[tokio::test]
+async fn peer_info_seed_opens_only_at_connection_destination() {
+    let app = App::<RpcPlugin>::builder("rpc-scope-seed-test")
+        .config_source(ConfigManager::<Dynamic>::empty())
+        .build()
+        .await
+        .expect("RPC app builds");
+    let runtime = app.runtime();
+    let peer = overseerd_transport::PeerInfo {
+        addr: Some("127.0.0.1:1234".parse().expect("valid test address")),
+    };
+    let connection = runtime
+        .open_scope(
+            &ConnectionScope,
+            Arc::clone(runtime.root()),
+            vec![BoxedComponent {
+                ty: TypeDescriptor::of::<overseerd_transport::PeerInfo>("PeerInfo"),
+                value: Box::new(peer.clone()),
+            }],
+        )
+        .await
+        .expect("registered peer seed opens the connection scope");
+    let resolved = connection
+        .resolve::<overseerd_transport::PeerInfo>()
+        .await
+        .expect("peer resolution succeeds")
+        .expect("peer is seeded");
+
+    assert_eq!(resolved.addr, peer.addr);
+
+    let error = match runtime
+        .open_scope(
+            &RequestScope,
+            Arc::clone(&connection),
+            vec![BoxedComponent {
+                ty: TypeDescriptor::of::<overseerd_transport::PeerInfo>("PeerInfo"),
+                value: Box::new(peer),
+            }],
+        )
+        .await
+    {
+        Ok(_) => panic!("peer seed was accepted at the request boundary"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        overseerd_app::Error::InvalidSeedDestination {
+            expected: CONNECTION_SCOPE_ID,
+            actual: REQUEST_SCOPE_ID,
+            ..
+        }
+    ));
+
+    let request = runtime
+        .open_scope(&RequestScope, connection, Vec::new())
+        .await
+        .expect("request opens under its declared connection parent");
+
+    assert_eq!(request.scope().id(), REQUEST_SCOPE_ID);
 }

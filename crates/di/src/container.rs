@@ -1,11 +1,12 @@
 use std::{
     any::{Any, TypeId},
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{Arc, Weak},
 };
 
 use overseerd_core::{
-    Cardinality, ResolutionMode, Resolver, ResolverCtx, ResolverSet, Scope, Singleton, Transient,
+    Cardinality, ResolutionMode, Resolver, ResolverCtx, ResolverSet, Scope, ScopeId, Singleton,
+    Transient,
 };
 use tracing::{debug, error, info, instrument, trace};
 
@@ -135,6 +136,49 @@ impl ScopeRegistry {
             .iter()
             .find(|provider| provider.qualifier == qualifier)
             .copied()
+    }
+
+    /// Selects a factory-backed trait provider visible from `scope`, nearest
+    /// scope group first.
+    pub(crate) fn fresh_provider(
+        &self,
+        scope: &ScopeContainer,
+        trait_id: TypeId,
+        qualifier: Option<&str>,
+    ) -> Option<ProviderDescriptor> {
+        let mut groups: BTreeMap<(u8, ScopeId), Vec<ProviderDescriptor>> = BTreeMap::new();
+
+        for provider in self
+            .providers_for_trait(trait_id)
+            .iter()
+            .filter(|provider| qualifier.is_none_or(|qualifier| provider.qualifier == qualifier))
+        {
+            let Some(descriptor) = self.factory_backed(provider.concrete_ty.type_id) else {
+                continue;
+            };
+
+            if !scope.can_access(descriptor.scope) {
+                continue;
+            }
+
+            groups
+                .entry((descriptor.scope.rank(), descriptor.scope.id()))
+                .or_default()
+                .push(*provider);
+        }
+
+        for providers in groups.values() {
+            let selected = match qualifier {
+                Some(_) => providers.first().copied(),
+                None => select_single_provider(providers),
+            };
+
+            if selected.is_some() {
+                return selected;
+            }
+        }
+
+        None
     }
 
     pub(crate) fn provider_ordinal(&self, provider: &ProviderDescriptor) -> usize {
@@ -431,8 +475,16 @@ impl ScopeContainer {
         Arc::clone(&self.registry)
     }
 
+    /// Returns whether this container was built from `registry`.
+    ///
+    /// Runtime layers use this before opening a child to prevent containers from
+    /// different prepared applications from being joined into one scope chain.
+    pub fn belongs_to_registry(&self, registry: &Arc<ScopeRegistry>) -> bool {
+        Arc::ptr_eq(&self.registry, registry)
+    }
+
     pub(crate) fn can_access(&self, scope: &'static dyn Scope) -> bool {
-        if scope.is_transient() || self.scope.name() == scope.name() {
+        if scope.is_transient() || self.scope.id() == scope.id() {
             return true;
         }
 
@@ -480,9 +532,8 @@ impl ScopeContainer {
     /// built-ins and any future user-defined one — is created through this single
     /// primitive.
     ///
-    /// An **empty** scope (nothing to construct, nothing to seed) holds no state of
-    /// its own, so resolution through it would only pass through to `parent`. Rather
-    /// than allocate a redundant container, this returns `parent` directly.
+    /// Empty scopes still receive a container so every declared logical boundary
+    /// retains its stable identity in the runtime chain.
     pub async fn open_child(
         scope: &'static dyn Scope,
         parent: Arc<ScopeContainer>,
@@ -490,10 +541,6 @@ impl ScopeContainer {
         order: &[ComponentDescriptor],
         seeds: Vec<BoxedComponent>,
     ) -> crate::Result<Arc<ScopeContainer>> {
-        if order.is_empty() && seeds.is_empty() {
-            return Ok(parent);
-        }
-
         let externals = parent.resolvers().clone();
 
         Self::build(scope, Some(parent), registry, order, seeds, externals).await

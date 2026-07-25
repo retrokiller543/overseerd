@@ -177,6 +177,11 @@ macro_rules! layer_scopes {
             struct $name;
 
             impl Scope for $name {
+                fn id(&self) -> overseerd_core::ScopeId {
+                    overseerd_core::ScopeId::new(concat!("benchmark/", stringify!($name)))
+                        .expect("valid benchmark scope ID")
+                }
+
                 fn rank(&self) -> u8 {
                     $rank
                 }

@@ -27,8 +27,6 @@ use overseerd_core::TypeDescriptor;
 use overseerd_di::{BoxedComponent, ScopeContainer};
 use tokio::time::Duration;
 
-use crate::request_meta::RequestMeta;
-
 /// How long the framework waits for a WS close handshake to flush before abandoning the socket.
 /// Bounds [`mount_ws`]'s error-path close send so a peer that never drains its receive buffer
 /// can't block the upgrade task forever.
@@ -43,9 +41,9 @@ pub type WsFuture<P> =
 
 /// A type-erased message handler for protocol `P`. It is handed the decoded
 /// [`Payload`](WebsocketProtocol::Payload) and the message's
-/// [`Request`-scope](crate::scope::Request) container, so it can decode the payload into the
+/// [`WebsocketMessage`-scope](crate::scope::WebsocketMessage) container, so it can decode the payload into the
 /// handler's parameter *and* resolve the handler's `Inject<T>` parameters from the scope chain
-/// (request → connection → singleton) — the same DI a REST route gets — before running the
+/// (message → connection → singleton) before running the
 /// controller method (the singleton captured by `Arc`) and turning the response into `P`'s
 /// [`Outcome`](WebsocketProtocol::Outcome).
 pub type WsHandlerFn<P> = Arc<
@@ -267,7 +265,7 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
     /// Builds the protocol's routing from the controllers registered to it and the endpoint
     /// `options`. Called once per `register_ws` entrypoint at app build. The protocol keeps whatever
     /// it needs from `runtime` (e.g. a clone, to open per-message
-    /// [`Request`](crate::scope::Request) scopes while serving). Recover each controller's typed
+    /// [`WebsocketMessage`](crate::scope::WebsocketMessage) scopes while serving). Recover each controller's typed
     /// routes with [`WsControllerDescriptor::routes_for::<Self>`](WsControllerDescriptor::routes_for).
     fn build(
         controllers: &[WsControllerDescriptor],
@@ -276,8 +274,9 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
     ) -> Result<Self, Self::BuildError>;
 
     /// Drives one upgraded connection until the peer closes it or graceful shutdown fires.
-    /// `connection` is this socket's [`Connection`](crate::scope::Connection) scope (opened once by
-    /// the framework); the protocol parents each per-message scope at it.
+    /// `connection` is this socket's
+    /// [`WebsocketConnection`](crate::scope::WebsocketConnection) scope (opened once by the
+    /// framework); the protocol parents each per-message scope at it.
     fn serve(
         self: Arc<Self>,
         socket: WebSocket,
@@ -313,6 +312,64 @@ impl WsConnectionSettings {
     }
 }
 
+/// Native HTTP metadata captured from the request that initiated a WebSocket upgrade.
+#[derive(Clone, Debug)]
+pub struct WebsocketUpgradeMeta {
+    /// The upgrade request's HTTP method.
+    pub method: axum::http::Method,
+
+    /// The upgrade request's URI.
+    pub uri: axum::http::Uri,
+
+    /// The upgrade request's headers.
+    pub headers: axum::http::HeaderMap,
+
+    /// Cookies parsed from the upgrade request's `Cookie` headers.
+    pub cookies: std::collections::HashMap<String, String>,
+}
+
+impl WebsocketUpgradeMeta {
+    /// Captures metadata from a WebSocket upgrade request.
+    pub fn from_parts(
+        method: axum::http::Method,
+        uri: axum::http::Uri,
+        headers: axum::http::HeaderMap,
+    ) -> Self {
+        let request = crate::RequestMeta::from_parts(method, uri, headers);
+
+        Self {
+            method: request.method,
+            uri: request.uri,
+            headers: request.headers,
+            cookies: request.cookies,
+        }
+    }
+}
+
+impl overseerd_di::Injectable for WebsocketUpgradeMeta {
+    type Target = Self;
+    type Stored = Self;
+
+    fn into_stored(self) -> Self {
+        self
+    }
+
+    fn from_stored(stored: &Self) -> Self {
+        stored.clone()
+    }
+}
+
+#[cfg(feature = "di-check")]
+impl overseerd_di::Provide<WebsocketUpgradeMeta> for overseerd_di::Wiring {}
+
+pub(crate) static WEBSOCKET_UPGRADE_META_DESCRIPTOR: overseerd_di::ComponentDescriptor =
+    overseerd_di::ComponentDescriptor::manual(
+        "__overseerd_websocket_upgrade_meta",
+        "WebsocketUpgradeMeta",
+        TypeDescriptor::of::<WebsocketUpgradeMeta>("WebsocketUpgradeMeta"),
+        &crate::scope::WebsocketConnection,
+    );
+
 /// Metadata selected while accepting one WebSocket upgrade.
 #[derive(Clone, Debug)]
 pub struct WsConnectionMeta {
@@ -339,12 +396,15 @@ impl overseerd_di::Injectable for WsConnectionMeta {
     }
 }
 
+#[cfg(feature = "di-check")]
+impl overseerd_di::Provide<WsConnectionMeta> for overseerd_di::Wiring {}
+
 pub(crate) static WS_CONNECTION_META_DESCRIPTOR: overseerd_di::ComponentDescriptor =
     overseerd_di::ComponentDescriptor::manual(
         "__overseerd_ws_connection_meta",
         "WsConnectionMeta",
         TypeDescriptor::of::<WsConnectionMeta>("WsConnectionMeta"),
-        &crate::scope::Connection,
+        &crate::scope::WebsocketConnection,
     );
 
 /// Tracks peer activity without spawning a feeder or timer task. A silent connection is probed
@@ -568,11 +628,8 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
     let max_frame_bytes = config.max_websocket_frame_bytes;
     let runtime = runtime.clone();
 
-    // The pre-built generic upgrade handler: it upgrades, opens this socket's `Connection` scope
-    // (seeded with the upgrade request's `RequestMeta` — a per-message `Request` scope, parented
-    // here, resolves it by walking the parent chain, so a message handler's request-scoped
-    // components can depend on the original upgrade request's headers/cookies without a
-    // per-message re-seed), and hands the socket to the protocol, which owns the
+    // The pre-built generic upgrade handler opens this socket's WebsocketConnection scope with
+    // upgrade and negotiation metadata, then hands the socket to the protocol that owns the
     // read→decode→dispatch→encode→send loop.
     let route_handler = move |method: axum::http::Method,
                               uri: axum::http::Uri,
@@ -613,10 +670,9 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
             ws.on_upgrade(move |mut socket| async move {
                 // Keep the admission permit for exactly the lifetime of this upgraded connection.
                 let _permit = permit;
-                let meta = RequestMeta::from_parts(method, uri, headers);
-                let request_seed = BoxedComponent {
-                    ty: TypeDescriptor::of::<RequestMeta>("RequestMeta"),
-                    value: Box::new(meta),
+                let upgrade_seed = BoxedComponent {
+                    ty: TypeDescriptor::of::<WebsocketUpgradeMeta>("WebsocketUpgradeMeta"),
+                    value: Box::new(WebsocketUpgradeMeta::from_parts(method, uri, headers)),
                 };
                 let connection_seed = BoxedComponent {
                     ty: TypeDescriptor::of::<WsConnectionMeta>("WsConnectionMeta"),
@@ -627,9 +683,9 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
 
                 let connection = match runtime
                     .open_scope(
-                        &crate::scope::Connection,
+                        &crate::scope::WebsocketConnection,
                         Arc::clone(runtime.root()),
-                        vec![request_seed, connection_seed],
+                        vec![upgrade_seed, connection_seed],
                     )
                     .await
                 {
