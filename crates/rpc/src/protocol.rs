@@ -1,6 +1,6 @@
 //! The native RPC protocol.
 //!
-//! [`Rpc`] implements the [`Protocol`]/[`Serve`] traits from `overseerd-app`: it owns the
+//! [`RpcRuntime`] implements the [`ProtocolRuntime`]/[`Serve`] traits from `overseerd-app`: it owns the
 //! router + middleware stack and drives the per-connection / per-call loop over any
 //! [`Transport`](overseerd_transport::Transport), opening connection and request scopes
 //! through the [`AppRuntime`]. The serve envelope (lifecycle hooks, reload triggers,
@@ -10,7 +10,7 @@
 use std::{panic::AssertUnwindSafe, sync::Arc, time::Duration};
 
 use futures::{FutureExt, StreamExt};
-use overseerd_app::{AppRuntime, Protocol, Serve, ShutdownSignal};
+use overseerd_app::{AppRuntime, ProtocolRuntime, Serve, ShutdownSignal};
 use overseerd_core::TypeDescriptor;
 use overseerd_di::{BoxedComponent, ScopeContainer};
 use overseerd_transport::{
@@ -91,10 +91,8 @@ impl Default for RpcLimits {
     }
 }
 
-/// The native RPC protocol: a router wrapped by the middleware stack, plus the global
-/// error handler. Built by [`RpcPlugin`](crate::RpcPlugin) and served over a
-/// [`Transport`].
-pub struct Rpc {
+/// The built native RPC runtime served over a [`Transport`].
+pub struct RpcRuntime {
     router: Arc<RpcRouter>,
     service: RpcService,
     error_handler: Option<Arc<dyn ErrorHandler>>,
@@ -102,7 +100,7 @@ pub struct Rpc {
     limits: RpcLimits,
 }
 
-impl Rpc {
+impl RpcRuntime {
     pub(crate) fn new(
         router: Arc<RpcRouter>,
         service: RpcService,
@@ -129,11 +127,11 @@ impl Rpc {
     }
 }
 
-impl Protocol for Rpc {
+impl ProtocolRuntime for RpcRuntime {
     type Error = crate::Error;
 }
 
-impl<T> Serve<T> for Rpc
+impl<T> Serve<T> for RpcRuntime
 where
     T: Transport,
     T::Connection: 'static,

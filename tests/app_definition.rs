@@ -1,41 +1,56 @@
 use overseerd::{
-    App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, ExecutionMode, Plugin, Protocol,
-    ProtocolPlugin, app,
+    App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, ExecutionMode, PreparedProtocol,
+    ProtocolDefinition, ProtocolRuntime, app,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static HELP_SETUP_CALLS: AtomicUsize = AtomicUsize::new(0);
 
-/// Test protocol accumulated by the named application host.
+/// Test protocol definition selected by the named application host.
 #[derive(Default)]
-pub struct TestPlugin;
-
-impl Plugin for TestPlugin {
-    fn register(&self, _registry: &mut AppRegistry) {}
-}
-
-/// Built protocol used only to type-check host expansion.
 pub struct TestProtocol;
 
-impl Protocol for TestProtocol {
-    type Error = overseerd_app::Error;
-}
-
-impl ProtocolPlugin for TestPlugin {
-    type Protocol = TestProtocol;
+impl ProtocolDefinition for TestProtocol {
+    type Prepared = PreparedTestProtocol;
     type Error = overseerd_app::Error;
 
+    const ID: overseerd::ProtocolId =
+        overseerd::namespaced_id!(overseerd::ProtocolId, "test/app-definition");
     const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
 
-    fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
-        Ok(TestProtocol)
+    fn register(&self, _registry: &mut AppRegistry) {}
+
+    fn prepare(
+        self,
+        _context: &overseerd::ValidationContext<'_>,
+    ) -> Result<Self::Prepared, Self::Error> {
+        Ok(PreparedTestProtocol)
     }
+}
+
+/// Prepared test protocol used only to type-check host expansion.
+pub struct PreparedTestProtocol;
+
+/// Built protocol runtime used only to type-check host expansion.
+pub struct TestRuntime;
+
+impl PreparedProtocol for PreparedTestProtocol {
+    type Runtime = TestRuntime;
+    type Error = overseerd_app::Error;
+
+    fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
+        Ok(TestRuntime)
+    }
+}
+
+impl ProtocolRuntime for TestRuntime {
+    type Error = overseerd_app::Error;
 }
 
 app! {
     pub app TestApplication {
         name: "named-app-test",
-        protocol: TestPlugin,
+        protocol: TestProtocol,
     }
 }
 
@@ -45,14 +60,14 @@ async fn help_setup(context: BootstrapContext) -> std::io::Result<BootstrapConte
     Ok(context)
 }
 
-async fn help_serve(_context: BootstrapContext, _app: App<TestPlugin>) -> std::io::Result<()> {
+async fn help_serve(_context: BootstrapContext, _app: App<TestProtocol>) -> std::io::Result<()> {
     Ok(())
 }
 
 app! {
     app HelpApplication {
         name: "help-app-test",
-        protocol: TestPlugin,
+        protocol: TestProtocol,
         setup = help_setup,
         serve = help_serve,
     }
@@ -66,8 +81,8 @@ async fn setup_lifecycle(mut context: BootstrapContext) -> std::io::Result<Boots
 
 async fn before_lifecycle(
     context: &mut BootstrapContext,
-    builder: AppBuilder<TestPlugin>,
-) -> std::io::Result<AppBuilder<TestPlugin>> {
+    builder: AppBuilder<TestProtocol>,
+) -> std::io::Result<AppBuilder<TestProtocol>> {
     context
         .get_mut::<Vec<&'static str>>()
         .expect("lifecycle events exist")
@@ -76,7 +91,10 @@ async fn before_lifecycle(
     Ok(builder)
 }
 
-async fn serve_lifecycle(context: BootstrapContext, _app: App<TestPlugin>) -> std::io::Result<()> {
+async fn serve_lifecycle(
+    context: BootstrapContext,
+    _app: App<TestProtocol>,
+) -> std::io::Result<()> {
     assert_eq!(
         context.get::<Vec<&'static str>>(),
         Some(&vec!["setup", "configure", "before_build", "after_build"])
@@ -88,7 +106,7 @@ async fn serve_lifecycle(context: BootstrapContext, _app: App<TestPlugin>) -> st
 app! {
     app LifecycleApplication {
         name: "lifecycle-app-test",
-        protocol: TestPlugin,
+        protocol: TestProtocol,
         setup = setup_lifecycle,
         configure(builder, context) {
             builder
@@ -118,7 +136,7 @@ async fn failing_setup(_context: BootstrapContext) -> std::io::Result<BootstrapC
 app! {
     app FailingLifecycleApplication {
         name: "failing-lifecycle-app-test",
-        protocol: TestPlugin,
+        protocol: TestProtocol,
         setup = failing_setup,
     }
 }
@@ -126,7 +144,7 @@ app! {
 app! {
     app DirectoryConfigApplication {
         name: "named-directory-config-test",
-        protocol: TestPlugin,
+        protocol: TestProtocol,
         managers: {
             directories: { root: std::env::temp_dir() },
             config: {},
@@ -134,7 +152,7 @@ app! {
     }
 }
 
-fn assert_builder(_builder: AppBuilder<TestPlugin>) {}
+fn assert_builder(_builder: AppBuilder<TestProtocol>) {}
 
 #[test]
 fn named_app_creates_independent_typed_builders() {
@@ -192,7 +210,7 @@ async fn named_app_explicitly_fast_forwards_lifecycle_stages() {
     );
 
     let (_, prepared) = prepared.into_parts();
-    let _: App<TestPlugin> = prepared.build().await.expect("prepared app builds");
+    let _: App<TestProtocol> = prepared.build().await.expect("prepared app builds");
 
     let built = LifecycleApplication::new(ExecutionMode::Run)
         .build()

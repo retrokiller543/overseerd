@@ -175,7 +175,7 @@ impl Api {
 async fn generated_client_round_trips_over_reqwest() {
     let app = app! {
         name: "client-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .build()
     .await

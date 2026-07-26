@@ -68,7 +68,7 @@ async fn axum_config_is_automatic_and_enforces_body_and_request_limits() {
     .expect("parse axum config");
     let app = app! {
         name: "configured-axum",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .config_source(config)
     .build()
@@ -200,7 +200,7 @@ async fn raw_layer_and_global_controller_path_middleware_run_in_order() {
 
     let app = app! {
         name: "test-order",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .layer(raw_layer)
     .middleware::<GlobalMw>()
@@ -266,7 +266,7 @@ impl SharedController {
 async fn same_middleware_type_shares_one_instance_across_attach_points() {
     let app = app! {
         name: "test-shared",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .middleware::<SharedMw>()
     .build()
@@ -348,7 +348,7 @@ impl AuthController {
 async fn request_scoped_component_reads_request_meta_and_is_shared() {
     let app = app! {
         name: "test-auth",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .build()
     .await

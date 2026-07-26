@@ -1,9 +1,9 @@
-//! The native RPC protocol plugin and its builder extension.
+//! The native RPC protocol definition and its builder extension.
 
 use std::sync::Arc;
 
 use overseerd_app::{
-    AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin, ValidationContext,
+    AppBuilder, AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ValidationContext,
 };
 use overseerd_core::{Descriptor, TypeDescriptor};
 use overseerd_di::{ComponentDescriptor, ServiceComponent};
@@ -13,7 +13,7 @@ use tower::{Layer, Service};
 use crate::descriptors::{RpcOutcome, SERVICES, ServiceDescriptor};
 use crate::extract::ErrorResponse;
 use crate::middleware::{ErrorHandler, Guard, GuardLayer, RouterService, RpcRequest, RpcService};
-use crate::protocol::{Rpc, RpcLimits};
+use crate::protocol::{RpcLimits, RpcRuntime};
 use crate::router::RpcRouter;
 use crate::scope::{Connection as ConnectionScope, SCOPE_TOPOLOGY};
 
@@ -34,22 +34,35 @@ static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
     &ConnectionScope,
 );
 
-/// The native RPC protocol plugin.
+/// The native RPC protocol definition.
 ///
 /// Accumulates the RPC-specific builder state — the discovered/registered services, the
 /// middleware layers, and the global error handler — seeds the connection-scoped
-/// `PeerInfo` via [`Plugin::register`], and builds the [`Rpc`] protocol (the router
-/// wrapped by the middleware stack) via [`ProtocolPlugin::build`].
+/// `PeerInfo`, and prepares the validated service plan consumed by [`RpcRuntime`].
 #[derive(Default)]
-pub struct RpcPlugin {
+pub struct Rpc {
     services: Vec<ServiceDescriptor>,
-    resolved_services: Option<Vec<crate::routes::ResolvedService>>,
     layers: Vec<LayerApplier>,
     error_handler: Option<Arc<dyn ErrorHandler>>,
     limits: RpcLimits,
 }
 
-impl Plugin for RpcPlugin {
+/// The validated RPC service and middleware plan awaiting runtime construction.
+pub struct PreparedRpc {
+    resolved_services: Vec<crate::routes::ResolvedService>,
+    layers: Vec<LayerApplier>,
+    error_handler: Option<Arc<dyn ErrorHandler>>,
+    needs_peer: bool,
+    limits: RpcLimits,
+}
+
+impl ProtocolDefinition for Rpc {
+    type Prepared = PreparedRpc;
+    type Error = crate::Error;
+
+    const ID: overseerd_app::ProtocolId =
+        overseerd_core::namespaced_id!(overseerd_app::ProtocolId, "overseerd/rpc");
+
     fn auto_discover(&mut self) {
         self.services.extend(SERVICES.iter().copied());
     }
@@ -57,44 +70,39 @@ impl Plugin for RpcPlugin {
     fn register(&self, registry: &mut AppRegistry) {
         registry.components.push(PEER_INFO_DESCRIPTOR);
     }
-}
-
-impl ProtocolPlugin for RpcPlugin {
-    type Protocol = Rpc;
-    type Error = crate::Error;
 
     const SCOPE_TOPOLOGY: overseerd_app::ScopeTopology = SCOPE_TOPOLOGY;
 
-    fn validate(&mut self, _context: &ValidationContext<'_>) -> crate::Result<()> {
+    fn prepare(self, context: &ValidationContext<'_>) -> crate::Result<Self::Prepared> {
         let resolved = crate::routes::resolved_services(&self.services);
 
         crate::routes::validate_services(&resolved)?;
-        self.resolved_services = Some(resolved);
 
-        Ok(())
-    }
-
-    fn build(self, runtime: &AppRuntime) -> crate::Result<Rpc> {
-        let resolved = match self.resolved_services {
-            Some(resolved) => resolved,
-            None => {
-                let resolved = crate::routes::resolved_services(&self.services);
-
-                crate::routes::validate_services(&resolved)?;
-
-                resolved
-            }
-        };
-
-        // Does any real component depend on the peer? If not, the connection scope need
-        // not exist solely to hold it; handlers still reach the peer via the `Peer`
-        // extractor, which reads it off the call context rather than the scope chain.
         let peer_id = PEER_INFO_DESCRIPTOR.ty.type_id;
-        let needs_peer = runtime.resolved_components().iter().any(|c| {
-            c.ty.type_id != peer_id && c.dependencies().iter().any(|d| d.ty.type_id == peer_id)
+        let needs_peer = context.resolved_components().iter().any(|component| {
+            component.ty.type_id != peer_id
+                && component
+                    .dependencies()
+                    .iter()
+                    .any(|dependency| dependency.ty.type_id == peer_id)
         });
 
-        let router = Arc::new(RpcRouter::from_services(&resolved));
+        Ok(PreparedRpc {
+            resolved_services: resolved,
+            layers: self.layers,
+            error_handler: self.error_handler,
+            needs_peer,
+            limits: self.limits,
+        })
+    }
+}
+
+impl PreparedProtocol for PreparedRpc {
+    type Runtime = RpcRuntime;
+    type Error = crate::Error;
+
+    fn build(self, _runtime: &AppRuntime) -> crate::Result<Self::Runtime> {
+        let router = Arc::new(RpcRouter::from_services(&self.resolved_services));
 
         // Fold the registered layers onto the terminal router service. Appliers are
         // pushed in registration order, so applying them in reverse makes the
@@ -105,17 +113,17 @@ impl ProtocolPlugin for RpcPlugin {
             service = applier(service);
         }
 
-        Ok(Rpc::new(
+        Ok(RpcRuntime::new(
             router,
             service,
             self.error_handler,
-            needs_peer,
+            self.needs_peer,
             self.limits,
         ))
     }
 }
 
-/// RPC-specific builder methods, contributed to [`AppBuilder<RpcPlugin>`] as an extension
+/// RPC-specific builder methods, contributed to [`AppBuilder<Rpc>`] as an extension
 /// trait (a foreign crate cannot add inherent methods to a generic type). Bring it into
 /// scope to register services, middleware, guards, and the error handler; it is in the
 /// prelude.
@@ -155,7 +163,7 @@ pub trait RpcAppBuilder {
     fn rpc_limits(self, limits: RpcLimits) -> Self;
 }
 
-impl RpcAppBuilder for AppBuilder<RpcPlugin> {
+impl RpcAppBuilder for AppBuilder<Rpc> {
     fn service<T>(mut self) -> Self
     where
         T: Descriptor<ServiceDescriptor> + Descriptor<ComponentDescriptor>,

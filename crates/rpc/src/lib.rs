@@ -1,6 +1,6 @@
 //! The Overseerd native RPC protocol, built on the protocol-agnostic `overseerd-app` core.
 //!
-//! This crate is a [`ProtocolPlugin`]: it adds the RPC router, the `FromContext`
+//! This crate provides the first-class [`Rpc`] protocol definition, router, `FromContext`
 //! extractors, the tower middleware stack, the wire transports, and the serve loop on top
 //! of [`overseerd_app`]. Depend on it directly for a self-contained RPC framework
 //! (`overseerd` is always present for the core macros + vocabulary), or reach it through
@@ -12,22 +12,22 @@ pub mod descriptors;
 pub mod error;
 pub mod extract;
 pub mod middleware;
-pub mod plugin;
+mod plugin;
 pub mod protocol;
 pub mod router;
 pub mod routes;
 pub mod scope;
 
 pub use error::{Error, Result};
-pub use plugin::{RpcAppBuilder, RpcPlugin};
+pub use plugin::{PreparedRpc, Rpc, RpcAppBuilder};
 
 /// The RPC daemon macros (`#[service]`, `#[handlers]`, `#[rpc]`), owned by this protocol crate.
-/// Their generated code roots plugin types at this crate (`::overseerd_rpc::*`) by default, or
+/// Their generated code roots protocol types at this crate (`::overseerd_rpc::*`) by default, or
 /// at `::overseerd::daemon::*` under the `facade` feature — so they work whether `overseerd-rpc`
 /// is used directly or through the `overseerd` facade. The core macros (`app!`, `#[component]`,
 /// …) come from `overseerd` (the always-present core).
 pub use overseerd_rpc_macros::{handlers, rpc, service};
-pub use protocol::{Rpc, RpcLimits};
+pub use protocol::{RpcLimits, RpcRuntime};
 pub use router::RpcRouter;
 pub use routes::ResolvedService;
 
@@ -44,17 +44,17 @@ pub use middleware::{
     ErrorHandler, Guard, GuardLayer, GuardService, RouterService, RpcRequest, RpcService,
 };
 
-/// The RPC app type: an [`App`](overseerd_app::App) specialized to the native [`RpcPlugin`].
+/// The RPC app type: an [`App`](overseerd_app::App) specialized to [`Rpc`].
 /// `App::builder(name)` resolves through this alias without a turbofish.
-pub type App = overseerd_app::App<RpcPlugin>;
+pub type App = overseerd_app::App<Rpc>;
 
-/// The RPC app builder: [`AppBuilder`](overseerd_app::AppBuilder) specialized to [`RpcPlugin`].
-pub type AppBuilder = overseerd_app::AppBuilder<RpcPlugin>;
+/// The RPC app builder: [`AppBuilder`](overseerd_app::AppBuilder) specialized to [`Rpc`].
+pub type AppBuilder = overseerd_app::AppBuilder<Rpc>;
 
 // Re-export the agnostic app surface so a standalone `overseerd-rpc` user has one import.
 pub use overseerd_app::{
-    AppRegistry, AppRuntime, LoggingConfig, Plugin, Protocol, ProtocolPlugin, Serve, ServerConfig,
-    ShutdownHandle, ShutdownSignal,
+    AppRegistry, AppRuntime, LoggingConfig, Plugin, PreparedProtocol, ProtocolDefinition,
+    ProtocolRuntime, Serve, ServerConfig, ShutdownHandle, ShutdownSignal,
 };
 
 /// Re-exported so macro-generated code can reach the `#[distributed_slice]` attribute for

@@ -1,6 +1,6 @@
 [package]
 name = "overseerd-rpc"
-description = "The Overseerd native RPC protocol plugin: router, extractors, middleware, transports, and the serve loop, over the protocol-agnostic overseerd-app core."
+description = "The Overseerd native RPC protocol: router, extractors, middleware, transports, and the serve loop over the protocol-agnostic overseerd-app core."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,10 +20,11 @@ di-check = [
     "overseerd-transport/di-check",
     "overseerd-rpc-macros/di-check",
 ]
+hybrid-registry = ["overseerd-rpc-macros/hybrid-registry"]
 yaml = ["overseerd-app/yaml", "overseerd-config/yaml"]
 watch = ["overseerd-app/watch", "overseerd-config/watch"]
 tracing-subscriber = ["overseerd-app/tracing-subscriber"]
-# Set by the `overseerd` facade: root the macros' generated plugin types at
+# Set by the `overseerd` facade: root the macros' generated protocol types at
 # `::overseerd::daemon::*`. Off (the default) keeps them at this standalone crate
 # (`::overseerd_rpc::*`), so depending on `overseerd-rpc` directly works.
 facade = ["overseerd-rpc-macros/facade"]

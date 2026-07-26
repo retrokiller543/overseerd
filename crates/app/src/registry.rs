@@ -32,7 +32,7 @@ pub struct AppRegistry {
 impl AppRegistry {
     /// Collects every link-time-registered agnostic descriptor (components, providers,
     /// config bindings) into an `AppRegistry`. Protocol variant slices (e.g. RPC services)
-    /// are folded in by the protocol plugin, not here.
+    /// are folded in by the protocol definition, not here.
     pub fn collect() -> Self {
         let mut components: Vec<_> = COMPONENTS.iter().copied().collect();
         let mut providers: Vec<_> = PROVIDERS.iter().copied().collect();

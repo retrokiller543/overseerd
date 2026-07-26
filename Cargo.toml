@@ -255,7 +255,11 @@ watch = ["overseerd-config/watch", "overseerd-app/watch", "overseerd-rpc?/watch"
 # unconditional native dep); it flips the `hybrid-registry` feature on the macro crates, which the
 # proc-macros read at expansion (`cfg!(feature = "hybrid-registry")`) to emit inventory instead of
 # linkme. The convenient alternative to setting `--cfg overseerd_hybrid` on the macro crate.
-hybrid-registry = ["overseerd-macros/hybrid-registry"]
+hybrid-registry = [
+    "overseerd-macros/hybrid-registry",
+    "overseerd-rpc?/hybrid-registry",
+    "overseerd-axum?/hybrid-registry",
+]
 
 # Shared across all targets: the client core, the (wasm-safe) transport substrate, the axum
 # protocol's *client* surface, and the proc-macros (built for the host regardless of target).

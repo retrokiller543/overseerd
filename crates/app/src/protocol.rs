@@ -1,7 +1,6 @@
-//! The pluggable protocol seam (traits).
+//! Protocol definition, preparation, runtime, and plugin contracts.
 //!
-//! These traits are protocol-agnostic; the native RPC protocol implements them in the
-//! `overseerd-rpc` crate, a future axum protocol in its own crate.
+//! These traits are protocol-agnostic; the RPC and Axum protocol crates implement them.
 
 use std::future::Future;
 
@@ -9,37 +8,47 @@ use overseerd_config::{Cfg, ConfigBinding, ConfigProperties, ConfigStore};
 use overseerd_core::{Descriptor, TypeDescriptor};
 use overseerd_di::{BoxedComponent, Component, ComponentDescriptor, Injectable};
 
+use crate::ProtocolId;
 use crate::lifecycle::ShutdownSignal;
 use crate::registry::AppRegistry;
 use crate::runtime::AppRuntime;
 use crate::scope::ScopeTopology;
 
-/// A general extension unit applied to an app while it is built.
+/// A general extension unit applied while an app definition is assembled.
 ///
 /// A plugin is the builder-time accumulator for an extension: it starts empty
-/// ([`Default`]), gathers protocol-specific configuration through the builder, folds its
+/// ([`Default`]), gathers extension-specific configuration through the builder, folds its
 /// link-time-discovered variants in on `auto_discover`, and contributes DI descriptors
-/// into the registry before the container is built. A plugin need not serve traffic —
-/// that is the job of the [`ProtocolPlugin`] sub-trait. Background behavior rides the
-/// components a plugin registers (via their own `#[hook]`s).
+/// into the registry before the container is built. A plugin need not serve traffic.
+/// Background behavior rides the components it registers through their own hooks.
 pub trait Plugin: Default {
-    /// Folds this plugin's link-time-registered component variants (e.g. the RPC
-    /// `SERVICES` slice) into the accumulator. Called from `AppBuilder::auto_discover`.
+    /// Folds this plugin's link-time-registered component variants into the accumulator. Called
+    /// from `AppBuilder::auto_discover`.
     /// Default: nothing to discover.
     fn auto_discover(&mut self) {}
 
     /// Contributes DI descriptors / seeds into the registry before validation and build.
-    /// The native RPC plugin seeds its connection-scoped `PeerInfo` here.
     fn register(&self, registry: &mut AppRegistry);
 }
 
-/// A [`Plugin`] that additionally installs a serve/dispatch [`Protocol`]. An `App` is
-/// built around exactly one of these.
-pub trait ProtocolPlugin: Plugin {
-    /// The protocol this plugin installs.
-    type Protocol: Protocol;
-    /// The plugin's error type; must absorb agnostic build failures.
+/// A selected protocol definition before application validation and construction.
+///
+/// An application owns exactly one definition. It contributes protocol-owned registrations,
+/// declares the scope topology, and is consumed into a distinct validated prepared state.
+pub trait ProtocolDefinition: Default + 'static {
+    /// The validated protocol state retained by [`PreparedApp`](crate::PreparedApp).
+    type Prepared: PreparedProtocol<Error = Self::Error>;
+    /// The definition's typed preparation and construction error.
     type Error: std::error::Error + Send + Sync + 'static + From<crate::Error>;
+
+    /// Stable identity used by composition, diagnostics, and tooling.
+    const ID: ProtocolId;
+
+    /// Folds link-time discovered protocol descriptors into this definition.
+    fn auto_discover(&mut self) {}
+
+    /// Contributes protocol-owned descriptors before application validation.
+    fn register(&self, registry: &mut AppRegistry);
 
     /// The protocol-owned scope boundaries and their declared parent paths.
     ///
@@ -54,17 +63,20 @@ pub trait ProtocolPlugin: Plugin {
         Ok(())
     }
 
-    /// Validates finalized protocol-owned configuration and descriptors before construction.
-    fn validate(&mut self, context: &ValidationContext<'_>) -> Result<(), Self::Error> {
-        let _ = context;
+    /// Validates finalized protocol-owned state and consumes the definition into its prepared
+    /// representation without constructing runtime resources.
+    fn prepare(self, context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error>;
+}
 
-        Ok(())
-    }
+/// Validated protocol-specific state awaiting runtime construction.
+pub trait PreparedProtocol: Send + 'static {
+    /// The built protocol runtime.
+    type Runtime: ProtocolRuntime;
+    /// The typed construction error.
+    type Error: std::error::Error + Send + Sync + 'static + From<crate::Error>;
 
-    /// Finalizes the protocol from the accumulated builder state and the assembled
-    /// runtime — for RPC, building the router from the discovered services and folding
-    /// the middleware stack.
-    fn build(self, runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error>;
+    /// Builds the protocol runtime after the application's root DI container exists.
+    fn build(self, runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error>;
 }
 
 /// Mutable application state available for protocol contributions before validation.
@@ -155,17 +167,16 @@ impl<'a> ValidationContext<'a> {
     }
 }
 
-/// A pluggable serve/dispatch layer over the app's DI runtime. There is exactly one
-/// active protocol per `App`.
-pub trait Protocol: Send + 'static {
+/// A built serve/dispatch layer over the app's DI runtime.
+pub trait ProtocolRuntime: Send + 'static {
     type Error: std::error::Error + Send + Sync + 'static;
 }
 
 /// Serves a built protocol over a concrete endpoint type `E`. Kept separate from
-/// [`Protocol`] so one protocol can serve many endpoint types — RPC over any transport, a
+/// [`ProtocolRuntime`] so one protocol can serve many endpoint types — RPC over any transport, a
 /// future HTTP protocol over a `SocketAddr`. The serve loop only needs to watch `endpoint`
 /// and `shutdown`; lifecycle and reload are handled by the caller (`App::serve`).
-pub trait Serve<E>: Protocol {
+pub trait Serve<E>: ProtocolRuntime {
     fn serve(
         self,
         runtime: AppRuntime,
@@ -178,17 +189,29 @@ impl Plugin for () {
     fn register(&self, _registry: &mut AppRegistry) {}
 }
 
-impl ProtocolPlugin for () {
-    type Protocol = ();
+impl ProtocolDefinition for () {
+    type Prepared = ();
     type Error = crate::Error;
 
+    const ID: ProtocolId = overseerd_core::namespaced_id!(ProtocolId, "overseerd/none");
     const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
 
-    fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
+    fn register(&self, _registry: &mut AppRegistry) {}
+
+    fn prepare(self, _context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error> {
         Ok(())
     }
 }
 
-impl Protocol for () {
+impl PreparedProtocol for () {
+    type Runtime = ();
+    type Error = crate::Error;
+
+    fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
+        Ok(())
+    }
+}
+
+impl ProtocolRuntime for () {
     type Error = crate::Error;
 }

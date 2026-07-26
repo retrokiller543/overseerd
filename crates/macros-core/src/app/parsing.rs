@@ -226,7 +226,7 @@ impl AppAssembly {
 
         let name = name.ok_or_else(|| input.error("`app!` requires a `name`"))?;
         let protocol = protocol.ok_or_else(|| {
-            input.error("`app!` requires a `protocol: <ProtocolPlugin>` (e.g. the RPC daemon's)")
+            input.error("`app!` requires a `protocol: <ProtocolDefinition>` (e.g. `Rpc`)")
         })?;
 
         Ok(Self {

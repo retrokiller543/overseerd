@@ -94,6 +94,7 @@ struct RouteSpec {
 /// One ws message route claimed from a `#[message("dest")]` method: its destination and the
 /// `Arc<Self> -> WsRoute` builder fragment.
 struct WsRouteSpec {
+    destination: LitStr,
     builder: TokenStream,
 }
 
@@ -563,18 +564,37 @@ impl AxumHandlers {
         let controller_ws_route = paths.plugin("ControllerWsRoute");
         let ws_controller_trait = paths.plugin("WebsocketController");
         let ws_route = paths.plugin("WsRoute");
+        let ws_route_descriptor = paths.plugin("WsRouteDescriptor");
         let ws_routes_slice = self
             .routes_slice
             .clone()
             .unwrap_or_else(|| format_ident!("{}WsRoutes", cx.self_ident));
 
-        let builders = self.ws_routes.iter().map(|spec| &spec.builder);
         let protocol = self
             .ws_protocol
             .as_ref()
             .expect("message routes require a handlers protocol");
 
         let ws_route_p = quote!(#ws_route<#protocol>);
+        let descriptors = self.ws_routes.iter().map(|spec| {
+            let destination = &spec.destination;
+            let builder = &spec.builder;
+
+            quote! {
+                #ws_route_descriptor::new::<#protocol>(
+                    #destination,
+                    |runtime| {
+                        let svc = runtime
+                            .root()
+                            .get::<#self_ty>()
+                            .expect("ws controller singleton missing from the root scope");
+                        let route: #ws_route_p = #builder;
+
+                        route.handler
+                    },
+                )
+            }
+        });
 
         // One message-route builder per `#[handlers]` block, wrapped in `ControllerWsRoute<Self, P>`
         // and registered into the controller's per-type ws-route registry.
@@ -582,7 +602,7 @@ impl AxumHandlers {
             quote! {
                 #inventory::submit! {
                     #descriptor_for::<#self_ty, #controller_ws_route<#self_ty, #protocol>>::new(
-                        #controller_ws_route(__overseerd_ws_route_group)
+                        #controller_ws_route::new(__overseerd_ws_route_group)
                     )
                 }
             },
@@ -590,7 +610,7 @@ impl AxumHandlers {
                 #[#distributed_slice(#ws_routes_slice)]
                 #[linkme(crate = #linkme_crate)]
                 static __OVERSEERD_WS_ROUTE_GROUP: #controller_ws_route<#self_ty, #protocol> =
-                    #controller_ws_route(__overseerd_ws_route_group);
+                    #controller_ws_route::new(__overseerd_ws_route_group);
             },
         );
 
@@ -602,11 +622,8 @@ impl AxumHandlers {
                 let _ = __overseerd_assert_ws_controller::<#self_ty>;
 
                 fn __overseerd_ws_route_group(
-                    svc: ::std::sync::Arc<#self_ty>,
-                ) -> ::std::vec::Vec<#ws_route_p> {
-                    let _ = &svc;
-
-                    ::std::vec![ #(#builders),* ]
+                ) -> ::std::vec::Vec<#ws_route_descriptor> {
+                    ::std::vec![ #(#descriptors),* ]
                 }
 
                 #register
@@ -900,7 +917,10 @@ fn build_ws_route(
         )
     }};
 
-    Ok(WsRouteSpec { builder })
+    Ok(WsRouteSpec {
+        destination: destination.clone(),
+        builder,
+    })
 }
 
 /// The single non-`Inject<T>` parameter of a `#[message]` method — the payload the client method

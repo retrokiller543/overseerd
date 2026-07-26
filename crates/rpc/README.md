@@ -1,16 +1,16 @@
 # overseerd-rpc
 
-> The Overseerd native RPC protocol plugin.
+> The Overseerd native first-class RPC protocol.
 
 Part of the [Overseerd](../../README.md) framework — the native RPC protocol built on the
 protocol-agnostic `overseerd-app` core.
 
 ## Role
 
-This crate is a `ProtocolPlugin`: it adds the RPC router (`RpcRouter`), the `FromContext` extractors
+This crate provides the `Rpc -> PreparedRpc -> RpcRuntime` protocol states, the RPC router (`RpcRouter`), the `FromContext` extractors
 (`Payload`, `Inject`, `Peer`, `Streaming`, …), the tower middleware stack (`Guard`, `RouterService`,
 `ErrorHandler`), the wire transports, and the serve loop on top of `overseerd-app`. It exposes the
-`RpcPlugin`, the specialized `App`/`AppBuilder` aliases, the descriptor model (`ServiceDescriptor`,
+`Rpc`, the specialized `App`/`AppBuilder` aliases, the descriptor model (`ServiceDescriptor`,
 `RpcDescriptor`, `SERVICES`, …) that runtime routing and client generation consume, and — under the
 `client` feature — the RPC `ProtocolTransport` carry (`StreamClientTransport`, `connect_tcp`,
 `connect_unix`) that plugs into the agnostic `overseerd-client`. It re-exports the RPC macros
@@ -40,7 +40,7 @@ impl Notifications {
 
 #[tokio::main]
 async fn main() -> overseerd::daemon::Result<()> {
-    let app = app! { name: "notifyd", protocol: RpcPlugin }.build().await?;
+    let app = app! { name: "notifyd", protocol: Rpc }.build().await?;
 
     app.serve(TcpTransport::bind("127.0.0.1:7000").await?).await
 }
@@ -52,7 +52,7 @@ Sits above `overseerd-app` (and through it `overseerd-di`, `overseerd-config`, `
 `overseerd-transport`, `overseerd-dirs`, `overseerd-core`) as the concrete RPC protocol. It pairs
 with `overseerd-rpc-macros`, whose generated code targets the types re-exported here, and with
 `overseerd-client` for the client side. The `overseerd` facade wraps this crate as its `daemon`
-module and turns on the `facade` feature so the macros root generated plugin types at
+module and turns on the `facade` feature so the macros root generated protocol types at
 `::overseerd::daemon::*`.
 
 ## Feature flags
@@ -64,4 +64,4 @@ module and turns on the `facade` feature so the macros root generated plugin typ
 | `yaml` | YAML config sources alongside TOML. |
 | `watch` | Reload config on file change. |
 | `tracing-subscriber` | The `init_tracing` helper. |
-| `facade` | Set by the `overseerd` facade: root the macros' generated plugin types at `::overseerd::daemon::*`. Off (the default) keeps them at `::overseerd_rpc::*` so depending on this crate directly works. |
+| `facade` | Set by the `overseerd` facade: root the macros' generated protocol types at `::overseerd::daemon::*`. Off (the default) keeps them at `::overseerd_rpc::*` so depending on this crate directly works. |

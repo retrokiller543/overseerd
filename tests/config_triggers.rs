@@ -50,7 +50,7 @@ async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::d
     // and applies the triggers to the manager.
     let built = app! {
         name: "trigger-macro-test",
-        protocol: overseerd::daemon::RpcPlugin,
+        protocol: overseerd::daemon::Rpc,
         managers: {
             directories: dirs,
             config: { sighup: true, debounce: Duration::from_millis(50) },

@@ -13,7 +13,7 @@ use super::*;
 async fn chat_message_is_recorded_and_broadcast() {
     let app = app! {
         name: "chat-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws::<Stomp>("/ws/stomp")
     .build()
@@ -62,7 +62,7 @@ async fn chat_message_is_recorded_and_broadcast() {
 async fn a_templated_room_subscription_gets_only_its_room() {
     let app = app! {
         name: "chat-room-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws::<Stomp>("/ws/stomp")
     .build()
@@ -124,7 +124,7 @@ async fn a_templated_room_subscription_gets_only_its_room() {
 async fn a_request_message_awaits_a_correlated_reply() {
     let app = app! {
         name: "chat-request-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws::<Stomp>("/ws/stomp")
     .build()
@@ -172,7 +172,7 @@ async fn a_request_message_awaits_a_correlated_reply() {
 async fn a_failing_request_message_resolves_err_not_hang() {
     let app = app! {
         name: "chat-reject-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws::<Stomp>("/ws/stomp")
     .build()
@@ -232,7 +232,7 @@ async fn a_failing_request_message_resolves_err_not_hang() {
 async fn a_request_without_a_reply_times_out() {
     let app = app! {
         name: "chat-timeout-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws::<Stomp>("/ws/stomp")
     .build()

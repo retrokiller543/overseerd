@@ -31,7 +31,7 @@ async fn daemon_builder_alias_builds() {
 async fn daemon_macro_alias_builds() {
     let app = daemon! {
         name: "deprecated-macro-alias",
-        protocol: overseerd::daemon::RpcPlugin,
+        protocol: overseerd::daemon::Rpc,
     }
     .build()
     .await

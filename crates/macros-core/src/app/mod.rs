@@ -4,7 +4,7 @@
 //! app! {
 //!     pub app Example {
 //!         name: "example-daemon",
-//!         protocol: RpcPlugin,
+//!         protocol: Rpc,
 //!         services: [Notifications, Echo],
 //!         configs: [DbConfig => "app.db.reader", DbConfig => "app.db.writer"],
 //!     }

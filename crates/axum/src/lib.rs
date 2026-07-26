@@ -1,6 +1,7 @@
 //! The Overseerd axum/HTTP protocol, built on the protocol-agnostic `overseerd-app` core.
 //!
-//! This crate is a [`ProtocolPlugin`]: it builds a real [`axum::Router`] from `#[controller]`
+//! This crate provides the first-class [`Axum`] protocol definition and builds a real
+//! [`axum::Router`] from `#[controller]`
 //! components, bridges the framework's dependency injection into axum via the [`Inject`]
 //! extractor (so route handlers mix native axum extractors with DI), and serves over HTTP.
 //! Depend on it directly, or reach it through the `overseerd` facade's `axum` feature.
@@ -29,7 +30,8 @@ pub mod messaging;
 /// names them); the axum extractor/response impls inside are gated to non-wasm.
 pub mod stream;
 
-// Server-only modules: the DI bridge, controllers, the serve loop, and the ws broker. None of
+// Server-only modules: the DI bridge, controllers, protocol states, the serve loop, and the ws
+// broker. None of
 // these exist on a wasm client target, where only the generated HTTP client is compiled.
 #[cfg(not(target_family = "wasm"))]
 pub mod config;
@@ -47,7 +49,7 @@ pub mod middleware;
 #[cfg(all(feature = "openapi", not(target_family = "wasm")))]
 pub mod openapi;
 #[cfg(not(target_family = "wasm"))]
-pub mod plugin;
+mod plugin;
 #[cfg(not(target_family = "wasm"))]
 pub mod protocol;
 #[cfg(not(target_family = "wasm"))]
@@ -62,7 +64,7 @@ pub use config::{AXUM_CONFIG_PATH, AxumConfig};
 #[cfg(all(feature = "openapi", not(target_family = "wasm")))]
 pub use config::{AXUM_OPENAPI_CONFIG_PATH, OpenApiConfig, OpenApiUi};
 /// The OpenAPI operation/schema slices and document assembler, re-exported at the crate root so
-/// `#[dto]`/`#[handlers]` generated code registers into a stable path and the plugin folds them.
+/// `#[dto]`/`#[handlers]` generated code registers into a stable path and the protocol folds them.
 #[cfg(all(feature = "openapi", not(target_family = "wasm")))]
 pub use openapi::{
     OPENAPI_OPERATIONS, OPENAPI_SCHEMAS, OperationEntry, SchemaEntry, build_openapi, join_base,
@@ -73,7 +75,7 @@ pub use controller::{CONTROLLERS, Controller, ControllerDescriptor, ControllerRo
 #[cfg(not(target_family = "wasm"))]
 pub use error::{Error, Result};
 /// The `utoipa` crate, re-exported so `#[dto]`/`#[handlers]` generated OpenAPI code names its
-/// derive (`ToSchema`), attribute (`path`), and traits through a stable plugin path
+/// derive (`ToSchema`), attribute (`path`), and traits through a stable protocol path
 /// (`::overseerd_axum::utoipa` / `::overseerd::axum::utoipa`) without the user crate depending on
 /// `utoipa` directly. Native + `openapi` only.
 #[cfg(all(feature = "openapi", not(target_family = "wasm")))]
@@ -84,8 +86,8 @@ pub use utoipa;
 pub use ws::{
     ControllerWsRoute, SOCKET_SEND_TIMEOUT, WS_CONTROLLERS, WebsocketController, WebsocketHandler,
     WebsocketProtocol, WebsocketUpgradeMeta, WsConnectionMeta, WsConnectionSettings,
-    WsControllerDescriptor, WsDispatchError, WsFuture, WsHandlerFn, WsIdle, WsRespond, WsRoute,
-    WsShutdown,
+    WsControllerDescriptor, WsControllerRegistration, WsDispatchError, WsFuture, WsHandlerFn,
+    WsIdle, WsRespond, WsRoute, WsRouteDescriptor, WsShutdown,
 };
 
 /// The `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements so
@@ -104,7 +106,7 @@ pub use ws::pubsub::{
 };
 
 /// The protocol-generic messaging wire contract, re-exported at the crate root on every target — the
-/// browser client's generated `#[topics]`/`#[message]` code names it through the plugin path. Behind
+/// browser client's generated `#[topics]`/`#[message]` code names it through the protocol path. Behind
 /// `ws` so a non-STOMP protocol reuses it without enabling `stomp`.
 #[cfg(feature = "ws")]
 pub use messaging::{MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec, TopicParam};
@@ -130,7 +132,7 @@ pub use middleware::AxumMiddleware;
 #[cfg(feature = "ws")]
 pub use overseerd_axum_macros::topics;
 /// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
-/// this protocol crate. Their generated code roots plugin types at this crate
+/// this protocol crate. Their generated code roots protocol types at this crate
 /// (`::overseerd_axum::*`) by default, or at `::overseerd::axum::*` under the `facade` feature —
 /// so they work whether `overseerd-axum` is used directly or through the `overseerd` facade. The
 /// core macros (`app!`, `#[component]`, …) come from `overseerd` (the always-present core).
@@ -138,9 +140,9 @@ pub use overseerd_axum_macros::{
     controller, delete, get, handlers, head, message, options, patch, post, put, route,
 };
 #[cfg(not(target_family = "wasm"))]
-pub use plugin::{AxumAppBuilder, AxumAppServe, AxumPlugin};
+pub use plugin::{Axum, AxumAppBuilder, AxumAppServe, PreparedAxum};
 #[cfg(not(target_family = "wasm"))]
-pub use protocol::Axum;
+pub use protocol::AxumRuntime;
 #[cfg(not(target_family = "wasm"))]
 pub use request_meta::RequestMeta;
 /// The `StreamBody` request extractor is an axum `FromRequest` — server-only.
@@ -202,20 +204,20 @@ pub use scope::{
     WebsocketMessage as WebsocketMessageScope,
 };
 
-/// The axum app type: an [`App`](overseerd_app::App) specialized to [`AxumPlugin`].
+/// The axum app type: an [`App`](overseerd_app::App) specialized to [`Axum`].
 /// `App::builder(name)` resolves through this alias without a turbofish.
 #[cfg(not(target_family = "wasm"))]
-pub type App = overseerd_app::App<AxumPlugin>;
+pub type App = overseerd_app::App<Axum>;
 
-/// The axum app builder: [`AppBuilder`](overseerd_app::AppBuilder) specialized to [`AxumPlugin`].
+/// The axum app builder: [`AppBuilder`](overseerd_app::AppBuilder) specialized to [`Axum`].
 #[cfg(not(target_family = "wasm"))]
-pub type AppBuilder = overseerd_app::AppBuilder<AxumPlugin>;
+pub type AppBuilder = overseerd_app::AppBuilder<Axum>;
 
 // Re-export the agnostic app surface so a standalone `overseerd-axum` user has one import.
 #[cfg(not(target_family = "wasm"))]
 pub use overseerd_app::{
-    AppRegistry, AppRuntime, LoggingConfig, Plugin, Protocol, ProtocolPlugin, Serve, ServerConfig,
-    ShutdownHandle, ShutdownSignal,
+    AppRegistry, AppRuntime, LoggingConfig, Plugin, PreparedProtocol, ProtocolDefinition,
+    ProtocolRuntime, Serve, ServerConfig, ShutdownHandle, ShutdownSignal,
 };
 
 /// Re-exported so macro-generated code can reach the `#[distributed_slice]` attribute for

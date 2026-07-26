@@ -1,7 +1,7 @@
 use std::future::Future;
 
 use super::{BootstrapContext, ExecutionMode, HostError, LifecyclePhase, PhaseError};
-use crate::{App, AppBuilder, PreparedApp, ProtocolPlugin};
+use crate::{App, AppBuilder, PreparedApp, ProtocolDefinition};
 
 /// Static lifecycle definition implemented by every generated named application.
 ///
@@ -9,8 +9,8 @@ use crate::{App, AppBuilder, PreparedApp, ProtocolPlugin};
 /// `*_host` functions below, so generated applications, custom runtimes, and CLI dispatch all use
 /// the same ordering and error tagging.
 pub trait AppHost {
-    /// The single protocol plugin configured by this host.
-    type Protocol: ProtocolPlugin + Send;
+    /// The single protocol definition selected by this host.
+    type Protocol: ProtocolDefinition + Send;
 
     /// Whether framework bootstrap supplies the builder's config manager.
     ///
@@ -103,7 +103,7 @@ pub trait AppHost {
 /// The generated application stores `Stage::State` directly. A stage marker therefore changes
 /// both the available methods and the data physically held by the value; lifecycle validity is not
 /// represented by a runtime enum or checked dynamically.
-pub trait AppStage<P: ProtocolPlugin>: Send + Sync + 'static {
+pub trait AppStage<D: ProtocolDefinition>: Send + Sync + 'static {
     /// Data available while the generated application is in this stage.
     type State;
 }
@@ -133,25 +133,25 @@ pub struct PreBuild;
 /// Stage after component and protocol construction.
 ///
 /// Stores `(BootstrapContext, App<P>)`. Singleton components and the root container are built,
-/// hooks and the root resolver are attached, `AppRuntime` is created, and the protocol plugin is
+/// hooks and the root resolver are attached, `AppRuntime` is created, and the protocol definition is
 /// finalized. The app can resolve DI dependencies or be handed to a runtime, but serving and
 /// startup hooks have not started until the serve implementation does so.
 pub struct Built;
 
-impl<P: ProtocolPlugin> AppStage<P> for Initial {
+impl<D: ProtocolDefinition> AppStage<D> for Initial {
     type State = ExecutionMode;
 }
 
-impl<P: ProtocolPlugin> AppStage<P> for Setup {
+impl<D: ProtocolDefinition> AppStage<D> for Setup {
     type State = BootstrapContext;
 }
 
-impl<P: ProtocolPlugin> AppStage<P> for PreBuild {
-    type State = (BootstrapContext, PreparedApp<P>);
+impl<D: ProtocolDefinition> AppStage<D> for PreBuild {
+    type State = (BootstrapContext, PreparedApp<D>);
 }
 
-impl<P: ProtocolPlugin> AppStage<P> for Built {
-    type State = (BootstrapContext, App<P>);
+impl<D: ProtocolDefinition> AppStage<D> for Built {
+    type State = (BootstrapContext, App<D>);
 }
 
 /// Creates an empty context for `mode`, runs [`AppHost::setup`], and finalizes bootstrap tracing.
@@ -264,7 +264,7 @@ pub async fn build_host_context<H: AppHost>(
 /// Builds a host whose registration and validation have completed.
 ///
 /// This constructs singleton components and the root DI container, attaches hooks and the root
-/// resolver, creates the runtime, finalizes the protocol plugin, and runs
+/// resolver, creates the runtime, constructs the protocol runtime, and runs
 /// [`AppHost::after_build`]. It does not invoke [`AppHost::serve`].
 pub async fn build_prepared_host<H: AppHost>(
     mut context: BootstrapContext,
@@ -305,7 +305,7 @@ pub fn resolve_host_dependency<P, H>(
     consumer: &str,
 ) -> impl Future<Output = Result<H, overseerd_di::Error>> + Send
 where
-    P: ProtocolPlugin,
+    P: ProtocolDefinition,
     H: overseerd_di::Injectable,
 {
     let container = std::sync::Arc::clone(app.container());

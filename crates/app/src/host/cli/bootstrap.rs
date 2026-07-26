@@ -5,7 +5,7 @@ use overseerd_dirs::DirectoriesManager;
 
 use super::{BootstrapError, BootstrapOptions, BootstrapPolicy, BootstrapState, ColorChoice};
 use crate::{
-    AppBuilder, BootstrapContext, ExecutionMode, LogFormat, LoggingConfig, ProtocolPlugin,
+    AppBuilder, BootstrapContext, ExecutionMode, LogFormat, LoggingConfig, ProtocolDefinition,
 };
 
 #[derive(Default)]
@@ -59,10 +59,10 @@ pub fn bootstrap_application_with_policy(
 }
 
 /// Applies generated bootstrap directories to a protocol-specific application builder.
-pub fn configure_bootstrap_directories<P: ProtocolPlugin>(
+pub fn configure_bootstrap_directories<D: ProtocolDefinition>(
     context: &mut BootstrapContext,
-    builder: AppBuilder<P>,
-) -> AppBuilder<P> {
+    builder: AppBuilder<D>,
+) -> AppBuilder<D> {
     let Some(state) = context.bootstrap_mut() else {
         return builder;
     };
@@ -74,10 +74,10 @@ pub fn configure_bootstrap_directories<P: ProtocolPlugin>(
 }
 
 /// Applies the generated bootstrap config source to a protocol-specific application builder.
-pub fn configure_bootstrap_config<P: ProtocolPlugin>(
+pub fn configure_bootstrap_config<D: ProtocolDefinition>(
     context: &mut BootstrapContext,
-    builder: AppBuilder<P>,
-) -> AppBuilder<P> {
+    builder: AppBuilder<D>,
+) -> AppBuilder<D> {
     let Some(state) = context.bootstrap_mut() else {
         return builder;
     };

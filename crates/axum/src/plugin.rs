@@ -1,4 +1,4 @@
-//! The axum protocol plugin and its builder extension.
+//! The axum protocol definition and its builder extension.
 
 use std::convert::Infallible;
 use std::future::Future;
@@ -9,7 +9,7 @@ use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::Route;
 use overseerd_app::{
-    AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin, ValidationContext,
+    AppBuilder, AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ValidationContext,
 };
 use overseerd_config::{ConfigBinding, ContainerConfigExt};
 use overseerd_core::{Descriptor, TypeDescriptor};
@@ -20,18 +20,18 @@ use crate::config::{AXUM_CONFIG_PATH, AxumConfig};
 use crate::controller::{CONTROLLERS, ControllerDescriptor};
 use crate::extract::ScopeHandle;
 use crate::middleware::{AxumMiddleware, MiddlewareApplier, as_layer};
-use crate::protocol::Axum;
+use crate::protocol::AxumRuntime;
 use crate::request_meta::{REQUEST_META_DESCRIPTOR, RequestMeta};
 use crate::scope::{HttpRequest as HttpRequestScope, SCOPE_TOPOLOGY};
 
-/// The axum HTTP protocol plugin.
+/// The axum HTTP protocol definition.
 ///
 /// Accumulates the registered/discovered controllers, contributes no extra DI seeds, and
-/// builds the [`Axum`] protocol: each controller's [`axum::Router`] merged together and
+/// builds the [`AxumRuntime`]: each controller's [`axum::Router`] merged together and
 /// wrapped by a per-request scope layer that opens the request scope and threads it into
 /// the request extensions for the [`Inject`](crate::Inject) extractor.
 #[derive(Default)]
-pub struct AxumPlugin {
+pub struct Axum {
     controllers: Vec<ControllerDescriptor>,
 
     /// Global middleware, in registration order — both raw `tower::Layer`s (via
@@ -43,7 +43,7 @@ pub struct AxumPlugin {
     /// Discovered `#[controller(ws = ..)]` descriptors. Only mounted for protocols a user opts into
     /// via [`register_ws`](AxumAppBuilder::register_ws).
     #[cfg(feature = "ws")]
-    ws_controllers: Vec<crate::ws::WsControllerDescriptor>,
+    ws_controllers: Vec<crate::ws::WsControllerRegistration>,
 
     /// Opt-in ws endpoints: each pairs a protocol type with the path to mount its upgrade handler.
     #[cfg(feature = "ws")]
@@ -56,9 +56,10 @@ pub struct AxumPlugin {
 #[cfg(feature = "ws")]
 type WsMount = Box<
     dyn FnOnce(
-        Vec<crate::ws::WsControllerDescriptor>,
-        &AppRuntime,
-    ) -> crate::Result<(axum::Router, crate::ws::WebsocketHandler)>,
+            Vec<crate::ws::WsControllerDescriptor>,
+            &AppRuntime,
+        ) -> crate::Result<(axum::Router, crate::ws::WebsocketHandler)>
+        + Send,
 >;
 
 /// One opt-in ws endpoint: a protocol type (by [`TypeId`](std::any::TypeId)) bound to a path, with a
@@ -67,11 +68,34 @@ type WsMount = Box<
 struct WsRegistration {
     path: String,
     protocol: std::any::TypeId,
+    protocol_name: &'static str,
     mount: WsMount,
     register: fn(&mut AppRegistry),
 }
 
-impl Plugin for AxumPlugin {
+/// One validated WebSocket endpoint and the exact route plan retained from preparation.
+#[cfg(feature = "ws")]
+struct PreparedWsRegistration {
+    controllers: Vec<crate::ws::WsControllerDescriptor>,
+    mount: WsMount,
+}
+
+/// The validated Axum plan awaiting router and runtime construction.
+pub struct PreparedAxum {
+    controllers: Vec<ControllerDescriptor>,
+    middleware: Vec<MiddlewareApplier>,
+    #[cfg(feature = "ws")]
+    ws_registrations: Vec<PreparedWsRegistration>,
+}
+
+impl ProtocolDefinition for Axum {
+    type Prepared = PreparedAxum;
+    type Error = crate::Error;
+
+    const ID: overseerd_app::ProtocolId =
+        overseerd_core::namespaced_id!(overseerd_app::ProtocolId, "overseerd/axum");
+    const SCOPE_TOPOLOGY: overseerd_app::ScopeTopology = SCOPE_TOPOLOGY;
+
     fn auto_discover(&mut self) {
         self.controllers.extend(CONTROLLERS.iter().copied());
 
@@ -101,47 +125,97 @@ impl Plugin for AxumPlugin {
             ));
 
         #[cfg(feature = "ws")]
-        for registration in &self.ws_registrations {
-            (registration.register)(registry);
+        {
+            let mut registered = std::collections::HashSet::new();
+
+            for registration in &self.ws_registrations {
+                if registered.insert(registration.protocol) {
+                    (registration.register)(registry);
+                }
+            }
         }
     }
-}
 
-impl ProtocolPlugin for AxumPlugin {
-    type Protocol = Axum;
-    type Error = crate::Error;
+    fn prepare(self, _context: &ValidationContext<'_>) -> crate::Result<Self::Prepared> {
+        let config = _context
+            .config::<AxumConfig>(AXUM_CONFIG_PATH)
+            .expect("AxumConfig missing from config store; Axum should register it")
+            .snapshot();
+        let base_prefix = normalize_base_path(&config.base_path);
 
-    const SCOPE_TOPOLOGY: overseerd_app::ScopeTopology = SCOPE_TOPOLOGY;
-
-    fn validate(&mut self, _context: &ValidationContext<'_>) -> crate::Result<()> {
-        #[cfg(feature = "ws")]
-        if !self.ws_registrations.is_empty() {
-            let config = _context
-                .config::<AxumConfig>(AXUM_CONFIG_PATH)
-                .expect("AxumConfig missing from config store; AxumPlugin should register it")
-                .snapshot();
-
-            crate::ws::validate_config(&config)?;
+        if !base_prefix.is_empty() {
+            crate::config::validate_mount_path("Axum base path", &base_prefix)?;
         }
+
+        #[cfg(feature = "ws")]
+        let ws_registrations = {
+            crate::ws::validate_config(&config)?;
+            let mut prepared = Vec::with_capacity(self.ws_registrations.len());
+            let mut endpoints = std::collections::HashSet::new();
+            let mut paths = std::collections::HashSet::new();
+
+            for registration in self.ws_registrations {
+                crate::config::validate_mount_path("WebSocket mount path", &registration.path)?;
+
+                if !endpoints.insert((registration.protocol, registration.path.clone())) {
+                    return Err(crate::Error::Config(format!(
+                        "WebSocket protocol `{}` is mounted more than once at `{}`",
+                        registration.protocol_name, registration.path
+                    )));
+                }
+
+                if !paths.insert(registration.path.clone()) {
+                    return Err(crate::Error::Config(format!(
+                        "more than one WebSocket endpoint is mounted at `{}`",
+                        registration.path
+                    )));
+                }
+
+                let controllers: Vec<crate::ws::WsControllerDescriptor> = self
+                    .ws_controllers
+                    .iter()
+                    .filter(|descriptor| (descriptor.protocol)() == registration.protocol)
+                    .map(crate::ws::WsControllerDescriptor::prepare)
+                    .collect();
+
+                crate::ws::validate_unique_destinations(&controllers, registration.protocol_name)?;
+                prepared.push(PreparedWsRegistration {
+                    controllers,
+                    mount: registration.mount,
+                });
+            }
+
+            prepared
+        };
 
         #[cfg(feature = "openapi")]
         {
             let config = _context
                 .config::<crate::OpenApiConfig>(crate::AXUM_OPENAPI_CONFIG_PATH)
-                .expect("OpenApiConfig missing from config store; AxumPlugin should register it")
+                .expect("OpenApiConfig missing from config store; Axum should register it")
                 .snapshot();
 
             crate::openapi::validate_config(&config)?;
         }
 
-        Ok(())
+        Ok(PreparedAxum {
+            controllers: self.controllers,
+            middleware: self.middleware,
+            #[cfg(feature = "ws")]
+            ws_registrations,
+        })
     }
+}
 
-    fn build(self, runtime: &AppRuntime) -> crate::Result<Axum> {
+impl PreparedProtocol for PreparedAxum {
+    type Runtime = AxumRuntime;
+    type Error = crate::Error;
+
+    fn build(self, runtime: &AppRuntime) -> crate::Result<Self::Runtime> {
         let config = runtime
             .root()
             .config::<AxumConfig>(AXUM_CONFIG_PATH)
-            .expect("AxumConfig missing from config store; AxumPlugin should register it");
+            .expect("AxumConfig missing from config store; Axum should register it");
         let config_snapshot = config.snapshot();
 
         // Merge every controller's routes. Each builder resolves its controller singleton
@@ -161,15 +235,8 @@ impl ProtocolPlugin for AxumPlugin {
             let mut endpoints = Vec::with_capacity(self.ws_registrations.len());
 
             for registration in self.ws_registrations {
-                let controllers: Vec<crate::ws::WsControllerDescriptor> = self
-                    .ws_controllers
-                    .iter()
-                    .copied()
-                    .filter(|descriptor| (descriptor.protocol)() == registration.protocol)
-                    .collect();
-
                 // The mount closure already holds the path and the protocol's options.
-                let (ws_router, handler) = (registration.mount)(controllers, runtime)?;
+                let (ws_router, handler) = (registration.mount)(registration.controllers, runtime)?;
 
                 router = router.merge(ws_router);
                 endpoints.push(handler);
@@ -261,7 +328,7 @@ impl ProtocolPlugin for AxumPlugin {
             let openapi_config = runtime
                 .root()
                 .config::<crate::OpenApiConfig>(crate::AXUM_OPENAPI_CONFIG_PATH)
-                .expect("OpenApiConfig missing from config store; AxumPlugin should register it")
+                .expect("OpenApiConfig missing from config store; Axum should register it")
                 .snapshot();
 
             crate::openapi::mount(router, &openapi_config, &base_prefix)?
@@ -271,7 +338,7 @@ impl ProtocolPlugin for AxumPlugin {
         // prefix. Nesting preserves the inner router's layers, so the scope layer still applies.
         let router = nest_base_path(router, &base_prefix);
 
-        let axum = Axum::new(router, config);
+        let axum = AxumRuntime::new(router, config);
 
         #[cfg(feature = "ws")]
         let axum = axum.with_ws_endpoints(ws_endpoints);
@@ -309,7 +376,7 @@ fn normalize_base_path(base_path: &str) -> String {
 /// Configured serving for a built axum app.
 ///
 /// This is the zero-boilerplate counterpart to [`overseerd_app::App::serve`]: it binds the
-/// listener described by the plugin-owned [`AxumConfig`] instead of requiring a `SocketAddr` at
+/// listener described by the protocol-owned [`AxumConfig`] instead of requiring a `SocketAddr` at
 /// the call site. Explicit `SocketAddr` and pre-bound `TcpListener` serving remain available for
 /// tests and advanced embedding.
 pub trait AxumAppServe {
@@ -317,13 +384,13 @@ pub trait AxumAppServe {
     fn serve_configured(self) -> impl Future<Output = crate::Result<()>> + Send;
 }
 
-impl AxumAppServe for overseerd_app::App<AxumPlugin> {
+impl AxumAppServe for overseerd_app::App<Axum> {
     fn serve_configured(self) -> impl Future<Output = crate::Result<()>> + Send {
         self.serve(())
     }
 }
 
-/// axum-specific builder methods, contributed to [`AppBuilder<AxumPlugin>`] as an extension
+/// axum-specific builder methods, contributed to [`AppBuilder<Axum>`] as an extension
 /// trait. Bring it into scope to register controllers by type; it is in the prelude.
 ///
 /// Controllers also auto-register through the [`CONTROLLERS`] slice, so an
@@ -360,9 +427,8 @@ pub trait AxumAppBuilder {
     /// Opts the app into a WebSocket protocol `P`, mounting its upgrade handler at `path` with the
     /// protocol's default [`Options`](crate::ws::WebsocketProtocol::Options). Only
     /// `#[controller(ws = P)]` controllers speaking `P` are then served, under `path` (the path
-    /// can't be inferred, so it is given here). Call it once per protocol to run, e.g., a STOMP
-    /// endpoint and a `JsonWs` endpoint on different paths in one server. Rejects two protocols on
-    /// the same path at build.
+    /// can't be inferred, so it is given here). The same protocol may be mounted more than once
+    /// with distinct paths and options. Duplicate paths are rejected during preparation.
     #[cfg(feature = "ws")]
     fn register_ws<P>(self, path: impl Into<String>) -> Self
     where
@@ -378,7 +444,7 @@ pub trait AxumAppBuilder {
         P: crate::ws::WebsocketProtocol;
 }
 
-impl AxumAppBuilder for AppBuilder<AxumPlugin> {
+impl AxumAppBuilder for AppBuilder<Axum> {
     fn controller<T>(mut self) -> Self
     where
         T: Descriptor<ControllerDescriptor> + Descriptor<ComponentDescriptor>,
@@ -445,17 +511,6 @@ impl AxumAppBuilder for AppBuilder<AxumPlugin> {
     {
         let path = path.into();
 
-        let duplicate = self
-            .protocol_mut()
-            .ws_registrations
-            .iter()
-            .any(|registration| registration.path == path);
-
-        assert!(
-            !duplicate,
-            "register_ws: a websocket protocol is already mounted at `{path}`"
-        );
-
         // Capture the path and options in the mount closure so the non-generic registration can
         // carry protocol-specific `Options` without erasing their type.
         let mount_path = path.clone();
@@ -466,6 +521,7 @@ impl AxumAppBuilder for AppBuilder<AxumPlugin> {
         self.protocol_mut().ws_registrations.push(WsRegistration {
             path,
             protocol: std::any::TypeId::of::<P>(),
+            protocol_name: std::any::type_name::<P>(),
             mount,
             register: P::register,
         });

@@ -1,12 +1,12 @@
 # overseerd-axum
 
-> The axum/HTTP protocol plugin for Overseerd: controllers, DI route extractors, WebSockets/STOMP, multipart, and a generated typed client.
+> The first-class axum/HTTP protocol for Overseerd: controllers, DI route extractors, WebSockets/STOMP, multipart, and a generated typed client.
 
 Part of the [Overseerd](../../README.md) framework — the HTTP protocol layer over the protocol-agnostic `overseerd-app` core.
 
 ## Role
 
-`overseerd-axum` is a [`ProtocolPlugin`] ([`AxumPlugin`]): it builds a real [`axum::Router`] from
+`overseerd-axum` provides the `Axum -> PreparedAxum -> AxumRuntime` protocol states and builds a real [`axum::Router`] from
 `#[controller]` components and serves them over HTTP. It bridges the framework's dependency
 injection into axum via the [`Inject`] extractor — a per-request scope layer threads an
 `Arc<ScopeContainer>` through the request extensions, and `Inject<T>` resolves components from it, so
@@ -31,7 +31,7 @@ transport-generic generated client (`crate::client`) that also compiles to wasm/
 Most users depend on the [`overseerd`](../../README.md) facade, which re-exports this crate under
 `overseerd::axum` — you rarely name it directly. Enable the `axum` feature; it pulls in the HTTP
 protocol plus the controller macros. Declare `#[controller]`/`#[handlers]` with route attributes,
-then build an [`App`] (an `App<AxumPlugin>`) and serve.
+then build an [`App`] (an `App<Axum>`) and serve.
 
 ```rust
 use overseerd::axum::prelude::*;
@@ -62,7 +62,7 @@ issues typed calls from the same definition, and the crate compiles to `wasm32` 
 
 Native (server) builds depend on `overseerd-app`, `overseerd-core`, `overseerd-di`,
 `overseerd-config`, and `overseerd-hooks`, plus `axum`/`tower`/`tokio`. It re-exports the agnostic
-app surface (`App`, `AppBuilder`, `ProtocolPlugin`, `Serve`, …) so a standalone `overseerd-axum`
+app surface (`App`, `AppBuilder`, `ProtocolDefinition`, `Serve`, …) so a standalone `overseerd-axum`
 user has a single import. The macros come from the sibling `overseerd-axum-macros` crate (re-exported
 here: `controller`, `handlers`, the route attrs, `dto`, `topics`), and codecs build on
 `overseerd-transport`. The `overseerd` facade re-exports everything under `overseerd::axum`. Because
@@ -84,4 +84,4 @@ while the server modules (controller, plugin, protocol, ws broker, extractors) a
 | `wasm-ts` | Opt into the newer `tsify` `Ts<T>` wasm ABI for the browser client (needs unreleased `tsify`). |
 | `yaml` / `watch` / `tracing-subscriber` | Forwarded config extras: YAML sources / reload on change / `init_tracing`. |
 | `di-check` | Compile-time DI-graph validation (forwarded across app/di/config/macros). |
-| `facade` | Set by the `overseerd` facade: root the macros' generated plugin types at `::overseerd::axum::*` instead of the standalone `::overseerd_axum::*`. |
+| `facade` | Set by the `overseerd` facade: root the macros' generated protocol types at `::overseerd::axum::*` instead of the standalone `::overseerd_axum::*`. |

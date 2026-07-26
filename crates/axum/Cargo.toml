@@ -1,6 +1,6 @@
 [package]
 name = "overseerd-axum"
-description = "The Overseerd axum/HTTP protocol plugin: controllers, route DI extractors, and the serve loop over the protocol-agnostic overseerd-app core."
+description = "The Overseerd axum/HTTP protocol: controllers, route DI extractors, and the serve loop over the protocol-agnostic overseerd-app core."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -55,6 +55,7 @@ di-check = [
     "overseerd-config/di-check",
     "overseerd-axum-macros/di-check",
 ]
+hybrid-registry = ["overseerd-axum-macros/hybrid-registry"]
 yaml = ["overseerd-app/yaml", "overseerd-config/yaml"]
 watch = ["overseerd-app/watch", "overseerd-config/watch"]
 tracing-subscriber = ["overseerd-app/tracing-subscriber"]
@@ -79,7 +80,7 @@ multipart = ["axum/multipart"]
 # the actual `TopicParam for Uuid` impl is gated on `all(ws, uuid)`, so `uuid` without `ws` is
 # a harmless no-op rather than an error.
 uuid = ["dep:uuid"]
-# Set by the `overseerd` facade: root the macros' generated plugin types at
+# Set by the `overseerd` facade: root the macros' generated protocol types at
 # `::overseerd::axum::*`. Off (the default) keeps them at this standalone crate
 # (`::overseerd_axum::*`), so depending on `overseerd-axum` directly works.
 facade = ["overseerd-axum-macros/facade"]

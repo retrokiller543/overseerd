@@ -55,7 +55,7 @@ impl IntoResponse for InjectRejection {
             InjectRejection::MissingScope => {
                 tracing::error!(
                     target: "overseerd::axum",
-                    "request scope handle missing from extensions; is the AxumPlugin scope layer installed?"
+                    "request scope handle missing from extensions; is the Axum scope layer installed?"
                 );
             }
 

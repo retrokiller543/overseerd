@@ -12,8 +12,8 @@ use overseerd_di::{
 
 use super::App;
 use crate::{
-    AppRegistry, AppRuntime, LoggingConfig, Plugin, PreBuildContext, Protocol, ProtocolPlugin,
-    ScopeTopology, ValidationContext,
+    AppRegistry, AppRuntime, LoggingConfig, PreBuildContext, PreparedProtocol, ProtocolDefinition,
+    ProtocolRuntime, ScopeTopology, ValidationContext,
 };
 
 static FACTORY_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -84,26 +84,29 @@ static BOUNDARY_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     hooks: overseerd_hooks::no_hooks,
 };
 
-/// Protocol plugin recording validation and construction calls.
+/// Protocol definition recording preparation calls.
 #[derive(Default)]
-struct BoundaryPlugin;
-
-impl Plugin for BoundaryPlugin {
-    fn register(&self, _registry: &mut AppRegistry) {}
-}
-
-/// Protocol produced after the component graph is constructed.
 struct BoundaryProtocol;
 
-impl Protocol for BoundaryProtocol {
+/// Validated protocol state retained before runtime construction.
+struct PreparedBoundaryProtocol;
+
+/// Protocol runtime produced after the component graph is constructed.
+struct BoundaryRuntime;
+
+impl ProtocolRuntime for BoundaryRuntime {
     type Error = crate::Error;
 }
 
-impl ProtocolPlugin for BoundaryPlugin {
-    type Protocol = BoundaryProtocol;
+impl ProtocolDefinition for BoundaryProtocol {
+    type Prepared = PreparedBoundaryProtocol;
     type Error = crate::Error;
 
+    const ID: crate::ProtocolId =
+        overseerd_core::namespaced_id!(crate::ProtocolId, "test/boundary");
     const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
+
+    fn register(&self, _registry: &mut AppRegistry) {}
 
     fn pre_build(&mut self, context: &mut PreBuildContext<'_>) -> Result<(), Self::Error> {
         context.component_descriptor(&BOUNDARY_COMPONENT);
@@ -113,7 +116,7 @@ impl ProtocolPlugin for BoundaryPlugin {
         Ok(())
     }
 
-    fn validate(&mut self, context: &ValidationContext<'_>) -> Result<(), Self::Error> {
+    fn prepare(self, context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error> {
         PRE_BUILD_CALLS.fetch_add(1, Ordering::SeqCst);
 
         assert_eq!(context.name(), "prepare-boundary-test");
@@ -138,13 +141,23 @@ impl ProtocolPlugin for BoundaryPlugin {
             "debug"
         );
 
-        Ok(())
+        Ok(PreparedBoundaryProtocol)
     }
+}
 
-    fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
+impl PreparedProtocol for PreparedBoundaryProtocol {
+    type Runtime = BoundaryRuntime;
+    type Error = crate::Error;
+
+    fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
+        assert_eq!(
+            FACTORY_CALLS.load(Ordering::SeqCst),
+            1,
+            "root components must be constructed before the protocol runtime"
+        );
         PROTOCOL_BUILD_CALLS.fetch_add(1, Ordering::SeqCst);
 
-        Ok(BoundaryProtocol)
+        Ok(BoundaryRuntime)
     }
 }
 
@@ -154,7 +167,7 @@ async fn prepare_validates_without_constructing_components_or_protocol() {
     PRE_BUILD_CALLS.store(0, Ordering::SeqCst);
     PROTOCOL_BUILD_CALLS.store(0, Ordering::SeqCst);
 
-    let prepared = App::<BoundaryPlugin>::builder("prepare-boundary-test")
+    let prepared = App::<BoundaryProtocol>::builder("prepare-boundary-test")
         .config_source(
             ConfigManager::<Toml>::from_str(
                 r#"
@@ -172,11 +185,19 @@ async fn prepare_validates_without_constructing_components_or_protocol() {
     assert_eq!(PRE_BUILD_CALLS.load(Ordering::SeqCst), 1);
     assert_eq!(FACTORY_CALLS.load(Ordering::SeqCst), 0);
     assert_eq!(PROTOCOL_BUILD_CALLS.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        std::any::type_name_of_val(prepared.protocol()),
+        std::any::type_name::<PreparedBoundaryProtocol>()
+    );
 
     let app = prepared.build().await.expect("prepared application builds");
 
     assert_eq!(FACTORY_CALLS.load(Ordering::SeqCst), 1);
     assert_eq!(PROTOCOL_BUILD_CALLS.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        std::any::type_name_of_val(app.protocol()),
+        std::any::type_name::<BoundaryRuntime>()
+    );
     assert!(app.container().get::<BoundaryComponent>().is_some());
     assert!(app.container().get::<SeededComponent>().is_some());
 }

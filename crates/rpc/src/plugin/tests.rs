@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd_app::{App, ProtocolPlugin, ScopeParent};
+use overseerd_app::{App, ProtocolDefinition, ScopeParent};
 use overseerd_config::{ConfigManager, Dynamic};
 use overseerd_core::{StaticScope, TypeDescriptor};
 use overseerd_di::{
@@ -11,7 +11,7 @@ use overseerd_di::{
     ComponentFactoryDescriptor, Injectable, Singleton,
 };
 
-use super::{RpcAppBuilder, RpcPlugin};
+use super::{Rpc, RpcAppBuilder};
 use crate::scope::{Connection as ConnectionScope, Request as RequestScope, SCOPE_TOPOLOGY};
 use crate::{Error, ServiceDescriptor};
 
@@ -85,7 +85,7 @@ static EMPTY_SERVICE: ServiceDescriptor = ServiceDescriptor {
 fn empty_service_fails_during_prepare_before_component_construction() {
     FACTORY_CALLS.store(0, Ordering::SeqCst);
 
-    let result = App::<RpcPlugin>::builder("invalid-rpc-test")
+    let result = App::<Rpc>::builder("invalid-rpc-test")
         .config_source(ConfigManager::<Dynamic>::empty())
         .component_descriptor(&SENTINEL_COMPONENT)
         .service_descriptor(&EMPTY_SERVICE)
@@ -110,14 +110,14 @@ fn rpc_scope_topology_declares_connection_and_request_path() {
         .boundary(&<RequestScope as StaticScope>::ID)
         .expect("request boundary is declared");
 
-    assert_eq!(RpcPlugin::SCOPE_TOPOLOGY.boundaries().len(), 2);
+    assert_eq!(Rpc::SCOPE_TOPOLOGY.boundaries().len(), 2);
     assert_eq!(connection.parent(), ScopeParent::Root);
     assert_eq!(request.parent(), ScopeParent::of::<ConnectionScope>());
 }
 
 #[tokio::test]
 async fn peer_info_seed_opens_only_at_connection_destination() {
-    let app = App::<RpcPlugin>::builder("rpc-scope-seed-test")
+    let app = App::<Rpc>::builder("rpc-scope-seed-test")
         .config_source(ConfigManager::<Dynamic>::empty())
         .build()
         .await

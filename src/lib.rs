@@ -85,6 +85,8 @@ pub use overseerd_config::{
 // handle, lifecycle/shutdown, and the opt-in config-property builtins.
 // ---------------------------------------------------------------------------
 #[cfg(not(target_family = "wasm"))]
+pub use overseerd_app::Error as AppError;
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_app::{
     App, AppBuilder, AppHost, AppRegistry, AppRuntime, AppStage, BootstrapContext, Built,
     CompositionDiagnostic, CompositionDiagnostics, CompositionDirective, CompositionEdge,
@@ -92,12 +94,13 @@ pub use overseerd_app::{
     EarlyPluginPlan, ExecutionMode, HostError, IdErrorKind, Initial, InstallationOrigin,
     InstallationProvenance, InvalidCompositionId, LifecyclePhase, LogFormat, LoggingConfig,
     PhaseError, Plugin, PluginDeclaration, PluginId, PluginRelation, PluginResolutionPlan,
-    PluginSlotId, PreBuild, PreBuildContext, PreparedApp, Protocol, ProtocolId, ProtocolPlugin,
-    RelationKind, RelationTarget, ReplacementDecision, ResolvedPlugin, ScopeTopology, Serve,
-    ServerConfig, Setup, ShutdownHandle, ShutdownSignal, SlotPolicy, SpanEvents,
-    SuppressionDecision, ValidationContext, build_host, build_host_context, build_prepared_host,
-    extend_late_plugins, prepare_host, prepare_host_context, prepare_setup_host_context,
-    resolve_early_plugins, resolve_host_dependency, serve_host, setup_host, setup_host_context,
+    PluginSlotId, PreBuild, PreBuildContext, PreparedApp, PreparedProtocol, ProtocolDefinition,
+    ProtocolId, ProtocolRuntime, RelationKind, RelationTarget, ReplacementDecision, ResolvedPlugin,
+    ScopeBoundary, ScopeParent, ScopeTopology, ScopeTopologyError, Serve, ServerConfig, Setup,
+    ShutdownHandle, ShutdownSignal, SlotPolicy, SpanEvents, SuppressionDecision, ValidationContext,
+    build_host, build_host_context, build_prepared_host, extend_late_plugins, prepare_host,
+    prepare_host_context, prepare_setup_host_context, resolve_early_plugins,
+    resolve_host_dependency, serve_host, setup_host, setup_host_context,
 };
 
 #[cfg(all(not(target_family = "wasm"), feature = "cli"))]
@@ -111,7 +114,7 @@ pub use overseerd_app::{
 // The generic `App<P>` / `AppBuilder<P>` are at the root (protocol-agnostic core); the `app!`
 // macro builds `App::<P>::builder(..)` for the protocol named in its `protocol:` field. A
 // protocol's own surface (the RPC daemon's services, client, …) lives in its module
-// (`overseerd::daemon::*`), so the facade root stays free of plugin-specific names.
+// (`overseerd::daemon::*`), so the facade root stays free of protocol-specific names.
 
 // ---------------------------------------------------------------------------
 // Wire-contract status types and stream item codecs.
@@ -213,11 +216,11 @@ pub mod daemon {
     pub use overseerd_rpc::{
         App, AppBuilder, Cancel, Error, ErrorHandler, ErrorResponse, FallibleHandler, FromContext,
         Guard, GuardLayer, GuardService, Handler, Inject, OperationKind, ParameterDescriptor,
-        ParameterKind, Payload, Peer, RequestStream, ResolvedService, Responder, ResponseError,
-        ResponseStream, Result, RouterService, Rpc, RpcAppBuilder, RpcCallContext, RpcDescriptor,
-        RpcGroup, RpcHandler, RpcLimits, RpcOutcome, RpcPlugin, RpcRequest, RpcResponse, RpcRouter,
-        RpcService, SERVICES, ServiceDescriptor, ServiceRpcs, Streaming, dispatch_fallible,
-        dispatch_with,
+        ParameterKind, Payload, Peer, PreparedRpc, RequestStream, ResolvedService, Responder,
+        ResponseError, ResponseStream, Result, RouterService, Rpc, RpcAppBuilder, RpcCallContext,
+        RpcDescriptor, RpcGroup, RpcHandler, RpcLimits, RpcOutcome, RpcRequest, RpcResponse,
+        RpcRouter, RpcRuntime, RpcService, SERVICES, ServiceDescriptor, ServiceRpcs, Streaming,
+        dispatch_fallible, dispatch_with,
     };
 
     /// Service/RPC route resolution, for introspecting the registered surface.
@@ -228,7 +231,7 @@ pub mod daemon {
 
     /// The RPC daemon macros, re-exported through `overseerd-rpc` (which owns them). With the
     /// facade's `daemon` feature, `overseerd-rpc/facade` is on, so their generated code roots
-    /// plugin types at `::overseerd::daemon::*` and core types at `::overseerd::*`.
+    /// protocol types at `::overseerd::daemon::*` and core types at `::overseerd::*`.
     /// (`app!`/`daemon!` are protocol-agnostic core macros at the crate root, not here.)
     pub use overseerd_rpc::{handlers, rpc, service};
 
@@ -262,7 +265,7 @@ pub mod daemon {
     /// with the crate-root `use overseerd::prelude::*;` for the core framework + `app!`).
     pub mod prelude {
         pub use super::{
-            App, FromContext, Handler, Inject, Payload, Peer, Responder, RpcAppBuilder, RpcPlugin,
+            App, FromContext, Handler, Inject, Payload, Peer, Responder, Rpc, RpcAppBuilder,
             Streaming, handlers, rpc, service,
         };
 
@@ -301,7 +304,7 @@ pub mod axum {
     /// `http` re-exports, the `scope` module, and (with the `client` feature) the `client` module
     /// and `__Stream` the generated client names. The protocol crate's root *is* the curated API.
     /// With the facade's `axum` feature, `overseerd-axum/facade` is on, so the macros' generated
-    /// code roots plugin types at `::overseerd::axum::*` and core types at `::overseerd::*`.
+    /// code roots protocol types at `::overseerd::axum::*` and core types at `::overseerd::*`.
     pub use overseerd_axum::*;
     #[cfg(feature = "json-ws")]
     pub use overseerd_axum_json_ws::*;
@@ -336,9 +339,7 @@ pub mod axum {
         #[cfg(not(target_family = "wasm"))]
         pub use super::scope::HttpRequest;
         #[cfg(not(target_family = "wasm"))]
-        pub use super::{
-            App, AxumAppBuilder, AxumAppServe, AxumConfig, AxumPlugin, Controller, Inject,
-        };
+        pub use super::{App, Axum, AxumAppBuilder, AxumAppServe, AxumConfig, Controller, Inject};
 
         #[cfg(all(feature = "json-ws", not(target_family = "wasm")))]
         pub use super::JsonWs;
@@ -370,8 +371,8 @@ pub mod prelude {
     #[cfg(not(target_family = "wasm"))]
     pub use crate::{
         App, Cfg, Component, ConfigManager, ConfigProperties, Deferred, Dep, Dir, DirKind,
-        DirectoriesManager, Fresh, FreshFromContainer, Injectable, Lazy, Plugin, Protocol,
-        ProtocolPlugin, RuntimeDescriptor, Scope, Serve, ServiceComponent,
+        DirectoriesManager, Fresh, FreshFromContainer, Injectable, Lazy, Plugin,
+        ProtocolDefinition, ProtocolRuntime, RuntimeDescriptor, Scope, Serve, ServiceComponent,
     };
 
     #[cfg(all(not(target_family = "wasm"), feature = "cli"))]
