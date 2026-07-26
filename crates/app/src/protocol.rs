@@ -8,28 +8,11 @@ use overseerd_config::{Cfg, ConfigBinding, ConfigProperties, ConfigStore};
 use overseerd_core::{Descriptor, TypeDescriptor};
 use overseerd_di::{BoxedComponent, Component, ComponentDescriptor, Injectable};
 
-use crate::ProtocolId;
 use crate::lifecycle::ShutdownSignal;
 use crate::registry::AppRegistry;
 use crate::runtime::AppRuntime;
 use crate::scope::ScopeTopology;
-
-/// A general extension unit applied while an app definition is assembled.
-///
-/// A plugin is the builder-time accumulator for an extension: it starts empty
-/// ([`Default`]), gathers extension-specific configuration through the builder, folds its
-/// link-time-discovered variants in on `auto_discover`, and contributes DI descriptors
-/// into the registry before the container is built. A plugin need not serve traffic.
-/// Background behavior rides the components it registers through their own hooks.
-pub trait Plugin: Default {
-    /// Folds this plugin's link-time-registered component variants into the accumulator. Called
-    /// from `AppBuilder::auto_discover`.
-    /// Default: nothing to discover.
-    fn auto_discover(&mut self) {}
-
-    /// Contributes DI descriptors / seeds into the registry before validation and build.
-    fn register(&self, registry: &mut AppRegistry);
-}
+use crate::{EffectivePluginPlan, ProtocolId, ProtocolPluginRegistrar};
 
 /// A selected protocol definition before application validation and construction.
 ///
@@ -46,6 +29,9 @@ pub trait ProtocolDefinition: Default + 'static {
 
     /// Folds link-time discovered protocol descriptors into this definition.
     fn auto_discover(&mut self) {}
+
+    /// Declares protocol-owned mandatory and default plugins before composition resolution.
+    fn register_plugins(_plugins: &mut ProtocolPluginRegistrar) {}
 
     /// Contributes protocol-owned descriptors before application validation.
     fn register(&self, registry: &mut AppRegistry);
@@ -135,14 +121,21 @@ pub struct ValidationContext<'a> {
     name: &'a str,
     registry: &'a AppRegistry,
     config: &'a ConfigStore,
+    plugin_plan: &'a EffectivePluginPlan,
 }
 
 impl<'a> ValidationContext<'a> {
-    pub(crate) fn new(name: &'a str, registry: &'a AppRegistry, config: &'a ConfigStore) -> Self {
+    pub(crate) fn new(
+        name: &'a str,
+        registry: &'a AppRegistry,
+        config: &'a ConfigStore,
+        plugin_plan: &'a EffectivePluginPlan,
+    ) -> Self {
         Self {
             name,
             registry,
             config,
+            plugin_plan,
         }
     }
 
@@ -159,6 +152,11 @@ impl<'a> ValidationContext<'a> {
     /// The effective component descriptors selected during validation.
     pub fn resolved_components(&self) -> &[ComponentDescriptor] {
         &self.registry.components
+    }
+
+    /// The immutable effective plugin plan lowered into the validated registry.
+    pub fn plugin_plan(&self) -> &EffectivePluginPlan {
+        self.plugin_plan
     }
 
     /// Resolves a finalized configuration binding by type and property path.
@@ -183,10 +181,6 @@ pub trait Serve<E>: ProtocolRuntime {
         shutdown: ShutdownSignal,
         endpoint: E,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
-}
-
-impl Plugin for () {
-    fn register(&self, _registry: &mut AppRegistry) {}
 }
 
 impl ProtocolDefinition for () {

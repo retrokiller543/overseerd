@@ -15,6 +15,7 @@ pub mod composition;
 pub mod error;
 pub mod host;
 pub mod lifecycle;
+pub mod plugin;
 pub mod protocol;
 pub mod registry;
 pub mod runtime;
@@ -46,8 +47,12 @@ pub use host::{
 };
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use overseerd_core::{Scope, ScopeId, StaticScope, namespaced_id};
+pub use plugin::{
+    ApplicationPluginRegistrar, EffectivePluginPlan, Plugin, PluginContribution,
+    PluginContributionKind, PluginContributions, PluginPlanError, ProtocolPluginRegistrar,
+};
 pub use protocol::{
-    Plugin, PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
+    PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
     ValidationContext,
 };
 pub use registry::AppRegistry;

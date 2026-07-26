@@ -118,6 +118,14 @@ pub enum Error {
     #[error(transparent)]
     ScopeTopology(#[from] crate::scope::ScopeTopologyError),
 
+    /// Plugin declarations could not be resolved into one deterministic effective plan.
+    #[error(transparent)]
+    Composition(#[from] crate::CompositionDiagnostics),
+
+    /// Retained plugin contributions could not be frozen or lowered safely.
+    #[error(transparent)]
+    PluginPlan(#[from] crate::PluginPlanError),
+
     /// An application-defined error surfaced through the framework.
     #[error(transparent)]
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),

@@ -3,8 +3,8 @@ use std::fmt;
 use thiserror::Error;
 
 use super::{
-    CompositionPhase, InstallationProvenance, PluginId, PluginSlotId, RelationKind, RelationTarget,
-    SlotPolicy,
+    CompositionPhase, InstallationProvenance, PluginId, PluginSlotId, ProtocolId, RelationKind,
+    RelationTarget, SlotPolicy,
 };
 
 /// A resolved graph endpoint used by cycle diagnostics.
@@ -67,10 +67,25 @@ impl CompositionEdge {
 #[derive(Clone, Debug, Eq, Error, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum CompositionDiagnostic {
-    /// A non-framework declaration claims the reserved framework namespace.
+    /// A public catalog declaration claims the reserved framework namespace.
     #[error("plugin '{plugin}' uses the reserved 'overseerd/' namespace ({provenance:?})")]
     ReservedNamespace {
         plugin: PluginId,
+        provenance: InstallationProvenance,
+    },
+    /// A public catalog declaration claims a framework-owned capability slot.
+    #[error("plugin slot '{slot}' uses the reserved 'overseerd/' namespace ({provenance:?})")]
+    ReservedSlotNamespace {
+        slot: PluginSlotId,
+        provenance: InstallationProvenance,
+    },
+    /// A protocol installation claims provenance from another protocol definition.
+    #[error(
+        "plugin declaration from protocol '{declared}' cannot be resolved for selected protocol '{selected}' ({provenance:?})"
+    )]
+    ProtocolOriginMismatch {
+        selected: ProtocolId,
+        declared: ProtocolId,
         provenance: InstallationProvenance,
     },
     /// The same plugin implementation was declared more than once.

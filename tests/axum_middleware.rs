@@ -1,3 +1,5 @@
+#![cfg(feature = "axum")]
+
 //! End-to-end tests for axum middleware registration (global/controller/path) and the
 //! `RequestMeta` request-scope seed.
 //!

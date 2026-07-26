@@ -44,7 +44,7 @@ impl Reaper {
 
 let app = App::builder("worker")
     .auto_discover()
-    .plugin(JobsPlugin)
+    .register_plugin::<JobsPlugin>()
     .build().await?;
 ```
 

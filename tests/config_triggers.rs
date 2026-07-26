@@ -8,11 +8,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use overseerd::ConfigManager;
+#[cfg(feature = "daemon")]
 use overseerd::app;
 use overseerd::config::Toml;
+#[cfg(feature = "daemon")]
 use overseerd::dirs::{Config, DirectoriesManager};
 
-#[cfg(feature = "watch")]
+#[cfg(all(feature = "daemon", feature = "watch"))]
 use overseerd::daemon::App;
 
 fn temp_dir(tag: &str) -> PathBuf {
@@ -39,6 +41,7 @@ fn config_manager_carries_its_triggers() {
 }
 
 #[tokio::test]
+#[cfg(feature = "daemon")]
 async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::daemon::Result<()> {
     let root = temp_dir("macro");
     let dirs = DirectoriesManager::from_path(root);
@@ -71,7 +74,7 @@ async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::d
     Ok(())
 }
 
-#[cfg(feature = "watch")]
+#[cfg(all(feature = "daemon", feature = "watch"))]
 #[tokio::test]
 async fn watching_a_source_file_triggers_a_reload() {
     let root = temp_dir("watch");

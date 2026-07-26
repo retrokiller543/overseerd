@@ -25,8 +25,11 @@ use tracing::{debug, error, info};
 
 use crate::error::Error;
 use crate::lifecycle::{ShutdownHandle, ShutdownSignal};
+use crate::plugin::{
+    ApplicationPluginRegistrar, EffectivePluginPlan, Plugin, PluginCatalog, ProtocolPluginRegistrar,
+};
 use crate::protocol::{
-    Plugin, PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
+    PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
     ValidationContext,
 };
 use crate::registry::AppRegistry;
@@ -68,9 +71,10 @@ pub struct AppBuilder<D: ProtocolDefinition> {
     registry: AppRegistry,
     instances: Vec<BoxedComponent>,
     config_source: Option<ConfigManager>,
-    /// Whether `auto_discover` was called: config auto-registration is gated on it.
-    auto_discover_configs: bool,
+    /// Whether link-time application, protocol, config, and plugin discovery is enabled.
+    auto_discovery_enabled: bool,
     dirs: Option<DirectoriesManager>,
+    plugins: PluginCatalog,
     /// The selected protocol definition and its accumulated configuration.
     protocol: D,
 }
@@ -84,6 +88,7 @@ pub struct PreparedApp<D: ProtocolDefinition> {
     registry: AppRegistry,
     instances: Vec<BoxedComponent>,
     protocol: D::Prepared,
+    plugin_plan: EffectivePluginPlan,
     shutdown: ShutdownSignal,
     root_resolver: RootResolver,
     hook_manager: HookManager,
@@ -105,8 +110,9 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
             registry: AppRegistry::default(),
             instances: Vec::new(),
             config_source: None,
-            auto_discover_configs: false,
+            auto_discovery_enabled: false,
             dirs: None,
+            plugins: PluginCatalog::new(),
             protocol: D::default(),
         }
     }
@@ -168,7 +174,7 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
 
         self.registry.components.extend(discovered.components);
         self.registry.providers.extend(discovered.providers);
-        self.auto_discover_configs = true;
+        self.auto_discovery_enabled = true;
         self.protocol.auto_discover();
 
         self
@@ -193,9 +199,18 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
         self
     }
 
-    /// Applies a non-protocol [`Plugin`], folding its registrations into the app.
-    pub fn plugin<Q: Plugin>(mut self, plugin: Q) -> Self {
-        plugin.register(&mut self.registry);
+    /// Retains plugin type `P` for deterministic composition during preparation.
+    pub fn register_plugin<P: Plugin>(mut self) -> Self {
+        self.plugins.register::<P>();
+
+        self
+    }
+
+    pub(crate) fn with_plugin_declarations(
+        mut self,
+        declarations: impl FnOnce(&mut ApplicationPluginRegistrar),
+    ) -> Self {
+        self.plugins.declare(declarations);
 
         self
     }
@@ -207,6 +222,14 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
         let mut registry = self.registry;
         let mut instances = self.instances;
         let mut protocol = self.protocol;
+        let mut protocol_plugins = ProtocolPluginRegistrar::new(D::ID);
+
+        D::register_plugins(&mut protocol_plugins);
+
+        let plugin_plan = self
+            .plugins
+            .freeze(protocol_plugins, self.auto_discovery_enabled)?;
+        let plugin_plan = plugin_plan.lower(&mut registry);
 
         // Consumed by `serve`/`run`; its handle is seeded as a framework injectable.
         let shutdown = ShutdownSignal::new();
@@ -245,7 +268,7 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
         }
         .with_directories(&dirs);
 
-        if self.auto_discover_configs {
+        if self.auto_discovery_enabled {
             tree = tree.auto_discover();
         }
 
@@ -284,6 +307,7 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
             &self.name,
             &registry,
             config_store.as_ref(),
+            &plugin_plan,
         ))?;
 
         let mut resolvers = ResolverSet::new();
@@ -316,6 +340,7 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
             registry,
             instances,
             protocol,
+            plugin_plan,
             shutdown,
             root_resolver,
             hook_manager,
@@ -353,6 +378,11 @@ impl<D: ProtocolDefinition> PreparedApp<D> {
         &self.protocol
     }
 
+    /// The immutable effective plugin plan lowered during preparation.
+    pub fn plugin_plan(&self) -> &EffectivePluginPlan {
+        &self.plugin_plan
+    }
+
     /// The stable identity of the selected protocol definition.
     pub const fn protocol_id(&self) -> crate::ProtocolId {
         D::ID
@@ -370,6 +400,7 @@ impl<D: ProtocolDefinition> PreparedApp<D> {
             registry,
             instances,
             protocol,
+            plugin_plan,
             shutdown,
             root_resolver,
             hook_manager,
@@ -424,6 +455,7 @@ impl<D: ProtocolDefinition> PreparedApp<D> {
             registry,
             runtime,
             protocol,
+            plugin_plan,
             shutdown,
             reloader,
             reload_triggers,
@@ -502,6 +534,7 @@ pub struct App<D: ProtocolDefinition> {
     pub registry: AppRegistry,
     runtime: AppRuntime,
     protocol: <D::Prepared as PreparedProtocol>::Runtime,
+    plugin_plan: EffectivePluginPlan,
     shutdown: ShutdownSignal,
     reloader: ConfigReloader,
     reload_triggers: ReloadTriggers,
@@ -546,6 +579,11 @@ impl<D: ProtocolDefinition> App<D> {
     /// The installed protocol.
     pub fn protocol(&self) -> &<D::Prepared as PreparedProtocol>::Runtime {
         &self.protocol
+    }
+
+    /// The immutable effective plugin plan used to assemble this application.
+    pub fn plugin_plan(&self) -> &EffectivePluginPlan {
+        &self.plugin_plan
     }
 
     /// The stable identity of the selected protocol definition.

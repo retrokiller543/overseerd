@@ -124,7 +124,7 @@ async fn main() -> overseerd::daemon::Result<()> {
     let app = App::builder("jobs-example")
         .config_source(config)
         .auto_discover()
-        .plugin(JobsPlugin)
+        .register_plugin::<JobsPlugin>()
         .build()
         .await?;
 

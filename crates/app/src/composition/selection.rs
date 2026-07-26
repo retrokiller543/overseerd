@@ -6,8 +6,7 @@ use super::diagnostic::CompositionDiagnostic;
 use super::model::DirectiveKind;
 use super::resolver::{ReplacementDecision, ResolvedPlugin, SuppressionDecision};
 use super::{
-    CompositionPhase, InstallationOrigin, InstallationProvenance, PluginDeclaration, PluginId,
-    PluginSlotId, SlotPolicy,
+    CompositionPhase, InstallationProvenance, PluginDeclaration, PluginId, PluginSlotId, SlotPolicy,
 };
 
 /// Effective plugin selection and the directives that produced it.
@@ -39,6 +38,22 @@ impl<'a> Directives<'a> {
         for directive in directives {
             let provenance = directive.provenance();
             let actual = provenance.phase();
+
+            match directive.kind() {
+                DirectiveKind::Replace { slot, .. } | DirectiveKind::Suppress { slot, .. }
+                    if slot.is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE) =>
+                {
+                    diagnostics.push(CompositionDiagnostic::ReservedSlotNamespace {
+                        slot: *slot,
+                        provenance,
+                    });
+
+                    continue;
+                }
+                DirectiveKind::Install(_)
+                | DirectiveKind::Replace { .. }
+                | DirectiveKind::Suppress { .. } => {}
+            }
 
             if actual != phase {
                 diagnostics.push(CompositionDiagnostic::UnexpectedPhase {
@@ -133,7 +148,6 @@ fn validate_plugin_ids<'a>(
         if declaration
             .id()
             .is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE)
-            && !framework_owns(declaration.provenance())
         {
             diagnostics.push(CompositionDiagnostic::ReservedNamespace {
                 plugin: declaration.id(),
@@ -164,17 +178,6 @@ fn validate_plugin_ids<'a>(
     duplicates
 }
 
-fn framework_owns(provenance: InstallationProvenance) -> bool {
-    match provenance.origin() {
-        InstallationOrigin::Framework => true,
-        InstallationOrigin::ProtocolDefault(protocol) => {
-            protocol.is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE)
-        }
-        InstallationOrigin::ApplicationDeclaration
-        | InstallationOrigin::ApplicationConfiguration => false,
-    }
-}
-
 fn validate_slots<'a>(
     declarations: &[&'a PluginDeclaration],
     diagnostics: &mut Vec<CompositionDiagnostic>,
@@ -186,6 +189,13 @@ fn validate_slots<'a>(
         let Some((slot, _)) = declaration.slot() else {
             continue;
         };
+
+        if slot.is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE) {
+            diagnostics.push(CompositionDiagnostic::ReservedSlotNamespace {
+                slot,
+                provenance: declaration.provenance(),
+            });
+        }
 
         providers.entry(slot).or_default().push(declaration);
     }

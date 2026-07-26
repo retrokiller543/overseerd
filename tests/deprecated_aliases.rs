@@ -2,6 +2,7 @@
 //! → `App`/`AppBuilder`/`app!`). The aliases are removed in 1.0.0; until then they must keep
 //! compiling and behaving exactly like the new names. `#![allow(deprecated)]` keeps the suite
 //! warning-free while still exercising the deprecated surface.
+#![cfg(feature = "daemon")]
 #![allow(deprecated)]
 
 use overseerd::daemon;

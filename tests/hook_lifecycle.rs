@@ -1,5 +1,6 @@
 //! Proof of the builtin `Startup`/`Shutdown` lifecycle hooks: `run()` fires `Startup` before
 //! waiting and `Shutdown` once a graceful stop is triggered.
+#![cfg(feature = "daemon")]
 #![allow(dead_code)]
 
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -1,3 +1,5 @@
+#![cfg(feature = "cli")]
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::{CommandFactory as _, Parser as _};

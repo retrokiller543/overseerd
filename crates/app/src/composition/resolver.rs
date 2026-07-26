@@ -2,8 +2,8 @@ use super::diagnostic::CompositionDiagnostics;
 use super::graph;
 use super::selection::{self, Directives};
 use super::{
-    CompositionDirective, CompositionPhase, InstallationProvenance, PluginDeclaration, PluginId,
-    PluginSlotId, SlotPolicy,
+    CompositionDiagnostic, CompositionDirective, CompositionPhase, InstallationOrigin,
+    InstallationProvenance, PluginDeclaration, PluginId, PluginSlotId, SlotPolicy,
 };
 
 /// One effective plugin installation in deterministic construction order.
@@ -276,6 +276,7 @@ fn resolve_phase(
     prior_suppressions: &[SuppressionDecision],
 ) -> Result<PluginResolutionPlan, CompositionDiagnostics> {
     let mut diagnostics = Vec::new();
+    validate_protocol_origins(protocol, directives, &mut diagnostics);
     let directives = Directives::collect(phase, directives, &mut diagnostics);
     let selection = selection::select(
         phase,
@@ -313,4 +314,28 @@ fn resolve_phase(
         replacements: all_replacements.into_boxed_slice(),
         suppressions: all_suppressions.into_boxed_slice(),
     })
+}
+
+fn validate_protocol_origins(
+    selected: super::ProtocolId,
+    directives: &[CompositionDirective],
+    diagnostics: &mut Vec<CompositionDiagnostic>,
+) {
+    for directive in directives {
+        let provenance = directive.provenance();
+        let declared = match provenance.origin() {
+            InstallationOrigin::ProtocolMandatory(protocol)
+            | InstallationOrigin::ProtocolDefault(protocol) => protocol,
+            InstallationOrigin::ApplicationDeclaration
+            | InstallationOrigin::ApplicationConfiguration => continue,
+        };
+
+        if declared != selected {
+            diagnostics.push(CompositionDiagnostic::ProtocolOriginMismatch {
+                selected,
+                declared,
+                provenance,
+            });
+        }
+    }
 }

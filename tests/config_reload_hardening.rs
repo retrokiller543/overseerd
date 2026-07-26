@@ -1,4 +1,5 @@
 //! Regression coverage for reload invalidation and panic recovery.
+#![cfg(feature = "daemon")]
 #![allow(dead_code)]
 
 use std::borrow::Cow;

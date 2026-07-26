@@ -1,7 +1,7 @@
 use std::future::Future;
 
 use super::{BootstrapContext, ExecutionMode, HostError, LifecyclePhase, PhaseError};
-use crate::{App, AppBuilder, PreparedApp, ProtocolDefinition};
+use crate::{App, AppBuilder, ApplicationPluginRegistrar, PreparedApp, ProtocolDefinition};
 
 /// Static lifecycle definition implemented by every generated named application.
 ///
@@ -23,6 +23,13 @@ pub trait AppHost {
     /// When true, preparation copies the resolved platform-native directories manager from
     /// [`BootstrapContext`] into the [`AppBuilder`] before [`configure`](Self::configure) runs.
     const BOOTSTRAP_OWNS_DIRECTORIES: bool = false;
+
+    /// Declares parser-visible application plugins and protocol-default slot directives.
+    ///
+    /// This static declaration seam is available before CLI parser construction. Dynamic
+    /// [`configure`](Self::configure) and [`before_build`](Self::before_build) hooks may only add
+    /// monotonic late plugins through [`AppBuilder::register_plugin`].
+    fn declare_plugins(_plugins: &mut ApplicationPluginRegistrar) {}
 
     /// Creates the declaration-configured protocol-specific application builder.
     ///
@@ -224,6 +231,7 @@ pub async fn prepare_setup_host_context<H: AppHost>(
 ) -> Result<(BootstrapContext, PreparedApp<H::Protocol>), PhaseError> {
     let builder =
         H::builder().map_err(|source| PhaseError::new(LifecyclePhase::Configure, source))?;
+    let builder = builder.with_plugin_declarations(H::declare_plugins);
 
     #[cfg(feature = "cli")]
     let builder = {
