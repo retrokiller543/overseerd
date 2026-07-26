@@ -75,6 +75,24 @@ async fn empty_child_scope_retains_its_identity() {
     assert!(child.belongs_to_registry(&registry));
     assert!(!child.belongs_to_registry(&self::registry()));
     assert!(!child.can_access(&SameNameScope));
+    assert!(matches!(
+        child.slot.state,
+        ScopeResolverSlotState::Attached(_)
+    ));
+    assert!(Arc::ptr_eq(
+        &child,
+        &child.slot.resolve().expect("attached scope resolves")
+    ));
+
+    let source = child
+        .resolvers()
+        .get_arc::<ComponentSource>()
+        .expect("empty child exposes its component source");
+
+    assert!(Arc::ptr_eq(
+        &child,
+        &source.container.upgrade().expect("child remains alive")
+    ));
 }
 
 #[tokio::test]

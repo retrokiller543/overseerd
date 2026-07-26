@@ -1,6 +1,6 @@
 use std::{any::TypeId, collections::HashMap, future::Future, pin::Pin, sync::Arc};
 
-use overseerd_core::{ResolverSet, ScopeId, StaticScope, TypeDescriptor};
+use overseerd_core::{ResolverSet, ScopeId, StaticScope, Transient, TypeDescriptor};
 
 use super::*;
 use crate::{
@@ -52,6 +52,24 @@ impl BranchProvider for SiblingPrimaryProvider {
     }
 }
 
+/// A transient provider that is visible from every scope.
+struct TransientProvider;
+
+impl BranchProvider for TransientProvider {
+    fn source(&self) -> &'static str {
+        "transient"
+    }
+}
+
+/// A factory-less provider declared in an inaccessible sibling branch.
+struct SiblingSeedProvider;
+
+impl BranchProvider for SiblingSeedProvider {
+    fn source(&self) -> &'static str {
+        "sibling-seed"
+    }
+}
+
 fn no_dependencies() -> Vec<DependencyDescriptor> {
     Vec::new()
 }
@@ -82,6 +100,19 @@ fn sibling_factory<'a>(
     })
 }
 
+fn transient_factory<'a>(
+    _: &'a mut ComponentConstructionContext,
+) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + 'a>> {
+    Box::pin(async {
+        let handle = Arc::new(TransientProvider);
+
+        Ok(BoxedComponent {
+            ty: TypeDescriptor::of::<TransientProvider>("TransientProvider"),
+            value: Box::new(Injectable::into_stored(handle)),
+        })
+    })
+}
+
 static VISIBLE_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
     construct: visible_factory,
     dependencies: no_dependencies,
@@ -94,12 +125,22 @@ static SIBLING_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescr
     default: false,
 }];
 
+static TRANSIENT_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    construct: transient_factory,
+    dependencies: no_dependencies,
+    default: false,
+}];
+
 fn visible_factories() -> &'static [ComponentFactoryDescriptor] {
     &VISIBLE_FACTORY
 }
 
 fn sibling_factories() -> &'static [ComponentFactoryDescriptor] {
     &SIBLING_FACTORY
+}
+
+fn transient_factories() -> &'static [ComponentFactoryDescriptor] {
+    &TRANSIENT_FACTORY
 }
 
 fn visible_descriptor() -> ComponentDescriptor {
@@ -124,6 +165,17 @@ fn sibling_descriptor() -> ComponentDescriptor {
     }
 }
 
+fn transient_descriptor() -> ComponentDescriptor {
+    ComponentDescriptor {
+        id: "transient-provider",
+        name: "TransientProvider",
+        ty: TypeDescriptor::of::<TransientProvider>("TransientProvider"),
+        scope: &Transient,
+        factories: transient_factories,
+        hooks: overseerd_hooks::no_hooks,
+    }
+}
+
 fn erase_visible(component: &BoxedComponent) -> BoxedComponent {
     let concrete = from_boxed::<Arc<VisibleProvider>>(component).expect("visible provider stored");
     let erased: Arc<dyn BranchProvider> = concrete;
@@ -137,6 +189,28 @@ fn erase_visible(component: &BoxedComponent) -> BoxedComponent {
 fn erase_sibling(component: &BoxedComponent) -> BoxedComponent {
     let concrete =
         from_boxed::<Arc<SiblingPrimaryProvider>>(component).expect("sibling provider stored");
+    let erased: Arc<dyn BranchProvider> = concrete;
+
+    BoxedComponent {
+        ty: TypeDescriptor::of::<dyn BranchProvider>("dyn BranchProvider"),
+        value: Box::new(Injectable::into_stored(erased)),
+    }
+}
+
+fn erase_transient(component: &BoxedComponent) -> BoxedComponent {
+    let concrete =
+        from_boxed::<Arc<TransientProvider>>(component).expect("transient provider stored");
+    let erased: Arc<dyn BranchProvider> = concrete;
+
+    BoxedComponent {
+        ty: TypeDescriptor::of::<dyn BranchProvider>("dyn BranchProvider"),
+        value: Box::new(Injectable::into_stored(erased)),
+    }
+}
+
+fn erase_sibling_seed(component: &BoxedComponent) -> BoxedComponent {
+    let concrete =
+        from_boxed::<Arc<SiblingSeedProvider>>(component).expect("sibling seed provider stored");
     let erased: Arc<dyn BranchProvider> = concrete;
 
     BoxedComponent {
@@ -171,6 +245,11 @@ async fn sibling_branches() -> (Arc<ScopeContainer>, Arc<ScopeContainer>) {
     let providers = vec![
         branch_provider(sibling.ty, true, erase_sibling),
         branch_provider(visible.ty, false, erase_visible),
+        branch_provider(
+            TypeDescriptor::of::<SiblingSeedProvider>("SiblingSeedProvider"),
+            false,
+            erase_sibling_seed,
+        ),
     ];
     let registry = Arc::new(ScopeRegistry::new(
         HashMap::new(),
@@ -196,6 +275,34 @@ async fn sibling_branches() -> (Arc<ScopeContainer>, Arc<ScopeContainer>) {
         .expect("sibling branch opens");
 
     (visible_branch, sibling_branch)
+}
+
+async fn transient_and_inaccessible_provider() -> Arc<ScopeContainer> {
+    let transient = transient_descriptor();
+    let sibling = sibling_descriptor();
+    let transient_components = [(transient.ty.type_id, transient)].into_iter().collect();
+    let factory_backed = [transient, sibling]
+        .into_iter()
+        .map(|descriptor| (descriptor.ty.type_id, descriptor))
+        .collect();
+    let providers = vec![
+        branch_provider(sibling.ty, true, erase_sibling),
+        branch_provider(transient.ty, false, erase_transient),
+    ];
+    let registry = Arc::new(ScopeRegistry::new(
+        transient_components,
+        factory_backed,
+        providers,
+        HashMap::new(),
+    ));
+    let root =
+        ScopeContainer::build_root(&[], Vec::new(), ResolverSet::new(), Arc::clone(&registry))
+            .await
+            .expect("root builds");
+
+    ScopeContainer::open_child(&VisibleScope, root, registry, &[], Vec::new())
+        .await
+        .expect("visible branch opens")
 }
 
 #[test]
@@ -241,4 +348,30 @@ async fn qualified_fresh_selects_repeated_qualifier_from_visible_sibling() {
     assert_eq!(visible_branch.scope().id(), VISIBLE_SCOPE_ID);
     assert_eq!(sibling_branch.scope().id(), SIBLING_SCOPE_ID);
     assert_eq!(provider.source(), "visible");
+}
+
+#[tokio::test]
+async fn eager_resolution_selects_visible_transient_before_inaccessible_primary() {
+    let visible_branch = transient_and_inaccessible_provider().await;
+    let provider = visible_branch
+        .resolve::<Arc<dyn BranchProvider>>()
+        .await
+        .expect("resolution succeeds")
+        .expect("transient provider resolves");
+
+    assert_eq!(provider.source(), "transient");
+}
+
+#[tokio::test]
+async fn fresh_collection_ignores_inaccessible_factoryless_provider() {
+    let (visible_branch, _) = sibling_branches().await;
+    let providers = fresh_construct_all::<dyn BranchProvider>(&visible_branch)
+        .await
+        .expect("fresh collection resolves");
+    let sources: Vec<_> = providers
+        .into_iter()
+        .map(|(_, provider)| provider.source())
+        .collect();
+
+    assert_eq!(sources, ["visible"]);
 }

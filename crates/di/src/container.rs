@@ -114,10 +114,6 @@ impl ScopeRegistry {
             .unwrap_or_default()
     }
 
-    pub(crate) fn single_provider(&self, trait_id: TypeId) -> Option<ProviderDescriptor> {
-        select_single_provider(self.providers_for_trait(trait_id))
-    }
-
     /// Transient-backed providers of a trait, precomputed at registry build so
     /// collection resolution does not probe the transient map per provider.
     pub(crate) fn transient_providers_for(&self, trait_id: TypeId) -> &[ProviderDescriptor] {
@@ -127,15 +123,36 @@ impl ScopeRegistry {
             .unwrap_or_default()
     }
 
-    pub(crate) fn qualified_provider(
+    pub(crate) fn selected_provider(
         &self,
         trait_id: TypeId,
-        qualifier: &str,
+        qualifier: Option<&str>,
     ) -> Option<ProviderDescriptor> {
-        self.providers_for_trait(trait_id)
-            .iter()
-            .find(|provider| provider.qualifier == qualifier)
-            .copied()
+        let providers = self.providers_for_trait(trait_id);
+
+        match qualifier {
+            Some(qualifier) => providers
+                .iter()
+                .find(|provider| provider.qualifier == qualifier)
+                .copied(),
+            None => select_single_provider(providers),
+        }
+    }
+
+    pub(crate) fn selected_transient_provider(
+        &self,
+        trait_id: TypeId,
+        qualifier: Option<&str>,
+    ) -> Option<ProviderDescriptor> {
+        let providers = self.transient_providers_for(trait_id);
+
+        match qualifier {
+            Some(qualifier) => providers
+                .iter()
+                .find(|provider| provider.qualifier == qualifier)
+                .copied(),
+            None => select_single_provider(providers),
+        }
     }
 
     /// Selects a factory-backed trait provider visible from `scope`, nearest
@@ -224,22 +241,49 @@ pub(crate) fn select_single_provider(
     Some(primary)
 }
 
-/// Cloneable weak attachment point for the scope currently under construction.
-#[derive(Clone, Default)]
+/// Cloneable attachment point for a scope under construction or already built.
+#[derive(Clone)]
 pub(crate) struct ScopeResolverSlot {
-    state: Arc<std::sync::Mutex<ScopeResolverState>>,
+    state: ScopeResolverSlotState,
 }
 
+/// Storage used by a pending or attached scope resolver slot.
+#[derive(Clone)]
+enum ScopeResolverSlotState {
+    Pending(Arc<std::sync::Mutex<ScopeResolverState>>),
+    Attached(Weak<ScopeContainer>),
+}
+
+/// Mutable hydration state shared while a scope is under construction.
 #[derive(Default)]
 struct ScopeResolverState {
     container: Weak<ScopeContainer>,
     deferred: Vec<Arc<dyn crate::primitives::DeferredHydrator>>,
 }
 
+impl Default for ScopeResolverSlot {
+    fn default() -> Self {
+        Self {
+            state: ScopeResolverSlotState::Pending(Arc::new(std::sync::Mutex::new(
+                ScopeResolverState::default(),
+            ))),
+        }
+    }
+}
+
 impl ScopeResolverSlot {
+    fn attached(container: Weak<ScopeContainer>) -> Self {
+        Self {
+            state: ScopeResolverSlotState::Attached(container),
+        }
+    }
+
     pub(crate) fn attach(&self, container: &Arc<ScopeContainer>) -> crate::Result<()> {
+        let ScopeResolverSlotState::Pending(state) = &self.state else {
+            return Ok(());
+        };
         let deferred = {
-            let mut state = self.state.lock().expect("scope resolver slot poisoned");
+            let mut state = state.lock().expect("scope resolver slot poisoned");
 
             state.container = Arc::downgrade(container);
 
@@ -254,20 +298,30 @@ impl ScopeResolverSlot {
     }
 
     pub(crate) fn resolve(&self) -> crate::Result<Arc<ScopeContainer>> {
-        self.state
-            .lock()
-            .expect("scope resolver slot poisoned")
-            .container
-            .upgrade()
-            .ok_or(Error::ScopeUnavailable)
+        match &self.state {
+            ScopeResolverSlotState::Pending(state) => state
+                .lock()
+                .expect("scope resolver slot poisoned")
+                .container
+                .upgrade()
+                .ok_or(Error::ScopeUnavailable),
+            ScopeResolverSlotState::Attached(container) => {
+                container.upgrade().ok_or(Error::ScopeUnavailable)
+            }
+        }
     }
 
     pub(crate) fn register_deferred(
         &self,
         deferred: Arc<dyn crate::primitives::DeferredHydrator>,
     ) -> crate::Result<()> {
+        let ScopeResolverSlotState::Pending(state) = &self.state else {
+            let container = self.resolve()?;
+
+            return deferred.hydrate(&container);
+        };
         let container = {
-            let mut state = self.state.lock().expect("scope resolver slot poisoned");
+            let mut state = state.lock().expect("scope resolver slot poisoned");
 
             if let Some(container) = state.container.upgrade() {
                 Some(container)
@@ -395,10 +449,7 @@ pub(crate) async fn construct_selected_transient_provider<H: Injectable>(
     qualifier: Option<&str>,
 ) -> crate::Result<Option<H>> {
     let target = TypeId::of::<H::Target>();
-    let provider = match qualifier {
-        Some(qualifier) => registry.qualified_provider(target, qualifier),
-        None => registry.single_provider(target),
-    };
+    let provider = registry.selected_provider(target, qualifier);
     let Some(provider) = provider else {
         return Ok(None);
     };
@@ -406,6 +457,21 @@ pub(crate) async fn construct_selected_transient_provider<H: Injectable>(
     if registry.transient(provider.concrete_ty.type_id).is_none() {
         return Ok(None);
     }
+
+    construct_transient_provider::<H>(registry, parent, slot, store, provider).await
+}
+
+pub(crate) async fn construct_fallback_transient_provider<H: Injectable>(
+    registry: &Arc<ScopeRegistry>,
+    parent: Option<Arc<ScopeContainer>>,
+    slot: ScopeResolverSlot,
+    store: Arc<std::sync::RwLock<ScopeStore>>,
+    qualifier: Option<&str>,
+) -> crate::Result<Option<H>> {
+    let target = TypeId::of::<H::Target>();
+    let Some(provider) = registry.selected_transient_provider(target, qualifier) else {
+        return Ok(None);
+    };
 
     construct_transient_provider::<H>(registry, parent, slot, store, provider).await
 }
@@ -425,13 +491,14 @@ pub struct ScopeContainer {
     store: ScopeStore,
     parent: Option<Arc<ScopeContainer>>,
     registry: Arc<ScopeRegistry>,
-    resolvers: ResolverSet,
+    resolver_base: ResolverSet,
+    resolvers: std::sync::OnceLock<ResolverSet>,
     slot: ScopeResolverSlot,
 }
 
 impl ResolverCtx for ScopeContainer {
     fn resolver(&self, kind: TypeId) -> Option<&dyn Any> {
-        self.resolvers.resolver(kind)
+        self.resolvers().resolver(kind)
     }
 }
 
@@ -468,7 +535,19 @@ impl ScopeContainer {
     /// The external resolvers threaded into this scope (config store, …), shared with
     /// child scopes.
     pub fn resolvers(&self) -> &ResolverSet {
-        &self.resolvers
+        self.resolvers.get_or_init(|| {
+            let container = self
+                .slot
+                .resolve()
+                .expect("built scope resolver slot remains attached");
+            let mut resolvers = self.resolver_base.clone();
+
+            resolvers.insert(Arc::new(ComponentSource {
+                container: Arc::downgrade(&container),
+            }));
+
+            resolvers
+        })
     }
 
     pub(crate) fn registry(&self) -> Arc<ScopeRegistry> {
@@ -491,6 +570,14 @@ impl ScopeContainer {
         self.parent
             .as_ref()
             .is_some_and(|parent| parent.can_access(scope))
+    }
+
+    pub(crate) fn contains_built(&self, target: TypeId) -> bool {
+        self.store.contains(target)
+            || self
+                .parent
+                .as_ref()
+                .is_some_and(|parent| parent.contains_built(target))
     }
 
     /// Resolves all registered singleton components in dependency order into the
@@ -542,6 +629,18 @@ impl ScopeContainer {
         seeds: Vec<BoxedComponent>,
     ) -> crate::Result<Arc<ScopeContainer>> {
         let externals = parent.resolvers().clone();
+
+        if order.is_empty() && seeds.is_empty() {
+            return Ok(Arc::new_cyclic(|container| ScopeContainer {
+                scope,
+                store: ScopeStore::default(),
+                parent: Some(parent),
+                registry,
+                resolver_base: externals,
+                resolvers: std::sync::OnceLock::new(),
+                slot: ScopeResolverSlot::attached(container.clone()),
+            }));
+        }
 
         Self::build(scope, Some(parent), registry, order, seeds, externals).await
     }
@@ -612,7 +711,8 @@ impl ScopeContainer {
                 store: parts.store,
                 parent: parts.parent,
                 registry: parts.registry,
-                resolvers,
+                resolver_base: resolvers.clone(),
+                resolvers: std::sync::OnceLock::from(resolvers),
                 slot: slot.clone(),
             }
         });
@@ -647,6 +747,18 @@ impl ScopeContainer {
             return Ok(Some(handle));
         }
 
+        if let Some(handle) = construct_fallback_transient_provider::<H>(
+            &self.registry,
+            Some(Arc::clone(self)),
+            self.slot.clone(),
+            empty_store(),
+            None,
+        )
+        .await?
+        {
+            return Ok(Some(handle));
+        }
+
         construct_transient::<H>(
             &self.registry,
             Some(Arc::clone(self)),
@@ -674,7 +786,18 @@ impl ScopeContainer {
             return Ok(Some(handle));
         }
 
-        Ok(self.resolve_qualified_built::<H>(qualifier))
+        if let Some(handle) = self.resolve_qualified_built::<H>(qualifier) {
+            return Ok(Some(handle));
+        }
+
+        construct_fallback_transient_provider::<H>(
+            &self.registry,
+            Some(Arc::clone(self)),
+            self.slot.clone(),
+            empty_store(),
+            Some(qualifier),
+        )
+        .await
     }
 
     /// Extracts any [`FromContainer`](crate::FromContainer) value from this scope — the
@@ -692,7 +815,7 @@ impl ScopeContainer {
             &Transient,
             Some(Arc::clone(self)),
             Arc::clone(&self.registry),
-            self.resolvers.clone(),
+            self.resolvers().clone(),
             self.slot.clone(),
         );
 
