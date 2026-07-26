@@ -1,6 +1,7 @@
 //! Construction via the `Factory` machinery: `#[init]` constructors driven through
 //! the build-time DI traits. Covers a sync constructor, an async fallible one, and
 //! the newly-enabled non-`Arc` parameter shapes (`Cfg<T>`).
+#![cfg(feature = "daemon")]
 
 use std::sync::Arc;
 

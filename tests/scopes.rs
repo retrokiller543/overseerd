@@ -5,6 +5,7 @@
 //! one id across the calls on its connection, a request-scoped instance gets a
 //! fresh id per call, and a transient gets a fresh id per resolution. The tests
 //! assert exactly those relationships by reading the ids back through handlers.
+#![cfg(feature = "daemon")]
 
 use std::sync::{
     Arc,

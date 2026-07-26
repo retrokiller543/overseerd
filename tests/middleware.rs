@@ -2,6 +2,7 @@
 //! in-memory transport. Covers a tower middleware observing a call before and
 //! after the handler, a `Guard` short-circuiting an unauthorized call, and a
 //! global `ErrorHandler` remapping an outgoing error.
+#![cfg(feature = "daemon")]
 
 use std::future::Future;
 use std::pin::Pin;

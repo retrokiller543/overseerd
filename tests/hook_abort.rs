@@ -1,5 +1,6 @@
 //! Proof that a rejecting `#[hook(ConfigReload)]` aborts the whole reload (two-phase
 //! all-or-nothing): nothing is committed and the live config keeps its old value.
+#![cfg(feature = "daemon")]
 #![allow(dead_code)]
 
 use std::fs;

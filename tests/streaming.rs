@@ -4,6 +4,7 @@
 //! All services in this binary are auto-discovered into one daemon, which is
 //! served on a `MemoryTransport` in a background task; each test opens calls on
 //! a fresh connection and asserts on the server's events.
+#![cfg(feature = "daemon")]
 
 use std::time::Duration;
 

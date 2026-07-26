@@ -13,8 +13,8 @@ pub enum CompositionPhase {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum InstallationOrigin {
-    /// A framework-owned mandatory or default installation.
-    Framework,
+    /// Mandatory infrastructure supplied by the selected protocol definition.
+    ProtocolMandatory(ProtocolId),
     /// A default supplied by the selected protocol definition.
     ProtocolDefault(ProtocolId),
     /// A plugin declared statically by the application.
@@ -27,9 +27,9 @@ impl InstallationOrigin {
     /// Returns the composition phase implied by this origin.
     pub const fn phase(self) -> CompositionPhase {
         match self {
-            Self::Framework | Self::ProtocolDefault(_) | Self::ApplicationDeclaration => {
-                CompositionPhase::Early
-            }
+            Self::ProtocolMandatory(_)
+            | Self::ProtocolDefault(_)
+            | Self::ApplicationDeclaration => CompositionPhase::Early,
             Self::ApplicationConfiguration => CompositionPhase::Late,
         }
     }

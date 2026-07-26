@@ -2,8 +2,10 @@ use overseerd::{
     App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, ExecutionMode, PreparedProtocol,
     ProtocolDefinition, ProtocolRuntime, app,
 };
+#[cfg(feature = "cli")]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(feature = "cli")]
 static HELP_SETUP_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// Test protocol definition selected by the named application host.
@@ -54,16 +56,19 @@ app! {
     }
 }
 
+#[cfg(feature = "cli")]
 async fn help_setup(context: BootstrapContext) -> std::io::Result<BootstrapContext> {
     HELP_SETUP_CALLS.fetch_add(1, Ordering::SeqCst);
 
     Ok(context)
 }
 
+#[cfg(feature = "cli")]
 async fn help_serve(_context: BootstrapContext, _app: App<TestProtocol>) -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "cli")]
 app! {
     app HelpApplication {
         name: "help-app-test",
@@ -262,6 +267,7 @@ async fn named_app_rejects_component_construction_in_tooling_mode() {
 }
 
 #[test]
+#[cfg(feature = "cli")]
 fn generated_cli_exposes_native_clap_types() {
     use clap::{CommandFactory as _, Parser as _};
 
@@ -280,6 +286,7 @@ fn generated_cli_exposes_native_clap_types() {
 }
 
 #[tokio::test]
+#[cfg(feature = "cli")]
 async fn generated_cli_help_and_version_do_not_run_setup() {
     HELP_SETUP_CALLS.store(0, Ordering::SeqCst);
 

@@ -1,6 +1,7 @@
 //! End-to-end tests for the framework builtins, driven over the in-memory
 //! transport. A handler injects the seeded [`ShutdownHandle`] and the call
 //! completes, proving the builtin resolves through the request scope chain.
+#![cfg(feature = "daemon")]
 
 use overseerd::daemon::{App, Inject, Payload, handlers, service};
 use overseerd::{CallResult, MemoryClient, MemoryConnectionHandle, ShutdownHandle};

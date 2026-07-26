@@ -1,4 +1,5 @@
 //! End-to-end coverage for scope-capturing DI provider primitives.
+#![allow(dead_code)]
 
 use std::{
     any::TypeId,
@@ -9,6 +10,7 @@ use std::{
     },
 };
 
+#[cfg(feature = "daemon")]
 use overseerd::daemon::App;
 use overseerd::{
     ComponentDescriptor, Deferred, Descriptor, Fresh, Lazy, ResolverSet, ScopeContainer,
@@ -110,6 +112,7 @@ struct RootBuildTransientOwner {
 }
 
 #[tokio::test]
+#[cfg(feature = "daemon")]
 async fn lazy_fresh_and_deferred_follow_their_cache_contracts() {
     let app = App::builder("provider-primitives")
         .auto_discover()
@@ -218,6 +221,7 @@ async fn deferred_hydrates_after_construction_without_retaining_a_cycle() {
 }
 
 #[tokio::test]
+#[cfg(feature = "daemon")]
 async fn deferred_in_transient_built_during_root_build_hydrates_at_attach() {
     let app = App::builder("root-build-transient-deferred")
         .auto_discover()

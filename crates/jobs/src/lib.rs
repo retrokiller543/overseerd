@@ -26,7 +26,7 @@
 //!     async fn report(&self, metrics: Dep<Metrics>) { metrics.snapshot().flush().await; }
 //! }
 //!
-//! app.plugin(JobsPlugin);
+//! app.register_plugin::<JobsPlugin>();
 //! ```
 //!
 //! ## Schedules

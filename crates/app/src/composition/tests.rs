@@ -6,6 +6,10 @@ fn plugin_id(value: &'static str) -> PluginId {
     PluginId::new(value).expect("valid test plugin id")
 }
 
+fn protocol_id(value: &'static str) -> ProtocolId {
+    ProtocolId::new(value).expect("valid test protocol id")
+}
+
 fn slot_id(value: &'static str) -> PluginSlotId {
     PluginSlotId::new(value).expect("valid test slot id")
 }
@@ -99,15 +103,75 @@ fn stable_ids_validate_namespaced_ascii_paths() {
 fn application_declarations_cannot_claim_framework_namespace() {
     let diagnostics = resolve_early_plugins(PROTOCOL, [install("overseerd/router", early(0))])
         .expect_err("framework namespace is reserved");
-    let framework = InstallationProvenance::new(InstallationOrigin::Framework, 0);
-    let plan = resolve_early_plugins(PROTOCOL, [install("overseerd/router", framework)])
-        .expect("framework may use reserved namespace");
 
     assert!(matches!(
         diagnostics.as_slice(),
         [CompositionDiagnostic::ReservedNamespace { .. }]
     ));
-    assert_eq!(plan.plugins()[0].id(), plugin_id("overseerd/router"));
+}
+
+#[test]
+fn protocol_provenance_must_match_the_selected_protocol() {
+    let other = protocol_id("test/other-protocol");
+    let provenance = InstallationProvenance::new(InstallationOrigin::ProtocolDefault(other), 0);
+    let diagnostics = resolve_early_plugins(PROTOCOL, [install("test/plugin", provenance)])
+        .expect_err("foreign protocol provenance is rejected");
+
+    assert!(matches!(
+        diagnostics.as_slice(),
+        [CompositionDiagnostic::ProtocolOriginMismatch {
+            selected: PROTOCOL,
+            declared,
+            ..
+        }] if *declared == other
+    ));
+}
+
+#[test]
+fn protocol_plugins_cannot_claim_framework_namespace() {
+    let provenance =
+        InstallationProvenance::new(InstallationOrigin::ProtocolMandatory(PROTOCOL), 0);
+    let diagnostics = resolve_early_plugins(PROTOCOL, [install("overseerd/forged", provenance)])
+        .expect_err("protocol plugin cannot forge framework ownership");
+
+    assert!(matches!(
+        diagnostics.as_slice(),
+        [CompositionDiagnostic::ReservedNamespace { .. }]
+    ));
+}
+
+#[test]
+fn public_declarations_cannot_claim_framework_slots() {
+    let slot = slot_id("overseerd/forged-slot");
+    let directive = CompositionDirective::install(
+        PluginDeclaration::new(plugin_id("test/plugin"), early(0))
+            .provides(slot, SlotPolicy::Replaceable),
+    );
+    let diagnostics = resolve_early_plugins(PROTOCOL, [directive])
+        .expect_err("framework slot namespace is reserved");
+
+    assert!(matches!(
+        diagnostics.as_slice(),
+        [CompositionDiagnostic::ReservedSlotNamespace { .. }]
+    ));
+}
+
+#[test]
+fn public_directives_cannot_target_framework_slots() {
+    let slot = slot_id("overseerd/forged-slot");
+    let replacement = CompositionDirective::replace(
+        slot,
+        PluginDeclaration::new(plugin_id("test/replacement"), early(0)),
+    );
+    let suppression = CompositionDirective::suppress(slot, early(1));
+    let diagnostics = resolve_early_plugins(PROTOCOL, [replacement, suppression])
+        .expect_err("framework slot targets are reserved");
+
+    assert_eq!(diagnostics.len(), 2);
+    assert!(diagnostics.as_slice().iter().all(|diagnostic| matches!(
+        diagnostic,
+        CompositionDiagnostic::ReservedSlotNamespace { .. }
+    )));
 }
 
 #[test]

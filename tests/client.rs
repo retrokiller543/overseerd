@@ -9,7 +9,7 @@
 //! (`Result<T, E>` decoding to `T` with the error typed as `E::Body`, `Option<T>`
 //! left intact, and each streaming kind).
 
-#![cfg(feature = "client")]
+#![cfg(all(feature = "client", feature = "daemon"))]
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf};

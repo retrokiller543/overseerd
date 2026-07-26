@@ -1,6 +1,7 @@
 //! End-to-end tests for the error-response status code, driven over the
 //! in-memory transport so they are fast and deterministic. Each test maps to a
 //! user story / success criterion from `specs/003-response-status-codes/`.
+#![cfg(feature = "daemon")]
 
 use overseerd::daemon::{App, ErrorResponse, ResponseError, ResponseStream, handlers, service};
 use overseerd::{
