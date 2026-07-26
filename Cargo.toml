@@ -248,8 +248,13 @@ tracing-subscriber = [
 ]
 
 # Protocol-neutral config file watching and reload (`ConfigManager::watch_config`), via `notify`.
-# The application core owns trigger startup; no RPC or HTTP protocol feature is required.
-watch = ["overseerd-app/watch"]
+# Weak forwarding configures already-enabled protocol crates without enabling either protocol.
+watch = [
+    "overseerd-config/watch",
+    "overseerd-app/watch",
+    "overseerd-rpc?/watch",
+    "overseerd-axum?/watch",
+]
 
 # Force the `inventory` registration backend (Apple/Mach-O targets auto-select it via the macro
 # crate's build script). A marker feature — it activates no dependency (`inventory` is an
