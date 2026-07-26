@@ -116,7 +116,17 @@ impl<P: WebsocketProtocol> WsRoute<P> {
 /// bare builder fn pointer so it can be an [`OverseerdDescriptor`] and thus a
 /// `DescriptorFor<C, ControllerWsRoute<C, P>>` bucket element on the `inventory` backend. `Copy` is
 /// manual (a naive derive would wrongly demand `C: Copy` / `P: Copy`).
-pub struct ControllerWsRoute<C, P: WebsocketProtocol>(pub fn(std::sync::Arc<C>) -> Vec<WsRoute<P>>);
+pub struct ControllerWsRoute<C, P: WebsocketProtocol>(
+    pub fn() -> Vec<WsRouteDescriptor>,
+    std::marker::PhantomData<fn() -> (C, P)>,
+);
+
+impl<C, P: WebsocketProtocol> ControllerWsRoute<C, P> {
+    /// Wraps one generated route-descriptor group for controller `C` and protocol `P`.
+    pub const fn new(routes: fn() -> Vec<WsRouteDescriptor>) -> Self {
+        Self(routes, std::marker::PhantomData)
+    }
+}
 
 impl<C, P: WebsocketProtocol> Clone for ControllerWsRoute<C, P> {
     fn clone(&self) -> Self {
@@ -131,31 +141,54 @@ impl<C: 'static, P: WebsocketProtocol> overseerd_core::OverseerdDescriptor
 {
 }
 
+type ErasedWsHandler = Box<dyn Any + Send + Sync>;
+
+/// One authoritative WebSocket route declaration before controller construction.
+///
+/// The destination is available during protocol preparation. The private factory resolves the
+/// controller and creates the corresponding typed handler only after the application runtime exists.
+#[derive(Clone)]
+pub struct WsRouteDescriptor {
+    destination: &'static str,
+    handler: Arc<dyn Fn(&AppRuntime) -> ErasedWsHandler + Send + Sync>,
+}
+
+impl WsRouteDescriptor {
+    /// Creates a route declaration whose destination and handler factory cannot diverge.
+    pub fn new<P: WebsocketProtocol>(
+        destination: &'static str,
+        handler: fn(&AppRuntime) -> WsHandlerFn<P>,
+    ) -> Self {
+        Self {
+            destination,
+            handler: Arc::new(move |runtime| Box::new(handler(runtime))),
+        }
+    }
+
+    /// The destination claimed by this route.
+    pub fn destination(&self) -> &'static str {
+        self.destination
+    }
+
+    fn to_route<P: WebsocketProtocol>(&self, runtime: &AppRuntime) -> WsRoute<P> {
+        let handler = (self.handler)(runtime)
+            .downcast::<WsHandlerFn<P>>()
+            .unwrap_or_else(|_| {
+                panic!(
+                    "ws route `{}` built a handler for the wrong protocol `{}`",
+                    self.destination,
+                    std::any::type_name::<P>()
+                )
+            });
+
+        WsRoute::new(self.destination, *handler)
+    }
+}
+
 /// Rejects ambiguous destinations before calling [`WebsocketProtocol::build`]. Keeping this check
 /// in the framework preserves the original infallible public `build` contract for downstream
 /// protocols while preventing bundled or custom implementations from silently depending on link
 /// order when routes collide.
-fn validate_unique_routes<P: WebsocketProtocol>(
-    controllers: &[WsControllerDescriptor],
-    runtime: &AppRuntime,
-) -> crate::Result<()> {
-    let mut destinations = HashSet::new();
-
-    for descriptor in controllers {
-        for route in descriptor.routes_for::<P>(runtime) {
-            if !destinations.insert(route.destination) {
-                return Err(crate::Error::Config(format!(
-                    "duplicate WebSocket destination `{}` for protocol `{}`",
-                    route.destination,
-                    std::any::type_name::<P>()
-                )));
-            }
-        }
-    }
-
-    Ok(())
-}
-
 /// Turns a handler's response value `R` into this protocol's [`Outcome`](WebsocketProtocol::Outcome).
 /// The macro calls `<P as WsRespond<R>>::respond(response)` for send-mode handlers.
 pub trait WsRespond<R>: WebsocketProtocol {
@@ -167,7 +200,7 @@ pub trait WsRespond<R>: WebsocketProtocol {
 /// for its message routes. Mirrors [`ControllerDescriptor`](crate::ControllerDescriptor), but the
 /// upgrade *path* is **not** here — it comes from `register_ws`.
 #[derive(Clone, Copy)]
-pub struct WsControllerDescriptor {
+pub struct WsControllerRegistration {
     /// The controller's id (defaults to the lowercased type name).
     pub id: &'static str,
 
@@ -185,38 +218,87 @@ pub struct WsControllerDescriptor {
     /// The protocol's type name, for diagnostics. A `fn` because `type_name` is not yet const.
     pub protocol_name: fn() -> &'static str,
 
-    /// Resolves the controller singleton from the runtime and builds its message routes — **type
-    /// erased** to `Box<dyn Any + Send>` (really a `Vec<WsRoute<P>>` for this controller's protocol
-    /// `P`), because the [`WS_CONTROLLERS`] link-time slice cannot store a generic descriptor.
-    /// Recover the typed vector with [`routes_for`](Self::routes_for) — sound because
-    /// `register_ws::<P>` only ever calls it for controllers whose [`protocol`](Self::protocol)
-    /// `TypeId` matches `P`.
-    pub routes: fn(&AppRuntime) -> Box<dyn Any + Send>,
+    /// Returns authoritative route declarations without constructing the controller.
+    pub routes: fn() -> Vec<WsRouteDescriptor>,
+}
+
+/// A prepared WebSocket controller descriptor passed to [`WebsocketProtocol::build`].
+#[derive(Clone)]
+pub struct WsControllerDescriptor {
+    /// The controller's stable id.
+    pub id: &'static str,
+    /// The controller's display name.
+    pub name: &'static str,
+    /// The controller's concrete type.
+    pub ty: TypeDescriptor,
+    /// The controller's WebSocket protocol type.
+    pub protocol: TypeId,
+    /// The protocol's type name for diagnostics.
+    pub protocol_name: &'static str,
+    routes: Arc<[WsRouteDescriptor]>,
 }
 
 impl WsControllerDescriptor {
-    /// Builds this controller's routes as a concrete `Vec<WsRoute<P>>`, downcasting the erased
-    /// [`routes`](Self::routes) product. Panics only on a framework bug — a caller passing a `P`
-    /// that disagrees with this controller's [`protocol`](Self::protocol) `TypeId`; `register_ws`
-    /// filters by that `TypeId` first, so the downcast always succeeds in practice.
-    pub fn routes_for<P: WebsocketProtocol>(&self, runtime: &AppRuntime) -> Vec<WsRoute<P>> {
-        let erased = (self.routes)(runtime);
-
-        *erased.downcast::<Vec<WsRoute<P>>>().unwrap_or_else(|_| {
-            panic!(
-                "ws controller `{}` routes downcast to the wrong protocol `{}`",
-                self.name,
-                std::any::type_name::<P>()
-            )
-        })
+    pub(crate) fn prepare(registration: &WsControllerRegistration) -> Self {
+        Self {
+            id: registration.id,
+            name: registration.name,
+            ty: registration.ty,
+            protocol: (registration.protocol)(),
+            protocol_name: (registration.protocol_name)(),
+            routes: (registration.routes)().into(),
+        }
     }
+
+    /// The authoritative route declarations retained during application preparation.
+    pub fn routes(&self) -> &[WsRouteDescriptor] {
+        &self.routes
+    }
+
+    /// Builds this controller's typed routes from the declarations retained during preparation.
+    pub fn routes_for<P: WebsocketProtocol>(&self, runtime: &AppRuntime) -> Vec<WsRoute<P>> {
+        assert_eq!(
+            self.protocol,
+            TypeId::of::<P>(),
+            "ws controller `{}` routes requested for the wrong protocol `{}`",
+            self.name,
+            std::any::type_name::<P>()
+        );
+
+        self.routes
+            .iter()
+            .map(|route| route.to_route(runtime))
+            .collect()
+    }
+}
+
+/// Rejects ambiguous destinations before component or protocol runtime construction.
+pub(crate) fn validate_unique_destinations(
+    controllers: &[WsControllerDescriptor],
+    protocol_name: &str,
+) -> crate::Result<()> {
+    let mut destinations = HashSet::new();
+
+    for controller in controllers {
+        for route in controller.routes() {
+            let destination = route.destination();
+
+            if !destinations.insert(destination) {
+                return Err(crate::Error::Config(format!(
+                    "duplicate WebSocket destination `{destination}` for protocol `{protocol_name}`"
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// The link-time slice every `#[controller(ws = ..)]` registers into, mirroring [`CONTROLLERS`].
 ///
 /// [`CONTROLLERS`]: crate::CONTROLLERS
 #[linkme::distributed_slice]
-pub static WS_CONTROLLERS: [WsControllerDescriptor];
+pub static WS_CONTROLLERS: [WsControllerRegistration];
 
 /// Implemented by every `#[controller(ws = P)]` struct: it names its protocol and builds its
 /// message routes. Generated alongside the [`WsControllerDescriptor`]; the per-`#[handlers]`-block
@@ -224,10 +306,6 @@ pub static WS_CONTROLLERS: [WsControllerDescriptor];
 pub trait WebsocketController {
     /// The protocol that frames and routes this controller's messages.
     type Protocol: WebsocketProtocol;
-
-    /// Builds this controller's message routes (typed to its [`Protocol`](Self::Protocol)),
-    /// resolving its singleton from the runtime.
-    fn ws_routes(runtime: &AppRuntime) -> Vec<WsRoute<Self::Protocol>>;
 }
 
 /// A pluggable WebSocket sub-protocol: it owns framing (how a raw [`Message`](axum::extract::ws::Message)
@@ -262,11 +340,10 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
     /// Contributes protocol-owned DI components before the root container is validated and built.
     fn register(_registry: &mut AppRegistry) {}
 
-    /// Builds the protocol's routing from the controllers registered to it and the endpoint
-    /// `options`. Called once per `register_ws` entrypoint at app build. The protocol keeps whatever
+    /// Builds the protocol's routing from prepared controllers and endpoint `options`. Called once
+    /// per `register_ws` entrypoint at app build. The protocol keeps whatever
     /// it needs from `runtime` (e.g. a clone, to open per-message
-    /// [`WebsocketMessage`](crate::scope::WebsocketMessage) scopes while serving). Recover each controller's typed
-    /// routes with [`WsControllerDescriptor::routes_for::<Self>`](WsControllerDescriptor::routes_for).
+    /// [`WebsocketMessage`](crate::scope::WebsocketMessage) scopes while serving).
     fn build(
         controllers: &[WsControllerDescriptor],
         runtime: &AppRuntime,
@@ -609,12 +686,10 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
     let config = runtime
         .root()
         .config::<crate::AxumConfig>(crate::AXUM_CONFIG_PATH)
-        .expect("AxumConfig missing from config store; AxumPlugin should register it")
+        .expect("AxumConfig missing from config store; Axum should register it")
         .snapshot();
 
     validate_config(&config)?;
-
-    validate_unique_routes::<P>(&controllers, runtime)?;
 
     let proto = Arc::new(P::build(&controllers, runtime, options).map_err(|source| {
         crate::Error::WebsocketBuild {

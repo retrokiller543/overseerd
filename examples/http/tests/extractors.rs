@@ -194,7 +194,7 @@ impl Extras {
 async fn generated_client_covers_every_extractor() {
     let app = app! {
         name: "extractors-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .build()
     .await

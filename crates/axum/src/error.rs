@@ -5,7 +5,7 @@ use thiserror::Error;
 /// A failure raised while building or serving the axum protocol.
 ///
 /// Absorbs the protocol-agnostic [`overseerd_app::Error`] (so it satisfies the
-/// `ProtocolPlugin::Error: From<app::Error>` bound) and the I/O errors raised by binding
+/// `ProtocolDefinition::Error: From<app::Error>` bound) and the I/O errors raised by binding
 /// and serving the TCP listener.
 #[derive(Debug, Error)]
 pub enum Error {

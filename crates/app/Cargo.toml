@@ -1,6 +1,6 @@
 [package]
 name = "overseerd-app"
-description = "The Overseerd protocol-agnostic application core: the App/AppBuilder, the Plugin/Protocol traits, the DI runtime handle, scope planning, lifecycle, and builtins."
+description = "The Overseerd protocol-agnostic application core: application and protocol states, plugins, DI runtime, scope planning, lifecycle, and builtins."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

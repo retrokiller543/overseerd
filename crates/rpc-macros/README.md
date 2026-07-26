@@ -8,7 +8,7 @@ plugin.
 ## Role
 
 A `proc-macro = true` crate holding the RPC-protocol-specific macros. Because they emit
-protocol plugin types (`::overseerd::daemon::*` or `::overseerd_rpc::*`), they can't live in the
+protocol types (`::overseerd::daemon::*` or `::overseerd_rpc::*`), they can't live in the
 protocol-agnostic `overseerd-macros`, so they get their own crate built on the shared
 [`overseerd-macros-core`](../macros-core) codegen via its extension seam:
 
@@ -51,7 +51,7 @@ Built on [`overseerd-macros-core`](../macros-core), reusing `expand_component`, 
 `MethodArgs`, `Paths`, and the `run` parse-and-expand harness. It is re-exported by
 [`overseerd-rpc`](../rpc) (`pub use overseerd_rpc_macros::{handlers, rpc, service}`), which the
 `overseerd` facade surfaces as `overseerd::daemon`. The `facade` feature (set by the facade) switches
-the generated plugin-type root between `::overseerd::daemon` and the standalone `::overseerd_rpc`.
+the generated protocol-type root between `::overseerd::daemon` and the standalone `::overseerd_rpc`.
 
 ## Feature flags
 
@@ -59,4 +59,4 @@ the generated plugin-type root between `::overseerd::daemon` and the standalone 
 |---|---|
 | `client` | Emit the generated RPC client (the `cfg!(feature = "client")` gates in `#[service]`/`#[handlers]`). Forwards to `overseerd-macros-core/client`. |
 | `di-check` | Emit the compile-time dependency-injection assertions. Forwards to `overseerd-macros-core/di-check`. |
-| `facade` | Root generated plugin types at the `overseerd` facade (`::overseerd::daemon::*`) instead of this protocol crate (`::overseerd_rpc::*`). Enabled by the facade; off means standalone `overseerd-rpc` is the root. Core vocabulary is always `::overseerd` either way. |
+| `facade` | Root generated protocol types at the `overseerd` facade (`::overseerd::daemon::*`) instead of this protocol crate (`::overseerd_rpc::*`). Enabled by the facade; off means standalone `overseerd-rpc` is the root. Core vocabulary is always `::overseerd` either way. |

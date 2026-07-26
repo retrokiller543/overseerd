@@ -1,9 +1,9 @@
 //! The Overseerd protocol-agnostic application core.
 //!
 //! This crate ties the DI engine, config, hooks, and dirs into a runnable [`App`] that is
-//! generic over the [`ProtocolPlugin`] it installs. It owns the [`AppBuilder`], the agnostic
+//! generic over the [`ProtocolDefinition`] it prepares. It owns the [`AppBuilder`], the agnostic
 //! [`AppRegistry`], scope planning, the lifecycle/serve envelope, the [`AppRuntime`] handle
-//! a protocol drives requests through, and the [`Plugin`]/[`Protocol`]/[`Serve`] seam.
+//! a protocol drives requests through, and the protocol state/serve seams.
 //!
 //! It is *protocol-agnostic*: it knows nothing of RPC, HTTP, or any wire format. A protocol
 //! (the native RPC daemon, a future axum binding) is a sibling crate that implements these
@@ -45,7 +45,11 @@ pub use host::{
     configure_bootstrap_config, configure_bootstrap_directories, finalize_bootstrap, validate_cli,
 };
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
-pub use protocol::{Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve, ValidationContext};
+pub use overseerd_core::{Scope, ScopeId, StaticScope, namespaced_id};
+pub use protocol::{
+    Plugin, PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
+    ValidationContext,
+};
 pub use registry::AppRegistry;
 pub use runtime::AppRuntime;
 pub use scope::{

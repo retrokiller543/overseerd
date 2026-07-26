@@ -124,7 +124,7 @@ app! {
     /// Demonstrates generated typestate lifecycle and nested typed CLI commands.
     app DaemonApplication {
         name: "example-daemon",
-        protocol: overseerd::daemon::RpcPlugin,
+        protocol: overseerd::daemon::Rpc,
         configs: [
             DbConfig => "app.db.reader",
             DbConfig => "app.db.writer",

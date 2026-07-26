@@ -49,7 +49,7 @@ mod server {
         // `register_ws`. `.layer(..)` takes a raw axum/tower layer directly (see `auth::log_requests`).
         let app = app! {
             name: "example-http",
-            protocol: AxumPlugin,
+            protocol: Axum,
         }
         .layer(overseerd::axum::axum::middleware::from_fn(
             auth::log_requests,

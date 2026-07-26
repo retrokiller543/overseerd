@@ -1,6 +1,6 @@
 //! The axum HTTP protocol.
 //!
-//! [`Axum`] implements the [`Protocol`]/[`Serve`] traits from `overseerd-app`: it owns the
+//! [`AxumRuntime`] implements the [`ProtocolRuntime`]/[`Serve`] traits from `overseerd-app`: it owns the
 //! assembled [`axum::Router`] (controllers merged, wrapped by the per-request scope layer)
 //! and serves it over a [`SocketAddr`] or a pre-bound [`TcpListener`]. The serve envelope
 //! (lifecycle hooks, reload triggers, ctrl-c) is run by `App::serve`, so this loop only
@@ -9,14 +9,13 @@
 use std::future::IntoFuture;
 use std::net::SocketAddr;
 
-use overseerd_app::{AppRuntime, Protocol, Serve, ShutdownSignal};
+use overseerd_app::{AppRuntime, ProtocolRuntime, Serve, ShutdownSignal};
 use overseerd_config::Cfg;
 use tokio::net::TcpListener;
 use tracing::info;
 
-/// The axum protocol: a fully-assembled [`axum::Router`] ready to serve. Built by
-/// [`AxumPlugin`](crate::AxumPlugin).
-pub struct Axum {
+/// The built Axum runtime: a fully assembled [`axum::Router`] ready to serve.
+pub struct AxumRuntime {
     router: axum::Router,
     config: Cfg<crate::AxumConfig>,
 
@@ -26,7 +25,7 @@ pub struct Axum {
     ws_endpoints: Vec<crate::ws::WebsocketHandler>,
 }
 
-impl Axum {
+impl AxumRuntime {
     pub(crate) fn new(router: axum::Router, config: Cfg<crate::AxumConfig>) -> Self {
         Self {
             router,
@@ -36,7 +35,7 @@ impl Axum {
         }
     }
 
-    /// Attaches the mounted ws endpoint handles (built by [`AxumPlugin`](crate::AxumPlugin)).
+    /// Attaches the mounted WebSocket endpoint handles.
     #[cfg(feature = "ws")]
     pub(crate) fn with_ws_endpoints(mut self, endpoints: Vec<crate::ws::WebsocketHandler>) -> Self {
         self.ws_endpoints = endpoints;
@@ -138,11 +137,11 @@ impl Axum {
     }
 }
 
-impl Protocol for Axum {
+impl ProtocolRuntime for AxumRuntime {
     type Error = crate::Error;
 }
 
-impl Serve<SocketAddr> for Axum {
+impl Serve<SocketAddr> for AxumRuntime {
     async fn serve(
         self,
         _runtime: AppRuntime,
@@ -155,7 +154,7 @@ impl Serve<SocketAddr> for Axum {
     }
 }
 
-impl Serve<()> for Axum {
+impl Serve<()> for AxumRuntime {
     async fn serve(
         self,
         _runtime: AppRuntime,
@@ -171,7 +170,7 @@ impl Serve<()> for Axum {
     }
 }
 
-impl Serve<TcpListener> for Axum {
+impl Serve<TcpListener> for AxumRuntime {
     async fn serve(
         self,
         _runtime: AppRuntime,

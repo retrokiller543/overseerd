@@ -1,6 +1,6 @@
 //! The protocol-facing runtime handle.
 //!
-//! [`AppRuntime`] is the cheap-clone handle a [`Protocol`](crate::protocol::Protocol)
+//! [`AppRuntime`] is the cheap-clone handle a [`ProtocolRuntime`](crate::ProtocolRuntime)
 //! receives to drive requests through the DI container and reach the app's support
 //! systems. It owns the *agnostic* runtime state — the built scope containers, the
 //! per-scope construction orders, and the hook manager — that the serve loop used to

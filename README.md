@@ -117,7 +117,7 @@ async fn main() -> overseerd::axum::Result<()> {
     // Each `#[controller]` self-registers; `app!` only needs the protocol.
     let app = app! {
         name: "my-service",
-        protocol: AxumPlugin,
+        protocol: Axum,
     }
     .build()
     .await?;
@@ -126,7 +126,7 @@ async fn main() -> overseerd::axum::Result<()> {
 }
 ```
 
-`AxumPlugin` always binds `[axum]`; every field has an environment-aware default, so the example
+`Axum` always binds `[axum]`; every field has an environment-aware default, so the example
 serves on `127.0.0.1:3000` even without a config file. Override listener and server-wide limits in
 `application.toml` (or with the corresponding `AXUM_*` environment variables):
 
@@ -176,7 +176,7 @@ use overseerd::daemon::prelude::*;
 async fn main() -> overseerd::daemon::Result<()> {
     let app = app! {
         name: "notifyd",
-        protocol: RpcPlugin,
+        protocol: Rpc,
     }
     .build()
     .await?;

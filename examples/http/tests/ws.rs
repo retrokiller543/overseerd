@@ -94,7 +94,7 @@ impl Sock {
 async fn ws_controller_dispatches_and_injects() {
     let app = app! {
         name: "ws-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws::<JsonWs>("/ws")
     .build()

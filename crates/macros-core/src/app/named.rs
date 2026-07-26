@@ -152,7 +152,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
             ///
             /// This consumes the stored `PreparedApp`, constructs singleton components and the
             /// root DI container in the previously validated order, attaches component hooks and
-            /// the root resolver, creates `AppRuntime`, finalizes the protocol plugin, and runs
+            /// the root resolver, creates `AppRuntime`, constructs the protocol runtime, and runs
             /// `after_build`. It then resolves typed inline serve parameters from the built root
             /// container and consumes the lifecycle context and app in the declared serve body.
             /// Setup, builder configuration, auto-discovery, config resolution, and graph
@@ -278,7 +278,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
             /// The builder receives the declared name and protocol and enables link-time
             /// auto-discovery. Calling `auto_discover` immediately collects all link-time component,
             /// provider, and config-binding descriptors into the builder registry and asks the
-            /// protocol plugin to collect its link-time variants, such as RPC service descriptors.
+            /// protocol definition to collect its link-time variants, such as RPC service descriptors.
             /// Every expression in `components` is then registered as an explicit pre-built
             /// instance; every `Type => "path"` entry in `configs` becomes an explicit config
             /// binding; explicit config or directories managers, middleware, guards, and the error
@@ -287,7 +287,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
             ///
             /// The `services` list does not register runtime services. Under `di-check`, it emits
             /// compile-time `Wired` assertions for the listed service dependency graphs. Runtime
-            /// protocol services come from the protocol plugin's link-time auto-discovery.
+            /// protocol services come from the protocol definition's link-time auto-discovery.
             ///
             /// This method does not run setup/configure hooks, load default platform config,
             /// collect auto-discovered config bindings, register protocol/framework descriptors,
@@ -361,7 +361,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
             /// resolution, protocol/framework registration, and complete DI/config validation.
             /// Construction then builds singleton components in validated dependency order, creates
             /// the root DI container, attaches component hooks and the `RootResolver`, creates
-            /// `AppRuntime`, finalizes the protocol plugin, and invokes `after_build`.
+            /// `AppRuntime`, constructs the protocol runtime, and invokes `after_build`.
             ///
             /// This method does not invoke the declared serve phase, open a transport, run startup
             /// hooks, or wait for shutdown. Tooling mode is rejected before component or protocol
@@ -423,7 +423,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
             /// This performs every registration, auto-discovery, config/directory resolution,
             /// validation, and construction-planning step documented by `prepare()`. It then builds
             /// singleton components, creates the root DI container, attaches hooks and the root
-            /// resolver, creates `AppRuntime`, finalizes the protocol plugin, and runs
+            /// resolver, creates `AppRuntime`, constructs the protocol runtime, and runs
             /// `after_build`. Setup is not repeated. The serve phase, transport startup, startup
             /// hooks, and shutdown wait do not run.
             ///
@@ -453,7 +453,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
             /// Borrows the prepared application before component and protocol construction.
             ///
             /// It contains the effective validated registry, resolved config slots and reload
-            /// metadata, framework seed instances, protocol accumulator, scope registry, provider
+            /// metadata, framework seed instances, prepared protocol state, scope registry, provider
             /// ordering, and component construction plans produced by auto-discovery plus explicit
             /// registration. Ordinary components, the root container, `AppRuntime`, and the
             /// finalized protocol do not exist yet.
@@ -480,7 +480,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
             ///
             /// This builds singleton components in the validated dependency order, creates the
             /// root DI container, attaches component hooks and the root resolver, creates
-            /// `AppRuntime`, finalizes the protocol plugin, and invokes `after_build`. It does not
+            /// `AppRuntime`, constructs the protocol runtime, and invokes `after_build`. It does not
             /// repeat setup, builder configuration, auto-discovery, registration, config
             /// resolution, or graph validation. It also does not invoke serve, open a transport,
             /// run startup hooks, or wait for shutdown. Tooling mode is rejected before build.

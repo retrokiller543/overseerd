@@ -1,6 +1,6 @@
 use std::future::Future;
 
-use crate::{App, AppHost, BootstrapContext, PreparedApp, ProtocolPlugin};
+use crate::{App, AppHost, BootstrapContext, PreparedApp, ProtocolDefinition};
 
 /// The minimum application state required by a CLI command.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -39,10 +39,10 @@ pub struct CommandContext<H: AppHost> {
 }
 
 /// Application state carried by a command context.
-enum CommandState<P: ProtocolPlugin> {
+enum CommandState<D: ProtocolDefinition> {
     Setup,
-    Configured(PreparedApp<P>),
-    Built(App<P>),
+    Configured(PreparedApp<D>),
+    Built(App<D>),
 }
 
 impl<H: AppHost> CommandContext<H> {

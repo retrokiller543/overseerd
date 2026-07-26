@@ -204,7 +204,7 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// app! {
 ///     pub app Example {
 ///         name: "example-daemon",
-///         protocol: overseerd::daemon::RpcPlugin,
+///         protocol: overseerd::daemon::Rpc,
 ///         services: [Notifications, Echo],
 ///         configs: [DbConfig => "app.db.reader", DbConfig => "app.db.writer"],
 ///     }
@@ -302,7 +302,7 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// app! {
 ///     app Example {
 ///         name: "example-daemon",
-///         protocol: RpcPlugin,
+///         protocol: Rpc,
 ///         args: { output: OutputArgs },
 ///         commands: {
 ///             #[command(alias = "db", display_order = 10)]

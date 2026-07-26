@@ -53,7 +53,7 @@ impl GreetController {
 A `proc-macro = true` crate built on `overseerd-macros-core` (which supplies `MethodArgs`, `Paths`,
 `run`, `expand_component`, and the shared method codegen). It is a direct dependency of
 `overseerd-axum`, which re-exports every macro at its crate root; the core macros (`app!`,
-`#[component]`, …) come from `overseerd` instead. `axum_paths()` selects the generated plugin-type
+`#[component]`, …) come from `overseerd` instead. `axum_paths()` selects the generated protocol-type
 root: `::overseerd::axum` under the `facade` feature, else the standalone `::overseerd_axum` — while
 core vocabulary is always rooted at `::overseerd` either way.
 
@@ -66,4 +66,4 @@ core vocabulary is always rooted at `::overseerd` either way.
 | `tungstenite` | Pure codegen signal that the WS transport is available, so STOMP `#[topics]`/`#[message]` codegen may emit the wasm binding over `StompClientTransport`. Implies `client`. |
 | `wasm-ts` | Opt into the newer `tsify` `Ts<T>` wasm ABI: `#[dto]` derives plain `Tsify` and the client marshals via `Ts<T>` (needs unreleased `tsify`). |
 | `di-check` | Emit compile-time DI assertions (forwarded to `overseerd-macros-core`). |
-| `facade` | Root generated plugin types at `::overseerd::axum::*` (set by the `overseerd` facade) instead of the standalone `::overseerd_axum::*`. |
+| `facade` | Root generated protocol types at `::overseerd::axum::*` (set by the `overseerd` facade) instead of the standalone `::overseerd_axum::*`. |

@@ -48,7 +48,7 @@ use proc_macro2::TokenStream;
 use syn::{DeriveInput, ItemImpl, ItemStruct, ItemTrait};
 
 /// `app!` / `daemon!` expansion entry point. The protocol-agnostic core assembly macro; the
-/// `protocol:` field selects the protocol plugin.
+/// `protocol:` field selects the protocol definition.
 pub fn app(input: TokenStream) -> TokenStream {
     run::<app::AppInput, _>(input, |input| Ok(app::expand(input)))
 }

@@ -4,7 +4,8 @@ use clap::{CommandFactory as _, Parser as _};
 use overseerd::config::Toml;
 use overseerd::{
     App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, CliCommand, CliError,
-    CommandContext, CommandPhase, ConfigManager, Plugin, Protocol, ProtocolPlugin, app, component,
+    CommandContext, CommandPhase, ConfigManager, PreparedProtocol, ProtocolDefinition,
+    ProtocolRuntime, app, component,
 };
 
 static SETUP_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -40,32 +41,47 @@ async fn build_marker() -> BuildMarker {
     BuildMarker
 }
 
-/// Test protocol plugin accumulated by the command application.
+/// Test protocol definition accumulated by the command application.
 #[derive(Default)]
-pub struct TestPlugin;
-
-impl Plugin for TestPlugin {
-    fn register(&self, _registry: &mut AppRegistry) {}
-}
-
-/// Built protocol used to observe construction without serving.
 pub struct TestProtocol;
 
-impl Protocol for TestProtocol {
-    type Error = overseerd_app::Error;
-}
-
-impl ProtocolPlugin for TestPlugin {
-    type Protocol = TestProtocol;
+impl ProtocolDefinition for TestProtocol {
+    type Prepared = PreparedTestProtocol;
     type Error = overseerd_app::Error;
 
+    const ID: overseerd::ProtocolId =
+        overseerd::namespaced_id!(overseerd::ProtocolId, "test/app-commands");
     const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
 
-    fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
+    fn register(&self, _registry: &mut AppRegistry) {}
+
+    fn prepare(
+        self,
+        _context: &overseerd::ValidationContext<'_>,
+    ) -> Result<Self::Prepared, Self::Error> {
+        Ok(PreparedTestProtocol)
+    }
+}
+
+/// Prepared protocol used to observe the construction boundary.
+pub struct PreparedTestProtocol;
+
+/// Built protocol runtime used to observe construction without serving.
+pub struct TestRuntime;
+
+impl PreparedProtocol for PreparedTestProtocol {
+    type Runtime = TestRuntime;
+    type Error = overseerd_app::Error;
+
+    fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
         PROTOCOL_BUILDS.fetch_add(1, Ordering::SeqCst);
 
-        Ok(TestProtocol)
+        Ok(TestRuntime)
     }
+}
+
+impl ProtocolRuntime for TestRuntime {
+    type Error = overseerd_app::Error;
 }
 
 /// Runs after generated bootstrap but before application configuration.
@@ -176,8 +192,8 @@ async fn setup(mut context: BootstrapContext) -> std::io::Result<BootstrapContex
 
 async fn configure(
     _context: &mut BootstrapContext,
-    builder: AppBuilder<TestPlugin>,
-) -> std::io::Result<AppBuilder<TestPlugin>> {
+    builder: AppBuilder<TestProtocol>,
+) -> std::io::Result<AppBuilder<TestProtocol>> {
     CONFIGURE_CALLS.fetch_add(1, Ordering::SeqCst);
 
     Ok(builder)
@@ -185,14 +201,14 @@ async fn configure(
 
 async fn after_build(
     _context: &mut BootstrapContext,
-    app: App<TestPlugin>,
-) -> std::io::Result<App<TestPlugin>> {
+    app: App<TestProtocol>,
+) -> std::io::Result<App<TestProtocol>> {
     AFTER_BUILD_CALLS.fetch_add(1, Ordering::SeqCst);
 
     Ok(app)
 }
 
-async fn serve(_context: BootstrapContext, _app: App<TestPlugin>) -> std::io::Result<()> {
+async fn serve(_context: BootstrapContext, _app: App<TestProtocol>) -> std::io::Result<()> {
     SERVE_CALLS.fetch_add(1, Ordering::SeqCst);
 
     Ok(())
@@ -201,7 +217,7 @@ async fn serve(_context: BootstrapContext, _app: App<TestPlugin>) -> std::io::Re
 app! {
     pub app CommandApplication {
         name: "command-app-test",
-        protocol: TestPlugin,
+        protocol: TestProtocol,
         managers: {
             config: ConfigManager::<Toml>::empty(),
         },

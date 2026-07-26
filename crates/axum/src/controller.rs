@@ -3,7 +3,7 @@
 //! A controller is a DI singleton (like an RPC service) annotated with `#[controller]`. Its
 //! `#[handlers]` impl blocks contribute routes. The macro emits a [`ControllerDescriptor`]
 //! into the [`CONTROLLERS`] slice and an implementation of [`Controller`]; the
-//! [`AxumPlugin`](crate::AxumPlugin) folds the slice on `auto_discover` and merges each
+//! [`Axum`](crate::Axum) folds the slice on `auto_discover` and merges each
 //! controller's [`axum::Router`] when the protocol is built.
 
 use std::sync::Arc;
@@ -56,7 +56,7 @@ pub struct ControllerDescriptor {
 }
 
 /// The link-time slice every `#[controller]` registers into, mirroring the RPC `SERVICES`
-/// slice. [`AxumPlugin::auto_discover`](crate::AxumPlugin) folds it into the builder.
+/// slice. [`Axum::auto_discover`](crate::Axum) folds it into the builder.
 #[linkme::distributed_slice]
 pub static CONTROLLERS: [ControllerDescriptor];
 

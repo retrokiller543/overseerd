@@ -10,7 +10,8 @@ use overseerd::config::Toml;
 use overseerd::daemon::App;
 use overseerd::{ConfigManager, Shutdown, Startup, component, methods};
 use overseerd_app::{
-    AppRegistry, AppRuntime, Plugin, Protocol, ProtocolPlugin, Serve, ShutdownSignal,
+    AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
+    ShutdownSignal,
 };
 
 /// Records that its startup and shutdown hooks ran.
@@ -278,30 +279,44 @@ async fn later_startup_failure_preserves_cleanup_for_an_already_started_componen
 }
 
 #[derive(Default)]
-struct PanickingPlugin;
-
 struct PanickingProtocol;
 
-impl Plugin for PanickingPlugin {
-    fn register(&self, _registry: &mut AppRegistry) {}
-}
+struct PreparedPanickingProtocol;
 
-impl ProtocolPlugin for PanickingPlugin {
-    type Protocol = PanickingProtocol;
+struct PanickingRuntime;
+
+impl ProtocolDefinition for PanickingProtocol {
+    type Prepared = PreparedPanickingProtocol;
     type Error = overseerd_app::Error;
 
+    const ID: overseerd::ProtocolId =
+        overseerd::namespaced_id!(overseerd::ProtocolId, "test/panicking");
     const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
 
-    fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
-        Ok(PanickingProtocol)
+    fn register(&self, _registry: &mut AppRegistry) {}
+
+    fn prepare(
+        self,
+        _context: &overseerd::ValidationContext<'_>,
+    ) -> Result<Self::Prepared, Self::Error> {
+        Ok(PreparedPanickingProtocol)
     }
 }
 
-impl Protocol for PanickingProtocol {
+impl PreparedProtocol for PreparedPanickingProtocol {
+    type Runtime = PanickingRuntime;
+    type Error = overseerd_app::Error;
+
+    fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
+        Ok(PanickingRuntime)
+    }
+}
+
+impl ProtocolRuntime for PanickingRuntime {
     type Error = overseerd_app::Error;
 }
 
-impl Serve<()> for PanickingProtocol {
+impl Serve<()> for PanickingRuntime {
     async fn serve(
         self,
         _runtime: AppRuntime,
@@ -314,7 +329,7 @@ impl Serve<()> for PanickingProtocol {
 
 #[tokio::test]
 async fn protocol_panic_still_runs_shutdown_hooks() {
-    let app = overseerd_app::App::<PanickingPlugin>::builder("panic-cleanup-test")
+    let app = overseerd_app::App::<PanickingProtocol>::builder("panic-cleanup-test")
         .config_source(ConfigManager::<Toml>::empty())
         .component::<LifecycleComponent>()
         .build()

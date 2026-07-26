@@ -26,7 +26,8 @@ use tracing::{debug, error, info};
 use crate::error::Error;
 use crate::lifecycle::{ShutdownHandle, ShutdownSignal};
 use crate::protocol::{
-    Plugin, PreBuildContext, Protocol, ProtocolPlugin, Serve, ValidationContext,
+    Plugin, PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
+    ValidationContext,
 };
 use crate::registry::AppRegistry;
 use crate::runtime::{AppRuntime, RuntimeScopePlan};
@@ -56,13 +57,13 @@ static HOOK_MANAGER_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manua
     &SingletonScope,
 );
 
-/// Assembles an [`App`] from an explicit set of components and the protocol plugin.
+/// Assembles an [`App`] from an explicit set of components and a protocol definition.
 ///
-/// Generic over the [`ProtocolPlugin`] it installs. The agnostic builder methods (config,
+/// Generic over the [`ProtocolDefinition`] it prepares. The agnostic builder methods (config,
 /// components, directories, auto-discovery) live here; protocol-specific methods come from
 /// an extension trait (e.g. `RpcAppBuilder` in `overseerd-rpc`), so the same builder serves
 /// any protocol.
-pub struct AppBuilder<P: ProtocolPlugin> {
+pub struct AppBuilder<D: ProtocolDefinition> {
     name: String,
     registry: AppRegistry,
     instances: Vec<BoxedComponent>,
@@ -70,20 +71,19 @@ pub struct AppBuilder<P: ProtocolPlugin> {
     /// Whether `auto_discover` was called: config auto-registration is gated on it.
     auto_discover_configs: bool,
     dirs: Option<DirectoriesManager>,
-    /// The protocol plugin: the builder-time accumulator for the installed protocol's
-    /// own configuration.
-    protocol: P,
+    /// The selected protocol definition and its accumulated configuration.
+    protocol: D,
 }
 
 /// A validated application assembly awaiting runtime component construction.
 ///
 /// Preparation resolves registrations, configuration, protocol validation, and scope plans
 /// without invoking factory-backed application components or constructing the served protocol.
-pub struct PreparedApp<P: ProtocolPlugin> {
+pub struct PreparedApp<D: ProtocolDefinition> {
     name: String,
     registry: AppRegistry,
     instances: Vec<BoxedComponent>,
-    protocol: P,
+    protocol: D::Prepared,
     shutdown: ShutdownSignal,
     root_resolver: RootResolver,
     hook_manager: HookManager,
@@ -98,7 +98,7 @@ pub struct PreparedApp<P: ProtocolPlugin> {
     resolvers: ResolverSet,
 }
 
-impl<P: ProtocolPlugin> AppBuilder<P> {
+impl<D: ProtocolDefinition> AppBuilder<D> {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -107,12 +107,12 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
             config_source: None,
             auto_discover_configs: false,
             dirs: None,
-            protocol: P::default(),
+            protocol: D::default(),
         }
     }
 
-    /// Mutable access to the protocol accumulator, for protocol-specific extension traits.
-    pub fn protocol_mut(&mut self) -> &mut P {
+    /// Mutable access to the protocol definition, for protocol-specific extension traits.
+    pub fn protocol_mut(&mut self) -> &mut D {
         &mut self.protocol
     }
 
@@ -161,7 +161,7 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
     }
 
     /// Merges every link-time-registered component and provider descriptor (and the
-    /// protocol's own variants, via [`Plugin::auto_discover`]) into the app, and enables
+    /// protocol's own variants) into the app, and enables
     /// config auto-discovery.
     pub fn auto_discover(mut self) -> Self {
         let discovered = AppRegistry::collect();
@@ -201,7 +201,7 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
     }
 
     /// Registers and validates the application without constructing ordinary components.
-    pub fn prepare(self) -> Result<PreparedApp<P>, P::Error> {
+    pub fn prepare(self) -> Result<PreparedApp<D>, D::Error> {
         debug!(target: "overseerd::app", app = %self.name, "building app");
 
         let mut registry = self.registry;
@@ -215,7 +215,7 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
         // once the root is built, so a singleton can resolve from the container after startup.
         let root_resolver = RootResolver::new();
 
-        // The protocol plugin contributes its DI descriptors (for RPC, the connection-scoped
+        // The protocol definition contributes its DI descriptors (for RPC, the connection-scoped
         // `PeerInfo` injectable) before validation.
         protocol.register(&mut registry);
 
@@ -255,7 +255,7 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
 
         registry.config_bindings = tree.bindings().to_vec();
 
-        let scope_topology = Arc::new(P::SCOPE_TOPOLOGY.prepare().map_err(Error::from)?);
+        let scope_topology = Arc::new(D::SCOPE_TOPOLOGY.prepare().map_err(Error::from)?);
 
         registry.validate_with_scope_topology(&scope_topology)?;
 
@@ -280,7 +280,7 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
         let (config_store, reload_slots) = ConfigStore::build(&tree).map_err(Error::from)?;
         let config_store = Arc::new(config_store);
 
-        protocol.validate(&ValidationContext::new(
+        let protocol = protocol.prepare(&ValidationContext::new(
             &self.name,
             &registry,
             config_store.as_ref(),
@@ -332,12 +332,12 @@ impl<P: ProtocolPlugin> AppBuilder<P> {
     }
 
     /// Validates, constructs, and finalizes a ready-to-run [`App`].
-    pub async fn build(self) -> Result<App<P>, P::Error> {
+    pub async fn build(self) -> Result<App<D>, D::Error> {
         self.prepare()?.build().await
     }
 }
 
-impl<P: ProtocolPlugin> PreparedApp<P> {
+impl<D: ProtocolDefinition> PreparedApp<D> {
     /// The configured application name.
     pub fn name(&self) -> &str {
         &self.name
@@ -348,9 +348,14 @@ impl<P: ProtocolPlugin> PreparedApp<P> {
         &self.registry
     }
 
-    /// The validated protocol accumulator awaiting runtime construction.
-    pub fn protocol(&self) -> &P {
+    /// The validated protocol state awaiting runtime construction.
+    pub fn protocol(&self) -> &D::Prepared {
         &self.protocol
+    }
+
+    /// The stable identity of the selected protocol definition.
+    pub const fn protocol_id(&self) -> crate::ProtocolId {
+        D::ID
     }
 
     /// The validated protocol-owned scope topology used for planning and runtime opening.
@@ -359,7 +364,7 @@ impl<P: ProtocolPlugin> PreparedApp<P> {
     }
 
     /// Constructs ordinary components and finalizes the application protocol.
-    pub async fn build(self) -> Result<App<P>, P::Error> {
+    pub async fn build(self) -> Result<App<D>, D::Error> {
         let PreparedApp {
             name,
             registry,
@@ -411,7 +416,7 @@ impl<P: ProtocolPlugin> PreparedApp<P> {
             hook_manager,
         );
 
-        // Hand off to the protocol plugin: it finalizes the served protocol.
+        // Hand off to the prepared protocol: it constructs the served runtime.
         let protocol = protocol.build(&runtime)?;
 
         Ok(App {
@@ -491,18 +496,18 @@ fn seed_dir<K: DirKind>(
 /// A fully assembled app, ready to serve its protocol.
 ///
 /// Holds the agnostic [`AppRuntime`] (DI container, scope orders, hooks) and the built
-/// [`Protocol`], plus the shutdown signal and config reloader the serve envelope drives.
-pub struct App<P: ProtocolPlugin> {
+/// [`ProtocolRuntime`], plus the shutdown signal and config reloader the serve envelope drives.
+pub struct App<D: ProtocolDefinition> {
     pub name: String,
     pub registry: AppRegistry,
     runtime: AppRuntime,
-    protocol: P::Protocol,
+    protocol: <D::Prepared as PreparedProtocol>::Runtime,
     shutdown: ShutdownSignal,
     reloader: ConfigReloader,
     reload_triggers: ReloadTriggers,
 }
 
-impl<P: ProtocolPlugin> fmt::Debug for App<P> {
+impl<D: ProtocolDefinition> fmt::Debug for App<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("App")
             .field("name", &self.name)
@@ -511,7 +516,7 @@ impl<P: ProtocolPlugin> fmt::Debug for App<P> {
     }
 }
 
-impl<P: ProtocolPlugin> fmt::Display for App<P> {
+impl<D: ProtocolDefinition> fmt::Display for App<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "App: {}", self.name)?;
         write!(f, "{}", self.registry)?;
@@ -520,11 +525,11 @@ impl<P: ProtocolPlugin> fmt::Display for App<P> {
     }
 }
 
-impl<P: ProtocolPlugin> App<P> {
-    /// Starts building an app for protocol plugin `P`. Most protocols expose a pinned
-    /// alias (e.g. `overseerd_rpc::App = App<RpcPlugin>`) so `App::builder(name)` resolves
+impl<D: ProtocolDefinition> App<D> {
+    /// Starts building an app for protocol definition `D`. Most protocols expose a pinned
+    /// alias (e.g. `overseerd_rpc::App = App<Rpc>`) so `App::builder(name)` resolves
     /// without a turbofish.
-    pub fn builder(name: impl Into<String>) -> AppBuilder<P> {
+    pub fn builder(name: impl Into<String>) -> AppBuilder<D> {
         AppBuilder::new(name)
     }
 
@@ -539,8 +544,13 @@ impl<P: ProtocolPlugin> App<P> {
     }
 
     /// The installed protocol.
-    pub fn protocol(&self) -> &P::Protocol {
+    pub fn protocol(&self) -> &<D::Prepared as PreparedProtocol>::Runtime {
         &self.protocol
+    }
+
+    /// The stable identity of the selected protocol definition.
+    pub const fn protocol_id(&self) -> crate::ProtocolId {
+        D::ID
     }
 
     /// Returns a handle that can trigger graceful shutdown from any spawned task.
@@ -563,10 +573,13 @@ impl<P: ProtocolPlugin> App<P> {
     /// The agnostic envelope: runs startup hooks, spawns config-reload triggers, bridges
     /// ctrl-c to the shutdown signal, then hands the runtime + shutdown signal to the
     /// protocol's [`Serve`] impl. Shutdown hooks run on the way out.
-    pub async fn serve<E>(self, endpoint: E) -> Result<(), <P::Protocol as Protocol>::Error>
+    pub async fn serve<E>(
+        self,
+        endpoint: E,
+    ) -> Result<(), <<D::Prepared as PreparedProtocol>::Runtime as ProtocolRuntime>::Error>
     where
-        P::Protocol: Serve<E>,
-        <P::Protocol as Protocol>::Error: From<crate::Error>,
+        <D::Prepared as PreparedProtocol>::Runtime: Serve<E>,
+        <<D::Prepared as PreparedProtocol>::Runtime as ProtocolRuntime>::Error: From<crate::Error>,
     {
         let App {
             runtime,

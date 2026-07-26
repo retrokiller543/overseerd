@@ -2,7 +2,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use super::{build_openapi, join_base, mount, normalize_prefix, spec_url};
+use super::{build_openapi, join_base, mount, normalize_prefix, spec_url, validate_config};
 use crate::config::{OpenApiConfig, OpenApiUi};
 
 /// Drives a `GET path` through `router` and returns `(status, body_string)`.
@@ -75,6 +75,26 @@ fn json_only_config() -> OpenApiConfig {
         ui_path: String::from("/docs"),
         title: String::from("Test"),
         version: String::from("1.0.0"),
+    }
+}
+
+#[test]
+fn invalid_mount_paths_are_rejected_before_router_construction() {
+    let mut config = json_only_config();
+    config.json_path = String::from("openapi.json");
+
+    let error = validate_config(&config).expect_err("relative JSON path must be rejected");
+
+    assert!(matches!(error, crate::Error::Config(_)), "got: {error}");
+
+    config.json_path = String::from("/openapi.json");
+    config.ui = OpenApiUi::Swagger;
+    config.ui_path = String::from("/docs/{tenant}");
+
+    if super::ui_is_compiled(config.ui) {
+        let error = validate_config(&config).expect_err("dynamic UI path must be rejected");
+
+        assert!(matches!(error, crate::Error::Config(_)), "got: {error}");
     }
 }
 

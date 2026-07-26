@@ -87,7 +87,7 @@ impl RestEvents {
 async fn stomp_send_is_broadcast_to_typed_subscribers() {
     let app = app! {
         name: "stomp-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws::<Stomp>("/stomp")
     .build()
@@ -147,7 +147,7 @@ async fn stomp_connect_authentication_and_explicit_disconnect_share_lifecycle() 
     });
     let app = app! {
         name: "stomp-auth-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws_with::<Stomp>("/stomp", config)
     .build()
@@ -245,7 +245,7 @@ impl StompAuthenticator for TokenAuth {
 async fn assert_credentials_are_enforced(config: StompConfig) {
     let app = app! {
         name: "stomp-auth-di-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws_with::<Stomp>("/stomp", config)
     .build()
@@ -309,7 +309,7 @@ async fn stomp_authenticator_resolves_a_di_component() {
 async fn http_handler_can_publish_to_typed_stomp_subscribers() {
     let app = app! {
         name: "stomp-http-publish-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws::<Stomp>("/stomp")
     .build()
@@ -424,7 +424,7 @@ impl Marked {
 async fn a_custom_codec_is_honored_on_both_ends_of_the_send_path() {
     let app = app! {
         name: "stomp-codec-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .register_ws::<Stomp>("/stomp")
     .build()

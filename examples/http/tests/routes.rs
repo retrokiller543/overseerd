@@ -101,7 +101,7 @@ impl TestController {
 async fn router() -> Router {
     let app = app! {
         name: "test-http",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: overseerd::axum::Axum,
     }
     .build()
     .await

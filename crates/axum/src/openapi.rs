@@ -166,9 +166,13 @@ pub(crate) fn validate_config(config: &OpenApiConfig) -> crate::Result<()> {
         return Ok(());
     }
 
+    crate::config::validate_mount_path("OpenAPI JSON path", &config.json_path)?;
+
     if !ui_is_compiled(config.ui) {
         return Ok(());
     }
+
+    crate::config::validate_mount_path("OpenAPI UI path", &config.ui_path)?;
 
     let json = config.json_path.trim_end_matches('/');
     let ui = config.ui_path.trim_end_matches('/');
