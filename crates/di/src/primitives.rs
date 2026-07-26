@@ -319,9 +319,17 @@ where
     let mut values = Vec::new();
 
     for provider in registry.providers_for_trait(std::any::TypeId::of::<T>()) {
-        let descriptor = registry
-            .factory_backed(provider.concrete_ty.type_id)
-            .ok_or_else(|| Error::UnsupportedFreshFactory(provider.concrete_ty.name.into()))?;
+        let Some(descriptor) = registry.factory_backed(provider.concrete_ty.type_id) else {
+            if registry.transient(provider.concrete_ty.type_id).is_some()
+                || scope.contains_built(provider.concrete_ty.type_id)
+            {
+                return Err(Error::UnsupportedFreshFactory(
+                    provider.concrete_ty.name.into(),
+                ));
+            }
+
+            continue;
+        };
 
         if !scope.can_access(descriptor.scope) {
             continue;

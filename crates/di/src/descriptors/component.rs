@@ -600,6 +600,18 @@ impl ComponentConstructionContext {
             return Ok(Some(handle));
         }
 
+        if let Some(handle) = crate::container::construct_fallback_transient_provider::<H>(
+            &self.registry,
+            self.parent.clone(),
+            self.slot.clone(),
+            self.store_handle(),
+            None,
+        )
+        .await?
+        {
+            return Ok(Some(handle));
+        }
+
         crate::container::construct_transient::<H>(
             &self.registry,
             self.parent.clone(),
@@ -640,7 +652,18 @@ impl ComponentConstructionContext {
             .as_ref()
             .and_then(|parent| parent.resolve_qualified_built::<H>(qualifier));
 
-        Ok(handle)
+        if handle.is_some() {
+            return Ok(handle);
+        }
+
+        crate::container::construct_fallback_transient_provider::<H>(
+            &self.registry,
+            self.parent.clone(),
+            self.slot.clone(),
+            self.store_handle(),
+            Some(qualifier),
+        )
+        .await
     }
 
     /// Every provider of the trait `H::Target` across this scope and its parents.
