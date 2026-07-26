@@ -1,5 +1,5 @@
 //! Phase 4 triggers: `ConfigManager` carries the opt-in reload triggers (config lives on the
-//! manager, never the daemon), the `app!` macro can construct + configure a manager from a
+//! manager, never a protocol), the `app!` macro can construct + configure a manager from a
 //! per-manager config block, and — under the `watch` feature — a file change drives a reload.
 #![allow(dead_code)]
 
@@ -11,11 +11,11 @@ use overseerd::ConfigManager;
 #[cfg(feature = "daemon")]
 use overseerd::app;
 use overseerd::config::Toml;
-#[cfg(feature = "daemon")]
+#[cfg(any(feature = "daemon", feature = "watch"))]
 use overseerd::dirs::{Config, DirectoriesManager};
 
-#[cfg(all(feature = "daemon", feature = "watch"))]
-use overseerd::daemon::App;
+#[cfg(feature = "watch")]
+use overseerd::App;
 
 fn temp_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("overseerd-triggers-{tag}-{}", std::process::id()));
@@ -74,7 +74,7 @@ async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::d
     Ok(())
 }
 
-#[cfg(all(feature = "daemon", feature = "watch"))]
+#[cfg(feature = "watch")]
 #[tokio::test]
 async fn watching_a_source_file_triggers_a_reload() {
     let root = temp_dir("watch");
@@ -90,19 +90,19 @@ async fn watching_a_source_file_triggers_a_reload() {
         .watch_config()
         .config_reload_debounce(Duration::from_millis(50));
 
-    let daemon = App::builder("watch-test")
+    let app = App::<()>::builder("watch-test")
         .config_source(manager)
         .build()
         .await
-        .expect("daemon builds");
+        .expect("protocol-neutral app builds");
 
-    let reloader = daemon.config_reloader();
-    let shutdown = daemon.shutdown_handle();
+    let reloader = app.config_reloader();
+    let shutdown = app.shutdown_handle();
     let before = reloader.generation();
 
     // `run` spawns the watch trigger task; drive it in the background.
     let task = tokio::spawn(async move {
-        let _ = daemon.run().await;
+        let _ = app.run().await;
     });
 
     // Let the watcher install before editing.
