@@ -182,8 +182,10 @@ fn generates_one_parser_subcommand_field_and_nested_delegation() {
     assert!(output.contains("enum ExampleApiUsersCommand"));
     assert!(output.contains("plugins . augment_cli"));
     assert!(output.contains("plugins . parse_cli_command"));
+    assert!(output.contains("impl ExampleApiUsersCommand"));
+    assert!(output.contains("dispatch_cli_command :: < Example < :: overseerd :: Initial >"));
     assert!(
-        output.contains(
+        !output.contains(
             "CliCommand < Example < :: overseerd :: Initial > > for ExampleApiUsersCommand"
         )
     );

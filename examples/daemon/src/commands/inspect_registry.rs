@@ -1,20 +1,20 @@
 use crate::DaemonApplication;
 use crate::commands::OutputArgs;
-use overseerd::{CliCommand, CommandContext, CommandContextError, CommandPhase};
+use overseerd::{CliCommand, CommandContext, CommandContextError, PreBuild};
 
 /// Prints the validated registry without constructing components or the RPC protocol.
 #[derive(clap::Args)]
 pub struct InspectRegistryCommand;
 
 impl CliCommand<DaemonApplication> for InspectRegistryCommand {
+    type Phase = PreBuild;
     type Error = CommandContextError;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Configured
-    }
-
-    async fn run(&self, context: CommandContext<DaemonApplication>) -> Result<(), Self::Error> {
-        let prepared = context.require_prepared()?;
+    async fn run(
+        &self,
+        context: CommandContext<DaemonApplication, Self::Phase>,
+    ) -> Result<(), Self::Error> {
+        let prepared = context.prepared();
         let verbose = context.require::<OutputArgs>()?.verbose;
 
         println!("Application: {}", prepared.name());

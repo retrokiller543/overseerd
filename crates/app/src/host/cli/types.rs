@@ -215,7 +215,7 @@ pub enum CliError {
     /// An application-defined command failed.
     #[error(transparent)]
     Command(#[from] CommandError),
-    /// Generated command dispatch received inconsistent lifecycle state.
+    /// A command required a typed bootstrap value that was not available.
     #[error(transparent)]
     CommandContext(#[from] CommandContextError),
 }

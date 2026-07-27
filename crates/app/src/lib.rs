@@ -42,11 +42,12 @@ pub use host::{
 #[cfg(feature = "cli")]
 pub use host::{
     BootstrapError, BootstrapOptions, BootstrapPolicy, BootstrapState, CliCommand,
-    CliDefinitionError, CliDefinitionSource, CliError, ColorChoice, CommandContext,
-    CommandContextError, CommandError, CommandPhase, ParsedPluginArgs, PluginCliCommand,
+    CliDefinitionError, CliDefinitionSource, CliError, CliPhase, ColorChoice, CommandContext,
+    CommandContextError, CommandError, ParsedPluginArgs, PluginCliCommand, PluginCliPhase,
     PluginCliProviderKind, PluginCliProviderMetadata, PluginCliRegistrar, PluginCommandContext,
     SelectedPluginCliCommand, bootstrap_application, bootstrap_application_with_policy,
-    configure_bootstrap_config, configure_bootstrap_directories, finalize_bootstrap, validate_cli,
+    configure_bootstrap_config, configure_bootstrap_directories, dispatch_cli_command,
+    finalize_bootstrap, prepare_cli_context, validate_cli,
 };
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use overseerd_core::{Scope, ScopeId, StaticScope, namespaced_id};

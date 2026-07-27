@@ -283,17 +283,14 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 ///
 /// impl CliCommand<Example> for MigrateCommand {
+///     type Phase = Built;
 ///     type Error = MigrationError;
-///
-///     fn phase(&self) -> CommandPhase {
-///         CommandPhase::Built
-///     }
 ///
 ///     async fn run(
 ///         &self,
-///         context: CommandContext<Example>,
+///         context: CommandContext<Example, Self::Phase>,
 ///     ) -> Result<(), Self::Error> {
-///         let app = context.require_app()?;
+///         let app = context.app();
 ///         // Resolve migration dependencies from `app.container()`.
 ///         Ok(())
 ///     }

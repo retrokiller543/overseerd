@@ -6,7 +6,7 @@ use std::fmt::Write;
 use overseerd_config::{CONFIG_BINDINGS, ConfigBinding};
 use overseerd_core::DependencyDescriptor;
 use overseerd_di::{
-    COMPONENTS, ComponentDescriptor, ComponentRegistry, PROVIDERS, ProviderDescriptor,
+    COMPONENTS, Component, ComponentDescriptor, ComponentRegistry, PROVIDERS, ProviderDescriptor,
 };
 
 use crate::error::Error;
@@ -71,6 +71,19 @@ impl AppRegistry {
     /// Collapses the registered descriptors to one per type (delegated to the DI engine).
     pub fn resolved_components(&self) -> crate::Result<Vec<ComponentDescriptor>> {
         Ok(self.component_registry().resolved_components()?)
+    }
+
+    /// Returns the effective descriptor registered for component type `T`.
+    ///
+    /// Duplicate registrations are resolved by the same rules used during registry validation.
+    pub fn resolved_component<T: Component>(&self) -> crate::Result<Option<ComponentDescriptor>> {
+        let type_id = TypeId::of::<T>();
+        let component = self
+            .resolved_components()?
+            .into_iter()
+            .find(|component| component.ty.type_id == type_id);
+
+        Ok(component)
     }
 
     /// Validates structural consistency: the component graph (via the DI engine), then the
@@ -211,13 +224,14 @@ impl fmt::Display for AppRegistry {
 
 #[cfg(test)]
 mod tests {
+    use std::any::TypeId;
     use std::future::Future;
     use std::pin::Pin;
 
     use overseerd_config::{ConfigBinding, ConfigProperties};
     use overseerd_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
     use overseerd_di::{
-        BoxedComponent, ComponentConstructionContext, ComponentDescriptor,
+        BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
         ComponentFactoryDescriptor, Singleton,
     };
 
@@ -229,6 +243,19 @@ mod tests {
 
     impl ConfigProperties for TestConfig {
         const NAME: &'static str = "TestConfig";
+    }
+
+    struct RegisteredComponent;
+
+    impl Component for RegisteredComponent {
+        const ID: &'static str = "registered";
+        const NAME: &'static str = "RegisteredComponent";
+
+        type Handle = std::sync::Arc<Self>;
+
+        fn into_handle(self) -> Self::Handle {
+            std::sync::Arc::new(self)
+        }
     }
 
     fn fake_factory<'a>(
@@ -269,6 +296,23 @@ mod tests {
             factories: config_factories,
             hooks: overseerd_hooks::no_hooks,
         }
+    }
+
+    #[test]
+    fn resolves_component_descriptor_by_concrete_type() {
+        let registry = AppRegistry {
+            components: vec![ComponentDescriptor::of::<RegisteredComponent>()],
+            providers: Vec::new(),
+            config_bindings: Vec::new(),
+        };
+
+        let descriptor = registry
+            .resolved_component::<RegisteredComponent>()
+            .expect("component resolution succeeds")
+            .expect("typed component is registered");
+
+        assert_eq!(descriptor.id, RegisteredComponent::ID);
+        assert_eq!(descriptor.ty.type_id, TypeId::of::<RegisteredComponent>());
     }
 
     #[test]
