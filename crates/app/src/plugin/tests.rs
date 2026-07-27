@@ -10,7 +10,9 @@ use overseerd_di::{
     ComponentFactoryDescriptor, ProviderDescriptor, Singleton,
 };
 
-use super::{Plugin, PluginCatalog, PluginContributions, ProtocolPluginRegistrar};
+use super::{
+    Plugin, PluginCatalog, PluginContributions, PluginWithOptions, ProtocolPluginRegistrar,
+};
 use crate::composition::{PluginRelation, RelationKind, RelationTarget};
 use crate::{
     App, AppBuilder, AppHost, AppRegistry, ExecutionMode, ProtocolDefinition, ScopeTopology,
@@ -25,6 +27,7 @@ static DEFAULT_DISCOVERIES: AtomicUsize = AtomicUsize::new(0);
 static DEFAULT_CONTRIBUTIONS: AtomicUsize = AtomicUsize::new(0);
 static REPLACEMENT_DISCOVERIES: AtomicUsize = AtomicUsize::new(0);
 static REPLACEMENT_CONTRIBUTIONS: AtomicUsize = AtomicUsize::new(0);
+static CONSTRUCTED_VALUES: AtomicUsize = AtomicUsize::new(0);
 
 const TEST_SLOT: crate::PluginSlotId =
     crate::namespaced_id!(crate::PluginSlotId, "test/default-slot");
@@ -132,7 +135,10 @@ static APPLICATION_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     hooks: overseerd_hooks::no_hooks,
 };
 
-#[derive(Default)]
+impl overseerd_core::Descriptor<ComponentDescriptor> for ApplicationComponent {
+    const DESCRIPTOR: ComponentDescriptor = APPLICATION_COMPONENT;
+}
+
 struct ProtocolPlugin;
 
 impl Plugin for ProtocolPlugin {
@@ -144,7 +150,7 @@ impl Plugin for ProtocolPlugin {
 
     fn contribute(self, contributions: &mut PluginContributions) {
         PROTOCOL_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
-        contributions.component(
+        contributions.component_descriptor(
             crate::namespaced_id!(crate::ContributionId, "test/protocol-component"),
             PROTOCOL_COMPONENT,
         );
@@ -167,7 +173,7 @@ impl Plugin for ApplicationPlugin {
 
     fn contribute(self, contributions: &mut PluginContributions) {
         APPLICATION_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
-        contributions.component(
+        contributions.component_descriptor(
             crate::namespaced_id!(crate::ContributionId, "test/application-component"),
             APPLICATION_COMPONENT,
         );
@@ -185,8 +191,8 @@ impl Plugin for DuplicateContributionPlugin {
         const ID: crate::ContributionId =
             crate::namespaced_id!(crate::ContributionId, "test/duplicate");
 
-        contributions.component(ID, PROTOCOL_COMPONENT);
-        contributions.component(ID, APPLICATION_COMPONENT);
+        contributions.component_descriptor(ID, PROTOCOL_COMPONENT);
+        contributions.component_descriptor(ID, APPLICATION_COMPONENT);
     }
 }
 
@@ -201,7 +207,7 @@ impl Plugin for AllContributionKindsPlugin {
     const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/all-kinds");
 
     fn contribute(self, contributions: &mut PluginContributions) {
-        contributions.component(
+        contributions.component_descriptor(
             crate::namespaced_id!(crate::ContributionId, "test/all-kinds-component"),
             APPLICATION_COMPONENT,
         );
@@ -257,7 +263,7 @@ impl ProtocolDefinition for DefaultProtocol {
     const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
 
     fn register_plugins(plugins: &mut ProtocolPluginRegistrar) {
-        plugins.optional_default::<DefaultPlugin>(TEST_SLOT);
+        plugins.optional_default(TEST_SLOT, DefaultPlugin);
     }
 
     fn register(&self, _registry: &mut AppRegistry) {}
@@ -276,7 +282,7 @@ impl AppHost for ReplacementHost {
     type Protocol = DefaultProtocol;
 
     fn declare_plugins(plugins: &mut super::ApplicationPluginRegistrar) {
-        plugins.replace::<ReplacementPlugin>(TEST_SLOT);
+        plugins.replace(TEST_SLOT, ReplacementPlugin);
     }
 
     fn builder() -> Result<AppBuilder<Self::Protocol>, overseerd_config::ConfigError> {
@@ -306,6 +312,27 @@ impl Plugin for StatefulPlugin {
     }
 }
 
+/// A non-default plugin constructed through explicit options or a supplied instance.
+struct ConstructedPlugin {
+    value: usize,
+}
+
+impl Plugin for ConstructedPlugin {
+    const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/constructed");
+
+    fn contribute(self, _contributions: &mut PluginContributions) {
+        CONSTRUCTED_VALUES.fetch_add(self.value, Ordering::SeqCst);
+    }
+}
+
+impl PluginWithOptions for ConstructedPlugin {
+    type Options = usize;
+
+    fn from_options(options: Self::Options) -> Self {
+        Self { value: options }
+    }
+}
+
 #[derive(Default)]
 struct TestProtocol;
 
@@ -317,7 +344,7 @@ impl ProtocolDefinition for TestProtocol {
     const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
 
     fn register_plugins(plugins: &mut ProtocolPluginRegistrar) {
-        plugins.mandatory::<ProtocolPlugin>();
+        plugins.mandatory(ProtocolPlugin);
     }
 
     fn register(&self, _registry: &mut AppRegistry) {}
@@ -400,6 +427,45 @@ fn independently_prepared_apps_own_distinct_retained_plugin_state() {
 }
 
 #[test]
+fn options_and_supplied_instances_converge_on_retained_plugins() {
+    CONSTRUCTED_VALUES.store(0, Ordering::SeqCst);
+
+    App::<()>::builder("options-plugin")
+        .register_plugin_with_options::<ConstructedPlugin>(20)
+        .prepare()
+        .expect("options plugin prepares");
+    App::<()>::builder("instance-plugin")
+        .with_plugin(ConstructedPlugin { value: 22 })
+        .prepare()
+        .expect("supplied plugin prepares");
+
+    assert_eq!(CONSTRUCTED_VALUES.load(Ordering::SeqCst), 42);
+}
+
+#[test]
+fn contribution_macro_supports_typed_and_expression_component_paths() {
+    let mut contributions = PluginContributions::new(AllContributionKindsPlugin::ID);
+
+    crate::contribute! {
+        to &mut contributions,
+        components: [
+            "test/macro-typed" => type ApplicationComponent,
+            "test/macro-expression" => PROTOCOL_COMPONENT
+        ],
+        providers: [
+            "test/macro-provider" => PLUGIN_PROVIDER,
+        ],
+        configs: [
+            "test/macro-config" => PluginConfig => "plugin",
+        ],
+    }
+
+    let contributions = contributions.finish().expect("macro IDs are unique");
+
+    assert_eq!(contributions.len(), 4);
+}
+
+#[test]
 fn discovery_is_skipped_when_the_builder_does_not_enable_it() {
     STATEFUL_VALUES.store(0, Ordering::SeqCst);
 
@@ -416,7 +482,7 @@ fn every_app_neutral_contribution_kind_lowers_with_metadata() {
     let mut catalog = PluginCatalog::new();
     let mut registry = AppRegistry::default();
 
-    catalog.register::<AllContributionKindsPlugin>();
+    catalog.with_plugin(AllContributionKindsPlugin);
 
     let plan = catalog
         .freeze(
@@ -487,7 +553,7 @@ fn replacement_executes_only_the_selected_plugin() {
 
     let prepared = App::<DefaultProtocol>::builder("replace-default")
         .auto_discover()
-        .with_plugin_declarations(|plugins| plugins.replace::<ReplacementPlugin>(TEST_SLOT))
+        .with_plugin_declarations(|plugins| plugins.replace(TEST_SLOT, ReplacementPlugin))
         .prepare()
         .expect("protocol default is replaced");
 

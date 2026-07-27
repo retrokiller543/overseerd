@@ -26,7 +26,8 @@ use tracing::{debug, error, info};
 use crate::error::Error;
 use crate::lifecycle::{ShutdownHandle, ShutdownSignal};
 use crate::plugin::{
-    ApplicationPluginRegistrar, EffectivePluginPlan, Plugin, PluginCatalog, ProtocolPluginRegistrar,
+    ApplicationPluginRegistrar, EffectivePluginPlan, Plugin, PluginCatalog, PluginWithOptions,
+    ProtocolPluginRegistrar,
 };
 use crate::protocol::{
     PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
@@ -200,8 +201,25 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
     }
 
     /// Retains plugin type `P` for deterministic composition during preparation.
-    pub fn register_plugin<P: Plugin>(mut self) -> Self {
-        self.plugins.register::<P>();
+    pub fn register_plugin<P: Plugin + Default>(mut self) -> Self {
+        self.plugins.with_plugin(P::default());
+
+        self
+    }
+
+    /// Retains plugin type `P` constructed synchronously from explicit options.
+    pub fn register_plugin_with_options<P: PluginWithOptions>(
+        mut self,
+        options: P::Options,
+    ) -> Self {
+        self.plugins.with_plugin(P::from_options(options));
+
+        self
+    }
+
+    /// Retains a supplied plugin instance for deterministic composition during preparation.
+    pub fn with_plugin<P: Plugin>(mut self, plugin: P) -> Self {
+        self.plugins.with_plugin(plugin);
 
         self
     }

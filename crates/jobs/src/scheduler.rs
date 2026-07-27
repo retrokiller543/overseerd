@@ -493,13 +493,18 @@ fn scheduler_hooks() -> &'static [HookDescriptor] {
 
 /// The [`ComponentDescriptor`] for the scheduler singleton, registered by the
 /// [`JobsPlugin`](crate::plugin::JobsPlugin).
-pub(crate) fn scheduler_descriptor() -> ComponentDescriptor {
-    ComponentDescriptor {
+impl overseerd_core::Descriptor<ComponentDescriptor> for JobScheduler {
+    const DESCRIPTOR: ComponentDescriptor = ComponentDescriptor {
         id: SCHEDULER_ID,
         name: SCHEDULER_NAME,
         ty: TypeDescriptor::of::<JobScheduler>(SCHEDULER_NAME),
         scope: &Singleton,
         factories: scheduler_factories,
         hooks: scheduler_hooks,
-    }
+    };
+}
+
+#[cfg(test)]
+pub(crate) fn scheduler_descriptor() -> ComponentDescriptor {
+    <JobScheduler as overseerd_core::Descriptor<ComponentDescriptor>>::DESCRIPTOR
 }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use overseerd::{
-    App, Component, ComponentDescriptor, CompositionDirective, ContributionId, InstallationOrigin,
+    App, Component, ComponentDescriptor, CompositionDirective, Descriptor, InstallationOrigin,
     InstallationProvenance, Plugin, PluginContributionKind, PluginContributions, PluginDeclaration,
     PluginId, ProtocolId, resolve_early_plugins,
 };
@@ -20,6 +20,10 @@ impl Component for FacadePluginComponent {
     }
 }
 
+impl Descriptor<ComponentDescriptor> for FacadePluginComponent {
+    const DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::of::<Self>();
+}
+
 /// A third-party plugin using only facade exports.
 #[derive(Default)]
 struct FacadePlugin;
@@ -28,10 +32,12 @@ impl Plugin for FacadePlugin {
     const ID: PluginId = overseerd::namespaced_id!(PluginId, "third-party/facade-plugin");
 
     fn contribute(self, contributions: &mut PluginContributions) {
-        contributions.component(
-            overseerd::namespaced_id!(ContributionId, "third-party/facade-component"),
-            ComponentDescriptor::of::<FacadePluginComponent>(),
-        );
+        overseerd::contribute! {
+            to contributions,
+            components: [
+                "third-party/facade-component" => type FacadePluginComponent,
+            ],
+        }
     }
 }
 

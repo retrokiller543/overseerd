@@ -49,7 +49,8 @@ pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use overseerd_core::{Scope, ScopeId, StaticScope, namespaced_id};
 pub use plugin::{
     ApplicationPluginRegistrar, EffectivePluginPlan, Plugin, PluginContribution,
-    PluginContributionKind, PluginContributions, PluginPlanError, ProtocolPluginRegistrar,
+    PluginContributionKind, PluginContributions, PluginPlanError, PluginWithOptions,
+    ProtocolPluginRegistrar,
 };
 pub use protocol::{
     PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
