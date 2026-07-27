@@ -641,7 +641,7 @@ async fn setup_command_does_not_configure_or_build() {
 }
 
 #[tokio::test]
-async fn protocol_and_application_plugin_commands_share_one_parser() {
+async fn application_plugin_command_composes_with_protocol_args() {
     reset_counters();
 
     CommandApplication::run_with([
@@ -661,7 +661,10 @@ async fn protocol_and_application_plugin_commands_share_one_parser() {
     assert_eq!(SETUP_CALLS.load(Ordering::SeqCst), 1);
     assert_eq!(CONFIGURE_CALLS.load(Ordering::SeqCst), 0);
     assert_eq!(SERVE_CALLS.load(Ordering::SeqCst), 0);
+}
 
+#[tokio::test]
+async fn protocol_plugin_command_composes_with_application_plugins() {
     reset_counters();
 
     CommandApplication::run_with(["command-app-test", "protocol-status"])
