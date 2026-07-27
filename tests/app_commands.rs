@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use clap::{CommandFactory as _, Parser as _};
 use overseerd::config::Toml;
 use overseerd::{
-    App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, CliCommand, CliError,
-    CommandContext, CommandPhase, ConfigManager, ContributionId, Plugin, PluginCliCommand,
-    PluginCliRegistrar, PluginCommandContext, PluginContributions, PreparedProtocol,
-    ProtocolDefinition, ProtocolPluginRegistrar, ProtocolRuntime, app, component,
+    App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, Built, CliCommand, CliError,
+    CommandContext, ConfigManager, ContributionId, Plugin, PluginCliCommand, PluginCliRegistrar,
+    PluginCommandContext, PluginContributions, PreBuild, PreparedProtocol, ProtocolDefinition,
+    ProtocolPluginRegistrar, ProtocolRuntime, Setup, app, component,
 };
 
 static SETUP_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -84,14 +84,10 @@ pub struct ProtocolPluginArgs {
 pub struct PluginInspectCommand;
 
 impl PluginCliCommand for PluginInspectCommand {
+    type Phase = Setup;
     type Error = std::io::Error;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Setup
-    }
-
-    async fn run(&self, context: PluginCommandContext) -> Result<(), Self::Error> {
-        assert_eq!(context.phase(), CommandPhase::Setup);
+    async fn run(&self, context: PluginCommandContext<Self::Phase>) -> Result<(), Self::Error> {
         assert_eq!(
             context
                 .require::<ProtocolPluginArgs>()
@@ -114,15 +110,10 @@ pub enum ProtocolPluginCommands {
 }
 
 impl PluginCliCommand for ProtocolPluginCommands {
+    type Phase = Setup;
     type Error = std::io::Error;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Setup
-    }
-
-    async fn run(&self, context: PluginCommandContext) -> Result<(), Self::Error> {
-        assert_eq!(context.phase(), CommandPhase::Setup);
-
+    async fn run(&self, _context: PluginCommandContext<Self::Phase>) -> Result<(), Self::Error> {
         PLUGIN_COMMAND_RUNS.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -196,17 +187,19 @@ impl Plugin for ApplicationCliPlugin {
 pub struct PluginCatalogCommand;
 
 impl PluginCliCommand for PluginCatalogCommand {
+    type Phase = PreBuild;
     type Error = std::io::Error;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Configured
-    }
-
-    async fn run(&self, context: PluginCommandContext) -> Result<(), Self::Error> {
-        assert_eq!(context.phase(), CommandPhase::Configured);
-        assert_eq!(context.application_name(), Some("plugin-only-command-test"));
-        assert!(context.registry().is_some());
-        assert!(context.plugin_plan().is_some());
+    async fn run(&self, context: PluginCommandContext<Self::Phase>) -> Result<(), Self::Error> {
+        assert_eq!(context.application_name(), "plugin-only-command-test");
+        assert!(
+            context
+                .registry()
+                .resolved_component::<BuildMarker>()
+                .expect("validated registry resolves components")
+                .is_some()
+        );
+        assert!(!context.plugin_plan().resolution().plugins().is_empty());
 
         PLUGIN_COMMAND_RUNS.fetch_add(1, Ordering::SeqCst);
 
@@ -219,18 +212,14 @@ impl PluginCliCommand for PluginCatalogCommand {
 pub struct PluginBuildCommand;
 
 impl PluginCliCommand for PluginBuildCommand {
+    type Phase = Built;
     type Error = overseerd::DiError;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Built
-    }
-
-    async fn run(&self, context: PluginCommandContext) -> Result<(), Self::Error> {
+    async fn run(&self, context: PluginCommandContext<Self::Phase>) -> Result<(), Self::Error> {
         let marker = context.resolve::<std::sync::Arc<BuildMarker>>().await?;
 
-        assert_eq!(context.phase(), CommandPhase::Built);
-        assert_eq!(context.application_name(), Some("plugin-only-command-test"));
-        assert!(context.plugin_plan().is_some());
+        assert_eq!(context.application_name(), "plugin-only-command-test");
+        assert!(!context.plugin_plan().resolution().plugins().is_empty());
         assert_eq!(std::sync::Arc::strong_count(&marker), 2);
         assert_eq!(PROTOCOL_DROPS.load(Ordering::SeqCst), 0);
 
@@ -335,14 +324,13 @@ impl Drop for TestRuntime {
 pub struct SetupCommand;
 
 impl CliCommand<CommandApplication> for SetupCommand {
+    type Phase = Setup;
     type Error = std::io::Error;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Setup
-    }
-
-    async fn run(&self, context: CommandContext<CommandApplication>) -> Result<(), Self::Error> {
-        assert_eq!(context.phase(), CommandPhase::Setup);
+    async fn run(
+        &self,
+        context: CommandContext<CommandApplication, Self::Phase>,
+    ) -> Result<(), Self::Error> {
         assert_eq!(
             context
                 .bootstrap()
@@ -350,9 +338,6 @@ impl CliCommand<CommandApplication> for SetupCommand {
                 .map(|args| args.format.as_str()),
             Some("json")
         );
-        assert!(context.prepared().is_none());
-        assert!(context.app().is_none());
-
         Ok(())
     }
 }
@@ -362,16 +347,14 @@ impl CliCommand<CommandApplication> for SetupCommand {
 pub struct ConfiguredCommand;
 
 impl CliCommand<CommandApplication> for ConfiguredCommand {
+    type Phase = PreBuild;
     type Error = std::io::Error;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Configured
-    }
-
-    async fn run(&self, context: CommandContext<CommandApplication>) -> Result<(), Self::Error> {
-        assert_eq!(context.phase(), CommandPhase::Configured);
-        assert!(context.prepared().is_some());
-        assert!(context.app().is_none());
+    async fn run(
+        &self,
+        context: CommandContext<CommandApplication, Self::Phase>,
+    ) -> Result<(), Self::Error> {
+        assert_eq!(context.prepared().name(), "command-app-test");
 
         Ok(())
     }
@@ -391,13 +374,13 @@ pub struct ListUsersCommand {
 }
 
 impl CliCommand<CommandApplication> for ListUsersCommand {
+    type Phase = Built;
     type Error = std::io::Error;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Built
-    }
-
-    async fn run(&self, context: CommandContext<CommandApplication>) -> Result<(), Self::Error> {
+    async fn run(
+        &self,
+        context: CommandContext<CommandApplication, Self::Phase>,
+    ) -> Result<(), Self::Error> {
         let marker = context
             .resolve::<std::sync::Arc<BuildMarker>>()
             .await
@@ -418,13 +401,13 @@ impl CliCommand<CommandApplication> for ListUsersCommand {
 pub struct FailCommand;
 
 impl CliCommand<CommandApplication> for FailCommand {
+    type Phase = Setup;
     type Error = std::io::Error;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Setup
-    }
-
-    async fn run(&self, _context: CommandContext<CommandApplication>) -> Result<(), Self::Error> {
+    async fn run(
+        &self,
+        _context: CommandContext<CommandApplication, Self::Phase>,
+    ) -> Result<(), Self::Error> {
         Err(std::io::Error::other("intentional failure"))
     }
 }
@@ -478,6 +461,8 @@ app! {
             configured: ConfiguredCommand,
             /// Administrative API commands.
             api: {
+                /// Runs setup through a nested parser namespace.
+                setup: SetupCommand,
                 /// User administration.
                 users: {
                     /// Lists users from the built application.
@@ -530,42 +515,36 @@ app! {
 pub struct InspectCommand;
 
 impl CliCommand<CommandOnlyApplication> for InspectCommand {
+    type Phase = Setup;
     type Error = std::io::Error;
-
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Setup
-    }
 
     async fn run(
         &self,
-        _context: CommandContext<CommandOnlyApplication>,
+        _context: CommandContext<CommandOnlyApplication, Self::Phase>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
 }
 
 impl CliCommand<CollidingApplication> for InspectCommand {
+    type Phase = Setup;
     type Error = std::io::Error;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Setup
-    }
-
-    async fn run(&self, _context: CommandContext<CollidingApplication>) -> Result<(), Self::Error> {
+    async fn run(
+        &self,
+        _context: CommandContext<CollidingApplication, Self::Phase>,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }
 
 impl CliCommand<PluginCollidingApplication> for InspectCommand {
+    type Phase = Setup;
     type Error = std::io::Error;
-
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Setup
-    }
 
     async fn run(
         &self,
-        _context: CommandContext<PluginCollidingApplication>,
+        _context: CommandContext<PluginCollidingApplication, Self::Phase>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -646,6 +625,21 @@ async fn setup_command_does_not_configure_or_build() {
     assert_eq!(COMPONENT_BUILDS.load(Ordering::SeqCst), 0);
     assert_eq!(PROTOCOL_BUILDS.load(Ordering::SeqCst), 0);
     assert_eq!(AFTER_BUILD_CALLS.load(Ordering::SeqCst), 0);
+    assert_eq!(SERVE_CALLS.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn nested_setup_leaf_does_not_inherit_built_sibling_phase() {
+    reset_counters();
+
+    CommandApplication::run_with(["command-app-test", "api", "setup", "--format", "json"])
+        .await
+        .expect("nested setup command runs");
+
+    assert_eq!(SETUP_CALLS.load(Ordering::SeqCst), 1);
+    assert_eq!(CONFIGURE_CALLS.load(Ordering::SeqCst), 0);
+    assert_eq!(COMPONENT_BUILDS.load(Ordering::SeqCst), 0);
+    assert_eq!(PROTOCOL_BUILDS.load(Ordering::SeqCst), 0);
     assert_eq!(SERVE_CALLS.load(Ordering::SeqCst), 0);
 }
 

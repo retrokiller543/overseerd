@@ -1,7 +1,7 @@
 use std::error::Error as _;
 
-use super::{CommandContext, CommandContextError, CommandError, CommandPhase};
-use crate::{AppHost, BootstrapContext, ExecutionMode};
+use super::{CommandContext, CommandContextError, CommandError};
+use crate::{AppHost, BootstrapContext, ExecutionMode, Setup};
 
 /// Host used to type command contexts without constructing an application.
 struct TestHost;
@@ -15,20 +15,17 @@ impl AppHost for TestHost {
 }
 
 #[test]
-fn setup_context_exposes_bootstrap_without_application_state() {
+fn setup_context_exposes_bootstrap_values() {
     let mut bootstrap = BootstrapContext::new(ExecutionMode::Run);
 
     bootstrap.insert(String::from("global"));
 
-    let context = CommandContext::<TestHost>::from_setup(bootstrap);
+    let context = CommandContext::<TestHost, Setup>::new(bootstrap, ());
 
-    assert_eq!(context.phase(), CommandPhase::Setup);
     assert_eq!(
         context.bootstrap().get::<String>().map(String::as_str),
         Some("global")
     );
-    assert!(context.prepared().is_none());
-    assert!(context.app().is_none());
     assert_eq!(
         context
             .require::<String>()
@@ -39,20 +36,6 @@ fn setup_context_exposes_bootstrap_without_application_state() {
         context.require::<usize>(),
         Err(CommandContextError::MissingValue { type_name })
             if type_name == std::any::type_name::<usize>()
-    ));
-    assert!(matches!(
-        context.require_prepared(),
-        Err(CommandContextError::Phase {
-            expected: CommandPhase::Configured,
-            actual: CommandPhase::Setup,
-        })
-    ));
-    assert!(matches!(
-        context.require_app(),
-        Err(CommandContextError::Phase {
-            expected: CommandPhase::Built,
-            actual: CommandPhase::Setup,
-        })
     ));
 }
 

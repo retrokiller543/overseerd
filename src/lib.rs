@@ -111,11 +111,12 @@ pub use overseerd_app::{
 #[cfg(all(not(target_family = "wasm"), feature = "cli"))]
 pub use overseerd_app::{
     BootstrapError, BootstrapOptions, BootstrapPolicy, BootstrapState, CliCommand,
-    CliDefinitionError, CliDefinitionSource, CliError, ColorChoice, CommandContext,
-    CommandContextError, CommandError, CommandPhase, ParsedPluginArgs, PluginCliCommand,
+    CliDefinitionError, CliDefinitionSource, CliError, CliPhase, ColorChoice, CommandContext,
+    CommandContextError, CommandError, ParsedPluginArgs, PluginCliCommand, PluginCliPhase,
     PluginCliProviderKind, PluginCliProviderMetadata, PluginCliRegistrar, PluginCommandContext,
     SelectedPluginCliCommand, bootstrap_application, bootstrap_application_with_policy, clap,
-    configure_bootstrap_config, configure_bootstrap_directories, finalize_bootstrap, validate_cli,
+    configure_bootstrap_config, configure_bootstrap_directories, dispatch_cli_command,
+    finalize_bootstrap, prepare_cli_context, validate_cli,
 };
 
 // The generic `App<P>` / `AppBuilder<P>` are at the root (protocol-agnostic core); the `app!`
@@ -383,7 +384,7 @@ pub mod prelude {
     };
 
     #[cfg(all(not(target_family = "wasm"), feature = "cli"))]
-    pub use crate::{CliCommand, CommandContext, CommandPhase};
+    pub use crate::{Built, CliCommand, CommandContext, PreBuild, Setup};
 }
 
 #[cfg(test)]

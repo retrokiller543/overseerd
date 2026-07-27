@@ -17,8 +17,7 @@ use super::model::{CommandEntry, CommandEntryKind, GlobalArgsEntry};
 #[cfg(feature = "cli")]
 pub(super) struct CommandExpansion {
     pub(super) variants: TokenStream,
-    pub(super) phase_arms: TokenStream,
-    pub(super) run_arms: TokenStream,
+    pub(super) dispatch_arms: TokenStream,
     pub(super) nested_types: TokenStream,
 }
 
@@ -29,10 +28,9 @@ pub(super) struct ExpansionInput<'a> {
     pub(super) host_ident: &'a Ident,
     pub(super) host: &'a proc_macro2::TokenStream,
     pub(super) entries: &'a [CommandEntry],
-    pub(super) cli_command: &'a Path,
-    pub(super) command_context: &'a Path,
-    pub(super) command_error: &'a Path,
-    pub(super) command_phase: &'a Path,
+    pub(super) bootstrap_context: &'a Path,
+    pub(super) cli_error: &'a Path,
+    pub(super) dispatch_cli_command: &'a Path,
 }
 
 pub(super) fn parse_args(input: ParseStream) -> syn::Result<Vec<GlobalArgsEntry>> {
@@ -120,8 +118,7 @@ fn expand_entries<'a>(
     nested_names: &mut HashSet<String>,
 ) -> syn::Result<CommandExpansion> {
     let mut variants = TokenStream::new();
-    let mut phase_arms = TokenStream::new();
-    let mut run_arms = TokenStream::new();
+    let mut dispatch_arms = TokenStream::new();
     let mut nested_types = TokenStream::new();
 
     for entry in entries {
@@ -132,25 +129,17 @@ fn expand_entries<'a>(
 
         match &entry.kind {
             CommandEntryKind::Leaf(ty) => {
-                let cli_command = input.cli_command;
                 let host = input.host;
-                let command_error = input.command_error;
+                let dispatch_cli_command = input.dispatch_cli_command;
 
                 variants.extend(quote! {
                     #(#attributes)*
                     #[command(name = #command_name)]
                     #variant(#ty),
                 });
-                phase_arms.extend(quote! {
-                    Self::#variant(command) => <#ty as #cli_command<#host>>::phase(command),
-                });
-                run_arms.extend(quote! {
+                dispatch_arms.extend(quote! {
                     Self::#variant(command) => {
-                        <#ty as #cli_command<#host>>::run(command, context)
-                            .await
-                            .map_err(|source| #command_error::new(#command_path, source))?;
-
-                        Ok(())
+                        #dispatch_cli_command::<#host, #ty>(command, bootstrap, #command_path).await
                     }
                 });
             }
@@ -171,15 +160,11 @@ fn expand_entries<'a>(
 
                 let nested = expand_entries(input, children, path, nested_names)?;
                 let visibility = input.visibility;
-                let cli_command = input.cli_command;
-                let command_context = input.command_context;
-                let command_error = input.command_error;
-                let command_phase = input.command_phase;
-                let host = input.host;
+                let bootstrap_context = input.bootstrap_context;
+                let cli_error = input.cli_error;
                 let clap: Path = syn::parse_quote!(::clap);
                 let nested_variants = nested.variants;
-                let nested_phase_arms = nested.phase_arms;
-                let nested_run_arms = nested.run_arms;
+                let nested_dispatch_arms = nested.dispatch_arms;
 
                 variants.extend(quote! {
                     #(#attributes)*
@@ -189,14 +174,9 @@ fn expand_entries<'a>(
                         command: #nested_ident,
                     },
                 });
-                phase_arms.extend(quote! {
-                    Self::#variant { command } => <#nested_ident as #cli_command<#host>>::phase(command),
-                });
-                run_arms.extend(quote! {
+                dispatch_arms.extend(quote! {
                     Self::#variant { command } => {
-                        <#nested_ident as #cli_command<#host>>::run(command, context).await?;
-
-                        Ok(())
+                        command.__dispatch(bootstrap).await
                     }
                 });
                 nested_types.extend(nested.nested_types);
@@ -207,21 +187,13 @@ fn expand_entries<'a>(
                         #nested_variants
                     }
 
-                    impl #cli_command<#host> for #nested_ident {
-                        type Error = #command_error;
-
-                        fn phase(&self) -> #command_phase {
-                            match self {
-                                #nested_phase_arms
-                            }
-                        }
-
-                        async fn run(
+                    impl #nested_ident {
+                        async fn __dispatch(
                             &self,
-                            context: #command_context<#host>,
-                        ) -> ::core::result::Result<(), Self::Error> {
+                            bootstrap: #bootstrap_context,
+                        ) -> ::core::result::Result<(), #cli_error> {
                             match self {
-                                #nested_run_arms
+                                #nested_dispatch_arms
                             }
                         }
                     }
@@ -234,8 +206,7 @@ fn expand_entries<'a>(
 
     Ok(CommandExpansion {
         variants,
-        phase_arms,
-        run_arms,
+        dispatch_arms,
         nested_types,
     })
 }

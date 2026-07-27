@@ -7,11 +7,10 @@ use clap::{Args, Command, Subcommand};
 mod context;
 mod validation;
 
-pub(crate) use context::PluginCommandState;
-pub use context::{PluginCliCommand, PluginCommandContext};
+pub use context::{PluginCliCommand, PluginCliPhase, PluginCommandContext};
 pub(crate) use validation::augment_plugin_cli;
 
-use super::{CommandContext, CommandError, CommandPhase};
+use super::{CommandError, prepare_cli_context};
 use crate::{BootstrapContext, ContributionId, ContributionProvenance, Contributor, PluginId};
 
 type ParsedValue = Box<dyn Any + Send + Sync>;
@@ -129,13 +128,13 @@ pub(crate) enum PluginCliProvider {
         metadata: PluginCliProviderMetadata,
         name: &'static str,
         augment: fn(Command, &'static str) -> Command,
-        extract: fn(&mut clap::ArgMatches) -> Result<Box<dyn ErasedPluginCliCommand>, clap::Error>,
+        extract: fn(&mut clap::ArgMatches) -> Result<ErasedPluginCliCommand, clap::Error>,
     },
     CommandSet {
         metadata: PluginCliProviderMetadata,
         augment: fn(Command) -> Command,
         matches: fn(&str) -> bool,
-        extract: fn(&mut clap::ArgMatches) -> Result<Box<dyn ErasedPluginCliCommand>, clap::Error>,
+        extract: fn(&mut clap::ArgMatches) -> Result<ErasedPluginCliCommand, clap::Error>,
     },
 }
 
@@ -235,44 +234,102 @@ impl Default for ParsedPluginArgs {
 #[doc(hidden)]
 pub struct SelectedPluginCliCommand {
     command: String,
-    value: Box<dyn ErasedPluginCliCommand>,
+    value: ErasedPluginCliCommand,
 }
 
 impl SelectedPluginCliCommand {
-    /// The minimum lifecycle phase requested by the parsed command.
-    pub fn phase(&self) -> CommandPhase {
-        self.value.phase()
-    }
-
-    /// Dispatches the command through the already prepared generated command context.
-    pub async fn run<H>(&self, context: CommandContext<H>) -> Result<(), CommandError>
+    /// Prepares and dispatches the selected plugin command at its statically declared phase.
+    pub async fn run<H>(&self, bootstrap: BootstrapContext) -> Result<(), crate::CliError>
     where
         H: crate::AppHost,
+        H::Protocol: Send,
     {
-        let context = context.into_plugin();
-
         self.value
-            .run(context)
+            .run::<H>(bootstrap)
             .await
-            .map_err(|source| CommandError::boxed(self.command.clone(), source))
+            .map_err(|source| CommandError::boxed(self.command.clone(), source))?;
+
+        Ok(())
     }
 }
 
-pub(crate) trait ErasedPluginCliCommand: Send + Sync {
-    fn phase(&self) -> CommandPhase;
+/// Phase-preserving erased plugin command used by generated parser adapters.
+#[doc(hidden)]
+pub struct ErasedPluginCliCommand(ErasedPluginCommandKind);
 
-    fn run(&self, context: PluginCommandContext) -> CommandFuture<'_>;
+enum ErasedPluginCommandKind {
+    Setup(Box<dyn ErasedPluginCommand<crate::Setup>>),
+    PreBuild(Box<dyn ErasedPluginCommand<crate::PreBuild>>),
+    Built(Box<dyn ErasedPluginCommand<crate::Built>>),
 }
 
-impl<T> ErasedPluginCliCommand for T
+impl ErasedPluginCliCommand {
+    fn new<T>(command: T) -> Self
+    where
+        T: PluginCliCommand + Send + Sync + 'static,
+    {
+        T::Phase::erase(command)
+    }
+
+    fn setup<T>(command: T) -> Self
+    where
+        T: PluginCliCommand<Phase = crate::Setup> + Send + Sync + 'static,
+    {
+        Self(ErasedPluginCommandKind::Setup(Box::new(command)))
+    }
+
+    fn pre_build<T>(command: T) -> Self
+    where
+        T: PluginCliCommand<Phase = crate::PreBuild> + Send + Sync + 'static,
+    {
+        Self(ErasedPluginCommandKind::PreBuild(Box::new(command)))
+    }
+
+    fn built<T>(command: T) -> Self
+    where
+        T: PluginCliCommand<Phase = crate::Built> + Send + Sync + 'static,
+    {
+        Self(ErasedPluginCommandKind::Built(Box::new(command)))
+    }
+
+    async fn run<H>(&self, bootstrap: BootstrapContext) -> Result<(), BoxedCommandError>
+    where
+        H: crate::AppHost,
+        H::Protocol: Send,
+    {
+        match &self.0 {
+            ErasedPluginCommandKind::Setup(command) => {
+                let context = prepare_cli_context::<H, crate::Setup>(bootstrap).await?;
+                let context = PluginCommandContext::from_application(context);
+
+                command.run(context).await
+            }
+            ErasedPluginCommandKind::PreBuild(command) => {
+                let context = prepare_cli_context::<H, crate::PreBuild>(bootstrap).await?;
+                let context = PluginCommandContext::from_application(context);
+
+                command.run(context).await
+            }
+            ErasedPluginCommandKind::Built(command) => {
+                let context = prepare_cli_context::<H, crate::Built>(bootstrap).await?;
+                let context = PluginCommandContext::from_application(context);
+
+                command.run(context).await
+            }
+        }
+    }
+}
+
+trait ErasedPluginCommand<P: PluginCliPhase>: Send + Sync {
+    fn run(&self, context: PluginCommandContext<P>) -> CommandFuture<'_>;
+}
+
+impl<T, P> ErasedPluginCommand<P> for T
 where
-    T: PluginCliCommand + Send + Sync,
+    T: PluginCliCommand<Phase = P> + Send + Sync,
+    P: PluginCliPhase,
 {
-    fn phase(&self) -> CommandPhase {
-        PluginCliCommand::phase(self)
-    }
-
-    fn run(&self, context: PluginCommandContext) -> CommandFuture<'_> {
+    fn run(&self, context: PluginCommandContext<P>) -> CommandFuture<'_> {
         Box::pin(async move {
             PluginCliCommand::run(self, context)
                 .await
@@ -297,9 +354,7 @@ where
     command.subcommand(T::augment_args(Command::new(name)))
 }
 
-fn extract_command<T>(
-    matches: &mut clap::ArgMatches,
-) -> Result<Box<dyn ErasedPluginCliCommand>, clap::Error>
+fn extract_command<T>(matches: &mut clap::ArgMatches) -> Result<ErasedPluginCliCommand, clap::Error>
 where
     T: Args + PluginCliCommand + Send + Sync + 'static,
 {
@@ -308,16 +363,16 @@ where
         .expect("selected plugin command has subcommand matches");
     let command = T::from_arg_matches_mut(&mut matches)?;
 
-    Ok(Box::new(command))
+    Ok(ErasedPluginCliCommand::new(command))
 }
 
 fn extract_command_set<T>(
     matches: &mut clap::ArgMatches,
-) -> Result<Box<dyn ErasedPluginCliCommand>, clap::Error>
+) -> Result<ErasedPluginCliCommand, clap::Error>
 where
     T: Subcommand + PluginCliCommand + Send + Sync + 'static,
 {
     let command = T::from_arg_matches_mut(matches)?;
 
-    Ok(Box::new(command))
+    Ok(ErasedPluginCliCommand::new(command))
 }

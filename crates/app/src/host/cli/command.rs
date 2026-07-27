@@ -1,89 +1,148 @@
 use std::future::Future;
 
-use crate::{App, AppHost, BootstrapContext, PreparedApp, ProtocolDefinition};
+use crate::{
+    App, AppHost, BootstrapContext, Built, CliError, PhaseError, PreBuild, PreparedApp, Setup,
+    build_host_context, prepare_host_context, setup_host_context,
+};
 
-/// The minimum application state required by a CLI command.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CommandPhase {
-    /// Bootstrap and custom setup have completed.
-    Setup,
-    /// Registration and validation have completed without component construction.
-    Configured,
-    /// Components and the application protocol have been constructed.
-    Built,
+mod private {
+    use std::future::Future;
+
+    use crate::{AppHost, BootstrapContext, PhaseError};
+
+    pub trait Sealed: Send + Sync + 'static {
+        type State<H: AppHost>;
+
+        fn prepare<H>(
+            bootstrap: BootstrapContext,
+        ) -> impl Future<Output = Result<(BootstrapContext, Self::State<H>), PhaseError>> + Send
+        where
+            H: AppHost,
+            H::Protocol: Send,
+            Self: Sized;
+    }
 }
 
-/// A fully parsed CLI command dispatched by a generated application host.
+/// The statically declared application lifecycle phase required by a CLI leaf command.
+///
+/// This trait is sealed. Commands select one of [`Setup`], [`PreBuild`], or [`Built`] as their
+/// associated phase rather than implementing additional phases.
+pub trait CliPhase: private::Sealed {}
+
+impl private::Sealed for Setup {
+    type State<H: AppHost> = ();
+
+    #[allow(clippy::manual_async_fn)]
+    fn prepare<H>(
+        bootstrap: BootstrapContext,
+    ) -> impl Future<Output = Result<(BootstrapContext, Self::State<H>), PhaseError>> + Send
+    where
+        H: AppHost,
+        H::Protocol: Send,
+    {
+        async move {
+            let bootstrap = setup_host_context::<H>(bootstrap).await?;
+
+            Ok((bootstrap, ()))
+        }
+    }
+}
+
+impl CliPhase for Setup {}
+
+impl private::Sealed for PreBuild {
+    type State<H: AppHost> = PreparedApp<H::Protocol>;
+
+    #[allow(clippy::manual_async_fn)]
+    fn prepare<H>(
+        bootstrap: BootstrapContext,
+    ) -> impl Future<Output = Result<(BootstrapContext, Self::State<H>), PhaseError>> + Send
+    where
+        H: AppHost,
+        H::Protocol: Send,
+    {
+        async move {
+            let (bootstrap, app) = prepare_host_context::<H>(bootstrap).await?;
+
+            Ok((bootstrap, app))
+        }
+    }
+}
+
+impl CliPhase for PreBuild {}
+
+impl private::Sealed for Built {
+    type State<H: AppHost> = App<H::Protocol>;
+
+    #[allow(clippy::manual_async_fn)]
+    fn prepare<H>(
+        bootstrap: BootstrapContext,
+    ) -> impl Future<Output = Result<(BootstrapContext, Self::State<H>), PhaseError>> + Send
+    where
+        H: AppHost,
+        H::Protocol: Send,
+    {
+        async move {
+            let (bootstrap, app) = build_host_context::<H>(bootstrap).await?;
+
+            Ok((bootstrap, app))
+        }
+    }
+}
+
+impl CliPhase for Built {}
+
+/// A fully parsed CLI leaf command dispatched by a generated application host.
 pub trait CliCommand<H>: Sync
 where
     H: AppHost,
     H::Protocol: Send,
 {
+    /// The statically required application lifecycle phase.
+    type Phase: CliPhase;
+
     /// The typed failure returned by this command.
     type Error: std::error::Error + Send + Sync + 'static;
 
-    /// The minimum application state this invocation requires.
-    fn phase(&self) -> CommandPhase;
-
-    /// Executes this parsed command against its requested application state.
+    /// Executes this parsed command against its statically selected application state.
     fn run(
         &self,
-        context: CommandContext<H>,
+        context: CommandContext<H, Self::Phase>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 }
 
-/// Lifecycle-aware application state supplied to a parsed CLI command.
-pub struct CommandContext<H: AppHost> {
+/// Lifecycle-aware application state supplied to a parsed CLI leaf command.
+///
+/// The phase parameter controls which state accessors exist. A setup command cannot compile if it
+/// attempts to access configured or built application state:
+///
+/// ```compile_fail
+/// # use overseerd_app::{AppHost, CommandContext, Setup};
+/// # fn invalid<H: AppHost>(context: CommandContext<H, Setup>) {
+/// let _ = context.prepared();
+/// # }
+/// ```
+///
+/// Likewise, dependency resolution is available only to commands declaring [`Built`]:
+///
+/// ```compile_fail
+/// # use overseerd_app::{AppHost, CommandContext, PreBuild};
+/// # fn invalid<H: AppHost>(context: CommandContext<H, PreBuild>) {
+/// let _ = context.resolve::<String>();
+/// # }
+/// ```
+pub struct CommandContext<H: AppHost, P: CliPhase> {
     bootstrap: BootstrapContext,
-    state: CommandState<H::Protocol>,
+    state: <P as private::Sealed>::State<H>,
 }
 
-/// Application state carried by a command context.
-enum CommandState<D: ProtocolDefinition> {
-    Setup,
-    Configured(PreparedApp<D>),
-    Built(App<D>),
-}
-
-impl<H: AppHost> CommandContext<H> {
-    /// Creates a setup-only command context.
-    #[doc(hidden)]
-    pub fn from_setup(bootstrap: BootstrapContext) -> Self {
-        Self {
-            bootstrap,
-            state: CommandState::Setup,
-        }
-    }
-
-    /// Creates a configured command context without constructing the application.
-    #[doc(hidden)]
-    pub fn from_configured(bootstrap: BootstrapContext, app: PreparedApp<H::Protocol>) -> Self {
-        Self {
-            bootstrap,
-            state: CommandState::Configured(app),
-        }
-    }
-
-    /// Creates a built command context.
-    #[doc(hidden)]
-    pub fn from_built(bootstrap: BootstrapContext, app: App<H::Protocol>) -> Self {
-        Self {
-            bootstrap,
-            state: CommandState::Built(app),
-        }
-    }
-
-    /// The application state prepared for this command.
-    pub fn phase(&self) -> CommandPhase {
-        match self.state {
-            CommandState::Setup => CommandPhase::Setup,
-            CommandState::Configured(_) => CommandPhase::Configured,
-            CommandState::Built(_) => CommandPhase::Built,
-        }
+impl<H: AppHost, P: CliPhase> CommandContext<H, P> {
+    fn new(bootstrap: BootstrapContext, state: <P as private::Sealed>::State<H>) -> Self {
+        Self { bootstrap, state }
     }
 
     /// Global bootstrap state and typed global argument groups.
-    pub fn bootstrap(&self) -> &BootstrapContext {
+    pub const fn bootstrap(&self) -> &BootstrapContext {
         &self.bootstrap
     }
 
@@ -93,9 +152,6 @@ impl<H: AppHost> CommandContext<H> {
     }
 
     /// Borrows a required typed bootstrap value.
-    ///
-    /// Generated application argument groups and plugin argument groups are inserted by their
-    /// concrete type before command dispatch. Setup hooks may insert additional typed values.
     ///
     /// # Errors
     ///
@@ -107,82 +163,56 @@ impl<H: AppHost> CommandContext<H> {
                 type_name: std::any::type_name::<T>(),
             })
     }
+}
 
-    /// The prepared application, when the command requested the configured phase.
-    pub fn prepared(&self) -> Option<&PreparedApp<H::Protocol>> {
-        match &self.state {
-            CommandState::Configured(app) => Some(app),
-            CommandState::Setup | CommandState::Built(_) => None,
-        }
+/// Prepares a context at one of the framework's sealed CLI phases.
+#[doc(hidden)]
+pub async fn prepare_cli_context<H, P>(
+    bootstrap: BootstrapContext,
+) -> Result<CommandContext<H, P>, PhaseError>
+where
+    H: AppHost,
+    H::Protocol: Send,
+    P: CliPhase,
+{
+    let (bootstrap, state) = P::prepare::<H>(bootstrap).await?;
+
+    Ok(CommandContext::new(bootstrap, state))
+}
+
+impl<H: AppHost> CommandContext<H, Setup> {
+    pub(crate) fn into_bootstrap(self) -> BootstrapContext {
+        self.bootstrap
+    }
+}
+
+impl<H: AppHost> CommandContext<H, PreBuild> {
+    /// The validated prepared application guaranteed by this context's phase.
+    pub const fn prepared(&self) -> &PreparedApp<H::Protocol> {
+        &self.state
     }
 
-    /// Borrows the required prepared application from a configured command context.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CommandContextError::Phase`] when this command was dispatched with setup-only or
-    /// built state instead of its declared configured state.
-    pub fn require_prepared(&self) -> Result<&PreparedApp<H::Protocol>, CommandContextError> {
-        self.prepared().ok_or(CommandContextError::Phase {
-            expected: CommandPhase::Configured,
-            actual: self.phase(),
-        })
+    pub(crate) fn into_parts(self) -> (BootstrapContext, PreparedApp<H::Protocol>) {
+        (self.bootstrap, self.state)
+    }
+}
+
+impl<H: AppHost> CommandContext<H, Built> {
+    /// The constructed application guaranteed by this context's phase.
+    pub const fn app(&self) -> &App<H::Protocol> {
+        &self.state
     }
 
-    /// The built application, when the command requested the built phase.
-    pub fn app(&self) -> Option<&App<H::Protocol>> {
-        match &self.state {
-            CommandState::Built(app) => Some(app),
-            CommandState::Setup | CommandState::Configured(_) => None,
-        }
-    }
-
-    /// Borrows the required built application from a built command context.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CommandContextError::Phase`] when this command was dispatched with setup-only or
-    /// configured state instead of its declared built state.
-    pub fn require_app(&self) -> Result<&App<H::Protocol>, CommandContextError> {
-        self.app().ok_or(CommandContextError::Phase {
-            expected: CommandPhase::Built,
-            actual: self.phase(),
-        })
-    }
-
-    /// Resolves an `Injectable` from the built command context's root DI container.
-    ///
-    /// The root container handle is shared into the returned `Send` future before asynchronous
-    /// resolution begins. Command implementations therefore do not need to hold `&App` across an
-    /// await, which would require protocol state to be `Sync`. This method does not consume the
-    /// context, advance lifecycle phases, or start serving.
-    ///
-    /// # Type parameters
-    ///
-    /// - `T` is the concrete value or handle requested from DI and must implement `Injectable`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `DiError` when this command did not request the built phase, the dependency is
-    /// missing or ambiguous, a root/scope is unavailable, a stored value cannot be downcast, or
-    /// transient dependency resolution or construction fails.
+    /// Resolves an `Injectable` from the built application's root DI container.
     pub fn resolve<T>(
         &self,
     ) -> impl Future<Output = Result<T, overseerd_di::Error>> + Send + use<H, T>
     where
         T: overseerd_di::Injectable,
     {
-        let container = match &self.state {
-            CommandState::Built(app) => Some(std::sync::Arc::clone(app.container())),
-            CommandState::Setup | CommandState::Configured(_) => None,
-        };
+        let container = std::sync::Arc::clone(self.state.container());
 
         async move {
-            let container = container.ok_or_else(|| overseerd_di::Error::MissingDependency {
-                component: std::any::type_name::<H>().to_string(),
-                type_name: std::any::type_name::<T>().to_string(),
-            })?;
-
             container
                 .resolve::<T>()
                 .await?
@@ -193,68 +223,40 @@ impl<H: AppHost> CommandContext<H> {
         }
     }
 
-    /// Consumes a built context for framework command dispatch.
+    /// Consumes a built context for generated framework serve dispatch.
     #[doc(hidden)]
-    pub fn into_built(self) -> Result<(BootstrapContext, App<H::Protocol>), CommandContextError> {
-        match self.state {
-            CommandState::Built(app) => Ok((self.bootstrap, app)),
-            CommandState::Setup => Err(CommandContextError::Phase {
-                expected: CommandPhase::Built,
-                actual: CommandPhase::Setup,
-            }),
-            CommandState::Configured(_) => Err(CommandContextError::Phase {
-                expected: CommandPhase::Built,
-                actual: CommandPhase::Configured,
-            }),
-        }
-    }
-
-    pub(crate) fn into_plugin(self) -> super::PluginCommandContext {
-        let state = match self.state {
-            CommandState::Setup => super::PluginCommandState::Setup,
-            CommandState::Configured(app) => {
-                let (name, registry, plugin_plan) = app.into_cli_parts();
-
-                super::PluginCommandState::Configured {
-                    name,
-                    registry,
-                    plugin_plan,
-                }
-            }
-            CommandState::Built(app) => {
-                let name = app.name().to_owned();
-                let container = std::sync::Arc::clone(app.container());
-                let plugin_plan = app.plugin_plan().clone();
-
-                super::PluginCommandState::Built {
-                    name,
-                    container,
-                    plugin_plan,
-                    _owner: Box::new(app),
-                }
-            }
-        };
-
-        super::PluginCommandContext {
-            bootstrap: self.bootstrap,
-            state,
-        }
+    pub fn into_parts(self) -> (BootstrapContext, App<H::Protocol>) {
+        (self.bootstrap, self.state)
     }
 }
 
-/// A generated command received application state for the wrong lifecycle phase.
+/// Prepares and dispatches one statically typed application CLI leaf.
+#[doc(hidden)]
+pub async fn dispatch_cli_command<H, C>(
+    command: &C,
+    bootstrap: BootstrapContext,
+    command_path: &'static str,
+) -> Result<(), CliError>
+where
+    H: AppHost,
+    H::Protocol: Send,
+    C: CliCommand<H>,
+{
+    let context = prepare_cli_context::<H, C::Phase>(bootstrap).await?;
+
+    command
+        .run(context)
+        .await
+        .map_err(|source| CommandError::new(command_path, source))?;
+
+    Ok(())
+}
+
+/// A command required a typed bootstrap value that was not parsed or inserted.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CommandContextError {
-    /// The generated dispatcher prepared a different phase than the command required.
-    #[error("command requires {expected:?} state but received {actual:?} state")]
-    Phase {
-        /// The phase required by the command.
-        expected: CommandPhase,
-        /// The phase carried by the context.
-        actual: CommandPhase,
-    },
-    /// A command required a typed bootstrap value that was not parsed or inserted.
+    /// A required typed bootstrap value was not available.
     #[error("command context is missing required bootstrap value '{type_name}'")]
     MissingValue {
         /// The missing concrete Rust type name.

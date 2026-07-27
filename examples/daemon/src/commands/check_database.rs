@@ -1,6 +1,6 @@
 use crate::DaemonApplication;
 use crate::components::Db;
-use overseerd::{CliCommand, CommandContext, CommandPhase, DiError};
+use overseerd::{Built, CliCommand, CommandContext, DiError};
 
 /// Builds the application and verifies that the database component resolves from DI.
 #[derive(clap::Args)]
@@ -16,13 +16,13 @@ pub struct CheckDatabaseCommand {
 }
 
 impl CliCommand<DaemonApplication> for CheckDatabaseCommand {
+    type Phase = Built;
     type Error = DiError;
 
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Built
-    }
-
-    async fn run(&self, context: CommandContext<DaemonApplication>) -> Result<(), Self::Error> {
+    async fn run(
+        &self,
+        context: CommandContext<DaemonApplication, Self::Phase>,
+    ) -> Result<(), Self::Error> {
         let database = context.resolve::<Db>().await?;
 
         println!("database component resolved through application DI");
