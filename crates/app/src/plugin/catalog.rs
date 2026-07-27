@@ -27,44 +27,39 @@ impl ProtocolPluginRegistrar {
         }
     }
 
-    /// Declares one mandatory protocol-owned plugin by type.
-    pub fn mandatory<P: Plugin>(&mut self) {
+    /// Declares one mandatory protocol-owned plugin from a supplied instance.
+    pub fn mandatory<P: Plugin>(&mut self, plugin: P) {
         let provenance = InstallationProvenance::new(
             InstallationOrigin::ProtocolMandatory(self.protocol),
             self.mandatory_ordinal,
         );
 
-        self.mandatory_ordinal = self
-            .mandatory_ordinal
-            .checked_add(1)
-            .expect("protocol mandatory plugin count exceeds u32::MAX");
+        self.mandatory_ordinal = next_ordinal(self.mandatory_ordinal);
 
         self.installations
-            .push(RetainedPlugin::install::<P>(provenance, None));
+            .push(RetainedPlugin::install(plugin, provenance, None));
     }
 
-    /// Declares one replaceable protocol default in an explicit capability slot.
-    pub fn replaceable_default<P: Plugin>(&mut self, slot: PluginSlotId) {
-        self.default::<P>(slot, SlotPolicy::Replaceable);
+    /// Declares one replaceable protocol default from a supplied instance.
+    pub fn replaceable_default<P: Plugin>(&mut self, slot: PluginSlotId, plugin: P) {
+        self.default(plugin, slot, SlotPolicy::Replaceable);
     }
 
-    /// Declares one suppressible protocol default in an explicit capability slot.
-    pub fn optional_default<P: Plugin>(&mut self, slot: PluginSlotId) {
-        self.default::<P>(slot, SlotPolicy::Optional);
+    /// Declares one suppressible protocol default from a supplied instance.
+    pub fn optional_default<P: Plugin>(&mut self, slot: PluginSlotId, plugin: P) {
+        self.default(plugin, slot, SlotPolicy::Optional);
     }
 
-    fn default<P: Plugin>(&mut self, slot: PluginSlotId, policy: SlotPolicy) {
+    fn default<P: Plugin>(&mut self, plugin: P, slot: PluginSlotId, policy: SlotPolicy) {
         let provenance = InstallationProvenance::new(
             InstallationOrigin::ProtocolDefault(self.protocol),
             self.default_ordinal,
         );
 
-        self.default_ordinal = self
-            .default_ordinal
-            .checked_add(1)
-            .expect("protocol default plugin count exceeds u32::MAX");
+        self.default_ordinal = next_ordinal(self.default_ordinal);
 
-        self.installations.push(RetainedPlugin::install::<P>(
+        self.installations.push(RetainedPlugin::install(
+            plugin,
             provenance,
             Some((slot, policy)),
         ));
@@ -83,23 +78,23 @@ impl ApplicationPluginRegistrar {
         }
     }
 
-    /// Declares an early application plugin installation.
-    pub fn register<P: Plugin>(&mut self) {
+    /// Declares an early application plugin from a supplied instance.
+    pub fn with_plugin<P: Plugin>(&mut self, plugin: P) {
         let provenance = self.provenance();
 
         self.directives
-            .push(RetainedDirective::Plugin(RetainedPlugin::install::<P>(
-                provenance, None,
+            .push(RetainedDirective::Plugin(RetainedPlugin::install(
+                plugin, provenance, None,
             )));
     }
 
-    /// Explicitly replaces a protocol default occupying `slot`.
-    pub fn replace<P: Plugin>(&mut self, slot: PluginSlotId) {
+    /// Replaces a protocol default with a supplied plugin instance.
+    pub fn replace<P: Plugin>(&mut self, slot: PluginSlotId, plugin: P) {
         let provenance = self.provenance();
 
         self.directives
-            .push(RetainedDirective::Plugin(RetainedPlugin::replace::<P>(
-                provenance, slot,
+            .push(RetainedDirective::Plugin(RetainedPlugin::replace(
+                plugin, provenance, slot,
             )));
     }
 
@@ -136,14 +131,14 @@ impl PluginCatalog {
         declarations(&mut self.early);
     }
 
-    pub(crate) fn register<P: Plugin>(&mut self) {
+    pub(crate) fn with_plugin<P: Plugin>(&mut self, plugin: P) {
         let provenance = InstallationProvenance::new(
             InstallationOrigin::ApplicationConfiguration,
             ordinal(self.late.len()),
         );
 
         self.late
-            .push(RetainedPlugin::install::<P>(provenance, None));
+            .push(RetainedPlugin::install(plugin, provenance, None));
     }
 
     pub(crate) fn freeze(
@@ -217,6 +212,7 @@ struct RetainedPlugin {
 
 impl RetainedPlugin {
     fn install<P: Plugin>(
+        plugin: P,
         provenance: InstallationProvenance,
         slot: Option<(PluginSlotId, SlotPolicy)>,
     ) -> Self {
@@ -232,11 +228,15 @@ impl RetainedPlugin {
         Self {
             directive,
             declaration,
-            plugin: Box::new(P::default()),
+            plugin: Box::new(plugin),
         }
     }
 
-    fn replace<P: Plugin>(provenance: InstallationProvenance, slot: PluginSlotId) -> Self {
+    fn replace<P: Plugin>(
+        plugin: P,
+        provenance: InstallationProvenance,
+        slot: PluginSlotId,
+    ) -> Self {
         let declaration =
             PluginDeclaration::new(P::ID, provenance).with_relations(P::RELATIONS.iter().copied());
         let directive = CompositionDirective::replace(slot, declaration.clone());
@@ -244,7 +244,7 @@ impl RetainedPlugin {
         Self {
             directive,
             declaration,
-            plugin: Box::new(P::default()),
+            plugin: Box::new(plugin),
         }
     }
 
@@ -314,5 +314,20 @@ impl<P: Plugin> ErasedPlugin for P {
 }
 
 fn ordinal(len: usize) -> u32 {
-    u32::try_from(len).expect("plugin installation count exceeds u32::MAX")
+    u32::try_from(len).unwrap_or_else(|_| ordinal_overflow())
+}
+
+fn next_ordinal(ordinal: u32) -> u32 {
+    ordinal.checked_add(1).unwrap_or_else(|| ordinal_overflow())
+}
+
+#[cold]
+#[inline(never)]
+fn ordinal_overflow() -> ! {
+    panic!(
+        "plugin installation count exceeds u32::MAX; report this limit with `gh issue create \
+         --repo retrokiller543/overseerd --title 'Widen plugin installation ordinals' \
+         --body 'Plugin installation provenance exceeded u32::MAX; migrate the ordinal to u64 \
+         or usize.'`"
+    )
 }

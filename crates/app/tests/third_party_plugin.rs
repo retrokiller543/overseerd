@@ -3,6 +3,7 @@ use std::sync::Arc;
 use overseerd_app::{
     App, ContributionId, Plugin, PluginContributionKind, PluginContributions, PluginId,
 };
+use overseerd_core::Descriptor;
 use overseerd_di::{Component, ComponentDescriptor};
 
 /// A component contributed entirely through public direct-crate plugin APIs.
@@ -19,6 +20,10 @@ impl Component for ThirdPartyComponent {
     }
 }
 
+impl Descriptor<ComponentDescriptor> for ThirdPartyComponent {
+    const DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::of::<Self>();
+}
+
 /// A third-party plugin authored without framework-private APIs.
 #[derive(Default)]
 struct ThirdPartyPlugin;
@@ -27,10 +32,10 @@ impl Plugin for ThirdPartyPlugin {
     const ID: PluginId = overseerd_app::namespaced_id!(PluginId, "third-party/direct-app-plugin");
 
     fn contribute(self, contributions: &mut PluginContributions) {
-        contributions.component(
-            overseerd_app::namespaced_id!(ContributionId, "third-party/component"),
-            ComponentDescriptor::of::<ThirdPartyComponent>(),
-        );
+        contributions.component::<ThirdPartyComponent>(overseerd_app::namespaced_id!(
+            ContributionId,
+            "third-party/component"
+        ));
     }
 }
 

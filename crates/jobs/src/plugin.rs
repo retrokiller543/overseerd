@@ -1,13 +1,13 @@
 //! The `JobsPlugin`: registers the scheduler so a daemon runs its `#[job]`s.
 
-use overseerd_app::{ContributionId, Plugin, PluginContributions, PluginId};
+use overseerd_app::{Plugin, PluginContributions, PluginId};
 
-use crate::scheduler::scheduler_descriptor;
+use crate::JobScheduler;
 
 /// The job-scheduler plugin.
 ///
 /// A non-protocol [`Plugin`]: it serves no traffic, it registers the
-/// [`JobScheduler`](crate::scheduler::JobScheduler) singleton whose `Startup` hook spawns a
+/// [`JobScheduler`] singleton whose `Startup` hook spawns a
 /// loop per registered `#[job]`. Apply it alongside any protocol with
 /// `AppBuilder::register_plugin::<JobsPlugin>()`.
 ///
@@ -21,9 +21,11 @@ impl Plugin for JobsPlugin {
     const ID: PluginId = overseerd_app::namespaced_id!(PluginId, "jobs/scheduler");
 
     fn contribute(self, contributions: &mut PluginContributions) {
-        contributions.component(
-            overseerd_app::namespaced_id!(ContributionId, "jobs/scheduler-component"),
-            scheduler_descriptor(),
-        );
+        overseerd_app::contribute! {
+            to contributions,
+            components: [
+                "jobs/scheduler-component" => type JobScheduler,
+            ],
+        }
     }
 }
