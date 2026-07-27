@@ -140,6 +140,22 @@ impl PluginContributions {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum PluginPlanError {
+    /// One plugin declared the same contributor-local CLI provider identity more than once.
+    #[cfg(feature = "cli")]
+    #[error("plugin CLI provider '{provenance:?}' is declared more than once")]
+    DuplicateCliProvider {
+        /// The duplicated stable CLI provider provenance.
+        provenance: ContributionProvenance,
+    },
+
+    /// A third-party plugin attempted to claim a framework-owned CLI provider identity.
+    #[cfg(feature = "cli")]
+    #[error("plugin CLI provider '{provenance:?}' uses the reserved 'overseerd/' namespace")]
+    ReservedCliProviderNamespace {
+        /// The invalid stable CLI provider provenance.
+        provenance: ContributionProvenance,
+    },
+
     /// One plugin emitted the same contributor-local identity more than once.
     #[error("plugin contribution '{provenance:?}' is declared more than once")]
     DuplicateContribution {
@@ -349,6 +365,13 @@ macro_rules! contribute {
 pub(super) struct CollectedContribution {
     metadata: PluginContribution,
     payload: ContributionPayload,
+}
+
+impl CollectedContribution {
+    #[cfg(feature = "cli")]
+    pub(super) const fn provenance(&self) -> ContributionProvenance {
+        self.metadata.provenance
+    }
 }
 
 enum ContributionPayload {

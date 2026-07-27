@@ -485,13 +485,7 @@ fn every_app_neutral_contribution_kind_lowers_with_metadata() {
     catalog.with_plugin(AllContributionKindsPlugin);
 
     let plan = catalog
-        .freeze(
-            ProtocolPluginRegistrar::new(crate::namespaced_id!(
-                crate::ProtocolId,
-                "test/all-kinds"
-            )),
-            false,
-        )
+        .freeze::<()>(false)
         .expect("all contribution kinds freeze")
         .lower(&mut registry);
     let kinds: Vec<_> = plan
@@ -553,7 +547,12 @@ fn replacement_executes_only_the_selected_plugin() {
 
     let prepared = App::<DefaultProtocol>::builder("replace-default")
         .auto_discover()
-        .with_plugin_declarations(|plugins| plugins.replace(TEST_SLOT, ReplacementPlugin))
+        .with_early_plugin_catalog(
+            early_catalog::<DefaultProtocol>(|plugins| {
+                plugins.replace(TEST_SLOT, ReplacementPlugin);
+            })
+            .expect("replacement catalog resolves"),
+        )
         .prepare()
         .expect("protocol default is replaced");
 
@@ -607,13 +606,28 @@ fn suppression_never_executes_the_optional_default() {
 
     let prepared = App::<DefaultProtocol>::builder("suppress-default")
         .auto_discover()
-        .with_plugin_declarations(|plugins| plugins.suppress(TEST_SLOT))
+        .with_early_plugin_catalog(
+            early_catalog::<DefaultProtocol>(|plugins| plugins.suppress(TEST_SLOT))
+                .expect("suppression catalog resolves"),
+        )
         .prepare()
         .expect("optional protocol default is suppressed");
 
     assert!(prepared.plugin_plan().resolution().plugins().is_empty());
     assert_eq!(DEFAULT_DISCOVERIES.load(Ordering::SeqCst), 0);
     assert_eq!(DEFAULT_CONTRIBUTIONS.load(Ordering::SeqCst), 0);
+}
+
+fn early_catalog<D: ProtocolDefinition>(
+    declarations: impl FnOnce(&mut super::ApplicationPluginRegistrar),
+) -> crate::Result<super::EarlyPluginCatalog> {
+    let mut protocol = ProtocolPluginRegistrar::new(D::ID);
+    let mut application = super::ApplicationPluginRegistrar::new();
+
+    D::register_plugins(&mut protocol);
+    declarations(&mut application);
+
+    super::EarlyPluginCatalog::resolve(protocol, application)
 }
 
 #[test]

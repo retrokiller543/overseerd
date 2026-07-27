@@ -1,6 +1,6 @@
 use std::error::Error as _;
 
-use super::{CommandContext, CommandError, CommandPhase};
+use super::{CommandContext, CommandContextError, CommandError, CommandPhase};
 use crate::{AppHost, BootstrapContext, ExecutionMode};
 
 /// Host used to type command contexts without constructing an application.
@@ -29,6 +29,31 @@ fn setup_context_exposes_bootstrap_without_application_state() {
     );
     assert!(context.prepared().is_none());
     assert!(context.app().is_none());
+    assert_eq!(
+        context
+            .require::<String>()
+            .expect("string value is present"),
+        "global"
+    );
+    assert!(matches!(
+        context.require::<usize>(),
+        Err(CommandContextError::MissingValue { type_name })
+            if type_name == std::any::type_name::<usize>()
+    ));
+    assert!(matches!(
+        context.require_prepared(),
+        Err(CommandContextError::Phase {
+            expected: CommandPhase::Configured,
+            actual: CommandPhase::Setup,
+        })
+    ));
+    assert!(matches!(
+        context.require_app(),
+        Err(CommandContextError::Phase {
+            expected: CommandPhase::Built,
+            actual: CommandPhase::Setup,
+        })
+    ));
 }
 
 #[test]

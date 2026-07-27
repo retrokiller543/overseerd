@@ -28,11 +28,19 @@ pub(crate) struct AppAssembly {
     pub(super) middleware: Vec<Expr>,
     pub(super) guards: Vec<Expr>,
     pub(super) error_handler: Option<Expr>,
+    pub(super) plugins: Vec<PluginDirective>,
     pub(super) overseerd: Option<Path>,
     pub(super) krate: Option<Path>,
     pub(super) phases: AppPhases,
     #[cfg_attr(not(feature = "cli"), allow(dead_code))]
     pub(super) cli: CliDeclarations,
+}
+
+/// One parser-visible static application plugin directive.
+pub(super) enum PluginDirective {
+    Install(Type),
+    Replace { slot: Expr, plugin: Type },
+    Suppress(Expr),
 }
 
 /// Application-owned global argument groups and command tree.

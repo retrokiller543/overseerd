@@ -5,8 +5,11 @@ mod contribution;
 
 use crate::{PluginId, PluginRelation};
 
+#[cfg(feature = "cli")]
+use crate::PluginCliRegistrar;
+
 pub(crate) use catalog::PluginCatalog;
-pub use catalog::{ApplicationPluginRegistrar, ProtocolPluginRegistrar};
+pub use catalog::{ApplicationPluginRegistrar, EarlyPluginCatalog, ProtocolPluginRegistrar};
 pub use contribution::{
     EffectivePluginPlan, PluginContribution, PluginContributionKind, PluginContributions,
     PluginPlanError,
@@ -22,6 +25,10 @@ pub trait Plugin: Send + 'static {
 
     /// Folds link-time-discovered plugin state into this retained instance.
     fn auto_discover(&mut self) {}
+
+    /// Declares optional parser-visible CLI facets without consuming plugin state.
+    #[cfg(feature = "cli")]
+    fn cli(&self, _cli: &mut PluginCliRegistrar) {}
 
     /// Emits deterministic app-neutral contributions for the effective application plan.
     fn contribute(self, contributions: &mut PluginContributions);

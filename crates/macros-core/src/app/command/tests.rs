@@ -180,6 +180,8 @@ fn generates_one_parser_subcommand_field_and_nested_delegation() {
     assert!(parser.contains("command (flatten)"));
     assert!(output.contains("enum ExampleApiCommand"));
     assert!(output.contains("enum ExampleApiUsersCommand"));
+    assert!(output.contains("plugins . augment_cli"));
+    assert!(output.contains("plugins . parse_cli_command"));
     assert!(
         output.contains(
             "CliCommand < Example < :: overseerd :: Initial > > for ExampleApiUsersCommand"

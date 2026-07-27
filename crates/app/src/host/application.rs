@@ -1,7 +1,10 @@
 use std::future::Future;
 
 use super::{BootstrapContext, ExecutionMode, HostError, LifecyclePhase, PhaseError};
-use crate::{App, AppBuilder, ApplicationPluginRegistrar, PreparedApp, ProtocolDefinition};
+use crate::{
+    App, AppBuilder, ApplicationPluginRegistrar, EarlyPluginCatalog, PreparedApp,
+    ProtocolDefinition, ProtocolPluginRegistrar,
+};
 
 /// Static lifecycle definition implemented by every generated named application.
 ///
@@ -103,6 +106,24 @@ pub trait AppHost {
             ))
         }
     }
+}
+
+/// Resolves and retains every parser-visible protocol and application plugin exactly once.
+#[doc(hidden)]
+pub fn resolve_host_plugin_catalog<H: AppHost>() -> crate::Result<EarlyPluginCatalog> {
+    let mut protocol = ProtocolPluginRegistrar::new(H::Protocol::ID);
+    let mut application = ApplicationPluginRegistrar::new();
+
+    H::Protocol::register_plugins(&mut protocol);
+    H::declare_plugins(&mut application);
+
+    EarlyPluginCatalog::resolve(protocol, application)
+}
+
+/// Transfers a parser-visible catalog into bootstrap lifecycle state.
+#[doc(hidden)]
+pub fn retain_host_plugin_catalog(context: &mut BootstrapContext, catalog: EarlyPluginCatalog) {
+    context.set_plugin_catalog(catalog);
 }
 
 /// Maps a generated application's compile-time stage to the state it owns.
@@ -229,9 +250,14 @@ pub async fn prepare_host_context<H: AppHost>(
 pub async fn prepare_setup_host_context<H: AppHost>(
     mut context: BootstrapContext,
 ) -> Result<(BootstrapContext, PreparedApp<H::Protocol>), PhaseError> {
+    let plugins = match context.take_plugin_catalog() {
+        Some(plugins) => plugins,
+        None => resolve_host_plugin_catalog::<H>()
+            .map_err(|source| PhaseError::new(LifecyclePhase::Prepare, source))?,
+    };
     let builder =
         H::builder().map_err(|source| PhaseError::new(LifecyclePhase::Configure, source))?;
-    let builder = builder.with_plugin_declarations(H::declare_plugins);
+    let builder = builder.with_early_plugin_catalog(plugins);
 
     #[cfg(feature = "cli")]
     let builder = {

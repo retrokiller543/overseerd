@@ -1,12 +1,102 @@
 use std::collections::HashSet;
 
+use crate::ContributionProvenance;
+
+/// Stable ownership of one side of a CLI definition collision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum CliDefinitionSource {
+    /// Framework-owned bootstrap, help, or version shape.
+    Framework,
+    /// Shape declared directly by the generated application.
+    Application,
+    /// Shape declared by an effective protocol or application plugin.
+    Plugin(ContributionProvenance),
+}
+
 /// A structural conflict in a generated Clap command definition.
 #[derive(Debug, thiserror::Error)]
-#[error("invalid command-line definition at `{command}`: duplicate {kind} `{value}`")]
+#[error("invalid command-line definition at `{command}`: duplicate {kind} `{value}`{sources}", sources = self.sources())]
 pub struct CliDefinitionError {
     command: String,
     kind: &'static str,
     value: String,
+    sources: Box<CliDefinitionSources>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CliDefinitionSources {
+    first: CliDefinitionSource,
+    second: CliDefinitionSource,
+}
+
+impl CliDefinitionError {
+    pub(crate) fn duplicate(
+        command: impl Into<String>,
+        kind: &'static str,
+        value: impl Into<String>,
+        first: CliDefinitionSource,
+        second: CliDefinitionSource,
+    ) -> Self {
+        Self {
+            command: command.into(),
+            kind,
+            value: value.into(),
+            sources: Box::new(CliDefinitionSources { first, second }),
+        }
+    }
+
+    /// The generated command path containing the conflict.
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+
+    /// The structural namespace that collided.
+    pub const fn kind(&self) -> &'static str {
+        self.kind
+    }
+
+    /// The duplicated name, ID, long option, or short option.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// The source that already owned the collided shape.
+    pub const fn first(&self) -> CliDefinitionSource {
+        self.sources.first
+    }
+
+    /// The source that introduced the conflicting shape.
+    pub const fn second(&self) -> CliDefinitionSource {
+        self.sources.second
+    }
+
+    pub(crate) fn same_collision(&self, other: &Self) -> bool {
+        self.command == other.command && self.kind == other.kind && self.value == other.value
+    }
+
+    pub(crate) fn with_sources(
+        mut self,
+        first: CliDefinitionSource,
+        second: CliDefinitionSource,
+    ) -> Self {
+        self.sources = Box::new(CliDefinitionSources { first, second });
+
+        self
+    }
+
+    fn sources(&self) -> String {
+        if self.sources.first == CliDefinitionSource::Application
+            && self.sources.second == CliDefinitionSource::Application
+        {
+            return String::new();
+        }
+
+        format!(
+            " from {:?} and {:?}",
+            self.sources.first, self.sources.second
+        )
+    }
 }
 
 /// Validates generated and flattened Clap declarations before Clap builds the parser.
@@ -163,6 +253,10 @@ where
             command: path.join(" "),
             kind,
             value: value.to_string(),
+            sources: Box::new(CliDefinitionSources {
+                first: CliDefinitionSource::Application,
+                second: CliDefinitionSource::Application,
+            }),
         });
     }
 

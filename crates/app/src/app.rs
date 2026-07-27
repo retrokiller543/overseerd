@@ -26,8 +26,7 @@ use tracing::{debug, error, info};
 use crate::error::Error;
 use crate::lifecycle::{ShutdownHandle, ShutdownSignal};
 use crate::plugin::{
-    ApplicationPluginRegistrar, EffectivePluginPlan, Plugin, PluginCatalog, PluginWithOptions,
-    ProtocolPluginRegistrar,
+    EarlyPluginCatalog, EffectivePluginPlan, Plugin, PluginCatalog, PluginWithOptions,
 };
 use crate::protocol::{
     PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
@@ -224,9 +223,17 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
         self
     }
 
-    pub(crate) fn with_plugin_declarations(
+    pub(crate) fn with_early_plugin_catalog(mut self, catalog: EarlyPluginCatalog) -> Self {
+        self.plugins.use_early(catalog);
+
+        self
+    }
+
+    /// Applies parser-visible static plugin declarations to a directly prepared builder.
+    #[doc(hidden)]
+    pub fn with_plugin_declarations(
         mut self,
-        declarations: impl FnOnce(&mut ApplicationPluginRegistrar),
+        declarations: impl FnOnce(&mut crate::ApplicationPluginRegistrar),
     ) -> Self {
         self.plugins.declare(declarations);
 
@@ -240,13 +247,7 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
         let mut registry = self.registry;
         let mut instances = self.instances;
         let mut protocol = self.protocol;
-        let mut protocol_plugins = ProtocolPluginRegistrar::new(D::ID);
-
-        D::register_plugins(&mut protocol_plugins);
-
-        let plugin_plan = self
-            .plugins
-            .freeze(protocol_plugins, self.auto_discovery_enabled)?;
+        let plugin_plan = self.plugins.freeze::<D>(self.auto_discovery_enabled)?;
         let plugin_plan = plugin_plan.lower(&mut registry);
 
         // Consumed by `serve`/`run`; its handle is seeded as a framework injectable.
@@ -381,6 +382,11 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
 }
 
 impl<D: ProtocolDefinition> PreparedApp<D> {
+    #[cfg(feature = "cli")]
+    pub(crate) fn into_cli_parts(self) -> (String, AppRegistry, EffectivePluginPlan) {
+        (self.name, self.registry, self.plugin_plan)
+    }
+
     /// The configured application name.
     pub fn name(&self) -> &str {
         &self.name
@@ -577,6 +583,11 @@ impl<D: ProtocolDefinition> fmt::Display for App<D> {
 }
 
 impl<D: ProtocolDefinition> App<D> {
+    #[cfg(feature = "cli")]
+    pub(crate) fn into_cli_parts(self) -> (String, Arc<ScopeContainer>, EffectivePluginPlan) {
+        (self.name, Arc::clone(self.runtime.root()), self.plugin_plan)
+    }
+
     /// Starts building an app for protocol definition `D`. Most protocols expose a pinned
     /// alias (e.g. `overseerd_rpc::App = App<Rpc>`) so `App::builder(name)` resolves
     /// without a turbofish.
