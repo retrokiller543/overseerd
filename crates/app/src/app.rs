@@ -583,9 +583,9 @@ impl<D: ProtocolDefinition> fmt::Display for App<D> {
 }
 
 impl<D: ProtocolDefinition> App<D> {
-    #[cfg(feature = "cli")]
-    pub(crate) fn into_cli_parts(self) -> (String, Arc<ScopeContainer>, EffectivePluginPlan) {
-        (self.name, Arc::clone(self.runtime.root()), self.plugin_plan)
+    /// The application name declared by its builder.
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Starts building an app for protocol definition `D`. Most protocols expose a pinned

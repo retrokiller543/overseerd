@@ -22,6 +22,7 @@ static APPLICATION_PLUGIN_CONSTRUCTIONS: AtomicUsize = AtomicUsize::new(0);
 static PROTOCOL_PLUGIN_CONTRIBUTIONS: AtomicUsize = AtomicUsize::new(0);
 static APPLICATION_PLUGIN_CONTRIBUTIONS: AtomicUsize = AtomicUsize::new(0);
 static PLUGIN_COMMAND_RUNS: AtomicUsize = AtomicUsize::new(0);
+static PROTOCOL_DROPS: AtomicUsize = AtomicUsize::new(0);
 
 /// Global arguments flattened into the generated application parser.
 #[derive(clap::Args)]
@@ -231,6 +232,7 @@ impl PluginCliCommand for PluginBuildCommand {
         assert_eq!(context.application_name(), Some("plugin-only-command-test"));
         assert!(context.plugin_plan().is_some());
         assert_eq!(std::sync::Arc::strong_count(&marker), 2);
+        assert_eq!(PROTOCOL_DROPS.load(Ordering::SeqCst), 0);
 
         PLUGIN_COMMAND_RUNS.fetch_add(1, Ordering::SeqCst);
 
@@ -320,6 +322,12 @@ impl PreparedProtocol for PreparedTestProtocol {
 
 impl ProtocolRuntime for TestRuntime {
     type Error = overseerd_app::Error;
+}
+
+impl Drop for TestRuntime {
+    fn drop(&mut self) {
+        PROTOCOL_DROPS.fetch_add(1, Ordering::SeqCst);
+    }
 }
 
 /// Runs after generated bootstrap but before application configuration.
@@ -611,6 +619,7 @@ fn reset_counters() {
     PROTOCOL_PLUGIN_CONTRIBUTIONS.store(0, Ordering::SeqCst);
     APPLICATION_PLUGIN_CONTRIBUTIONS.store(0, Ordering::SeqCst);
     PLUGIN_COMMAND_RUNS.store(0, Ordering::SeqCst);
+    PROTOCOL_DROPS.store(0, Ordering::SeqCst);
 }
 
 #[tokio::test]
