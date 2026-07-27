@@ -255,7 +255,7 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
             /// `CliError::Clap` values for tests, embedding, or custom process policies. Before
             /// parsing, it validates generated and flattened command names, aliases, argument/group
             /// IDs, long/short options, and inherited global options. On success it performs the
-            /// the same bootstrap resolution and lifecycle-aware dispatch as `run_cli()`.
+            /// same bootstrap resolution and lifecycle-aware dispatch as `run_cli()`.
             ///
             /// # Type parameters
             ///
@@ -268,8 +268,8 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
             /// Returns `Definition` for conflicting generated or flattened Clap declarations;
             /// `Clap` for invalid arguments or requested help/version; `Bootstrap` for directory,
             /// config/profile, logging, color, or tracing resolution; `Lifecycle` for a tagged app
-            /// phase; `CommandContext` when a required typed bootstrap value is absent; and
-            /// `Command` for a typed leaf-command error annotated with its full command path.
+            /// phase; and `Command` for a typed leaf-command error, including a missing required
+            /// bootstrap value, annotated with its full command path.
             pub async fn run_with<I, T>(args: I) -> ::core::result::Result<(), #cli_error>
             where
                 I: ::core::iter::IntoIterator<Item = T>,

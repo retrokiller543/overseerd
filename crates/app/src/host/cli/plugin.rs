@@ -244,10 +244,7 @@ impl SelectedPluginCliCommand {
         H: crate::AppHost,
         H::Protocol: Send,
     {
-        self.value
-            .run::<H>(bootstrap)
-            .await
-            .map_err(|source| CommandError::boxed(self.command.clone(), source))?;
+        self.value.run::<H>(bootstrap, &self.command).await?;
 
         Ok(())
     }
@@ -292,7 +289,11 @@ impl ErasedPluginCliCommand {
         Self(ErasedPluginCommandKind::Built(Box::new(command)))
     }
 
-    async fn run<H>(&self, bootstrap: BootstrapContext) -> Result<(), BoxedCommandError>
+    async fn run<H>(
+        &self,
+        bootstrap: BootstrapContext,
+        command_path: &str,
+    ) -> Result<(), crate::CliError>
     where
         H: crate::AppHost,
         H::Protocol: Send,
@@ -302,21 +303,32 @@ impl ErasedPluginCliCommand {
                 let context = prepare_cli_context::<H, crate::Setup>(bootstrap).await?;
                 let context = PluginCommandContext::from_application(context);
 
-                command.run(context).await
+                command
+                    .run(context)
+                    .await
+                    .map_err(|source| CommandError::boxed(command_path, source))?;
             }
             ErasedPluginCommandKind::PreBuild(command) => {
                 let context = prepare_cli_context::<H, crate::PreBuild>(bootstrap).await?;
                 let context = PluginCommandContext::from_application(context);
 
-                command.run(context).await
+                command
+                    .run(context)
+                    .await
+                    .map_err(|source| CommandError::boxed(command_path, source))?;
             }
             ErasedPluginCommandKind::Built(command) => {
                 let context = prepare_cli_context::<H, crate::Built>(bootstrap).await?;
                 let context = PluginCommandContext::from_application(context);
 
-                command.run(context).await
+                command
+                    .run(context)
+                    .await
+                    .map_err(|source| CommandError::boxed(command_path, source))?;
             }
         }
+
+        Ok(())
     }
 }
 
