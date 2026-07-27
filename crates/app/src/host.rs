@@ -76,6 +76,7 @@ impl fmt::Display for LifecyclePhase {
 pub struct BootstrapContext {
     mode: ExecutionMode,
     extensions: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    plugin_catalog: Option<crate::EarlyPluginCatalog>,
 }
 
 impl BootstrapContext {
@@ -84,6 +85,7 @@ impl BootstrapContext {
         Self {
             mode,
             extensions: HashMap::new(),
+            plugin_catalog: None,
         }
     }
 
@@ -117,6 +119,19 @@ impl BootstrapContext {
             .downcast::<T>()
             .ok()
             .map(|value| *value)
+    }
+
+    #[cfg(feature = "cli")]
+    pub(crate) fn insert_boxed(&mut self, type_id: TypeId, value: Box<dyn Any + Send + Sync>) {
+        self.extensions.insert(type_id, value);
+    }
+
+    pub(crate) fn set_plugin_catalog(&mut self, catalog: crate::EarlyPluginCatalog) {
+        self.plugin_catalog = Some(catalog);
+    }
+
+    pub(crate) fn take_plugin_catalog(&mut self) -> Option<crate::EarlyPluginCatalog> {
+        self.plugin_catalog.take()
     }
 }
 

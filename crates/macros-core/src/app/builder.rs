@@ -18,6 +18,7 @@ pub(super) fn expand(input: AppAssembly) -> TokenStream {
         middleware,
         guards,
         error_handler,
+        plugins: _,
         overseerd,
         krate,
         phases: _,

@@ -19,17 +19,6 @@ pub(super) struct CliInput<'a> {
 
 /// Expands the generated application CLI and typed command dispatcher.
 pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
-    if !input.has_serve && input.declarations.commands.is_empty() {
-        if !input.declarations.args.is_empty() {
-            return Err(syn::Error::new_spanned(
-                input.application_name,
-                "global CLI arguments require at least one command or a `serve` phase",
-            ));
-        }
-
-        return Ok(TokenStream::new());
-    }
-
     let cli_application_name = match input.application_name {
         Expr::Lit(expression) => match &expression.lit {
             syn::Lit::Str(name) => name,
@@ -55,6 +44,7 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
         .filter(|attribute| attribute.path().is_ident("doc"));
     let cli_ident = format_ident!("{}Cli", ident);
     let command_ident = format_ident!("{}Command", ident);
+    let framework_cli_ident = format_ident!("__{}FrameworkCli", ident);
     let bootstrap_application_with_policy = input.paths.core("bootstrap_application_with_policy");
     let bootstrap_options = input.paths.core("BootstrapOptions");
     let bootstrap_policy = input.paths.core("BootstrapPolicy");
@@ -62,14 +52,18 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
     let build_host_context = input.paths.core("build_host_context");
     let built = input.paths.core("Built");
     let cli_error = input.paths.core("CliError");
-    let validate_cli = input.paths.core("validate_cli");
     let cli_command = input.paths.core("CliCommand");
     let command_context = input.paths.core("CommandContext");
     let command_error = input.paths.core("CommandError");
     let command_phase = input.paths.core("CommandPhase");
     let execution_mode = input.paths.core("ExecutionMode");
+    let early_plugin_catalog = input.paths.core("EarlyPluginCatalog");
     let initial = input.paths.core("Initial");
     let prepare_host_context = input.paths.core("prepare_host_context");
+    let resolve_host_plugin_catalog = input.paths.core("resolve_host_plugin_catalog");
+    let retain_host_plugin_catalog = input.paths.core("retain_host_plugin_catalog");
+    let parsed_plugin_args = input.paths.core("ParsedPluginArgs");
+    let selected_plugin_command = input.paths.core("SelectedPluginCliCommand");
     let setup_host_context = input.paths.core("setup_host_context");
     let clap: syn::Path = syn::parse_quote!(::clap);
     let host = quote!(#ident<#initial>);
@@ -104,24 +98,13 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
         .iter()
         .map(|entry| &entry.alias)
         .collect::<Vec<_>>();
-    let command_field = if input.has_serve {
-        quote! {
-            /// Application command. Defaults to `serve` when omitted.
-            #[command(subcommand)]
-            pub command: Option<#command_ident>,
-        }
-    } else {
-        quote! {
-            /// Application command.
-            #[command(subcommand)]
-            pub command: #command_ident,
-        }
-    };
-    let select_command = if input.has_serve {
-        quote!(command.unwrap_or(#command_ident::Serve))
-    } else {
-        quote!(command)
-    };
+    let global_arg_types = input
+        .declarations
+        .args
+        .iter()
+        .map(|entry| &entry.ty)
+        .collect::<Vec<_>>();
+    let has_application_commands = input.has_serve || !input.declarations.commands.is_empty();
     let serve_variant = input.has_serve.then(|| {
         quote! {
             /// Build and serve the application.
@@ -143,6 +126,111 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
             }
         }
     });
+    let command_field = has_application_commands.then(|| {
+        quote! {
+            /// Application command.
+            #[command(subcommand)]
+            pub command: Option<#command_ident>,
+        }
+    });
+    let command_type = has_application_commands.then(|| {
+        quote! {
+            /// Generated application commands.
+            #[derive(#clap::Subcommand)]
+            #visibility enum #command_ident {
+                #serve_variant
+                #command_variants
+            }
+
+            impl #cli_command<#ident<#initial>> for #command_ident {
+                type Error = #cli_error;
+
+                fn phase(&self) -> #command_phase {
+                    match self {
+                        #serve_phase_arm
+                        #command_phase_arms
+                    }
+                }
+
+                async fn run(
+                    &self,
+                    context: #command_context<#ident<#initial>>,
+                ) -> ::core::result::Result<(), Self::Error> {
+                    match self {
+                        #serve_run_arm
+                        #command_run_arms
+                    }
+                }
+            }
+        }
+    });
+    let select_command = if input.has_serve {
+        quote!(command.or(::core::option::Option::Some(#command_ident::Serve)))
+    } else if has_application_commands {
+        quote!(command)
+    } else {
+        quote!(::core::option::Option::<()>::None)
+    };
+    let command_destructure = has_application_commands.then(|| quote!(command,));
+    let no_application_command = if has_application_commands {
+        quote!(cli.command.is_none())
+    } else {
+        quote!(true)
+    };
+    let missing_command_check = (!input.has_serve).then(|| {
+        quote! {
+            if plugin_command.is_none() && #no_application_command {
+                return Err(#clap::Error::new(#clap::error::ErrorKind::MissingSubcommand).into());
+            }
+        }
+    });
+    let application_phase = has_application_commands.then(|| {
+        quote! {
+            ::core::option::Option::None => {
+                <#command_ident as #cli_command<#ident<#initial>>>::phase(
+                    command.as_ref().expect("Clap requires an application or plugin command")
+                )
+            }
+        }
+    });
+    let absent_application_phase = (!has_application_commands).then(|| {
+        quote! {
+            ::core::option::Option::None => unreachable!("plugin-only CLI requires a plugin command"),
+        }
+    });
+    let application_dispatch = has_application_commands.then(|| {
+        quote! {
+            ::core::option::Option::None => {
+                <#command_ident as #cli_command<#ident<#initial>>>::run(
+                    command.as_ref().expect("Clap requires an application or plugin command"),
+                    context,
+                ).await?;
+            }
+        }
+    });
+    let absent_application_dispatch = (!has_application_commands).then(|| {
+        quote! {
+            ::core::option::Option::None => unreachable!("plugin-only CLI requires a plugin command"),
+        }
+    });
+    let run_cli = has_application_commands.then(|| {
+        quote! {
+            /// Dispatches an already parsed generated application command.
+            ///
+            /// Runtime-contributed plugin commands and plugin argument groups require `run_with`,
+            /// because they are not representable in the statically generated CLI value.
+            pub async fn run_cli(cli: #cli_ident) -> ::core::result::Result<(), #cli_error> {
+                let plugins = #resolve_host_plugin_catalog::<#ident<#initial>>()?;
+
+                Self::__run_cli(
+                    cli,
+                    plugins,
+                    #parsed_plugin_args::default(),
+                    ::core::option::Option::None,
+                ).await
+            }
+        }
+    });
 
     Ok(quote! {
         #(#documentation)*
@@ -158,33 +246,14 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
             #command_field
         }
 
-        /// Generated application commands.
-        #[derive(#clap::Subcommand)]
-        #visibility enum #command_ident {
-            #serve_variant
-            #command_variants
+        #[derive(#clap::Parser)]
+        #[command(name = #cli_application_name, version)]
+        struct #framework_cli_ident {
+            #[command(flatten)]
+            bootstrap: #bootstrap_options,
         }
 
-        impl #cli_command<#ident<#initial>> for #command_ident {
-            type Error = #cli_error;
-
-            fn phase(&self) -> #command_phase {
-                match self {
-                    #serve_phase_arm
-                    #command_phase_arms
-                }
-            }
-
-            async fn run(
-                &self,
-                context: #command_context<#ident<#initial>>,
-            ) -> ::core::result::Result<(), Self::Error> {
-                match self {
-                    #serve_run_arm
-                    #command_run_arms
-                }
-            }
-        }
+        #command_type
 
         #nested_command_types
 
@@ -236,43 +305,45 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
                 I: ::core::iter::IntoIterator<Item = T>,
                 T: ::core::convert::Into<::std::ffi::OsString> + ::core::clone::Clone,
             {
+                let plugins = #resolve_host_plugin_catalog::<#ident<#initial>>()?;
                 let mut command = <#cli_ident as #clap::CommandFactory>::command();
+                let framework = <#framework_cli_ident as #clap::CommandFactory>::command();
 
-                #validate_cli(&command)?;
+                command = plugins.augment_cli(
+                    command,
+                    framework,
+                    &[#(::core::any::TypeId::of::<#global_arg_types>()),*],
+                )?;
 
                 let mut matches = command.try_get_matches_from_mut(args)?;
+                let plugin_args = plugins.parse_cli_args(&mut matches)?;
+                let plugin_command = plugins.parse_cli_command(&mut matches)?;
                 let cli = <#cli_ident as #clap::FromArgMatches>::from_arg_matches_mut(&mut matches)?;
 
-                Self::run_cli(cli).await
+                Self::__run_cli(cli, plugins, plugin_args, plugin_command).await
             }
 
-            /// Resolves bootstrap state and dispatches an already parsed generated CLI value.
-            ///
-            /// This does not run Clap parsing or command-definition validation. It resolves CLI,
-            /// environment, profile, base-config, and default precedence into `BootstrapContext`,
-            /// uses platform-native project directories unless an explicit manager is declared,
-            /// inserts each flattened global argument group by type, and selects the command's
-            /// required lifecycle phase. Setup commands run setup and tracing finalization only;
-            /// configured commands additionally perform discovery, registration, config
-            /// resolution, graph/config validation, and construction planning; built commands also
-            /// construct components, root DI, runtime, and protocol and run `after_build`.
-            /// Non-serve commands never enter the serve phase.
-            ///
-            /// # Errors
-            ///
-            /// Returns `Bootstrap` when directories, config/profile precedence, logging, color, or
-            /// tracing cannot be resolved; `Lifecycle` when setup, configure, prepare, build,
-            /// after-build, or serve fails; `CommandContext` when generated dispatch receives the
-            /// wrong lifecycle state; and `Command` when the selected leaf returns its typed error.
-            /// `Definition` and `Clap` are not produced because parsing already completed.
-            pub async fn run_cli(cli: #cli_ident) -> ::core::result::Result<(), #cli_error> {
+            #run_cli
+
+            async fn __run_cli(
+                cli: #cli_ident,
+                plugins: #early_plugin_catalog,
+                plugin_args: #parsed_plugin_args,
+                plugin_command: ::core::option::Option<#selected_plugin_command>,
+            ) -> ::core::result::Result<(), #cli_error> {
+                #missing_command_check
+
                 let #cli_ident {
                     bootstrap,
                     #(#global_arg_names,)*
-                    command,
+                    #command_destructure
                 } = cli;
                 let command = #select_command;
-                let phase = <#command_ident as #cli_command<#ident<#initial>>>::phase(&command);
+                let phase = match &plugin_command {
+                    ::core::option::Option::Some(command) => command.phase(),
+                    #application_phase
+                    #absent_application_phase
+                };
                 let mut context = #bootstrap_application_with_policy(
                     #cli_application_name,
                     #execution_mode::Run,
@@ -282,26 +353,32 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
                         <#ident<#initial> as #app_host>::BOOTSTRAP_OWNS_CONFIG,
                     ),
                 )?;
+                #retain_host_plugin_catalog(&mut context, plugins);
                 #(context.insert(#global_arg_names);)*
+                plugin_args.apply(&mut context);
                 let context = match phase {
                     #command_phase::Setup => {
                         let context = #setup_host_context::<#ident<#initial>>(context).await?;
 
-                        #command_context::from_setup(context)
+                        #command_context::<#ident<#initial>>::from_setup(context)
                     }
                     #command_phase::Configured => {
                         let (context, app) = #prepare_host_context::<#ident<#initial>>(context).await?;
 
-                        #command_context::from_configured(context, app)
+                        #command_context::<#ident<#initial>>::from_configured(context, app)
                     }
                     #command_phase::Built => {
                         let (context, app) = #build_host_context::<#ident<#initial>>(context).await?;
 
-                        #command_context::from_built(context, app)
+                        #command_context::<#ident<#initial>>::from_built(context, app)
                     }
                 };
 
-                <#command_ident as #cli_command<#ident<#initial>>>::run(&command, context).await?;
+                match plugin_command {
+                    ::core::option::Option::Some(command) => command.run(context).await?,
+                    #application_dispatch
+                    #absent_application_dispatch
+                }
 
                 Ok(())
             }

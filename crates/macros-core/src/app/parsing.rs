@@ -7,11 +7,13 @@ use syn::{Ident, LitBool, Token, Type, braced, bracketed, parenthesized};
 
 use super::model::{
     AppPhases, CliDeclarations, ConfigEntry, ConfigSettings, DirSettings, ManagerSource,
-    PhaseArgument, PhaseInput,
+    PhaseArgument, PhaseInput, PluginDirective,
 };
 use super::{AppAssembly, AppInput, NamedApp, command};
 
 syn::custom_keyword!(app);
+syn::custom_keyword!(replace);
+syn::custom_keyword!(suppress);
 
 impl Parse for ConfigSettings {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -149,6 +151,7 @@ impl AppAssembly {
         let mut middleware = Vec::new();
         let mut guards = Vec::new();
         let mut error_handler = None;
+        let mut plugins = Vec::new();
         let mut overseerd = None;
         let mut krate = None;
         let mut phases = AppPhases::default();
@@ -197,6 +200,13 @@ impl AppAssembly {
                 "middleware" => middleware = bracketed_list(input)?,
                 "guards" => guards = bracketed_list(input)?,
                 "error_handler" => error_handler = Some(input.parse()?),
+                "plugins" if !reject_duplicates => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        "static plugin declarations require a named app definition",
+                    ));
+                }
+                "plugins" => plugins = parse_plugins(input)?,
                 "overseerd" => overseerd = Some(input.parse()?),
                 "crate" => krate = Some(input.parse()?),
                 "args" | "commands" if !reject_duplicates => {
@@ -213,7 +223,7 @@ impl AppAssembly {
                         format!(
                             "unknown `app!` key `{other}`, expected `name`, `protocol`, \
                              `services`, `components`, `configs`, `managers`, `middleware`, \
-                             `guards`, `error_handler`, `args`, `commands`, `overseerd`, or `crate`"
+                             `guards`, `error_handler`, `plugins`, `args`, `commands`, `overseerd`, or `crate`"
                         ),
                     ));
                 }
@@ -240,12 +250,51 @@ impl AppAssembly {
             middleware,
             guards,
             error_handler,
+            plugins,
             overseerd,
             krate,
             phases,
             cli,
         })
     }
+}
+
+fn parse_plugins(input: ParseStream) -> syn::Result<Vec<PluginDirective>> {
+    let content;
+
+    bracketed!(content in input);
+
+    let mut directives = Vec::new();
+
+    while !content.is_empty() {
+        let directive = if content.peek(replace) {
+            content.parse::<replace>()?;
+
+            let slot = content.parse()?;
+
+            content.parse::<Token![=>]>()?;
+
+            let plugin = content.parse()?;
+
+            PluginDirective::Replace { slot, plugin }
+        } else if content.peek(suppress) {
+            content.parse::<suppress>()?;
+
+            PluginDirective::Suppress(content.parse()?)
+        } else {
+            PluginDirective::Install(content.parse()?)
+        };
+
+        directives.push(directive);
+
+        if content.peek(Token![,]) {
+            content.parse::<Token![,]>()?;
+        } else if !content.is_empty() {
+            return Err(content.error("expected `,` between plugin directives"));
+        }
+    }
+
+    Ok(directives)
 }
 
 impl Parse for AppAssembly {

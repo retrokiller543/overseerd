@@ -28,97 +28,14 @@
 //! DaemonApplication::new(ExecutionMode::Run).serve().await?;
 //! ```
 
+mod commands;
 mod components;
 mod notifiers;
 mod service;
 
-use crate::components::{Db, DbConfig};
-use overseerd::{
-    Cfg, CliCommand, CommandContext, CommandPhase, LoggingConfig, ServerConfig, TcpTransport, app,
-};
-
-/// Shared arguments available before or after every generated subcommand.
-#[derive(clap::Args)]
-struct OutputArgs {
-    /// Print additional command details.
-    #[arg(long, global = true)]
-    verbose: bool,
-}
-
-/// Prints the validated registry without constructing components or the RPC protocol.
-#[derive(clap::Args)]
-struct InspectRegistryCommand;
-
-impl CliCommand<DaemonApplication> for InspectRegistryCommand {
-    type Error = std::io::Error;
-
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Configured
-    }
-
-    async fn run(&self, context: CommandContext<DaemonApplication>) -> Result<(), Self::Error> {
-        let prepared = context
-            .prepared()
-            .ok_or_else(|| std::io::Error::other("prepared application is unavailable"))?;
-        let verbose = context
-            .bootstrap()
-            .get::<OutputArgs>()
-            .is_some_and(|args| args.verbose);
-
-        println!("Application: {}", prepared.name());
-        println!("{}", prepared.registry());
-
-        if verbose {
-            println!(
-                "Protocol: {}",
-                std::any::type_name_of_val(prepared.protocol())
-            );
-        }
-
-        Ok(())
-    }
-}
-
-/// Builds the application and verifies that the database component resolves from DI.
-#[derive(clap::Args)]
-#[group(id = "database-check-mode", required = true, multiple = false)]
-struct CheckDatabaseCommand {
-    /// Verify that the database pool resolves from the root container.
-    #[arg(long, group = "database-check-mode")]
-    pool: bool,
-
-    /// Verify a connection by recording one example query.
-    #[arg(long, group = "database-check-mode")]
-    connection: bool,
-}
-
-impl CliCommand<DaemonApplication> for CheckDatabaseCommand {
-    type Error = std::io::Error;
-
-    fn phase(&self) -> CommandPhase {
-        CommandPhase::Built
-    }
-
-    async fn run(&self, context: CommandContext<DaemonApplication>) -> Result<(), Self::Error> {
-        let app = context
-            .app()
-            .ok_or_else(|| std::io::Error::other("built application is unavailable"))?;
-        let database = app
-            .container()
-            .get::<Db>()
-            .ok_or_else(|| std::io::Error::other("database component is unavailable"))?;
-
-        println!("database component resolved from the root container");
-
-        if self.connection {
-            println!("recorded query #{}", database.record_query());
-        }
-
-        let _ = self.pool;
-
-        Ok(())
-    }
-}
+use crate::commands::{CheckDatabaseCommand, InspectRegistryCommand, OutputArgs};
+use crate::components::DbConfig;
+use overseerd::{Cfg, LoggingConfig, ServerConfig, TcpTransport, app};
 
 app! {
     /// Demonstrates generated typestate lifecycle and nested typed CLI commands.

@@ -194,6 +194,9 @@ impl BootstrapOptions {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum CliError {
+    /// Parser-visible protocol or application plugins could not be resolved.
+    #[error(transparent)]
+    PluginCatalog(#[from] crate::Error),
     /// Generated or flattened Clap declarations conflict structurally.
     #[error(transparent)]
     Definition(#[from] CliDefinitionError),

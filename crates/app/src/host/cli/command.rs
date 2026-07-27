@@ -92,6 +92,22 @@ impl<H: AppHost> CommandContext<H> {
         &mut self.bootstrap
     }
 
+    /// Borrows a required typed bootstrap value.
+    ///
+    /// Generated application argument groups and plugin argument groups are inserted by their
+    /// concrete type before command dispatch. Setup hooks may insert additional typed values.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommandContextError::MissingValue`] when no value of type `T` is present.
+    pub fn require<T: Send + Sync + 'static>(&self) -> Result<&T, CommandContextError> {
+        self.bootstrap
+            .get::<T>()
+            .ok_or(CommandContextError::MissingValue {
+                type_name: std::any::type_name::<T>(),
+            })
+    }
+
     /// The prepared application, when the command requested the configured phase.
     pub fn prepared(&self) -> Option<&PreparedApp<H::Protocol>> {
         match &self.state {
@@ -100,12 +116,38 @@ impl<H: AppHost> CommandContext<H> {
         }
     }
 
+    /// Borrows the required prepared application from a configured command context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommandContextError::Phase`] when this command was dispatched with setup-only or
+    /// built state instead of its declared configured state.
+    pub fn require_prepared(&self) -> Result<&PreparedApp<H::Protocol>, CommandContextError> {
+        self.prepared().ok_or(CommandContextError::Phase {
+            expected: CommandPhase::Configured,
+            actual: self.phase(),
+        })
+    }
+
     /// The built application, when the command requested the built phase.
     pub fn app(&self) -> Option<&App<H::Protocol>> {
         match &self.state {
             CommandState::Built(app) => Some(app),
             CommandState::Setup | CommandState::Configured(_) => None,
         }
+    }
+
+    /// Borrows the required built application from a built command context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommandContextError::Phase`] when this command was dispatched with setup-only or
+    /// configured state instead of its declared built state.
+    pub fn require_app(&self) -> Result<&App<H::Protocol>, CommandContextError> {
+        self.app().ok_or(CommandContextError::Phase {
+            expected: CommandPhase::Built,
+            actual: self.phase(),
+        })
     }
 
     /// Resolves an `Injectable` from the built command context's root DI container.
@@ -166,6 +208,35 @@ impl<H: AppHost> CommandContext<H> {
             }),
         }
     }
+
+    pub(crate) fn into_plugin(self) -> super::PluginCommandContext {
+        let state = match self.state {
+            CommandState::Setup => super::PluginCommandState::Setup,
+            CommandState::Configured(app) => {
+                let (name, registry, plugin_plan) = app.into_cli_parts();
+
+                super::PluginCommandState::Configured {
+                    name,
+                    registry,
+                    plugin_plan,
+                }
+            }
+            CommandState::Built(app) => {
+                let (name, container, plugin_plan) = app.into_cli_parts();
+
+                super::PluginCommandState::Built {
+                    name,
+                    container,
+                    plugin_plan,
+                }
+            }
+        };
+
+        super::PluginCommandContext {
+            bootstrap: self.bootstrap,
+            state,
+        }
+    }
 }
 
 /// A generated command received application state for the wrong lifecycle phase.
@@ -180,13 +251,19 @@ pub enum CommandContextError {
         /// The phase carried by the context.
         actual: CommandPhase,
     },
+    /// A command required a typed bootstrap value that was not parsed or inserted.
+    #[error("command context is missing required bootstrap value '{type_name}'")]
+    MissingValue {
+        /// The missing concrete Rust type name.
+        type_name: &'static str,
+    },
 }
 
 /// A typed leaf-command failure annotated with its complete CLI path.
 #[derive(Debug, thiserror::Error)]
 #[error("command `{command}` failed: {source}")]
 pub struct CommandError {
-    command: &'static str,
+    command: String,
     #[source]
     source: Box<dyn std::error::Error + Send + Sync>,
 }
@@ -194,18 +271,28 @@ pub struct CommandError {
 impl CommandError {
     /// Wraps a typed command failure with the command path users invoked.
     pub fn new(
-        command: &'static str,
+        command: impl Into<String>,
         source: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {
         Self {
-            command,
+            command: command.into(),
             source: Box::new(source),
         }
     }
 
+    pub(crate) fn boxed(
+        command: impl Into<String>,
+        source: Box<dyn std::error::Error + Send + Sync>,
+    ) -> Self {
+        Self {
+            command: command.into(),
+            source,
+        }
+    }
+
     /// The complete space-separated CLI command path.
-    pub fn command(&self) -> &'static str {
-        self.command
+    pub fn command(&self) -> &str {
+        &self.command
     }
 }
 

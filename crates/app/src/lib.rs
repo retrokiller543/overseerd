@@ -35,22 +35,25 @@ pub use error::{Error, Result};
 pub use host::{
     AppHost, AppStage, BootstrapContext, Built, ExecutionMode, HostError, Initial, LifecyclePhase,
     PhaseError, PreBuild, Setup, build_host, build_host_context, build_prepared_host, prepare_host,
-    prepare_host_context, prepare_setup_host_context, resolve_host_dependency, serve_host,
-    setup_host, setup_host_context,
+    prepare_host_context, prepare_setup_host_context, resolve_host_dependency,
+    resolve_host_plugin_catalog, retain_host_plugin_catalog, serve_host, setup_host,
+    setup_host_context,
 };
 #[cfg(feature = "cli")]
 pub use host::{
     BootstrapError, BootstrapOptions, BootstrapPolicy, BootstrapState, CliCommand,
-    CliDefinitionError, CliError, ColorChoice, CommandContext, CommandContextError, CommandError,
-    CommandPhase, bootstrap_application, bootstrap_application_with_policy,
+    CliDefinitionError, CliDefinitionSource, CliError, ColorChoice, CommandContext,
+    CommandContextError, CommandError, CommandPhase, ParsedPluginArgs, PluginCliCommand,
+    PluginCliProviderKind, PluginCliProviderMetadata, PluginCliRegistrar, PluginCommandContext,
+    SelectedPluginCliCommand, bootstrap_application, bootstrap_application_with_policy,
     configure_bootstrap_config, configure_bootstrap_directories, finalize_bootstrap, validate_cli,
 };
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
 pub use overseerd_core::{Scope, ScopeId, StaticScope, namespaced_id};
 pub use plugin::{
-    ApplicationPluginRegistrar, EffectivePluginPlan, Plugin, PluginContribution,
-    PluginContributionKind, PluginContributions, PluginPlanError, PluginWithOptions,
-    ProtocolPluginRegistrar,
+    ApplicationPluginRegistrar, EarlyPluginCatalog, EffectivePluginPlan, Plugin,
+    PluginContribution, PluginContributionKind, PluginContributions, PluginPlanError,
+    PluginWithOptions, ProtocolPluginRegistrar,
 };
 pub use protocol::{
     PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,

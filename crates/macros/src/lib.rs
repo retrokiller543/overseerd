@@ -293,7 +293,7 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///         &self,
 ///         context: CommandContext<Example>,
 ///     ) -> Result<(), Self::Error> {
-///         let app = context.app().expect("built command context");
+///         let app = context.require_app()?;
 ///         // Resolve migration dependencies from `app.container()`.
 ///         Ok(())
 ///     }

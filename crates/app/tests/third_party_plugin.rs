@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+#[cfg(feature = "cli")]
+use overseerd_app::PluginCliRegistrar;
 use overseerd_app::{
     App, ContributionId, Plugin, PluginContributionKind, PluginContributions, PluginId,
 };
@@ -28,8 +30,25 @@ impl Descriptor<ComponentDescriptor> for ThirdPartyComponent {
 #[derive(Default)]
 struct ThirdPartyPlugin;
 
+/// Direct-crate global arguments contributed through public plugin APIs.
+#[derive(clap::Args)]
+#[cfg(feature = "cli")]
+struct ThirdPartyArgs {
+    /// Enables direct-crate plugin output.
+    #[arg(long)]
+    enabled: bool,
+}
+
 impl Plugin for ThirdPartyPlugin {
     const ID: PluginId = overseerd_app::namespaced_id!(PluginId, "third-party/direct-app-plugin");
+
+    #[cfg(feature = "cli")]
+    fn cli(&self, cli: &mut PluginCliRegistrar) {
+        cli.args::<ThirdPartyArgs>(overseerd_app::namespaced_id!(
+            ContributionId,
+            "third-party/args"
+        ));
+    }
 
     fn contribute(self, contributions: &mut PluginContributions) {
         contributions.component::<ThirdPartyComponent>(overseerd_app::namespaced_id!(
@@ -65,4 +84,5 @@ fn direct_crate_exports_support_third_party_plugins() {
             .iter()
             .any(|component| component.id == ThirdPartyComponent::ID)
     );
+    assert_eq!(prepared.plugin_plan().resolution().plugins().len(), 1);
 }

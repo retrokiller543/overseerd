@@ -57,12 +57,31 @@ fn parses_complete_named_app() {
             middleware: [middleware()],
             guards: [guard()],
             error_handler: error_handler(),
+            plugins: [Plugin, replace SLOT => Replacement, suppress OPTIONAL_SLOT],
             overseerd: ::framework,
             crate: ::plugin,
         }
     };
 
     parse2::<AppInput>(input).expect("complete named app parses");
+}
+
+#[test]
+fn expands_static_plugin_declarations_on_the_host() {
+    let input = parse2::<AppInput>(quote! {
+        app Example {
+            name: "example",
+            protocol: Protocol,
+            plugins: [Plugin, replace SLOT => Replacement, suppress OPTIONAL_SLOT],
+        }
+    })
+    .expect("static plugins parse");
+    let output = expand(input).to_string();
+
+    assert!(output.contains("fn declare_plugins"));
+    assert!(output.contains("plugins . register :: < Plugin >"));
+    assert!(output.contains("plugins . replace_with :: < Replacement > (SLOT)"));
+    assert!(output.contains("plugins . suppress (OPTIONAL_SLOT)"));
 }
 
 #[test]
@@ -165,6 +184,18 @@ fn keeps_legacy_expression_form() {
 }
 
 #[test]
+fn rejects_static_plugins_in_legacy_apps() {
+    assert!(
+        parse_error(quote! {
+            name: "legacy",
+            protocol: Protocol,
+            plugins: [Plugin],
+        })
+        .contains("static plugin declarations require a named app definition")
+    );
+}
+
+#[test]
 fn parses_external_and_inline_lifecycle_phases() {
     let input = quote! {
         pub app Example {
@@ -255,4 +286,23 @@ fn named_app_without_cli_omits_bootstrap_helpers() {
 
     assert!(!output.contains("finalize_bootstrap"));
     assert!(!output.contains("configure_bootstrap"));
+}
+
+#[cfg(feature = "cli")]
+#[test]
+fn named_app_without_application_commands_generates_plugin_cli_shell() {
+    let input = parse2::<AppInput>(quote! {
+        app PluginOnly {
+            name: "plugin-only",
+            protocol: Protocol,
+            plugins: [Plugin],
+        }
+    })
+    .expect("plugin-only app parses");
+    let output = expand(input).to_string();
+
+    assert!(output.contains("struct PluginOnlyCli"));
+    assert!(output.contains("fn run_with"));
+    assert!(!output.contains("enum PluginOnlyCommand"));
+    assert!(!output.contains("fn run_cli"));
 }

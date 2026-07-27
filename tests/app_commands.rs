@@ -6,8 +6,9 @@ use clap::{CommandFactory as _, Parser as _};
 use overseerd::config::Toml;
 use overseerd::{
     App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, CliCommand, CliError,
-    CommandContext, CommandPhase, ConfigManager, PreparedProtocol, ProtocolDefinition,
-    ProtocolRuntime, app, component,
+    CommandContext, CommandPhase, ConfigManager, ContributionId, Plugin, PluginCliCommand,
+    PluginCliRegistrar, PluginCommandContext, PluginContributions, PreparedProtocol,
+    ProtocolDefinition, ProtocolPluginRegistrar, ProtocolRuntime, app, component,
 };
 
 static SETUP_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -16,6 +17,11 @@ static COMPONENT_BUILDS: AtomicUsize = AtomicUsize::new(0);
 static PROTOCOL_BUILDS: AtomicUsize = AtomicUsize::new(0);
 static AFTER_BUILD_CALLS: AtomicUsize = AtomicUsize::new(0);
 static SERVE_CALLS: AtomicUsize = AtomicUsize::new(0);
+static PROTOCOL_PLUGIN_CONSTRUCTIONS: AtomicUsize = AtomicUsize::new(0);
+static APPLICATION_PLUGIN_CONSTRUCTIONS: AtomicUsize = AtomicUsize::new(0);
+static PROTOCOL_PLUGIN_CONTRIBUTIONS: AtomicUsize = AtomicUsize::new(0);
+static APPLICATION_PLUGIN_CONTRIBUTIONS: AtomicUsize = AtomicUsize::new(0);
+static PLUGIN_COMMAND_RUNS: AtomicUsize = AtomicUsize::new(0);
 
 /// Global arguments flattened into the generated application parser.
 #[derive(clap::Args)]
@@ -31,6 +37,232 @@ pub struct CollidingArgs {
     /// Conflicts with the framework's global profile option.
     #[arg(long)]
     profile: Option<String>,
+}
+
+/// Plugin arguments intentionally colliding with framework bootstrap options.
+#[derive(clap::Args)]
+pub struct CollidingPluginArgs {
+    /// Conflicts with the framework's global profile option.
+    #[arg(long)]
+    profile: Option<String>,
+}
+
+/// Plugin used to prove provenance-aware parser collisions.
+pub struct CollidingCliPlugin;
+
+impl Default for CollidingCliPlugin {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl Plugin for CollidingCliPlugin {
+    const ID: overseerd::PluginId =
+        overseerd::namespaced_id!(overseerd::PluginId, "test/colliding-cli");
+
+    fn cli(&self, cli: &mut PluginCliRegistrar) {
+        cli.args::<CollidingPluginArgs>(overseerd::namespaced_id!(
+            ContributionId,
+            "test/colliding-args"
+        ));
+    }
+
+    fn contribute(self, _contributions: &mut PluginContributions) {}
+}
+
+/// Global arguments contributed by a protocol-default plugin.
+#[derive(clap::Args)]
+pub struct ProtocolPluginArgs {
+    /// Selects the protocol inspection detail level.
+    #[arg(long, global = true, default_value = "summary")]
+    protocol_detail: String,
+}
+
+/// Setup-only command contributed by an application plugin.
+#[derive(clap::Args)]
+pub struct PluginInspectCommand;
+
+impl PluginCliCommand for PluginInspectCommand {
+    type Error = std::io::Error;
+
+    fn phase(&self) -> CommandPhase {
+        CommandPhase::Setup
+    }
+
+    async fn run(&self, context: PluginCommandContext) -> Result<(), Self::Error> {
+        assert_eq!(context.phase(), CommandPhase::Setup);
+        assert_eq!(
+            context
+                .require::<ProtocolPluginArgs>()
+                .expect("plugin arguments are retained")
+                .protocol_detail,
+            "full"
+        );
+
+        PLUGIN_COMMAND_RUNS.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+}
+
+/// Native flattened command set contributed by the protocol default.
+#[derive(clap::Subcommand)]
+pub enum ProtocolPluginCommands {
+    /// Reports protocol CLI composition state.
+    ProtocolStatus,
+}
+
+impl PluginCliCommand for ProtocolPluginCommands {
+    type Error = std::io::Error;
+
+    fn phase(&self) -> CommandPhase {
+        CommandPhase::Setup
+    }
+
+    async fn run(&self, context: PluginCommandContext) -> Result<(), Self::Error> {
+        assert_eq!(context.phase(), CommandPhase::Setup);
+
+        PLUGIN_COMMAND_RUNS.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+}
+
+/// Protocol-default plugin contributing args and a native command set.
+pub struct ProtocolCliPlugin {
+    marker: bool,
+}
+
+impl Default for ProtocolCliPlugin {
+    fn default() -> Self {
+        PROTOCOL_PLUGIN_CONSTRUCTIONS.fetch_add(1, Ordering::SeqCst);
+
+        Self { marker: true }
+    }
+}
+
+impl Plugin for ProtocolCliPlugin {
+    const ID: overseerd::PluginId =
+        overseerd::namespaced_id!(overseerd::PluginId, "test/protocol-cli");
+
+    fn cli(&self, cli: &mut PluginCliRegistrar) {
+        cli.args::<ProtocolPluginArgs>(overseerd::namespaced_id!(
+            ContributionId,
+            "test/protocol-args"
+        ));
+        cli.commands::<ProtocolPluginCommands>(overseerd::namespaced_id!(
+            ContributionId,
+            "test/protocol-commands"
+        ));
+    }
+
+    fn contribute(self, _contributions: &mut PluginContributions) {
+        assert!(self.marker);
+
+        PROTOCOL_PLUGIN_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// Application plugin contributing one leaf command.
+pub struct ApplicationCliPlugin;
+
+impl Default for ApplicationCliPlugin {
+    fn default() -> Self {
+        APPLICATION_PLUGIN_CONSTRUCTIONS.fetch_add(1, Ordering::SeqCst);
+
+        Self
+    }
+}
+
+impl Plugin for ApplicationCliPlugin {
+    const ID: overseerd::PluginId =
+        overseerd::namespaced_id!(overseerd::PluginId, "test/application-cli");
+
+    fn cli(&self, cli: &mut PluginCliRegistrar) {
+        cli.command::<PluginInspectCommand>(
+            overseerd::namespaced_id!(ContributionId, "test/plugin-inspect-command"),
+            "plugin-inspect",
+        );
+    }
+
+    fn contribute(self, _contributions: &mut PluginContributions) {
+        APPLICATION_PLUGIN_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// Configured command contributed to a plugin-only CLI surface.
+#[derive(clap::Args)]
+pub struct PluginCatalogCommand;
+
+impl PluginCliCommand for PluginCatalogCommand {
+    type Error = std::io::Error;
+
+    fn phase(&self) -> CommandPhase {
+        CommandPhase::Configured
+    }
+
+    async fn run(&self, context: PluginCommandContext) -> Result<(), Self::Error> {
+        assert_eq!(context.phase(), CommandPhase::Configured);
+        assert_eq!(context.application_name(), Some("plugin-only-command-test"));
+        assert!(context.registry().is_some());
+        assert!(context.plugin_plan().is_some());
+
+        PLUGIN_COMMAND_RUNS.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+}
+
+/// Built command proving protocol-neutral plugin DI access.
+#[derive(clap::Args)]
+pub struct PluginBuildCommand;
+
+impl PluginCliCommand for PluginBuildCommand {
+    type Error = overseerd::DiError;
+
+    fn phase(&self) -> CommandPhase {
+        CommandPhase::Built
+    }
+
+    async fn run(&self, context: PluginCommandContext) -> Result<(), Self::Error> {
+        let marker = context.resolve::<std::sync::Arc<BuildMarker>>().await?;
+
+        assert_eq!(context.phase(), CommandPhase::Built);
+        assert_eq!(context.application_name(), Some("plugin-only-command-test"));
+        assert!(context.plugin_plan().is_some());
+        assert_eq!(std::sync::Arc::strong_count(&marker), 2);
+
+        PLUGIN_COMMAND_RUNS.fetch_add(1, Ordering::SeqCst);
+
+        Ok(())
+    }
+}
+
+/// Plugin defining an application's entire CLI surface.
+pub struct PluginOnlyCliPlugin;
+
+impl Default for PluginOnlyCliPlugin {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl Plugin for PluginOnlyCliPlugin {
+    const ID: overseerd::PluginId =
+        overseerd::namespaced_id!(overseerd::PluginId, "test/plugin-only-cli");
+
+    fn cli(&self, cli: &mut PluginCliRegistrar) {
+        cli.command::<PluginCatalogCommand>(
+            overseerd::namespaced_id!(ContributionId, "test/plugin-catalog-command"),
+            "plugin-catalog",
+        );
+        cli.command::<PluginBuildCommand>(
+            overseerd::namespaced_id!(ContributionId, "test/plugin-build-command"),
+            "plugin-build",
+        );
+    }
+
+    fn contribute(self, _contributions: &mut PluginContributions) {}
 }
 
 /// Component resolved by the migration-style built command.
@@ -54,6 +286,10 @@ impl ProtocolDefinition for TestProtocol {
     const ID: overseerd::ProtocolId =
         overseerd::namespaced_id!(overseerd::ProtocolId, "test/app-commands");
     const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
+
+    fn register_plugins(plugins: &mut ProtocolPluginRegistrar) {
+        plugins.mandatory(ProtocolCliPlugin::default());
+    }
 
     fn register(&self, _registry: &mut AppRegistry) {}
 
@@ -223,6 +459,7 @@ app! {
         managers: {
             config: ConfigManager::<Toml>::empty(),
         },
+        plugins: [ApplicationCliPlugin],
         args: {
             output: OutputArgs,
         },
@@ -245,6 +482,25 @@ app! {
         configure = configure,
         after_build = after_build,
         serve = serve,
+    }
+}
+
+app! {
+    app PluginCollidingApplication {
+        name: "plugin-colliding-command-test",
+        protocol: (),
+        plugins: [CollidingCliPlugin],
+        commands: {
+            inspect: InspectCommand,
+        },
+    }
+}
+
+app! {
+    app PluginOnlyApplication {
+        name: "plugin-only-command-test",
+        protocol: (),
+        plugins: [PluginOnlyCliPlugin],
     }
 }
 
@@ -292,6 +548,21 @@ impl CliCommand<CollidingApplication> for InspectCommand {
     }
 }
 
+impl CliCommand<PluginCollidingApplication> for InspectCommand {
+    type Error = std::io::Error;
+
+    fn phase(&self) -> CommandPhase {
+        CommandPhase::Setup
+    }
+
+    async fn run(
+        &self,
+        _context: CommandContext<PluginCollidingApplication>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 app! {
     app CommandOnlyApplication {
         name: "command-only-test",
@@ -335,6 +606,11 @@ fn reset_counters() {
     PROTOCOL_BUILDS.store(0, Ordering::SeqCst);
     AFTER_BUILD_CALLS.store(0, Ordering::SeqCst);
     SERVE_CALLS.store(0, Ordering::SeqCst);
+    PROTOCOL_PLUGIN_CONSTRUCTIONS.store(0, Ordering::SeqCst);
+    APPLICATION_PLUGIN_CONSTRUCTIONS.store(0, Ordering::SeqCst);
+    PROTOCOL_PLUGIN_CONTRIBUTIONS.store(0, Ordering::SeqCst);
+    APPLICATION_PLUGIN_CONTRIBUTIONS.store(0, Ordering::SeqCst);
+    PLUGIN_COMMAND_RUNS.store(0, Ordering::SeqCst);
 }
 
 #[tokio::test]
@@ -362,6 +638,93 @@ async fn setup_command_does_not_configure_or_build() {
     assert_eq!(PROTOCOL_BUILDS.load(Ordering::SeqCst), 0);
     assert_eq!(AFTER_BUILD_CALLS.load(Ordering::SeqCst), 0);
     assert_eq!(SERVE_CALLS.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn protocol_and_application_plugin_commands_share_one_parser() {
+    reset_counters();
+
+    CommandApplication::run_with([
+        "command-app-test",
+        "plugin-inspect",
+        "--protocol-detail",
+        "full",
+    ])
+    .await
+    .expect("application plugin command runs");
+
+    assert_eq!(PROTOCOL_PLUGIN_CONSTRUCTIONS.load(Ordering::SeqCst), 1);
+    assert_eq!(APPLICATION_PLUGIN_CONSTRUCTIONS.load(Ordering::SeqCst), 1);
+    assert_eq!(PROTOCOL_PLUGIN_CONTRIBUTIONS.load(Ordering::SeqCst), 0);
+    assert_eq!(APPLICATION_PLUGIN_CONTRIBUTIONS.load(Ordering::SeqCst), 0);
+    assert_eq!(PLUGIN_COMMAND_RUNS.load(Ordering::SeqCst), 1);
+    assert_eq!(SETUP_CALLS.load(Ordering::SeqCst), 1);
+    assert_eq!(CONFIGURE_CALLS.load(Ordering::SeqCst), 0);
+    assert_eq!(SERVE_CALLS.load(Ordering::SeqCst), 0);
+
+    reset_counters();
+
+    CommandApplication::run_with(["command-app-test", "protocol-status"])
+        .await
+        .expect("protocol plugin command runs");
+
+    assert_eq!(PROTOCOL_PLUGIN_CONSTRUCTIONS.load(Ordering::SeqCst), 1);
+    assert_eq!(APPLICATION_PLUGIN_CONSTRUCTIONS.load(Ordering::SeqCst), 1);
+    assert_eq!(PLUGIN_COMMAND_RUNS.load(Ordering::SeqCst), 1);
+    assert_eq!(SERVE_CALLS.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn configured_app_command_consumes_the_preparse_catalog_once() {
+    reset_counters();
+
+    CommandApplication::run_with(["command-app-test", "configured"])
+        .await
+        .expect("configured command runs");
+
+    assert_eq!(PROTOCOL_PLUGIN_CONSTRUCTIONS.load(Ordering::SeqCst), 1);
+    assert_eq!(APPLICATION_PLUGIN_CONSTRUCTIONS.load(Ordering::SeqCst), 1);
+    assert_eq!(PROTOCOL_PLUGIN_CONTRIBUTIONS.load(Ordering::SeqCst), 1);
+    assert_eq!(APPLICATION_PLUGIN_CONTRIBUTIONS.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn plugin_only_cli_reaches_configured_state() {
+    reset_counters();
+
+    PluginOnlyApplication::run_with(["plugin-only-command-test", "plugin-catalog"])
+        .await
+        .expect("plugin-only configured command runs");
+
+    assert_eq!(PLUGIN_COMMAND_RUNS.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn plugin_only_cli_resolves_built_dependencies() {
+    reset_counters();
+
+    PluginOnlyApplication::run_with(["plugin-only-command-test", "plugin-build"])
+        .await
+        .expect("plugin-only built command runs");
+
+    assert_eq!(PLUGIN_COMMAND_RUNS.load(Ordering::SeqCst), 1);
+    assert_eq!(COMPONENT_BUILDS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn direct_generated_builder_retains_static_plugins() {
+    let prepared = PluginOnlyApplication::builder()
+        .expect("generated builder constructs")
+        .prepare()
+        .expect("generated builder prepares");
+
+    assert!(
+        prepared
+            .plugin_plan()
+            .resolution()
+            .plugin(PluginOnlyCliPlugin::ID)
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -460,4 +823,24 @@ async fn flattened_argument_collisions_return_typed_errors() {
         error.to_string(),
         "invalid command-line definition at `colliding-command-test`: duplicate long option `profile`"
     );
+}
+
+#[tokio::test]
+async fn plugin_argument_collisions_name_both_contributors() {
+    let error = PluginCollidingApplication::run_with(["plugin-colliding-command-test", "inspect"])
+        .await
+        .expect_err("plugin collision is rejected before parsing");
+    let CliError::Definition(error) = error else {
+        panic!("expected a CLI definition error");
+    };
+
+    assert_eq!(error.first(), overseerd::CliDefinitionSource::Framework);
+    assert_eq!(
+        error.second(),
+        overseerd::CliDefinitionSource::Plugin(overseerd::ContributionProvenance::new(
+            overseerd::Contributor::Plugin(CollidingCliPlugin::ID),
+            overseerd::namespaced_id!(ContributionId, "test/colliding-args"),
+        ))
+    );
+    assert!(error.to_string().contains("test/colliding-cli"));
 }

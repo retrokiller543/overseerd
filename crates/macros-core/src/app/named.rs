@@ -25,6 +25,20 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
     let has_directories_manager = assembly.directories_manager.is_some();
     let paths = Paths::overseerd().resolve(assembly.overseerd.take(), assembly.krate.take());
     let protocol = &assembly.protocol;
+    let plugin_declarations = assembly
+        .plugins
+        .iter()
+        .map(|directive| match directive {
+            super::model::PluginDirective::Install(plugin) => {
+                quote!(plugins.register::<#plugin>();)
+            }
+            super::model::PluginDirective::Replace { slot, plugin } => {
+                quote!(plugins.replace_with::<#plugin>(#slot);)
+            }
+            super::model::PluginDirective::Suppress(slot) => quote!(plugins.suppress(#slot);),
+        })
+        .collect::<Vec<_>>();
+    let application_plugin_registrar = paths.core("ApplicationPluginRegistrar");
     let app = paths.core("App");
     let app_builder = paths.core("AppBuilder");
     let app_host = paths.core("AppHost");
@@ -299,6 +313,14 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
             /// source and that source cannot be read or parsed. Pure in-memory builder assembly and
             /// descriptor collection do not perform runtime graph validation here.
             pub fn builder() -> ::core::result::Result<#app_builder<#protocol>, #config_error> {
+                ::core::result::Result::Ok(
+                    Self::__builder()?.with_plugin_declarations(|plugins| {
+                        #(#plugin_declarations)*
+                    })
+                )
+            }
+
+            fn __builder() -> ::core::result::Result<#app_builder<#protocol>, #config_error> {
                 ::core::result::Result::Ok(#builder)
             }
 
@@ -573,8 +595,12 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
             const BOOTSTRAP_OWNS_CONFIG: bool = #has_config_manager == false;
             const BOOTSTRAP_OWNS_DIRECTORIES: bool = #has_directories_manager == false;
 
+            fn declare_plugins(plugins: &mut #application_plugin_registrar) {
+                #(#plugin_declarations)*
+            }
+
             fn builder() -> ::core::result::Result<#app_builder<#protocol>, #config_error> {
-                Self::builder()
+                Self::__builder()
             }
 
             async fn setup(context: #bootstrap_context) -> ::core::result::Result<#bootstrap_context, #phase_error> {
