@@ -36,6 +36,7 @@ pub(crate) enum PluginCommandState {
         name: String,
         container: std::sync::Arc<overseerd_di::ScopeContainer>,
         plugin_plan: EffectivePluginPlan,
+        _owner: Box<dyn Send>,
     },
 }
 

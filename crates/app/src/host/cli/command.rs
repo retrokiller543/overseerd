@@ -222,12 +222,15 @@ impl<H: AppHost> CommandContext<H> {
                 }
             }
             CommandState::Built(app) => {
-                let (name, container, plugin_plan) = app.into_cli_parts();
+                let name = app.name().to_owned();
+                let container = std::sync::Arc::clone(app.container());
+                let plugin_plan = app.plugin_plan().clone();
 
                 super::PluginCommandState::Built {
                     name,
                     container,
                     plugin_plan,
+                    _owner: Box::new(app),
                 }
             }
         };
