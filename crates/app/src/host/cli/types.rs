@@ -2,7 +2,7 @@ use overseerd_config::{ConfigManager, Dynamic};
 use overseerd_dirs::DirectoriesManager;
 
 use super::super::{BootstrapContext, PhaseError};
-use super::{CliDefinitionError, CommandContextError, CommandError};
+use super::{CliDefinitionError, CommandError};
 use crate::{LogFormat, LoggingConfig};
 
 /// Controls when generated CLI output uses ANSI color.
@@ -215,7 +215,4 @@ pub enum CliError {
     /// An application-defined command failed.
     #[error(transparent)]
     Command(#[from] CommandError),
-    /// A command required a typed bootstrap value that was not available.
-    #[error(transparent)]
-    CommandContext(#[from] CommandContextError),
 }
