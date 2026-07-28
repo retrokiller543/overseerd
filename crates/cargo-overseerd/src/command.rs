@@ -366,19 +366,40 @@ fn add_framework_version_check(report: &mut CommandReport, framework_version: &s
 }
 
 fn report_error(command: CommandKind, error: ProbeRequestError) -> CommandReport {
-    let (outcome, diagnostics) = match error {
-        ProbeRequestError::Discovery(error) => (
-            CommandOutcome::TargetSelectionFailure,
+    let (outcome, target, diagnostics) = match error {
+        ProbeRequestError::Discovery(error) if discovery_cancelled(&error) => (
+            CommandOutcome::OperationalFailure,
+            None,
             discovery_diagnostics(&error),
         ),
-        ProbeRequestError::Build(error) => {
-            (CommandOutcome::BuildFailure, build_diagnostics(&error))
-        }
-        ProbeRequestError::Probe(error) => {
-            (CommandOutcome::ProbeFailure, probe_diagnostics(&error))
-        }
+        ProbeRequestError::Discovery(error) => (
+            CommandOutcome::TargetSelectionFailure,
+            None,
+            discovery_diagnostics(&error),
+        ),
+        ProbeRequestError::Build { target, source } if build_cancelled(&source) => (
+            CommandOutcome::OperationalFailure,
+            Some(SelectedTargetReport::from(target.as_ref())),
+            build_diagnostics(&source),
+        ),
+        ProbeRequestError::Build { target, source } => (
+            CommandOutcome::BuildFailure,
+            Some(SelectedTargetReport::from(target.as_ref())),
+            build_diagnostics(&source),
+        ),
+        ProbeRequestError::Probe { target, source } if probe_operational(&source) => (
+            CommandOutcome::OperationalFailure,
+            Some(SelectedTargetReport::from(target.as_ref())),
+            probe_diagnostics(&source),
+        ),
+        ProbeRequestError::Probe { target, source } => (
+            CommandOutcome::ProbeFailure,
+            Some(SelectedTargetReport::from(target.as_ref())),
+            probe_diagnostics(&source),
+        ),
         ProbeRequestError::Lock(error) => (
             CommandOutcome::OperationalFailure,
+            None,
             vec![tool_diagnostic(
                 "cargo-overseerd/invocation-lock",
                 "Cargo Overseerd could not serialize access to its private artifacts.",
@@ -389,6 +410,7 @@ fn report_error(command: CommandKind, error: ProbeRequestError) -> CommandReport
         ),
         ProbeRequestError::LockCancelled => (
             CommandOutcome::OperationalFailure,
+            None,
             vec![tool_diagnostic(
                 "cargo-overseerd/cancelled",
                 "The tooling command was cancelled while waiting for another invocation.",
@@ -398,6 +420,7 @@ fn report_error(command: CommandKind, error: ProbeRequestError) -> CommandReport
     };
     let mut report = CommandReport::new(command, outcome);
 
+    report.target = target;
     report.diagnostics = diagnostics;
 
     if command == CommandKind::Doctor {
@@ -409,6 +432,27 @@ fn report_error(command: CommandKind, error: ProbeRequestError) -> CommandReport
     }
 
     report
+}
+
+fn discovery_cancelled(error: &crate::DiscoveryError) -> bool {
+    matches!(error, crate::DiscoveryError::Cancelled)
+}
+
+fn build_cancelled(error: &crate::BuildError) -> bool {
+    matches!(error, crate::BuildError::Cancelled { .. })
+}
+
+fn probe_operational(error: &crate::ProbeError) -> bool {
+    matches!(
+        error,
+        crate::ProbeError::Cancelled { .. }
+            | crate::ProbeError::CreateDirectory(_)
+            | crate::ProbeError::DirectoryExhausted
+            | crate::ProbeError::Process(_)
+            | crate::ProbeError::Capture
+            | crate::ProbeError::ResponseMetadata { .. }
+            | crate::ProbeError::ReadResponse { .. }
+    )
 }
 
 fn passed_check(code: &str, message: &str) -> CommandCheck {

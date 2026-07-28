@@ -1,3 +1,4 @@
+use cargo_metadata::diagnostic::DiagnosticLevel;
 use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity, SourceLocation};
 
 use crate::{BuildError, BuildEvidence, DiscoveryError, ProbeError, ProbeEvidence, SelectionError};
@@ -157,7 +158,7 @@ pub(super) fn build_diagnostics(error: &BuildError) -> Vec<Diagnostic> {
                         || String::from("cargo-overseerd/rustc"),
                         |code| format!("rustc/{}", code.code),
                     ),
-                    severity: DiagnosticSeverity::Error,
+                    severity: rustc_severity(diagnostic.diagnostic.level),
                     message: diagnostic.diagnostic.message.clone(),
                     resources: vec![format!("cargo-target:{}", diagnostic.target_name)],
                     sources: primary_sources(&diagnostic.diagnostic),
@@ -167,15 +168,24 @@ pub(super) fn build_diagnostics(error: &BuildError) -> Vec<Diagnostic> {
         })
         .unwrap_or_default();
 
-    if diagnostics.is_empty() {
-        diagnostics.push(tool_diagnostic(
-            "cargo-overseerd/build-failed",
-            error.to_string(),
-            build_error_hint(error, evidence),
-        ));
-    }
+    diagnostics.push(tool_diagnostic(
+        "cargo-overseerd/build-failed",
+        error.to_string(),
+        build_error_hint(error, evidence),
+    ));
 
     diagnostics
+}
+
+fn rustc_severity(level: DiagnosticLevel) -> DiagnosticSeverity {
+    match level {
+        DiagnosticLevel::Ice | DiagnosticLevel::Error | DiagnosticLevel::FailureNote => {
+            DiagnosticSeverity::Error
+        }
+        DiagnosticLevel::Warning => DiagnosticSeverity::Warning,
+        DiagnosticLevel::Note | DiagnosticLevel::Help => DiagnosticSeverity::Info,
+        _ => DiagnosticSeverity::Info,
+    }
 }
 
 fn build_error_evidence(error: &BuildError) -> Option<&BuildEvidence> {
@@ -373,3 +383,6 @@ fn warning_diagnostic(code: &str, message: &str) -> Diagnostic {
         fix: None,
     }
 }
+
+#[cfg(test)]
+mod tests;

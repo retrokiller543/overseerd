@@ -1,3 +1,9 @@
+use std::path::PathBuf;
+
+use crate::{
+    BuildError, BuildEvidence, ProbeError, ProbeEvidence, ProbeRequestError, ProcessStatus,
+    SelectedTarget,
+};
 use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity};
 
 use super::{CommandExitCode, CommandKind, CommandOutcome, CommandReport, CommandSchemaVersion};
@@ -40,4 +46,78 @@ fn json_report_is_versioned_and_canonicalizes_diagnostics() {
     assert!(json.starts_with("{\"schema\":{\"major\":1},\"command\":\"check\""));
     assert!(json.find("fixture/a-first") < json.find("fixture/z-last"));
     assert_eq!(report.diagnostics[0].resources, ["a", "z"]);
+}
+
+#[test]
+fn cancellation_is_always_operational_and_retains_selected_target() {
+    let target = selected_target();
+    let report = super::report_error(
+        CommandKind::Check,
+        ProbeRequestError::Build {
+            target: Box::new(target.clone()),
+            source: Box::new(BuildError::Cancelled {
+                evidence: empty_build_evidence(),
+            }),
+        },
+    );
+
+    assert_eq!(report.outcome, CommandOutcome::OperationalFailure);
+    assert_eq!(report.exit_code, CommandExitCode::OperationalFailure.code());
+    assert_eq!(report.target, Some((&target).into()));
+}
+
+#[test]
+fn local_probe_failures_are_operational_and_retain_selected_target() {
+    let target = selected_target();
+    let report = super::report_error(
+        CommandKind::Check,
+        ProbeRequestError::Probe {
+            target: Box::new(target.clone()),
+            source: Box::new(ProbeError::Cancelled {
+                evidence: Box::new(empty_probe_evidence()),
+            }),
+        },
+    );
+
+    assert_eq!(report.outcome, CommandOutcome::OperationalFailure);
+    assert_eq!(report.exit_code, CommandExitCode::OperationalFailure.code());
+    assert_eq!(report.target, Some((&target).into()));
+}
+
+fn selected_target() -> SelectedTarget {
+    SelectedTarget {
+        package_id: String::from("fixture 1.0.0 (path+file:///fixture)"),
+        package_name: String::from("fixture"),
+        package_version: String::from("1.0.0"),
+        manifest_path: PathBuf::from("/fixture/Cargo.toml"),
+        binary_name: String::from("fixture"),
+        required_features: Vec::new(),
+    }
+}
+
+fn empty_build_evidence() -> BuildEvidence {
+    BuildEvidence {
+        status: ProcessStatus {
+            success: false,
+            code: None,
+        },
+        diagnostics: Vec::new(),
+        text_lines: Vec::new(),
+        stderr: Vec::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+    }
+}
+
+fn empty_probe_evidence() -> ProbeEvidence {
+    ProbeEvidence {
+        status: ProcessStatus {
+            success: false,
+            code: None,
+        },
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+    }
 }

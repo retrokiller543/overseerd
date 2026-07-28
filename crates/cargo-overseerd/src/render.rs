@@ -76,6 +76,7 @@ fn write_terminal(report: &CommandReport, output: &mut impl io::Write) -> io::Re
                 (Some(line), Some(column)) => {
                     writeln!(output, "  at {}:{line}:{column}", source.file)?;
                 }
+                (Some(line), None) => writeln!(output, "  at {}:{line}", source.file)?,
                 _ => writeln!(output, "  at {}", source.file)?,
             }
         }
