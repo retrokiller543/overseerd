@@ -141,7 +141,6 @@ pub enum ProbeError {
 }
 
 /// Executes and validates one built target's generated private tooling probe.
-#[allow(clippy::needless_late_init)]
 pub fn execute_probe(
     executable: &Path,
     workspace_target_directory: &Path,
@@ -152,7 +151,6 @@ pub fn execute_probe(
     let run_directory = ProbeDirectory::create(workspace_target_directory)?;
     let response = run_directory.path.join("response.json");
     let mut command = Command::new(executable);
-    let output;
 
     command.arg(TOOLING_PROBE_ARGUMENT);
     scrub_reserved_environment(&mut command);
@@ -167,7 +165,7 @@ pub fn execute_probe(
         command.current_dir(current_dir);
     }
 
-    output = execute(
+    let output = execute(
         &mut command,
         cancellation,
         PROBE_OUTPUT_LIMIT,
