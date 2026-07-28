@@ -4,8 +4,10 @@ use std::path::PathBuf;
 use cargo_metadata::MetadataCommand;
 use thiserror::Error;
 
+use crate::process::{CARGO_STDERR_LIMIT, CARGO_STDOUT_LIMIT, ProcessExecutionError, execute};
 use crate::{
-    CancellationToken, FeatureSelection, SelectedTarget, SelectionError, WorkspaceCatalog,
+    CancellationToken, FeatureSelection, ProcessStatus, SelectedTarget, SelectionError,
+    WorkspaceCatalog,
 };
 
 /// Cargo executable used for metadata and build operations.
@@ -65,7 +67,32 @@ pub enum DiscoveryError {
     /// Cancellation was requested while Cargo metadata was running.
     #[error("Cargo metadata discovery was cancelled")]
     Cancelled,
-    /// Cargo metadata could not be loaded or decoded.
+    /// Cargo metadata could not be launched.
+    #[error("failed to launch Cargo metadata discovery")]
+    Launch(#[source] std::io::Error),
+    /// Cargo metadata process monitoring failed.
+    #[error("failed while waiting for Cargo metadata discovery")]
+    Process(#[source] std::io::Error),
+    /// A Cargo output reader thread failed unexpectedly.
+    #[error("failed to capture Cargo metadata output")]
+    Capture,
+    /// Cargo metadata reported a failure.
+    #[error("Cargo failed to load workspace metadata")]
+    Failed {
+        /// Portable Cargo completion status.
+        status: ProcessStatus,
+        /// Bounded Cargo stderr.
+        stderr: Vec<u8>,
+        /// Whether stderr exceeded the retained bound.
+        stderr_truncated: bool,
+    },
+    /// Cargo metadata exceeded the bounded machine-output size.
+    #[error("Cargo metadata output exceeded the supported size")]
+    OutputTooLarge,
+    /// Cargo metadata output was not UTF-8 text.
+    #[error("Cargo metadata output is not UTF-8")]
+    Encoding(#[source] std::string::FromUtf8Error),
+    /// Cargo metadata could not be decoded.
     #[error("failed to load Cargo workspace metadata")]
     Metadata(#[source] cargo_metadata::Error),
     /// No unambiguous package and binary target matched the request.
@@ -95,13 +122,49 @@ pub fn discover(
         command.current_dir(path);
     }
 
-    let metadata = command.exec().map_err(DiscoveryError::Metadata)?;
+    let mut cargo = command.cargo_command();
+    let output = execute(
+        &mut cargo,
+        cancellation,
+        CARGO_STDOUT_LIMIT,
+        CARGO_STDERR_LIMIT,
+    )
+    .map_err(map_process_error)?;
 
-    if cancellation.is_cancelled() {
+    if output.cancelled {
         return Err(DiscoveryError::Cancelled);
     }
+
+    if !output.status.success {
+        return Err(DiscoveryError::Failed {
+            status: output.status,
+            stderr: output.stderr,
+            stderr_truncated: output.stderr_truncated,
+        });
+    }
+
+    if output.stdout_truncated {
+        return Err(DiscoveryError::OutputTooLarge);
+    }
+
+    let stdout = String::from_utf8(output.stdout).map_err(DiscoveryError::Encoding)?;
+    let json = stdout
+        .lines()
+        .find(|line| line.starts_with('{'))
+        .unwrap_or(stdout.as_str());
+    let metadata = MetadataCommand::parse(json).map_err(DiscoveryError::Metadata)?;
     let catalog = WorkspaceCatalog::from_metadata(&metadata, &request.features);
     let selected = catalog.select(request.package.as_deref(), request.binary.as_deref())?;
 
     Ok((catalog, selected))
+}
+
+fn map_process_error(error: ProcessExecutionError) -> DiscoveryError {
+    match error {
+        ProcessExecutionError::Spawn(source) => DiscoveryError::Launch(source),
+        ProcessExecutionError::Wait(source)
+        | ProcessExecutionError::Kill(source)
+        | ProcessExecutionError::Capture(source) => DiscoveryError::Process(source),
+        ProcessExecutionError::CapturePanic => DiscoveryError::Capture,
+    }
 }

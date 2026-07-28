@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use cargo_metadata::Metadata;
@@ -204,7 +204,7 @@ impl WorkspaceCatalog {
         let default_members = self
             .packages
             .iter()
-            .filter(|package| package.default_member)
+            .filter(|package| package.default_member && package.has_eligible_binary())
             .collect::<Vec<_>>();
 
         if default_members.len() == 1 {
@@ -217,13 +217,25 @@ impl WorkspaceCatalog {
             });
         }
 
-        match self.packages.as_slice() {
+        let eligible_packages = self
+            .packages
+            .iter()
+            .filter(|package| package.has_eligible_binary())
+            .collect::<Vec<_>>();
+
+        match eligible_packages.as_slice() {
             [] => Err(SelectionError::NoPackage),
             [package] => Ok(package),
             packages => Err(SelectionError::AmbiguousPackage {
-                candidates: packages.to_vec(),
+                candidates: packages.iter().copied().cloned().collect(),
             }),
         }
+    }
+}
+
+impl PackageCandidate {
+    fn has_eligible_binary(&self) -> bool {
+        self.binaries.iter().any(BinaryCandidate::is_eligible)
     }
 }
 
@@ -306,9 +318,9 @@ fn select_binary<'a>(
         && let Some(binary) = package
             .binaries
             .iter()
-            .find(|binary| binary.name == default_run)
+            .find(|binary| binary.name == default_run && binary.is_eligible())
     {
-        return require_eligible(package, binary);
+        return Ok(binary);
     }
 
     let eligible = package
@@ -353,19 +365,21 @@ fn enabled_features(
     package: &cargo_metadata::Package,
     selection: &FeatureSelection,
 ) -> BTreeSet<String> {
+    expand_enabled_features(&package.features, selection)
+}
+
+fn expand_enabled_features(
+    definitions: &std::collections::BTreeMap<String, Vec<String>>,
+    selection: &FeatureSelection,
+) -> BTreeSet<String> {
     let mut enabled = if selection.all_features {
-        package.features.keys().cloned().collect::<BTreeSet<_>>()
+        definitions.keys().cloned().collect::<BTreeSet<_>>()
     } else {
         selection
             .normalized_features()
             .into_iter()
             .collect::<BTreeSet<_>>()
     };
-    let definitions = package
-        .features
-        .iter()
-        .map(|(name, values)| (name.as_str(), values.as_slice()))
-        .collect::<BTreeMap<_, _>>();
 
     if !selection.no_default_features && definitions.contains_key("default") {
         enabled.insert(String::from("default"));
@@ -378,16 +392,13 @@ fn enabled_features(
             continue;
         };
 
-        for value in *values {
-            let referenced = value
-                .strip_prefix("dep:")
-                .unwrap_or(value)
-                .split(['/', '?'])
-                .next()
-                .unwrap_or(value);
-
-            if definitions.contains_key(referenced) && enabled.insert(referenced.to_string()) {
-                pending.push(referenced.to_string());
+        for value in values {
+            if !value.starts_with("dep:")
+                && !value.contains('/')
+                && definitions.contains_key(value)
+                && enabled.insert(value.clone())
+            {
+                pending.push(value.clone());
             }
         }
     }
