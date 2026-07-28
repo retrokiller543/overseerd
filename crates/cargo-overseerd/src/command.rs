@@ -448,6 +448,7 @@ fn probe_operational(error: &crate::ProbeError) -> bool {
         crate::ProbeError::Cancelled { .. }
             | crate::ProbeError::CreateDirectory(_)
             | crate::ProbeError::DirectoryExhausted
+            | crate::ProbeError::Launch(_)
             | crate::ProbeError::Process(_)
             | crate::ProbeError::Capture
             | crate::ProbeError::ResponseMetadata { .. }
