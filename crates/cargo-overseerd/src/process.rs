@@ -7,6 +7,7 @@ use std::time::Duration;
 use command_group::CommandGroup as _;
 
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const CAPTURE_DRAIN_IDLE_LIMIT: Duration = Duration::from_millis(100);
 
 pub(crate) const CARGO_STDOUT_LIMIT: usize = 128 * 1024 * 1024;
 pub(crate) const CARGO_STDERR_LIMIT: usize = 16 * 1024 * 1024;
@@ -116,17 +117,21 @@ pub(crate) fn execute(
         Arc::clone(&capture_complete),
     );
 
-    let status = loop {
+    let monitored = loop {
         if cancellation.is_cancelled() {
             cancelled = true;
 
-            if let Err(error) = child.kill()
-                && error.kind() != std::io::ErrorKind::InvalidInput
-            {
-                return Err(ProcessExecutionError::Kill(error));
-            }
+            match child.kill() {
+                Ok(()) => break child.wait().map_err(ProcessExecutionError::Wait),
+                Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
+                    break child.wait().map_err(ProcessExecutionError::Wait);
+                }
+                Err(error) => {
+                    terminate_group(&mut child);
 
-            break child.wait().map_err(ProcessExecutionError::Wait)?;
+                    break Err(ProcessExecutionError::Kill(error));
+                }
+            }
         }
 
         let completed = match child.try_wait() {
@@ -134,14 +139,14 @@ pub(crate) fn execute(
             Err(error) => {
                 terminate_group(&mut child);
 
-                return Err(ProcessExecutionError::Wait(error));
+                break Err(ProcessExecutionError::Wait(error));
             }
         };
 
         if let Some(completed) = completed {
             terminate_group(&mut child);
 
-            break completed;
+            break Ok(completed);
         }
 
         std::thread::sleep(PROCESS_POLL_INTERVAL);
@@ -149,8 +154,11 @@ pub(crate) fn execute(
 
     capture_complete.store(true, Ordering::Release);
 
-    let stdout = join_capture(stdout_thread)?;
-    let stderr = join_capture(stderr_thread)?;
+    let stdout = join_capture(stdout_thread);
+    let stderr = join_capture(stderr_thread);
+    let status = monitored?;
+    let stdout = stdout?;
+    let stderr = stderr?;
 
     Ok(ProcessOutput {
         status: status.into(),
@@ -188,6 +196,7 @@ fn capture(
     std::thread::spawn(move || {
         let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
         let mut buffer = [0_u8; 16 * 1024];
+        let mut drain_idle_since = None;
         let mut truncated = false;
 
         reader.configure_capture()?;
@@ -197,7 +206,12 @@ fn capture(
                 Ok(read) => read,
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                     if complete.load(Ordering::Acquire) {
-                        break;
+                        let idle_since =
+                            drain_idle_since.get_or_insert_with(std::time::Instant::now);
+
+                        if idle_since.elapsed() >= CAPTURE_DRAIN_IDLE_LIMIT {
+                            break;
+                        }
                     }
 
                     std::thread::sleep(PROCESS_POLL_INTERVAL);
@@ -210,6 +224,8 @@ fn capture(
             if read == 0 {
                 break;
             }
+
+            drain_idle_since = None;
 
             let remaining = limit.saturating_sub(bytes.len());
             let retained = remaining.min(read);

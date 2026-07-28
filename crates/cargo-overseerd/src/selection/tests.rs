@@ -1,6 +1,10 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
-use super::{BinaryCandidate, PackageCandidate, SelectedTarget, SelectionError, WorkspaceCatalog};
+use super::{
+    BinaryCandidate, FeatureSelection, PackageCandidate, SelectedTarget, SelectionError,
+    WorkspaceCatalog, expand_enabled_features,
+};
 
 #[test]
 fn selects_the_only_workspace_package_and_binary() {
@@ -23,6 +27,24 @@ fn workspace_default_member_wins_over_other_packages() {
     ]);
 
     let selected = catalog.select(None, None).expect("default member selects");
+
+    assert_eq!(selected.package_name, "server");
+}
+
+#[test]
+fn disabled_default_member_does_not_hide_the_only_eligible_package() {
+    let catalog = catalog(vec![
+        package(
+            "disabled",
+            true,
+            vec![binary("disabled", &["tooling"], &["tooling"])],
+        ),
+        package("server", false, vec![binary("server", &[], &[])]),
+    ]);
+
+    let selected = catalog
+        .select(None, None)
+        .expect("eligible package selects");
 
     assert_eq!(selected.package_name, "server");
 }
@@ -68,6 +90,26 @@ fn package_default_run_wins_over_other_binaries() {
 }
 
 #[test]
+fn disabled_default_run_falls_back_to_the_only_eligible_binary() {
+    let mut package = package(
+        "server",
+        false,
+        vec![
+            binary("admin", &[], &[]),
+            binary("server", &["server"], &["server"]),
+        ],
+    );
+
+    package.default_run = Some(String::from("server"));
+
+    let selected = catalog(vec![package])
+        .select(None, None)
+        .expect("eligible fallback selects");
+
+    assert_eq!(selected.binary_name, "admin");
+}
+
+#[test]
 fn required_feature_failure_exposes_exact_missing_features() {
     let catalog = catalog(vec![package(
         "server",
@@ -76,7 +118,7 @@ fn required_feature_failure_exposes_exact_missing_features() {
     )]);
 
     let error = catalog
-        .select(None, Some("server"))
+        .select(Some("server"), Some("server"))
         .expect_err("disabled binary rejects");
 
     assert_eq!(
@@ -103,6 +145,45 @@ fn sole_eligible_binary_wins_over_disabled_targets() {
     let selected = catalog.select(None, None).expect("eligible target selects");
 
     assert_eq!(selected.binary_name, "server");
+}
+
+#[test]
+fn dependency_feature_references_do_not_enable_local_features() {
+    let mut definitions = BTreeMap::new();
+
+    definitions.insert(
+        String::from("default"),
+        vec![
+            String::from("dep:foo"),
+            String::from("foo/bar"),
+            String::from("foo?/optional"),
+        ],
+    );
+    definitions.insert(String::from("foo"), Vec::new());
+
+    let enabled = expand_enabled_features(&definitions, &FeatureSelection::default());
+
+    assert_eq!(enabled, BTreeSet::from([String::from("default")]));
+}
+
+#[test]
+fn plain_local_feature_references_expand_transitively() {
+    let mut definitions = BTreeMap::new();
+
+    definitions.insert(String::from("default"), vec![String::from("server")]);
+    definitions.insert(String::from("server"), vec![String::from("tooling")]);
+    definitions.insert(String::from("tooling"), Vec::new());
+
+    let enabled = expand_enabled_features(&definitions, &FeatureSelection::default());
+
+    assert_eq!(
+        enabled,
+        BTreeSet::from([
+            String::from("default"),
+            String::from("server"),
+            String::from("tooling"),
+        ])
+    );
 }
 
 fn catalog(mut packages: Vec<PackageCandidate>) -> WorkspaceCatalog {
