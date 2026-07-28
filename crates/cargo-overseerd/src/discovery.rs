@@ -1,10 +1,14 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::process::Command;
 
-use cargo_metadata::MetadataCommand;
 use thiserror::Error;
 
-use crate::{FeatureSelection, SelectedTarget, SelectionError, WorkspaceCatalog};
+use crate::process::{CARGO_STDERR_LIMIT, CARGO_STDOUT_LIMIT, ProcessExecutionError, execute};
+use crate::{
+    CancellationToken, FeatureSelection, ProcessStatus, SelectedTarget, SelectionError,
+    WorkspaceCatalog,
+};
 
 /// Cargo executable used for metadata and build operations.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,9 +64,34 @@ pub struct DiscoveryRequest {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DiscoveryError {
-    /// Cargo metadata could not be loaded.
-    #[error("failed to load Cargo workspace metadata")]
-    Metadata(#[source] cargo_metadata::Error),
+    /// Cancellation was requested while Cargo metadata was running.
+    #[error("Cargo metadata discovery was cancelled")]
+    Cancelled,
+    /// Cargo metadata could not be launched.
+    #[error("failed to launch Cargo metadata discovery")]
+    Launch(#[source] std::io::Error),
+    /// Cargo metadata process monitoring failed.
+    #[error("failed while waiting for Cargo metadata discovery")]
+    Process(#[source] std::io::Error),
+    /// A Cargo output reader thread failed unexpectedly.
+    #[error("failed to capture Cargo metadata output")]
+    Capture,
+    /// Cargo metadata reported a failure.
+    #[error("Cargo failed to load workspace metadata")]
+    Failed {
+        /// Portable Cargo completion status.
+        status: ProcessStatus,
+        /// Bounded Cargo stderr.
+        stderr: Vec<u8>,
+        /// Whether stderr exceeded the retained bound.
+        stderr_truncated: bool,
+    },
+    /// Cargo metadata exceeded the bounded machine-output size.
+    #[error("Cargo metadata output exceeded the supported size")]
+    OutputTooLarge,
+    /// Cargo metadata output could not be decoded.
+    #[error("failed to decode Cargo workspace metadata")]
+    Decode(#[source] serde_json::Error),
     /// No unambiguous package and binary target matched the request.
     #[error(transparent)]
     Selection(#[from] SelectionError),
@@ -71,23 +100,61 @@ pub enum DiscoveryError {
 /// Loads Cargo metadata and selects one application binary target.
 pub fn discover(
     request: &DiscoveryRequest,
+    cancellation: &CancellationToken,
 ) -> Result<(WorkspaceCatalog, SelectedTarget), DiscoveryError> {
-    let mut command = MetadataCommand::new();
+    let mut command = Command::new(request.cargo.as_os_str());
 
-    command.cargo_path(request.cargo.as_os_str());
-    command.no_deps();
+    command
+        .arg("metadata")
+        .arg("--format-version")
+        .arg("1")
+        .arg("--no-deps");
 
     if let Some(path) = &request.manifest_path {
-        command.manifest_path(path);
+        command.arg("--manifest-path").arg(path);
     }
 
     if let Some(path) = &request.current_dir {
         command.current_dir(path);
     }
 
-    let metadata = command.exec().map_err(DiscoveryError::Metadata)?;
+    let output = execute(
+        &mut command,
+        cancellation,
+        CARGO_STDOUT_LIMIT,
+        CARGO_STDERR_LIMIT,
+    )
+    .map_err(map_process_error)?;
+
+    if output.cancelled {
+        return Err(DiscoveryError::Cancelled);
+    }
+
+    if !output.status.success {
+        return Err(DiscoveryError::Failed {
+            status: output.status,
+            stderr: output.stderr,
+            stderr_truncated: output.stderr_truncated,
+        });
+    }
+
+    if output.stdout_truncated {
+        return Err(DiscoveryError::OutputTooLarge);
+    }
+
+    let metadata = serde_json::from_slice(&output.stdout).map_err(DiscoveryError::Decode)?;
     let catalog = WorkspaceCatalog::from_metadata(&metadata, &request.features);
     let selected = catalog.select(request.package.as_deref(), request.binary.as_deref())?;
 
     Ok((catalog, selected))
+}
+
+fn map_process_error(error: ProcessExecutionError) -> DiscoveryError {
+    match error {
+        ProcessExecutionError::Spawn(source) => DiscoveryError::Launch(source),
+        ProcessExecutionError::Wait(source)
+        | ProcessExecutionError::Kill(source)
+        | ProcessExecutionError::Capture(source) => DiscoveryError::Process(source),
+        ProcessExecutionError::CapturePanic => DiscoveryError::Capture,
+    }
 }
