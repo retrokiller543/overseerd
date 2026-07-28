@@ -85,6 +85,8 @@ cookie = { version = "0.18", default-features = false }
 uuid = "1"
 bytes = "1"
 cargo_metadata = "0.23.1"
+command-group = "5.0.1"
+fs2 = "0.4.3"
 notify = "6"
 thiserror = "2"
 toml = "1.1"
