@@ -51,11 +51,23 @@ pub enum ProbeRequestError {
     #[error(transparent)]
     Discovery(#[from] DiscoveryError),
     /// The selected target could not be built.
-    #[error(transparent)]
-    Build(#[from] BuildError),
+    #[error("{source}")]
+    Build {
+        /// Target selected before the build failed.
+        target: Box<SelectedTarget>,
+        /// Typed Cargo build failure.
+        #[source]
+        source: Box<BuildError>,
+    },
     /// The selected executable did not complete the private probe contract.
     #[error("the selected executable did not complete the private tooling probe")]
-    Probe(#[source] Box<ProbeError>),
+    Probe {
+        /// Target selected before probe execution failed.
+        target: Box<SelectedTarget>,
+        /// Typed target-local probe failure.
+        #[source]
+        source: Box<ProbeError>,
+    },
     /// Tooling invocation serialization could not be established.
     #[error("failed to acquire the Cargo tooling invocation lock")]
     Lock(#[source] std::io::Error),
@@ -82,7 +94,11 @@ pub fn run_probe(
             selected: target.clone(),
         },
         cancellation,
-    )?;
+    )
+    .map_err(|source| ProbeRequestError::Build {
+        target: Box::new(target.clone()),
+        source: Box::new(source),
+    })?;
     let probe = execute_probe(
         &build.executable,
         &workspace.target_directory,
@@ -90,7 +106,10 @@ pub fn run_probe(
         request.current_dir.as_deref(),
         cancellation,
     )
-    .map_err(|error| ProbeRequestError::Probe(Box::new(error)))?;
+    .map_err(|source| ProbeRequestError::Probe {
+        target: Box::new(target.clone()),
+        source: Box::new(source),
+    })?;
 
     Ok(ToolingProbe {
         workspace,
