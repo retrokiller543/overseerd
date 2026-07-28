@@ -1,0 +1,16 @@
+[package]
+name = "cargo-overseerd"
+description = "Cargo target discovery and probe execution for Overseerd developer tooling."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+cargo_metadata = { workspace = true }
+overseerd-tooling-schema = { workspace = true }
+thiserror = { workspace = true }
