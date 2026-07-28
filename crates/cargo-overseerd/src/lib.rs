@@ -125,13 +125,19 @@ impl InvocationLock {
 
             match file.try_lock_exclusive() {
                 Ok(()) => return Ok(Self { file }),
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(error) if lock_is_contended(&error) => {
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }
                 Err(error) => return Err(ProbeRequestError::Lock(error)),
             }
         }
     }
+}
+
+fn lock_is_contended(error: &std::io::Error) -> bool {
+    let contended = fs2::lock_contended_error();
+
+    error.raw_os_error() == contended.raw_os_error()
 }
 
 impl Drop for InvocationLock {
