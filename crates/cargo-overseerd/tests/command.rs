@@ -29,6 +29,32 @@ fn cargo_subcommand_reports_the_live_homeledger_application() {
 }
 
 #[test]
+fn commands_run_from_the_selected_crate_with_workspace_relative_defaults() {
+    let example = workspace_root().join("examples/daemon");
+    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
+
+    for command in ["check", "doctor"] {
+        let output = Command::new(binary)
+            .arg(command)
+            .current_dir(&example)
+            .output()
+            .expect("cargo-overseerd command launches");
+
+        assert!(
+            output.status.success(),
+            "{command} failed: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+
+        let stdout = String::from_utf8(output.stdout).expect("command output is UTF-8");
+
+        assert!(stdout.contains("Application homeledger (homeledger/rpc)"));
+        assert!(stdout.contains(&format!("cargo overseerd {command} passed")));
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
 fn json_validation_failure_uses_the_stable_exit_code_and_diagnostic() {
     let workspace = workspace_root();
     let binary = env!("CARGO_BIN_EXE_cargo-overseerd");

@@ -103,7 +103,7 @@ pub fn run_probe(
         &build.executable,
         &workspace.target_directory,
         &target,
-        request.current_dir.as_deref(),
+        Some(&workspace.workspace_root),
         cancellation,
     )
     .map_err(|source| ProbeRequestError::Probe {
