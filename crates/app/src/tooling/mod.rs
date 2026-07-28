@@ -23,6 +23,7 @@ use crate::{
 
 mod composition;
 mod contribution;
+mod failure;
 mod output;
 mod panic;
 mod resources;
@@ -113,6 +114,10 @@ pub enum ToolingProbeTargetError {
 
 impl ToolingProbeError {
     fn failure(&self) -> ProbeFailure {
+        if let Some(failure) = self.structured_failure() {
+            return failure;
+        }
+
         let (code, message, phase, resources, sources, hint) = match self {
             #[cfg(feature = "cli")]
             Self::Bootstrap(error) => bootstrap_failure(error),
@@ -178,6 +183,24 @@ impl ToolingProbeError {
         ProbeFailure {
             phase,
             diagnostics: vec![diagnostic],
+        }
+    }
+
+    fn structured_failure(&self) -> Option<ProbeFailure> {
+        match self {
+            Self::PluginCatalog(error) => failure::app_diagnostics(error, None),
+            #[cfg(feature = "cli")]
+            Self::CliDefinition(error) => Some(ProbeFailure {
+                phase: None,
+                diagnostics: vec![failure::cli_definition_diagnostic(error)],
+            }),
+            Self::Lifecycle(error) => error
+                .source()
+                .and_then(|source| source.downcast_ref::<crate::Error>())
+                .and_then(|source| {
+                    failure::app_diagnostics(source, Some(error.phase().to_string()))
+                }),
+            _ => None,
         }
     }
 }

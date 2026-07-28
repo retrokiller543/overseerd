@@ -1,10 +1,10 @@
 //! Cargo target discovery and probe execution for Overseerd developer tooling.
 //!
-//! This crate contains presentation-neutral orchestration shared by the `cargo overseerd`
-//! subcommand and editor integrations. It does not render terminal output or assign process exit
-//! codes.
+//! This crate contains presentation-neutral orchestration and command reports shared by the
+//! `cargo overseerd` subcommand and editor integrations. Terminal rendering remains in the binary.
 
 mod build;
+mod command;
 mod discovery;
 mod probe;
 mod process;
@@ -14,6 +14,10 @@ use std::fs::OpenOptions;
 
 pub use build::{BuildError, BuildEvidence, BuildResult, CargoDiagnostic};
 use build::{BuildRequest, build_target};
+pub use command::{
+    CommandCheck, CommandCheckStatus, CommandExitCode, CommandKind, CommandOutcome, CommandReport,
+    CommandSchemaVersion, SelectedTargetReport, run_command,
+};
 pub use discovery::{CargoExecutable, DiscoveryError, DiscoveryRequest, discover};
 use fs2::FileExt as _;
 use probe::execute_probe;

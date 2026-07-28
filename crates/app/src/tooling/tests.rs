@@ -20,9 +20,10 @@ use overseerd_tooling_schema::{
 };
 
 use crate::{
-    App, AppRegistry, Plugin, PluginContributions, PluginRelation, PluginSlotId, PreparedProtocol,
-    ProtocolDefinition, ProtocolPluginRegistrar, ProtocolRuntime, RelationKind, RelationTarget,
-    ScopeTopology, ToolingEndpoint, ToolingRelationshipKind, ValidationContext,
+    App, AppRegistry, CompositionDiagnostic, CompositionDiagnostics, InstallationOrigin,
+    InstallationProvenance, Plugin, PluginContributions, PluginId, PluginRelation, PluginSlotId,
+    PreparedProtocol, ProtocolDefinition, ProtocolPluginRegistrar, ProtocolRuntime, RelationKind,
+    RelationTarget, ScopeTopology, ToolingEndpoint, ToolingRelationshipKind, ValidationContext,
 };
 use overseerd_hooks::{HookCall, HookKind};
 
@@ -78,6 +79,35 @@ fn arbitrary_setup_and_plugin_error_displays_never_enter_failure_envelopes() {
         assert!(!json.contains("probe-secret"));
         assert!(!json.contains("bearer-token"));
     }
+}
+
+#[test]
+fn plugin_composition_failures_preserve_stable_plugin_and_installation_identities() {
+    let provenance = InstallationProvenance::new(InstallationOrigin::ApplicationDeclaration, 2);
+    let error = crate::Error::Composition(CompositionDiagnostics::new(vec![
+        CompositionDiagnostic::MissingDependency {
+            plugin: PluginId::new("fixture/plugin").expect("valid plugin ID"),
+            provenance,
+            target: RelationTarget::Slot(
+                PluginSlotId::new("fixture/database").expect("valid slot ID"),
+            ),
+        },
+    ]));
+    let failure = super::ToolingProbeError::Lifecycle(crate::PhaseError::new(
+        crate::LifecyclePhase::Configure,
+        error,
+    ))
+    .failure();
+
+    assert_eq!(failure.diagnostics.len(), 1);
+    assert_eq!(
+        failure.diagnostics[0].resources,
+        [
+            "plugin:fixture/plugin",
+            "plugin-installation:application-declaration:2",
+            "plugin-slot:fixture/database",
+        ]
+    );
 }
 
 #[test]
