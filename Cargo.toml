@@ -84,6 +84,7 @@ cookie = { version = "0.18", default-features = false }
 # Optional: a `TopicParam` impl for templated STOMP topics (behind the axum `uuid` feature).
 uuid = "1"
 bytes = "1"
+cargo_metadata = "0.23.1"
 notify = "6"
 thiserror = "2"
 toml = "1.1"
