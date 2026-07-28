@@ -4,7 +4,6 @@
 //! dependency on application runtime state, Clap, Cargo metadata, or a concrete protocol.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -396,12 +395,24 @@ fn validate_package_identity(package: &PackageIdentity) -> Result<(), IdentityVa
     if package
         .manifest_path
         .as_ref()
-        .is_some_and(|path| is_blank(path) || !Path::new(path).is_absolute())
+        .is_some_and(|path| is_blank(path) || !is_portable_absolute_path(path))
     {
         return Err(IdentityValidationError::InvalidManifestPath);
     }
 
     Ok(())
+}
+
+fn is_portable_absolute_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let unix = bytes.first() == Some(&b'/');
+    let unc = bytes.starts_with(b"\\\\");
+    let drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | 92);
+
+    unix || unc || drive
 }
 
 fn validate_source_location(source: &SourceLocation) -> Result<(), IdentityValidationError> {

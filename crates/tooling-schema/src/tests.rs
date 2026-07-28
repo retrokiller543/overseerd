@@ -487,6 +487,27 @@ fn probe_identity_rejects_invalid_optional_metadata_and_source_coordinates() {
 }
 
 #[test]
+fn probe_identity_accepts_portable_absolute_manifest_paths() {
+    for manifest_path in [
+        "/workspace/fixture/Cargo.toml",
+        r"C:\workspace\fixture\Cargo.toml",
+        r"\\server\workspace\fixture\Cargo.toml",
+    ] {
+        super::ProbeTargetIdentity::new(
+            PackageIdentity {
+                name: String::from("fixture-package"),
+                version: Some(String::from("1.2.3")),
+                manifest_path: Some(manifest_path.to_string()),
+            },
+            BinaryTargetIdentity {
+                name: String::from("fixture-bin"),
+            },
+        )
+        .expect("producer-native absolute manifest path is portable schema metadata");
+    }
+}
+
+#[test]
 fn hostile_probe_json_cannot_bypass_identity_validation() {
     let mut value =
         serde_json::to_value(ProbeEnvelope::failure(probe_identity(), failure_fixture()))
