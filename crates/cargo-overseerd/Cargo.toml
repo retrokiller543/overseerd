@@ -15,7 +15,6 @@ cargo_metadata = { workspace = true }
 command-group = { workspace = true }
 fs2 = { workspace = true }
 overseerd-tooling-schema = { workspace = true }
-serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]

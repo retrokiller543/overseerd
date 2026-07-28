@@ -145,14 +145,12 @@ pub enum BuildError {
 }
 
 /// Builds one selected binary in the tooling-owned Cargo target directory.
-#[allow(clippy::needless_late_init)]
 pub fn build_target(
     request: &BuildRequest,
     cancellation: &CancellationToken,
 ) -> Result<BuildResult, BuildError> {
     let target_directory = request.workspace_target_directory.join("overseerd/build");
     let mut command = Command::new(request.cargo.as_os_str());
-    let output;
     let mut diagnostics = Vec::new();
     let mut text_lines = Vec::new();
     let mut executables = Vec::new();
@@ -179,7 +177,7 @@ pub fn build_target(
         command.current_dir(current_dir);
     }
 
-    output = execute(
+    let output = execute(
         &mut command,
         cancellation,
         CARGO_STDOUT_LIMIT,

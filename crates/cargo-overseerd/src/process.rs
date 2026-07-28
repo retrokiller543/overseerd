@@ -66,19 +66,14 @@ pub(crate) enum ProcessExecutionError {
     CapturePanic,
 }
 
-#[allow(clippy::needless_late_init)]
 pub(crate) fn execute(
     command: &mut Command,
     cancellation: &CancellationToken,
     stdout_limit: usize,
     stderr_limit: usize,
 ) -> Result<ProcessOutput, ProcessExecutionError> {
-    let mut child;
-    let stdout_thread;
-    let stderr_thread;
     let capture_complete = Arc::new(AtomicBool::new(false));
     let mut cancelled = false;
-    let status;
 
     command
         .stdin(Stdio::null())
@@ -99,10 +94,10 @@ pub(crate) fn execute(
         });
     }
 
-    child = command
+    let mut child = command
         .group_spawn()
         .map_err(ProcessExecutionError::Spawn)?;
-    stdout_thread = capture(
+    let stdout_thread = capture(
         child
             .inner()
             .stdout
@@ -111,7 +106,7 @@ pub(crate) fn execute(
         stdout_limit,
         Arc::clone(&capture_complete),
     );
-    stderr_thread = capture(
+    let stderr_thread = capture(
         child
             .inner()
             .stderr
@@ -121,7 +116,7 @@ pub(crate) fn execute(
         Arc::clone(&capture_complete),
     );
 
-    loop {
+    let status = loop {
         if cancellation.is_cancelled() {
             cancelled = true;
 
@@ -131,9 +126,7 @@ pub(crate) fn execute(
                 return Err(ProcessExecutionError::Kill(error));
             }
 
-            status = child.wait().map_err(ProcessExecutionError::Wait)?;
-
-            break;
+            break child.wait().map_err(ProcessExecutionError::Wait)?;
         }
 
         let completed = match child.try_wait() {
@@ -146,15 +139,13 @@ pub(crate) fn execute(
         };
 
         if let Some(completed) = completed {
-            status = completed;
-
             terminate_group(&mut child);
 
-            break;
+            break completed;
         }
 
         std::thread::sleep(PROCESS_POLL_INTERVAL);
-    }
+    };
 
     capture_complete.store(true, Ordering::Release);
 
