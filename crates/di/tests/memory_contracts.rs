@@ -62,16 +62,16 @@ unsafe impl GlobalAlloc for TrackingAllocator {
         unsafe { System.alloc(layout) }
     }
 
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        record_allocation(1, layout.size() as i64);
-
-        unsafe { System.alloc_zeroed(layout) }
-    }
-
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         record_allocation(0, -(layout.size() as i64));
 
         unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        record_allocation(1, layout.size() as i64);
+
+        unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
@@ -160,9 +160,10 @@ impl<const N: usize> C<N> {
 }
 
 impl<const N: usize> Component for C<N> {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "mem-component";
     const NAME: &'static str = "MemComponent";
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Arc<Self> {
         Arc::new(self)

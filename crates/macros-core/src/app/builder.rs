@@ -1,45 +1,8 @@
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::AppAssembly;
-use super::model::{ConfigSettings, DirSettings, ManagerSource};
+use super::model::{ConfigSettings, DirSettings, ManagerSource, ManagerValue};
 use crate::{di, paths::Paths};
-
-/// Expands the protocol-specific application builder.
-pub(super) fn expand(input: AppAssembly) -> TokenStream {
-    let AppAssembly {
-        name,
-        protocol,
-        services,
-        components,
-        configs,
-        config_manager,
-        directories_manager,
-        middleware,
-        guards,
-        error_handler,
-        plugins: _,
-        overseerd,
-        krate,
-        phases: _,
-        cli: _,
-    } = input;
-    let paths = Paths::overseerd().resolve(overseerd, krate);
-
-    expand_with_paths(
-        &name,
-        &protocol,
-        &services,
-        &components,
-        &configs,
-        &config_manager,
-        &directories_manager,
-        &middleware,
-        &guards,
-        &error_handler,
-        &paths,
-    )
-}
 
 /// Expands a builder using paths already resolved by a named host.
 #[allow(clippy::too_many_arguments)]
@@ -117,18 +80,35 @@ fn expand_directories(
     let directories_path = paths.core("DirectoriesManager");
 
     match manager {
-        Some(ManagerSource::Instance(expression)) => Ok((
+        Some(ManagerSource {
+            value: ManagerValue::Instance(expression),
+            ..
+        }) => Ok((
             quote!(let __overseerd_directories = #expression;),
             quote!(.directories(__overseerd_directories)),
             true,
         )),
-        Some(ManagerSource::Configure(settings)) => {
+        Some(ManagerSource {
+            value:
+                ManagerValue::Configure {
+                    block_span,
+                    settings,
+                },
+            ..
+        }) => {
             let expression = if let Some(root) = &settings.root {
+                let root = &root.value;
+
                 quote!(#directories_path::from_path(#root))
             } else if let Some(app) = &settings.app {
+                let app = &app.value;
+
                 quote!(#directories_path::for_app(#app))
             } else {
-                return Err(error("a `directories` config block needs `app` or `root`"));
+                return Err(error(
+                    *block_span,
+                    "a `directories` config block needs `app` or `root`",
+                ));
             };
 
             Ok((
@@ -150,36 +130,55 @@ fn expand_config(
     let config_dynamic = paths.core("config::Dynamic");
 
     match manager {
-        Some(ManagerSource::Instance(expression)) => Ok((
+        Some(ManagerSource {
+            value: ManagerValue::Instance(expression),
+            ..
+        }) => Ok((
             quote!(let __overseerd_config = #expression;),
             quote!(.config_source(__overseerd_config)),
         )),
-        Some(ManagerSource::Configure(settings)) => {
+        Some(ManagerSource {
+            key_span,
+            value: ManagerValue::Configure { settings, .. },
+        }) => {
             let base = if let Some(source) = &settings.source {
+                let source = &source.value;
+
                 quote!(#source)
             } else if directories_available {
                 let profiles = match &settings.profiles {
-                    Some(profiles) => quote!(#profiles),
+                    Some(profiles) => {
+                        let profiles = &profiles.value;
+
+                        quote!(#profiles)
+                    }
                     None => quote!(&[]),
                 };
 
                 quote!(#config_manager_path::<#config_dynamic>::load_from(&__overseerd_directories, #profiles)?)
             } else {
                 return Err(error(
+                    *key_span,
                     "a `config` block without `source` requires a `directories` manager to load from",
                 ));
             };
             let mut chain = base;
 
-            if settings.sighup {
+            if settings
+                .sighup
+                .as_ref()
+                .is_some_and(|setting| setting.value)
+            {
                 chain = quote!(#chain.reload_on_sighup());
             }
 
-            if settings.watch {
+            if settings.watch.as_ref().is_some_and(|setting| setting.value) {
                 chain = quote!(#chain.watch_config());
             }
 
             if let Some(debounce) = &settings.debounce {
+                let debounce = &debounce.value;
+
                 chain = quote!(#chain.config_reload_debounce(#debounce));
             }
 
@@ -192,6 +191,6 @@ fn expand_config(
     }
 }
 
-fn error(message: &str) -> TokenStream {
-    syn::Error::new(Span::call_site(), message).to_compile_error()
+fn error(span: proc_macro2::Span, message: &str) -> TokenStream {
+    syn::Error::new(span, message).to_compile_error()
 }

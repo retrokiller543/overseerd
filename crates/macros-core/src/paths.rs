@@ -14,8 +14,9 @@
 //! Each macro crate supplies its defaults (so built-in macros are zero-config); a
 //! per-invocation `overseerd = ::fork` / `crate = ::my_plugin` overrides them.
 
-use quote::ToTokens;
-use syn::Path;
+use syn::parse::Parser as _;
+use syn::punctuated::Punctuated;
+use syn::{Path, PathSegment, Token};
 
 pub const OVERSEERD_CRATE: &str = "overseerd";
 
@@ -132,8 +133,16 @@ impl Paths {
 
     /// Appends `::<item>` (which may itself contain `::`) to a root path.
     fn join(&self, root: &Path, item: &str) -> Path {
-        let combined = format!("{}::{item}", root.to_token_stream());
+        let suffix = Punctuated::<PathSegment, Token![::]>::parse_separated_nonempty
+            .parse_str(item)
+            .expect("framework item suffix must contain relative Rust path segments");
+        let mut path = root.clone();
 
-        syn::parse_str(&combined).expect("valid composed item path")
+        path.segments.extend(suffix);
+
+        path
     }
 }
+
+#[cfg(test)]
+mod tests;

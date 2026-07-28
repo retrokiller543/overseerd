@@ -5,6 +5,9 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "tooling")]
+use std::path::PathBuf;
+
 use futures::FutureExt;
 use overseerd_config::{
     CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, ConfigBinding, ConfigManager, ConfigProperties,
@@ -15,7 +18,7 @@ use overseerd_core::{
 };
 use overseerd_di::{
     BoxedComponent, Component, ComponentDescriptor, Injectable, RootResolver, ScopeContainer,
-    ScopeRegistry, root_resolver_descriptor,
+    ScopeRegistry, root_resolver_descriptor, topological_sort,
 };
 use overseerd_dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp};
 use overseerd_hooks::{
@@ -95,12 +98,66 @@ pub struct PreparedApp<D: ProtocolDefinition> {
     reloader: ConfigReloader,
     reload_triggers: ReloadTriggers,
     resolved: Arc<[ComponentDescriptor]>,
-    singletons: Vec<ComponentDescriptor>,
+    root_order: Arc<[ComponentDescriptor]>,
+    #[cfg(feature = "tooling")]
+    host_lifecycle: Option<HostLifecycleCapabilities>,
+    #[cfg(feature = "tooling")]
+    provider_order: Arc<HashMap<std::any::TypeId, HashMap<std::any::TypeId, usize>>>,
+    #[cfg(feature = "tooling")]
+    protocol_tooling: crate::tooling::ToolingContributionSet,
+    #[cfg(feature = "tooling")]
+    config_sources: Arc<[PathBuf]>,
+    #[cfg(feature = "tooling")]
+    tooling_snapshot: Arc<crate::tooling::ProjectionSnapshot>,
     scope_registry: Arc<ScopeRegistry>,
     scope_topology: Arc<PreparedScopeTopology>,
     scope_orders: Arc<HashMap<overseerd_core::ScopeId, Vec<ComponentDescriptor>>>,
     seed_destinations: Arc<HashMap<std::any::TypeId, SeedDestination>>,
     resolvers: ResolverSet,
+}
+
+/// Generated host callback capabilities retained only for prepared-state tooling projection.
+#[derive(Clone, Copy, Debug, Default)]
+#[doc(hidden)]
+pub struct HostLifecycleCapabilities {
+    #[cfg(feature = "tooling")]
+    pub(crate) setup: bool,
+    #[cfg(feature = "tooling")]
+    pub(crate) configure: bool,
+    #[cfg(feature = "tooling")]
+    pub(crate) before_build: bool,
+    #[cfg(feature = "tooling")]
+    pub(crate) after_build: bool,
+    #[cfg(feature = "tooling")]
+    pub(crate) serve: bool,
+}
+
+impl HostLifecycleCapabilities {
+    /// Creates one generated host lifecycle capability value.
+    #[doc(hidden)]
+    pub const fn new(
+        setup: bool,
+        configure: bool,
+        before_build: bool,
+        after_build: bool,
+        serve: bool,
+    ) -> Self {
+        #[cfg(not(feature = "tooling"))]
+        let _ = (setup, configure, before_build, after_build, serve);
+
+        Self {
+            #[cfg(feature = "tooling")]
+            setup,
+            #[cfg(feature = "tooling")]
+            configure,
+            #[cfg(feature = "tooling")]
+            before_build,
+            #[cfg(feature = "tooling")]
+            after_build,
+            #[cfg(feature = "tooling")]
+            serve,
+        }
+    }
 }
 
 impl<D: ProtocolDefinition> AppBuilder<D> {
@@ -249,6 +306,8 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
         let mut protocol = self.protocol;
         let plugin_plan = self.plugins.freeze::<D>(self.auto_discovery_enabled)?;
         let plugin_plan = plugin_plan.lower(&mut registry);
+        #[cfg(feature = "tooling")]
+        let mut plugin_plan = plugin_plan;
 
         // Consumed by `serve`/`run`; its handle is seeded as a framework injectable.
         let shutdown = ShutdownSignal::new();
@@ -304,6 +363,8 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
         // Collapse to the effective component set (explicit factories override defaults).
         let resolved = registry.resolved_components()?;
         registry.components = resolved.clone();
+        #[cfg(feature = "tooling")]
+        plugin_plan.reconcile(&registry);
 
         // Collect every component's `#[hook]` methods into the hook manager.
         let hooks: Vec<HookDescriptor> = resolved
@@ -317,6 +378,20 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
         });
 
         let scopes = ScopePlan::partition(&resolved, &registry.providers, &scope_topology)?;
+        let prebuilt: HashSet<_> = instances
+            .iter()
+            .map(|instance| instance.ty.type_id)
+            .collect();
+        let root_order: Vec<_> = topological_sort(
+            &scopes.singletons,
+            &prebuilt,
+            &registry.providers,
+            &scopes.transient,
+        )
+        .map_err(Error::from)?
+        .into_iter()
+        .copied()
+        .collect();
 
         // Build the config store — every bound `Cfg<T>` value, plus the reload slots.
         let (config_store, reload_slots) = ConfigStore::build(&tree).map_err(Error::from)?;
@@ -329,17 +404,33 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
             &plugin_plan,
         ))?;
 
+        #[cfg(feature = "tooling")]
+        let protocol_tooling = {
+            let owner = format!("protocol:{}", D::ID.as_str());
+            let mut contributions = crate::ToolingContributions::new(owner);
+
+            protocol.tooling(&mut contributions);
+
+            contributions.finish().map_err(Error::from)?
+        };
+
         let mut resolvers = ResolverSet::new();
         resolvers.insert(config_store);
 
         let reload_triggers = tree.triggers();
 
         let reloader = ConfigReloader::new(tree, reload_slots, hook_manager.clone());
+        #[cfg(feature = "tooling")]
+        let config_sources = Arc::from(reloader.sources());
         instances.push(BoxedComponent {
             ty: TypeDescriptor::of::<ConfigReloader>(CONFIG_RELOADER_NAME),
             value: Box::new(Injectable::into_stored(reloader.clone())),
         });
 
+        let provider_order = registry
+            .component_registry()
+            .provider_order(&resolved)
+            .map_err(Error::from)?;
         let scope_registry = Arc::new(ScopeRegistry::new(
             scopes.transient,
             resolved
@@ -348,10 +439,15 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
                 .map(|component| (component.ty.type_id, *component))
                 .collect(),
             registry.providers.clone(),
-            registry
-                .component_registry()
-                .provider_order(&resolved)
-                .map_err(Error::from)?,
+            provider_order.clone(),
+        ));
+        #[cfg(feature = "tooling")]
+        let tooling_snapshot = Arc::new(crate::tooling::ProjectionSnapshot::capture(
+            &registry.components,
+            &root_order,
+            &scopes.orders,
+            &instances,
+            &scopes.seed_destinations,
         ));
 
         Ok(PreparedApp {
@@ -366,7 +462,17 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
             reloader,
             reload_triggers,
             resolved: Arc::from(resolved),
-            singletons: scopes.singletons,
+            root_order: Arc::from(root_order),
+            #[cfg(feature = "tooling")]
+            host_lifecycle: None,
+            #[cfg(feature = "tooling")]
+            provider_order: Arc::new(provider_order),
+            #[cfg(feature = "tooling")]
+            protocol_tooling,
+            #[cfg(feature = "tooling")]
+            config_sources,
+            #[cfg(feature = "tooling")]
+            tooling_snapshot,
             scope_registry,
             scope_topology,
             scope_orders: Arc::new(scopes.orders),
@@ -417,6 +523,52 @@ impl<D: ProtocolDefinition> PreparedApp<D> {
         &self.scope_topology
     }
 
+    #[cfg(feature = "tooling")]
+    pub(crate) fn retain_host_lifecycle(&mut self, capabilities: HostLifecycleCapabilities) {
+        self.host_lifecycle = Some(capabilities);
+    }
+
+    #[cfg(feature = "tooling")]
+    pub(crate) const fn host_lifecycle(&self) -> Option<HostLifecycleCapabilities> {
+        self.host_lifecycle
+    }
+
+    #[cfg(feature = "tooling")]
+    pub(crate) fn provider_order(
+        &self,
+        trait_ty: std::any::TypeId,
+        concrete_ty: std::any::TypeId,
+    ) -> Option<usize> {
+        self.provider_order
+            .get(&trait_ty)?
+            .get(&concrete_ty)
+            .copied()
+    }
+
+    #[cfg(feature = "tooling")]
+    pub(crate) const fn protocol_tooling(&self) -> &crate::tooling::ToolingContributionSet {
+        &self.protocol_tooling
+    }
+
+    #[cfg(feature = "tooling")]
+    pub(crate) fn config_sources(&self) -> &[PathBuf] {
+        &self.config_sources
+    }
+
+    #[cfg(feature = "tooling")]
+    pub(crate) fn tooling_snapshot(&self) -> &crate::tooling::ProjectionSnapshot {
+        &self.tooling_snapshot
+    }
+
+    #[cfg(feature = "tooling")]
+    pub(crate) fn component_resource_id(&self, ty: std::any::TypeId) -> Option<String> {
+        self.registry
+            .components
+            .iter()
+            .find(|component| component.ty.type_id == ty)
+            .map(|component| format!("component:{}", component.id))
+    }
+
     /// Constructs ordinary components and finalizes the application protocol.
     pub async fn build(self) -> Result<App<D>, D::Error> {
         let PreparedApp {
@@ -431,7 +583,17 @@ impl<D: ProtocolDefinition> PreparedApp<D> {
             reloader,
             reload_triggers,
             resolved,
-            singletons,
+            root_order,
+            #[cfg(feature = "tooling")]
+                host_lifecycle: _,
+            #[cfg(feature = "tooling")]
+                provider_order: _,
+            #[cfg(feature = "tooling")]
+                protocol_tooling: _,
+            #[cfg(feature = "tooling")]
+                config_sources: _,
+            #[cfg(feature = "tooling")]
+                tooling_snapshot: _,
             scope_registry,
             scope_topology,
             scope_orders,
@@ -440,7 +602,7 @@ impl<D: ProtocolDefinition> PreparedApp<D> {
         } = self;
 
         let root = ScopeContainer::build_root(
-            &singletons,
+            &root_order,
             instances,
             resolvers,
             Arc::clone(&scope_registry),

@@ -1,16 +1,8 @@
-use clap::Parser as _;
-
 use super::{
     BootstrapEnvironment, BootstrapOptions, BootstrapPolicy, ColorChoice,
     bootstrap_application_with_env,
 };
 use crate::{BootstrapContext, ExecutionMode, LogFormat};
-
-#[derive(clap::Parser)]
-struct TestCli {
-    #[command(flatten)]
-    bootstrap: BootstrapOptions,
-}
 
 fn temp_config_dir(test: &str) -> std::path::PathBuf {
     let directory =
@@ -23,13 +15,20 @@ fn temp_config_dir(test: &str) -> std::path::PathBuf {
 }
 
 fn options(config: impl Into<std::path::PathBuf>) -> BootstrapOptions {
-    BootstrapOptions {
-        config: Some(config.into()),
-        profiles: Vec::new(),
-        log: None,
-        log_format: None,
-        color: None,
-    }
+    BootstrapOptions::from_parts(
+        Some(config.into()),
+        Vec::new(),
+        None,
+        None,
+        None,
+        [
+            Some(clap::parser::ValueSource::CommandLine),
+            None,
+            None,
+            None,
+            None,
+        ],
+    )
 }
 
 fn bootstrap(
@@ -46,46 +45,6 @@ fn bootstrap(
         environment,
     )
     .expect("bootstrap resolves")
-}
-
-#[test]
-fn options_parse_typed_global_values() {
-    let cli = TestCli::try_parse_from([
-        "test",
-        "--config",
-        "config/application.toml",
-        "--profile",
-        "base",
-        "-p",
-        "local",
-        "--log",
-        "warn,overseerd=trace",
-        "--log-format",
-        "json",
-        "--color",
-        "always",
-    ])
-    .expect("bootstrap options parse");
-
-    assert_eq!(
-        cli.bootstrap.config(),
-        Some(std::path::Path::new("config/application.toml"))
-    );
-    assert_eq!(cli.bootstrap.profiles(), ["base", "local"]);
-    assert_eq!(cli.bootstrap.log(), Some("warn,overseerd=trace"));
-    assert_eq!(cli.bootstrap.log_format(), Some(LogFormat::Json));
-    assert_eq!(cli.bootstrap.color(), Some(ColorChoice::Always));
-}
-
-#[test]
-fn options_reject_unknown_typed_values() {
-    let result = TestCli::try_parse_from(["test", "--log-format", "xml"]);
-    let error = match result {
-        Ok(_) => panic!("unknown log format was accepted"),
-        Err(error) => error,
-    };
-
-    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
 }
 
 #[test]
@@ -109,13 +68,14 @@ fn cli_values_override_environment_and_profile_config() {
     )
     .expect("write environment profile");
 
-    let options = BootstrapOptions {
-        config: Some(config.clone()),
-        profiles: vec![String::from("cli")],
-        log: Some(String::from("trace,overseerd=debug")),
-        log_format: Some(LogFormat::Json),
-        color: Some(ColorChoice::Always),
-    };
+    let options = BootstrapOptions::from_parts(
+        Some(config.clone()),
+        vec![String::from("cli")],
+        Some(String::from("trace,overseerd=debug")),
+        Some(LogFormat::Json),
+        Some(ColorChoice::Always),
+        [Some(clap::parser::ValueSource::CommandLine); 5],
+    );
     let environment = BootstrapEnvironment {
         profiles: Some(String::from("env")),
         rust_log: Some(String::from("warn")),
@@ -181,6 +141,85 @@ fn environment_is_used_when_cli_values_are_absent() {
 }
 
 #[test]
+fn parser_defaults_preserve_environment_and_config_precedence() {
+    let directory = temp_config_dir("parser-default-precedence");
+    let config = directory.join("application.toml");
+
+    std::fs::write(
+        &config,
+        "[logging]\nlevel = \"debug\"\nformat = \"compact\"\nansi = true\n",
+    )
+    .expect("write base config");
+
+    let options = BootstrapOptions::from_parts(
+        Some(std::path::PathBuf::from("unused.toml")),
+        vec![String::from("application")],
+        Some(String::from("error")),
+        Some(LogFormat::Json),
+        Some(ColorChoice::Never),
+        [Some(clap::parser::ValueSource::DefaultValue); 5],
+    );
+    let environment = BootstrapEnvironment {
+        config: Some(config.clone().into_os_string()),
+        profiles: Some(String::from("environment")),
+        ..BootstrapEnvironment::default()
+    };
+    let context = bootstrap(
+        "bootstrap-parser-default-test",
+        options,
+        BootstrapPolicy::default(),
+        environment,
+    );
+    let state = context.bootstrap().expect("bootstrap state exists");
+
+    assert_eq!(state.config_path(), config);
+    assert_eq!(state.profiles(), ["environment"]);
+    assert_eq!(state.logging().level, "debug");
+    assert_eq!(state.logging().format, LogFormat::Compact);
+    assert_eq!(state.color(), ColorChoice::Always);
+
+    std::fs::remove_dir_all(directory).expect("remove config directory");
+}
+
+#[test]
+fn parser_defaults_fill_absent_sources() {
+    let directory = temp_config_dir("parser-default-fallback");
+    let config = directory.join("application.toml");
+
+    std::fs::write(&config, "").expect("write empty base config");
+
+    let options = BootstrapOptions::from_parts(
+        Some(config.clone()),
+        vec![String::from("application")],
+        Some(String::from("error")),
+        Some(LogFormat::Json),
+        Some(ColorChoice::Never),
+        [
+            Some(clap::parser::ValueSource::CommandLine),
+            Some(clap::parser::ValueSource::DefaultValue),
+            Some(clap::parser::ValueSource::DefaultValue),
+            Some(clap::parser::ValueSource::DefaultValue),
+            Some(clap::parser::ValueSource::DefaultValue),
+        ],
+    );
+    let context = bootstrap(
+        "bootstrap-parser-default-fallback-test",
+        options,
+        BootstrapPolicy::default(),
+        BootstrapEnvironment::default(),
+    );
+    let state = context.bootstrap().expect("bootstrap state exists");
+
+    assert_eq!(state.config_path(), config);
+    assert_eq!(state.profiles(), ["application"]);
+    assert_eq!(state.logging().level, "error");
+    assert_eq!(state.logging().format, LogFormat::Json);
+    assert_eq!(state.color(), ColorChoice::Never);
+
+    std::fs::remove_dir_all(directory).expect("remove config directory");
+}
+
+#[test]
 fn auto_color_follows_terminal_capability() {
     let directory = temp_config_dir("terminal");
     let config = directory.join("application.toml");
@@ -188,9 +227,20 @@ fn auto_color_follows_terminal_capability() {
     std::fs::write(&config, "").expect("write base config");
 
     for (terminal, ansi) in [(false, false), (true, true)] {
-        let mut options = options(config.clone());
-
-        options.color = Some(ColorChoice::Auto);
+        let options = BootstrapOptions::from_parts(
+            Some(config.clone()),
+            Vec::new(),
+            None,
+            None,
+            Some(ColorChoice::Auto),
+            [
+                Some(clap::parser::ValueSource::CommandLine),
+                None,
+                None,
+                None,
+                Some(clap::parser::ValueSource::CommandLine),
+            ],
+        );
 
         let environment = BootstrapEnvironment {
             stdout_terminal: terminal,
@@ -269,9 +319,20 @@ fn declaration_owned_config_skips_generated_loading() {
         "overseerd-bootstrap-ignored-{}.toml",
         std::process::id()
     ));
-    let mut options = options(path.clone());
-
-    options.log = Some(String::from("debug"));
+    let options = BootstrapOptions::from_parts(
+        Some(path.clone()),
+        Vec::new(),
+        Some(String::from("debug")),
+        None,
+        None,
+        [
+            Some(clap::parser::ValueSource::CommandLine),
+            None,
+            Some(clap::parser::ValueSource::CommandLine),
+            None,
+            None,
+        ],
+    );
 
     let context = bootstrap(
         "bootstrap-declaration-config-test",
@@ -284,4 +345,25 @@ fn declaration_owned_config_skips_generated_loading() {
     assert_eq!(state.config_path(), path);
     assert!(state.directories().is_none());
     assert_eq!(state.logging().level, "debug");
+}
+
+#[test]
+fn default_options_have_no_generated_values_or_sources() {
+    let options = BootstrapOptions::default();
+
+    assert!(options.config().is_none());
+    assert!(options.profiles().is_empty());
+    assert!(options.log().is_none());
+    assert!(options.log_format().is_none());
+    assert!(options.color().is_none());
+    assert!(!options.config_is_command_line());
+    assert!(!options.config_is_default());
+    assert!(!options.profiles_are_command_line());
+    assert!(!options.profiles_are_default());
+    assert!(!options.log_is_command_line());
+    assert!(!options.log_is_default());
+    assert!(!options.log_format_is_command_line());
+    assert!(!options.log_format_is_default());
+    assert!(!options.color_is_command_line());
+    assert!(!options.color_is_default());
 }

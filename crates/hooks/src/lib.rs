@@ -39,15 +39,15 @@ use overseerd_core::{DependencyDescriptor, OverseerdDescriptor, ResolverCtx, Typ
 /// "decides what output it needs"), and `Cx` is the owned, per-invocation context its
 /// parameters are extracted from (e.g. the proposed config values for a reload).
 pub trait HookKind: 'static {
-    /// A stable name for diagnostics and indexing.
-    const NAME: &'static str;
-
     /// What each hook of this kind returns and the runner collects.
     type Output: Send + 'static;
 
     /// The owned context one invocation carries, that this kind's [`HookParam`]s read.
     /// `Send + Sync` so the hook future (which borrows it) stays `Send`.
     type Cx: Send + Sync + 'static;
+
+    /// A stable name for diagnostics and indexing.
+    const NAME: &'static str;
 }
 
 /// A parameter a `#[hook(K)]` method may take: an input of kind `K`, extracted from the

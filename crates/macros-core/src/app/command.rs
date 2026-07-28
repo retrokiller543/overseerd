@@ -13,6 +13,10 @@ use syn::{Path, Visibility};
 
 use super::model::{CommandEntry, CommandEntryKind, GlobalArgsEntry};
 
+mod validation;
+
+pub(super) use validation::validate_literal_collisions;
+
 /// Generated command variants, delegation arms, and nested enum definitions.
 #[cfg(feature = "cli")]
 pub(super) struct CommandExpansion {
@@ -93,7 +97,7 @@ pub(super) fn parse_commands(input: ParseStream) -> syn::Result<Vec<CommandEntry
 
     braced!(content in input);
 
-    let commands = parse_command_entries(&content, true)?;
+    let commands = parse_command_entries(&content)?;
 
     if commands.is_empty() {
         return Err(content.error("`commands` cannot be empty"));
@@ -211,7 +215,7 @@ fn expand_entries<'a>(
     })
 }
 
-fn parse_command_entries(input: ParseStream, root: bool) -> syn::Result<Vec<CommandEntry>> {
+fn parse_command_entries(input: ParseStream) -> syn::Result<Vec<CommandEntry>> {
     let mut names = HashSet::new();
     let mut variants = HashSet::new();
     let mut entries = Vec::new();
@@ -223,16 +227,9 @@ fn parse_command_entries(input: ParseStream, root: bool) -> syn::Result<Vec<Comm
 
         validate_attributes(&attributes)?;
 
-        if names.contains(&normalized) {
-            return Err(syn::Error::new(
-                name.span(),
-                format!("duplicate command name `{normalized}`"),
-            ));
-        }
-
         let variant = variant_ident(&name).to_string();
 
-        if variants.contains(&variant) {
+        if !names.contains(&normalized) && variants.contains(&variant) {
             return Err(syn::Error::new(
                 name.span(),
                 format!("command name generates duplicate Rust variant `{variant}`"),
@@ -240,20 +237,6 @@ fn parse_command_entries(input: ParseStream, root: bool) -> syn::Result<Vec<Comm
         }
 
         variants.insert(variant);
-
-        if normalized == "help" {
-            return Err(syn::Error::new(
-                name.span(),
-                "command name `help` is reserved by Clap",
-            ));
-        }
-
-        if root && normalized == "serve" {
-            return Err(syn::Error::new(
-                name.span(),
-                "command name `serve` is reserved by the generated application CLI",
-            ));
-        }
 
         if normalized.starts_with("--overseerd") || normalized.starts_with("__overseerd") {
             return Err(syn::Error::new(
@@ -269,7 +252,7 @@ fn parse_command_entries(input: ParseStream, root: bool) -> syn::Result<Vec<Comm
 
             braced!(content in input);
 
-            let nested = parse_command_entries(&content, false)?;
+            let nested = parse_command_entries(&content)?;
 
             if nested.is_empty() {
                 return Err(syn::Error::new(
@@ -467,12 +450,15 @@ fn variant_ident(name: &Ident) -> Ident {
 
 #[cfg(feature = "cli")]
 fn nested_command_ident(host: &Ident, path: &[&Ident]) -> Ident {
+    let namespace = path
+        .last()
+        .expect("nested command identifiers require a namespace path");
     let suffix = path
         .iter()
         .map(|segment| pascal_case(&segment.unraw().to_string()))
         .collect::<String>();
 
-    format_ident!("{host}{suffix}Command")
+    format_ident!("{host}{suffix}Command", span = namespace.span())
 }
 
 fn pascal_case(value: &str) -> String {

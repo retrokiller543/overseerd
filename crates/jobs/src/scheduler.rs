@@ -408,9 +408,10 @@ impl Drop for JobScheduler {
 // ---------------------------------------------------------------------------
 
 impl Component for JobScheduler {
+    type Handle = Arc<JobScheduler>;
+
     const ID: &'static str = SCHEDULER_ID;
     const NAME: &'static str = SCHEDULER_NAME;
-    type Handle = Arc<JobScheduler>;
 
     fn into_handle(self) -> Arc<JobScheduler> {
         Arc::new(self)

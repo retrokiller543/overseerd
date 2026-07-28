@@ -47,10 +47,9 @@ pub use component::expand as expand_component;
 use proc_macro2::TokenStream;
 use syn::{DeriveInput, ItemImpl, ItemStruct, ItemTrait};
 
-/// `app!` / `daemon!` expansion entry point. The protocol-agnostic core assembly macro; the
-/// `protocol:` field selects the protocol definition.
+/// `app!` expansion entry point for a named protocol-agnostic application definition.
 pub fn app(input: TokenStream) -> TokenStream {
-    run::<app::AppInput, _>(input, |input| Ok(app::expand(input)))
+    run::<app::NamedApp, _>(input, |input| Ok(app::expand(input)))
 }
 
 /// Parses `item` as `T` and runs `expand`, turning a parse or expansion error into a

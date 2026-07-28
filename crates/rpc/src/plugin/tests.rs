@@ -3,6 +3,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(feature = "tooling")]
+use overseerd_app::tooling_schema::RelationshipKind;
 use overseerd_app::{App, ProtocolDefinition, ScopeParent};
 use overseerd_config::{ConfigManager, Dynamic};
 use overseerd_core::{StaticScope, TypeDescriptor};
@@ -21,10 +23,10 @@ static FACTORY_CALLS: AtomicUsize = AtomicUsize::new(0);
 struct SentinelComponent;
 
 impl Component for SentinelComponent {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "rpc_validation_sentinel";
     const NAME: &'static str = "RpcValidationSentinel";
-
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Self::Handle {
         Arc::new(self)
@@ -113,6 +115,46 @@ fn rpc_scope_topology_declares_connection_and_request_path() {
     assert_eq!(Rpc::SCOPE_TOPOLOGY.boundaries().len(), 2);
     assert_eq!(connection.parent(), ScopeParent::Root);
     assert_eq!(request.parent(), ScopeParent::of::<ConnectionScope>());
+}
+
+#[cfg(feature = "tooling")]
+#[test]
+fn prepared_rpc_projects_only_retained_service_and_route_facts() {
+    let document = App::<Rpc>::builder("rpc-tooling")
+        .config_source(ConfigManager::<Dynamic>::empty())
+        .prepare()
+        .expect("RPC prepares")
+        .tooling_document()
+        .expect("RPC tooling projects");
+    let protocol = document
+        .resources
+        .iter()
+        .find(|resource| resource.id == "protocol:overseerd/rpc")
+        .expect("RPC protocol resource exists");
+    let summary = &protocol.facets["protocol:overseerd/rpc/tooling/summary"].value;
+    let peer = document
+        .resources
+        .iter()
+        .find(|resource| resource.id == "component:__overseerd_peer_info")
+        .expect("peer seed projects");
+
+    assert_eq!(summary["service_count"], 0);
+    assert_eq!(summary["route_count"], 0);
+    assert_eq!(summary["middleware_count"], 0);
+    assert_eq!(peer.labels["construction"], "scope-seed");
+    assert!(!peer.labels.contains_key("plan-ordinal"));
+    assert!(
+        document
+            .relationships
+            .iter()
+            .filter(|relationship| {
+                relationship.from == "protocol:overseerd/rpc"
+                    && relationship
+                        .to
+                        .starts_with("protocol:overseerd/rpc/tooling/")
+            })
+            .all(|relationship| relationship.kind == RelationshipKind::Contains)
+    );
 }
 
 #[tokio::test]

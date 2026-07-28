@@ -24,6 +24,7 @@ hybrid-registry = ["overseerd-rpc-macros/hybrid-registry"]
 yaml = ["overseerd-app/yaml", "overseerd-config/yaml"]
 watch = ["overseerd-app/watch", "overseerd-config/watch"]
 tracing-subscriber = ["overseerd-app/tracing-subscriber"]
+tooling = ["overseerd-app/tooling"]
 # Set by the `overseerd` facade: root the macros' generated protocol types at
 # `::overseerd::daemon::*`. Off (the default) keeps them at this standalone crate
 # (`::overseerd_rpc::*`), so depending on `overseerd-rpc` directly works.

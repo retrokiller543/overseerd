@@ -76,10 +76,6 @@ impl Error {
 impl ResponseError for Error {
     type Body = String;
 
-    fn status_code(&self) -> StatusCode {
-        self.status_code()
-    }
-
     fn error_response(self) -> ErrorResponse {
         let code = self.status_code();
         let public_message = match &self {
@@ -94,6 +90,10 @@ impl ResponseError for Error {
         }
 
         ErrorResponse::with_serialized_body(code, public_message)
+    }
+
+    fn status_code(&self) -> StatusCode {
+        self.status_code()
     }
 }
 

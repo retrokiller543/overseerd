@@ -1,12 +1,12 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::super::model::PhaseInput;
+use super::super::model::{Declared, PhaseInput};
 
 /// Expands the application-specific `AppHost::serve` implementation.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn expand(
-    serve: Option<&PhaseInput>,
+    serve: Option<&Declared<PhaseInput>>,
     host: &syn::Ident,
     protocol: &syn::Type,
     app: &syn::Path,
@@ -19,9 +19,11 @@ pub(super) fn expand(
         return TokenStream::new();
     };
 
-    match serve {
+    let method = &serve.key;
+
+    match &serve.value {
         PhaseInput::Path(path) => quote! {
-            async fn serve(
+            async fn #method(
                 context: #bootstrap_context,
                 app: #app<#protocol>,
             ) -> ::core::result::Result<(), #phase_error> {
@@ -46,7 +48,7 @@ pub(super) fn expand(
             });
 
             quote! {
-                async fn serve(
+                async fn #method(
                     #context: #bootstrap_context,
                     #app_name: #app<#protocol>,
                 ) -> ::core::result::Result<(), #phase_error> {

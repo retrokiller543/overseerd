@@ -21,15 +21,15 @@ use overseerd_hooks::{HookDescriptor, no_hooks};
 /// Supplies the runtime identity used to synthesize a descriptor for a
 /// manually-provided instance. Implemented by `#[component]` and `#[service]`.
 pub trait Component: Any + Send + Sync + 'static {
-    const ID: &'static str;
-    const NAME: &'static str;
-
     /// The cloneable handle this component is stored in the container as, and
     /// injected by. `Arc<Self>` by default (auto-wrapped); a type that manages
     /// its own sharing — typically because it is internally `Arc` and cheap to
     /// clone — may set this to `Self` via `#[component(by_value)]`, so it is
     /// stored without an extra `Arc`.
     type Handle: Injectable<Target = Self>;
+
+    const ID: &'static str;
+    const NAME: &'static str;
 
     /// Wraps a freshly constructed instance into its storage handle.
     fn into_handle(self) -> Self::Handle;

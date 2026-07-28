@@ -34,6 +34,7 @@ pub enum PluginCliProviderKind {
 pub struct PluginCliProviderMetadata {
     provenance: ContributionProvenance,
     kind: PluginCliProviderKind,
+    name: Option<&'static str>,
 }
 
 impl PluginCliProviderMetadata {
@@ -45,6 +46,11 @@ impl PluginCliProviderMetadata {
     /// The parser-facing provider category.
     pub const fn kind(self) -> PluginCliProviderKind {
         self.kind
+    }
+
+    /// The parser-visible command name when this provider declares one named command.
+    pub const fn name(self) -> Option<&'static str> {
+        self.name
     }
 }
 
@@ -68,7 +74,7 @@ impl PluginCliRegistrar {
         T: Args + Send + Sync + 'static,
     {
         self.providers.push(PluginCliProvider::Args {
-            metadata: self.metadata(id, PluginCliProviderKind::Args),
+            metadata: self.metadata(id, PluginCliProviderKind::Args, None),
             value_type: TypeId::of::<T>(),
             augment: T::augment_args,
             extract: extract_args::<T>,
@@ -81,7 +87,7 @@ impl PluginCliRegistrar {
         T: Args + PluginCliCommand + Send + Sync + 'static,
     {
         self.providers.push(PluginCliProvider::Command {
-            metadata: self.metadata(id, PluginCliProviderKind::Command),
+            metadata: self.metadata(id, PluginCliProviderKind::Command, Some(name)),
             name,
             augment: augment_command::<T>,
             extract: extract_command::<T>,
@@ -94,7 +100,7 @@ impl PluginCliRegistrar {
         T: Subcommand + PluginCliCommand + Send + Sync + 'static,
     {
         self.providers.push(PluginCliProvider::CommandSet {
-            metadata: self.metadata(id, PluginCliProviderKind::CommandSet),
+            metadata: self.metadata(id, PluginCliProviderKind::CommandSet, None),
             augment: T::augment_subcommands,
             matches: T::has_subcommand,
             extract: extract_command_set::<T>,
@@ -109,10 +115,12 @@ impl PluginCliRegistrar {
         &self,
         id: ContributionId,
         kind: PluginCliProviderKind,
+        name: Option<&'static str>,
     ) -> PluginCliProviderMetadata {
         PluginCliProviderMetadata {
             provenance: ContributionProvenance::new(Contributor::Plugin(self.contributor), id),
             kind,
+            name,
         }
     }
 }

@@ -13,18 +13,20 @@ use overseerd::{App, AppError, ConfigManager, HookKind, component, methods};
 struct Startup;
 
 impl HookKind for Startup {
-    const NAME: &'static str = "startup";
     type Output = ();
     type Cx = ();
+
+    const NAME: &'static str = "startup";
 }
 
 /// A kind nobody listens to, to prove `has` is false for it.
 struct Unused;
 
 impl HookKind for Unused {
-    const NAME: &'static str = "unused";
     type Output = ();
     type Cx = ();
+
+    const NAME: &'static str = "unused";
 }
 
 /// Subscribes to the custom `Startup` kind. The hook takes `&self` and no inputs.

@@ -37,10 +37,6 @@ impl std::fmt::Display for AppError {
 impl ResponseError for AppError {
     type Body = AppErrorBody;
 
-    fn status_code(&self) -> StatusCode {
-        StatusCode::new_with_custom(PredefinedCode::BadInput, Flags::RETRYABLE, SUBCODE)
-    }
-
     fn error_response(self) -> ErrorResponse {
         let body = AppErrorBody {
             detail: "bad thing".to_string(),
@@ -48,6 +44,10 @@ impl ResponseError for AppError {
         };
 
         ErrorResponse::with_serialized_body(self.status_code(), &body)
+    }
+
+    fn status_code(&self) -> StatusCode {
+        StatusCode::new_with_custom(PredefinedCode::BadInput, Flags::RETRYABLE, SUBCODE)
     }
 }
 

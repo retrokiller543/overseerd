@@ -1,12 +1,5 @@
+use proc_macro2::Span;
 use syn::{Attribute, Block, Expr, Ident, LitStr, Path, Type, Visibility};
-
-/// Parsed input accepted by `app!`.
-pub(crate) enum AppInput {
-    /// A reusable named application definition.
-    Named(NamedApp),
-    /// The temporary expression-oriented application builder form.
-    Legacy(AppAssembly),
-}
 
 /// A reusable named application definition.
 pub(crate) struct NamedApp {
@@ -16,10 +9,16 @@ pub(crate) struct NamedApp {
     pub(super) assembly: AppAssembly,
 }
 
-/// The protocol-specific builder assembly shared by both macro forms.
+/// A parsed DSL value together with the exact key that declared it.
+pub(super) struct Declared<T> {
+    pub(super) key: Ident,
+    pub(super) value: T,
+}
+
+/// The protocol-specific builder assembly declared by a named application.
 pub(crate) struct AppAssembly {
-    pub(super) name: Expr,
-    pub(super) protocol: Type,
+    pub(super) name: Declared<Expr>,
+    pub(super) protocol: Declared<Type>,
     pub(super) services: Vec<Type>,
     pub(super) components: Vec<Expr>,
     pub(super) configs: Vec<ConfigEntry>,
@@ -30,13 +29,14 @@ pub(crate) struct AppAssembly {
     pub(super) error_handler: Option<Expr>,
     pub(super) plugins: Vec<PluginDirective>,
     pub(super) overseerd: Option<Path>,
-    pub(super) krate: Option<Path>,
     pub(super) phases: AppPhases,
+    pub(super) cli_policy: super::policy::CliPolicy,
     #[cfg_attr(not(feature = "cli"), allow(dead_code))]
     pub(super) cli: CliDeclarations,
 }
 
 /// One parser-visible static application plugin directive.
+#[allow(clippy::large_enum_variant)]
 pub(super) enum PluginDirective {
     Install(Type),
     Replace { slot: Expr, plugin: Type },
@@ -69,6 +69,7 @@ pub(super) struct CommandEntry {
 
 /// The value associated with a command name.
 #[cfg_attr(not(feature = "cli"), allow(dead_code))]
+#[allow(clippy::large_enum_variant)]
 pub(super) enum CommandEntryKind {
     Leaf(Type),
     Namespace(Vec<CommandEntry>),
@@ -77,11 +78,11 @@ pub(super) enum CommandEntryKind {
 /// Application lifecycle phase definitions.
 #[derive(Default)]
 pub(super) struct AppPhases {
-    pub(super) setup: Option<PhaseInput>,
-    pub(super) configure: Option<PhaseInput>,
-    pub(super) before_build: Option<PhaseInput>,
-    pub(super) after_build: Option<PhaseInput>,
-    pub(super) serve: Option<PhaseInput>,
+    pub(super) setup: Option<Declared<PhaseInput>>,
+    pub(super) configure: Option<Declared<PhaseInput>>,
+    pub(super) before_build: Option<Declared<PhaseInput>>,
+    pub(super) after_build: Option<Declared<PhaseInput>>,
+    pub(super) serve: Option<Declared<PhaseInput>>,
 }
 
 /// A lifecycle phase implemented by a function or inline block.
@@ -100,27 +101,37 @@ pub(super) struct PhaseArgument {
 }
 
 /// How a manager is supplied in the `managers` block.
+pub(super) struct ManagerSource<S> {
+    pub(super) key_span: Span,
+    pub(super) value: ManagerValue<S>,
+}
+
+/// The instance expression or configuration block supplying a manager.
 #[allow(clippy::large_enum_variant)]
-pub(super) enum ManagerSource<S> {
+pub(super) enum ManagerValue<S> {
     Instance(Expr),
-    Configure(S),
+    Configure { block_span: Span, settings: S },
+}
+
+/// One manager configuration value and the key that declared it.
+pub(super) struct ManagerSetting<T> {
+    pub(super) key_span: Span,
+    pub(super) value: T,
 }
 
 /// Settings for a macro-constructed `ConfigManager`.
-#[derive(Default)]
 pub(super) struct ConfigSettings {
-    pub(super) source: Option<Expr>,
-    pub(super) profiles: Option<Expr>,
-    pub(super) sighup: bool,
-    pub(super) watch: bool,
-    pub(super) debounce: Option<Expr>,
+    pub(super) source: Option<ManagerSetting<Expr>>,
+    pub(super) profiles: Option<ManagerSetting<Expr>>,
+    pub(super) sighup: Option<ManagerSetting<bool>>,
+    pub(super) watch: Option<ManagerSetting<bool>>,
+    pub(super) debounce: Option<ManagerSetting<Expr>>,
 }
 
 /// Settings for a macro-constructed `DirectoriesManager`.
-#[derive(Default)]
 pub(super) struct DirSettings {
-    pub(super) app: Option<Expr>,
-    pub(super) root: Option<Expr>,
+    pub(super) app: Option<ManagerSetting<Expr>>,
+    pub(super) root: Option<ManagerSetting<Expr>>,
 }
 
 /// One `configs:` entry containing a type and property path.

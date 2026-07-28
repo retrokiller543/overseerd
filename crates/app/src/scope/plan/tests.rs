@@ -57,6 +57,14 @@ struct SiblingSeed;
 struct ChildFactory;
 /// A factory-less seed assigned to an undeclared boundary.
 struct MissingSeed;
+/// First independent singleton in declaration order.
+struct FirstSingleton;
+/// Second independent singleton in declaration order.
+struct SecondSingleton;
+/// First independent component at a protocol-owned scope.
+struct FirstScoped;
+/// Second independent component at a protocol-owned scope.
+struct SecondScoped;
 
 fn construct(
     _: &mut ComponentConstructionContext,
@@ -167,6 +175,30 @@ fn factoryless_descriptor_in_undeclared_scope_is_rejected() {
             scope: MISSING_ID,
         } if component.ends_with("MissingSeed")
     ));
+}
+
+#[test]
+fn partition_preserves_independent_singleton_declaration_order() {
+    let descriptors = [
+        descriptor::<SecondSingleton>("z-second", "Second", &Singleton, empty_factory),
+        descriptor::<FirstSingleton>("a-first", "First", &Singleton, empty_factory),
+    ];
+    let plan = ScopePlan::partition(&descriptors, &[], &topology()).expect("plan succeeds");
+
+    assert_eq!(plan.singletons[0].id, descriptors[0].id);
+    assert_eq!(plan.singletons[1].id, descriptors[1].id);
+}
+
+#[test]
+fn partition_preserves_independent_scoped_declaration_order() {
+    let descriptors = [
+        descriptor::<SecondScoped>("z-second", "Second", &CHILD, empty_factory),
+        descriptor::<FirstScoped>("a-first", "First", &CHILD, empty_factory),
+    ];
+    let plan = ScopePlan::partition(&descriptors, &[], &topology()).expect("plan succeeds");
+
+    assert_eq!(plan.orders[&CHILD_ID][0].id, descriptors[0].id);
+    assert_eq!(plan.orders[&CHILD_ID][1].id, descriptors[1].id);
 }
 
 #[test]

@@ -79,9 +79,10 @@ impl RootResolver {
 }
 
 impl Component for RootResolver {
+    type Handle = RootResolver;
+
     const ID: &'static str = ROOT_RESOLVER_ID;
     const NAME: &'static str = ROOT_RESOLVER_NAME;
-    type Handle = RootResolver;
 
     fn into_handle(self) -> Self::Handle {
         self

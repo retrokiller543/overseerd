@@ -1451,6 +1451,7 @@ dependencies = [
  "overseerd-jobs",
  "overseerd-macros",
  "overseerd-rpc",
+ "overseerd-tooling-schema",
  "overseerd-transport",
  "postcard",
  "serde",
@@ -1471,6 +1472,7 @@ dependencies = [
  "overseerd-dirs",
  "overseerd-hooks",
  "overseerd-macros",
+ "overseerd-tooling-schema",
  "serde",
  "thiserror",
  "tokio",
@@ -1653,6 +1655,7 @@ name = "overseerd-example-http"
 version = "0.20.0"
 dependencies = [
  "arc-swap",
+ "clap",
  "futures",
  "http-body-util",
  "overseerd",
@@ -1672,7 +1675,9 @@ dependencies = [
 name = "overseerd-example-jobs"
 version = "0.20.0"
 dependencies = [
+ "clap",
  "overseerd",
+ "thiserror",
  "tokio",
  "tracing",
 ]
@@ -1775,6 +1780,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "overseerd-tooling-schema"
+version = "0.20.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

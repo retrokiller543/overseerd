@@ -62,16 +62,11 @@ impl ProtocolDefinition for Rpc {
 
     const ID: overseerd_app::ProtocolId =
         overseerd_core::namespaced_id!(overseerd_app::ProtocolId, "overseerd/rpc");
-
-    fn auto_discover(&mut self) {
-        self.services.extend(SERVICES.iter().copied());
-    }
+    const SCOPE_TOPOLOGY: overseerd_app::ScopeTopology = SCOPE_TOPOLOGY;
 
     fn register(&self, registry: &mut AppRegistry) {
         registry.components.push(PEER_INFO_DESCRIPTOR);
     }
-
-    const SCOPE_TOPOLOGY: overseerd_app::ScopeTopology = SCOPE_TOPOLOGY;
 
     fn prepare(self, context: &ValidationContext<'_>) -> crate::Result<Self::Prepared> {
         let resolved = crate::routes::resolved_services(&self.services);
@@ -94,6 +89,10 @@ impl ProtocolDefinition for Rpc {
             needs_peer,
             limits: self.limits,
         })
+    }
+
+    fn auto_discover(&mut self) {
+        self.services.extend(SERVICES.iter().copied());
     }
 }
 
@@ -120,6 +119,86 @@ impl PreparedProtocol for PreparedRpc {
             self.needs_peer,
             self.limits,
         ))
+    }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
+        use std::collections::BTreeMap;
+
+        use overseerd_app::{ToolingEndpoint, ToolingRelationshipKind};
+
+        contributions.facet(
+            "summary",
+            1,
+            overseerd_app::tooling_schema::JsonValue::Object(
+                [
+                    (
+                        String::from("service_count"),
+                        self.resolved_services.len().into(),
+                    ),
+                    (
+                        String::from("route_count"),
+                        self.resolved_services
+                            .iter()
+                            .map(|service| service.rpcs.len())
+                            .sum::<usize>()
+                            .into(),
+                    ),
+                    (String::from("middleware_count"), self.layers.len().into()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        );
+
+        for service in &self.resolved_services {
+            let service_id = format!("service/{}", service.descriptor.id);
+
+            contributions.resource_with_labels(
+                &service_id,
+                service.descriptor.name,
+                BTreeMap::from([
+                    (String::from("kind"), String::from("rpc-service")),
+                    (String::from("route-count"), service.rpcs.len().to_string()),
+                ]),
+            );
+            contributions.relationship(
+                ToolingRelationshipKind::Contains,
+                ToolingEndpoint::Owner,
+                ToolingEndpoint::Resource(&service_id),
+            );
+
+            for rpc in &service.rpcs {
+                let rpc_id = format!("route/{}/{}", service.descriptor.id, rpc.name);
+
+                contributions.resource_with_labels(
+                    &rpc_id,
+                    rpc.name,
+                    BTreeMap::from([
+                        (String::from("kind"), String::from("rpc-route")),
+                        (
+                            String::from("operation"),
+                            operation_kind(rpc.operation).to_string(),
+                        ),
+                    ]),
+                );
+                contributions.relationship(
+                    ToolingRelationshipKind::Contains,
+                    ToolingEndpoint::Resource(&service_id),
+                    ToolingEndpoint::Resource(&rpc_id),
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "tooling")]
+fn operation_kind(kind: crate::OperationKind) -> &'static str {
+    match kind {
+        crate::OperationKind::Unary => "unary",
+        crate::OperationKind::ServerStream => "server-stream",
+        crate::OperationKind::ClientStream => "client-stream",
+        crate::OperationKind::BidiStream => "bidi-stream",
     }
 }
 

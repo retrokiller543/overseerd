@@ -1,8 +1,9 @@
 use crate::DaemonApplication;
 use crate::commands::OutputArgs;
+use crate::lifecycle::StartupProvenance;
 use overseerd::{CliCommand, CommandContext, CommandContextError, PreBuild};
 
-/// Prints the validated registry without constructing components or the RPC protocol.
+/// Prints the validated Homeledger plan without constructing components or the RPC protocol.
 #[derive(clap::Args)]
 pub struct InspectRegistryCommand;
 
@@ -16,15 +17,23 @@ impl CliCommand<DaemonApplication> for InspectRegistryCommand {
     ) -> Result<(), Self::Error> {
         let prepared = context.prepared();
         let verbose = context.require::<OutputArgs>()?.verbose;
+        let plugins = prepared.plugin_plan().resolution().plugins();
 
         println!("Application: {}", prepared.name());
+        println!("Protocol: {}", prepared.protocol_id());
+        println!("Static plugins: {}", plugins.len());
+
+        if let Some(provenance) = context.bootstrap().get::<StartupProvenance>() {
+            println!("Config: {}", provenance.config_path);
+            println!("Environments: {}", provenance.profiles.join(","));
+            println!("Operator: {}", provenance.operator);
+            println!("Audit review: {}", provenance.audit_review_ticket);
+        }
+
         println!("{}", prepared.registry());
 
         if verbose {
-            println!(
-                "Protocol: {}",
-                std::any::type_name_of_val(prepared.protocol())
-            );
+            println!("Plugin plan: {:#?}", prepared.plugin_plan().resolution());
         }
 
         Ok(())

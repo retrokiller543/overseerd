@@ -4,34 +4,39 @@
 # can only produce a string. `${@kind}` resolves an application directory
 # (`@config @data @cache @state @runtime @tmp`) from the DirectoriesManager.
 
-# A single `overseerd=<level>` knob now covers all framework logging (daemon, config,
-# dirs, …), since every framework log uses a target under the `overseerd::` root. Narrow
-# to one area with e.g. `overseerd::config=trace`.
+# Homeledger's base config is merged with `application-development.toml` by the
+# declaration's generated parser default environment. Explicit `--environment` and
+# `OVERSEERD_PROFILES` replace that default; later repeated profiles win in order.
 [logging]
-level = "info,overseerd=trace"
-format = "full"
-ansi = true
+level = "info,homeledger=debug,overseerd=info"
+ansi = false
 
-[app.greet]
-greeting = "Hello, ${USER:world}"
+[homeledger.ledger]
+household = "Maple Street"
+currency = "USD"
 
-[app.server]
+# Supplied by the compliance policy replacing Homeledger RPC's household default.
+[homeledger.audit]
+retention_days = 2555
+require_review_ticket = true
+
+[homeledger.server]
 port = "${PORT:9000}"
-addr = "127.0.0.1:${app.server.port}"
+addr = "127.0.0.1:${homeledger.server.port}"
 bind = "${BIND:127.0.0.1}"
 # `socket` is intentionally omitted — it falls back to its `#[default]`:
-# "${@runtime}/example-daemon.sock".
+# "${@runtime}/homeledger.sock".
 
 # Internally tagged (`kind = ".."`): selects the `disk` variant but omits its `path`, so
 # the field falls back to its `#[default]` of "${@data}/blobs". Omit this section entirely
 # (or set `kind = "memory"`) to get the `#[default]` `Memory` variant.
-[app.storage]
+[homeledger.storage]
 kind = "disk"
 
-[app.db.reader]
-url = "postgres://${DB_HOST:localhost}:5432/app"
+[homeledger.database.reader]
+url = "postgres://${DB_HOST:localhost}:5432/homeledger"
 pool_size = "${READER_POOL:8}"
 
-[app.db.writer]
-url = "postgres://${DB_HOST:localhost}:5432/app"
+[homeledger.database.writer]
+url = "postgres://${DB_HOST:localhost}:5432/homeledger"
 pool_size = "${WRITER_POOL:4}"

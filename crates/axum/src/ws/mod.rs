@@ -337,9 +337,6 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
     /// Whether an upgrade must negotiate one of [`SUBPROTOCOLS`](Self::SUBPROTOCOLS).
     const REQUIRE_SUBPROTOCOL: bool = false;
 
-    /// Contributes protocol-owned DI components before the root container is validated and built.
-    fn register(_registry: &mut AppRegistry) {}
-
     /// Builds the protocol's routing from prepared controllers and endpoint `options`. Called once
     /// per `register_ws` entrypoint at app build. The protocol keeps whatever
     /// it needs from `runtime` (e.g. a clone, to open per-message
@@ -360,6 +357,9 @@ pub trait WebsocketProtocol: Send + Sync + Sized + 'static {
         connection: Arc<ScopeContainer>,
         shutdown: WsShutdown,
     ) -> impl Future<Output = ()> + Send;
+
+    /// Contributes protocol-owned DI components before the root container is validated and built.
+    fn register(_registry: &mut AppRegistry) {}
 }
 
 /// Framework-owned controls resolved from each WebSocket connection's config store. This remains

@@ -38,13 +38,27 @@ impl Notifications {
     }
 }
 
-#[tokio::main]
-async fn main() -> overseerd::daemon::Result<()> {
-    let app = app! { name: "notifyd", protocol: Rpc }.build().await?;
+app! {
+    app NotifyApplication {
+        name: "notifyd",
+        protocol: Rpc,
+        serve(_context, app) {
+            let transport = TcpTransport::bind("127.0.0.1:7000").await?;
 
-    app.serve(TcpTransport::bind("127.0.0.1:7000").await?).await
+            app.serve(transport).await
+        },
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), overseerd::CliError> {
+    NotifyApplication::run().await
 }
 ```
+
+The [named application migration guide](../../docs/named-application-migration.md) covers the
+removed expression form, generated runner and lifecycle APIs, RPC command contexts, static plugins,
+tooling mode, and when to use a custom `main` or direct `App::<Rpc>::builder(..)`.
 
 ## Internal role
 

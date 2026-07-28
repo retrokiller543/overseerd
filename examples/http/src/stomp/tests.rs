@@ -9,16 +9,22 @@ use tokio::net::TcpListener;
 
 use super::*;
 
-#[tokio::test]
-async fn chat_message_is_recorded_and_broadcast() {
-    let app = app! {
+app! {
+    /// Generated host shared by the STOMP chat unit tests.
+    app ChatTestApplication {
         name: "chat-test",
         protocol: overseerd::axum::Axum,
     }
-    .register_ws::<Stomp>("/ws/stomp")
-    .build()
-    .await
-    .expect("app builds");
+}
+
+#[tokio::test]
+async fn chat_message_is_recorded_and_broadcast() {
+    let app = ChatTestApplication::builder()
+        .expect("app builder")
+        .register_ws::<Stomp>("/ws/stomp")
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -60,14 +66,12 @@ async fn chat_message_is_recorded_and_broadcast() {
 
 #[tokio::test]
 async fn a_templated_room_subscription_gets_only_its_room() {
-    let app = app! {
-        name: "chat-room-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .register_ws::<Stomp>("/ws/stomp")
-    .build()
-    .await
-    .expect("app builds");
+    let app = ChatTestApplication::builder()
+        .expect("app builder")
+        .register_ws::<Stomp>("/ws/stomp")
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -122,14 +126,12 @@ async fn a_templated_room_subscription_gets_only_its_room() {
 
 #[tokio::test]
 async fn a_request_message_awaits_a_correlated_reply() {
-    let app = app! {
-        name: "chat-request-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .register_ws::<Stomp>("/ws/stomp")
-    .build()
-    .await
-    .expect("app builds");
+    let app = ChatTestApplication::builder()
+        .expect("app builder")
+        .register_ws::<Stomp>("/ws/stomp")
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -170,14 +172,12 @@ async fn a_request_message_awaits_a_correlated_reply() {
 
 #[tokio::test]
 async fn a_failing_request_message_resolves_err_not_hang() {
-    let app = app! {
-        name: "chat-reject-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .register_ws::<Stomp>("/ws/stomp")
-    .build()
-    .await
-    .expect("app builds");
+    let app = ChatTestApplication::builder()
+        .expect("app builder")
+        .register_ws::<Stomp>("/ws/stomp")
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -230,14 +230,12 @@ async fn a_failing_request_message_resolves_err_not_hang() {
 
 #[tokio::test]
 async fn a_request_without_a_reply_times_out() {
-    let app = app! {
-        name: "chat-timeout-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .register_ws::<Stomp>("/ws/stomp")
-    .build()
-    .await
-    .expect("app builds");
+    let app = ChatTestApplication::builder()
+        .expect("app builder")
+        .register_ws::<Stomp>("/ws/stomp")
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");

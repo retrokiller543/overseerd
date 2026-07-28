@@ -18,9 +18,10 @@ pub const SHUTDOWN_HANDLE_ID: &str = "overseerd:shutdown-handle";
 pub const SHUTDOWN_HANDLE_NAME: &str = "ShutdownHandle";
 
 impl Component for ShutdownHandle {
+    type Handle = ShutdownHandle;
+
     const ID: &'static str = SHUTDOWN_HANDLE_ID;
     const NAME: &'static str = SHUTDOWN_HANDLE_NAME;
-    type Handle = ShutdownHandle;
 
     fn into_handle(self) -> Self::Handle {
         self

@@ -27,7 +27,8 @@ pub fn expand<Ext: ComponentExt>(
     let self_ident = item.ident.clone();
     let providers = provide::generate_providers(&self_ident, &args, paths);
     let handle = handle::handle_impl(&self_ident, args.by_value, paths);
-    let handle_items = &handle.items;
+    let handle_associated_type = &handle.associated_type;
+    let handle_method = &handle.method;
     let injectable = &handle.injectable;
     let provide_impl = di::provide_impl(&self_ident, paths);
 
@@ -116,9 +117,10 @@ pub fn expand<Ext: ComponentExt>(
         #assert_wired
 
         impl #component for #self_ident {
+            #handle_associated_type
             const ID: &'static str = #id;
             const NAME: &'static str = #name;
-            #handle_items
+            #handle_method
         }
 
         #injectable
@@ -148,3 +150,6 @@ pub fn expand<Ext: ComponentExt>(
         #ext
     })
 }
+
+#[cfg(test)]
+mod tests;

@@ -180,6 +180,29 @@ macro_rules! deserialize_int {
 impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx, 'r> {
     type Error = TemplateError;
 
+    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
+        match self.value {
+            ConfigValue::Null => visitor.visit_unit(),
+            ConfigValue::Bool(b) => visitor.visit_bool(*b),
+
+            ConfigValue::Int(n) => match i64::try_from(*n) {
+                Ok(small) => visitor.visit_i64(small),
+                Err(_) => visitor.visit_i128(*n),
+            },
+
+            ConfigValue::Float(f) => visitor.visit_f64(*f),
+
+            ConfigValue::Str(s) => {
+                let rendered = render_str(s, self.ctx)?;
+
+                visitor.visit_string(rendered)
+            }
+
+            ConfigValue::Array(_) => self.deserialize_seq(visitor),
+            ConfigValue::Table(_) => self.deserialize_map(visitor),
+        }
+    }
+
     fn deserialize_bool<V: Visitor<'de>>(mut self, visitor: V) -> Result<V::Value, Self::Error> {
         match self.value {
             ConfigValue::Bool(b) => visitor.visit_bool(*b),
@@ -206,16 +229,17 @@ impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx
     deserialize_int!(deserialize_i16, i16, visit_i16);
     deserialize_int!(deserialize_i32, i32, visit_i32);
     deserialize_int!(deserialize_i64, i64, visit_i64);
-    deserialize_int!(deserialize_u8, u8, visit_u8);
-    deserialize_int!(deserialize_u16, u16, visit_u16);
-    deserialize_int!(deserialize_u32, u32, visit_u32);
-    deserialize_int!(deserialize_u64, u64, visit_u64);
 
     fn deserialize_i128<V: Visitor<'de>>(mut self, visitor: V) -> Result<V::Value, Self::Error> {
         let n = self.int_value("i128")?;
 
         visitor.visit_i128(n)
     }
+
+    deserialize_int!(deserialize_u8, u8, visit_u8);
+    deserialize_int!(deserialize_u16, u16, visit_u16);
+    deserialize_int!(deserialize_u32, u32, visit_u32);
+    deserialize_int!(deserialize_u64, u64, visit_u64);
 
     fn deserialize_u128<V: Visitor<'de>>(mut self, visitor: V) -> Result<V::Value, Self::Error> {
         let n = self.int_value("u128")?;
@@ -268,6 +292,8 @@ impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx
     fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         self.deserialize_str(visitor)
     }
+
+    serde::forward_to_deserialize_any! { bytes byte_buf }
 
     fn deserialize_option<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self.value {
@@ -394,31 +420,6 @@ impl<'de, 'cfg, 'ctx, 'r> de::Deserializer<'de> for ValueDeserializer<'cfg, 'ctx
 
         visitor.visit_unit()
     }
-
-    fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
-        match self.value {
-            ConfigValue::Null => visitor.visit_unit(),
-            ConfigValue::Bool(b) => visitor.visit_bool(*b),
-
-            ConfigValue::Int(n) => match i64::try_from(*n) {
-                Ok(small) => visitor.visit_i64(small),
-                Err(_) => visitor.visit_i128(*n),
-            },
-
-            ConfigValue::Float(f) => visitor.visit_f64(*f),
-
-            ConfigValue::Str(s) => {
-                let rendered = render_str(s, self.ctx)?;
-
-                visitor.visit_string(rendered)
-            }
-
-            ConfigValue::Array(_) => self.deserialize_seq(visitor),
-            ConfigValue::Table(_) => self.deserialize_map(visitor),
-        }
-    }
-
-    serde::forward_to_deserialize_any! { bytes byte_buf }
 }
 
 /// `SeqAccess` over an array node, handing each element a child deserializer.

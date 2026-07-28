@@ -27,20 +27,24 @@ pub trait ProtocolDefinition: Default + 'static {
     /// Stable identity used by composition, diagnostics, and tooling.
     const ID: ProtocolId;
 
-    /// Folds link-time discovered protocol descriptors into this definition.
-    fn auto_discover(&mut self) {}
-
-    /// Declares protocol-owned mandatory and default plugins before composition resolution.
-    fn register_plugins(_plugins: &mut ProtocolPluginRegistrar) {}
-
-    /// Contributes protocol-owned descriptors before application validation.
-    fn register(&self, registry: &mut AppRegistry);
-
     /// The protocol-owned scope boundaries and their declared parent paths.
     ///
     /// The universal singleton root is implicit, and transient components do not
     /// occupy an openable boundary.
     const SCOPE_TOPOLOGY: ScopeTopology;
+
+    /// Contributes protocol-owned descriptors before application validation.
+    fn register(&self, registry: &mut AppRegistry);
+
+    /// Validates finalized protocol-owned state and consumes the definition into its prepared
+    /// representation without constructing runtime resources.
+    fn prepare(self, context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error>;
+
+    /// Folds link-time discovered protocol descriptors into this definition.
+    fn auto_discover(&mut self) {}
+
+    /// Declares protocol-owned mandatory and default plugins before composition resolution.
+    fn register_plugins(_plugins: &mut ProtocolPluginRegistrar) {}
 
     /// Contributes protocol-owned components and configuration bindings before app validation.
     fn pre_build(&mut self, context: &mut PreBuildContext<'_>) -> Result<(), Self::Error> {
@@ -48,10 +52,6 @@ pub trait ProtocolDefinition: Default + 'static {
 
         Ok(())
     }
-
-    /// Validates finalized protocol-owned state and consumes the definition into its prepared
-    /// representation without constructing runtime resources.
-    fn prepare(self, context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error>;
 }
 
 /// Validated protocol-specific state awaiting runtime construction.
@@ -63,6 +63,10 @@ pub trait PreparedProtocol: Send + 'static {
 
     /// Builds the protocol runtime after the application's root DI container exists.
     fn build(self, runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error>;
+
+    /// Describes stable protocol-owned facts retained by this prepared state.
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, _contributions: &mut crate::ToolingContributions) {}
 }
 
 /// Mutable application state available for protocol contributions before validation.

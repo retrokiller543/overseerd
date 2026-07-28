@@ -143,27 +143,81 @@ impl Default for BootstrapPolicy {
 }
 
 /// Protocol-neutral options consumed during generated application bootstrap.
-#[derive(Clone, Debug, Default, Eq, PartialEq, clap::Args)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub struct BootstrapOptions {
-    /// Configuration file or directory.
-    #[arg(short = 'c', long, global = true, value_name = "PATH")]
     pub(super) config: Option<std::path::PathBuf>,
-    /// Ordered configuration profile; may be repeated.
-    #[arg(short = 'p', long = "profile", global = true, value_name = "PROFILE")]
     pub(super) profiles: Vec<String>,
-    /// EnvFilter-compatible tracing directive.
-    #[arg(long, global = true, value_name = "FILTER")]
     pub(super) log: Option<String>,
-    /// Tracing output formatter.
-    #[arg(long, global = true, value_enum, value_name = "FORMAT")]
     pub(super) log_format: Option<LogFormat>,
-    /// ANSI color behavior.
-    #[arg(long, global = true, value_enum, value_name = "WHEN")]
     pub(super) color: Option<ColorChoice>,
+    sources: BootstrapOptionSources,
+}
+
+/// Semantic provenance for one value copied out of a generated Clap parser.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum BootstrapValueSource {
+    #[default]
+    Absent,
+    CommandLine,
+    DefaultValue,
+}
+
+impl BootstrapValueSource {
+    fn from_clap(source: Option<clap::parser::ValueSource>) -> Self {
+        match source {
+            Some(clap::parser::ValueSource::CommandLine) => Self::CommandLine,
+            Some(clap::parser::ValueSource::DefaultValue) => Self::DefaultValue,
+            Some(_) | None => Self::Absent,
+        }
+    }
+
+    fn is_command_line(self) -> bool {
+        matches!(self, Self::CommandLine)
+    }
+
+    fn is_default(self) -> bool {
+        matches!(self, Self::DefaultValue)
+    }
+}
+
+/// Per-field provenance retained alongside protocol-neutral bootstrap values.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct BootstrapOptionSources {
+    config: BootstrapValueSource,
+    profiles: BootstrapValueSource,
+    log: BootstrapValueSource,
+    log_format: BootstrapValueSource,
+    color: BootstrapValueSource,
 }
 
 impl BootstrapOptions {
+    /// Creates semantic bootstrap options from a generated application-specific parser.
+    #[doc(hidden)]
+    pub fn from_parts(
+        config: Option<std::path::PathBuf>,
+        profiles: Vec<String>,
+        log: Option<String>,
+        log_format: Option<LogFormat>,
+        color: Option<ColorChoice>,
+        sources: [Option<clap::parser::ValueSource>; 5],
+    ) -> Self {
+        Self {
+            config,
+            profiles,
+            log,
+            log_format,
+            color,
+            sources: BootstrapOptionSources {
+                config: BootstrapValueSource::from_clap(sources[0]),
+                profiles: BootstrapValueSource::from_clap(sources[1]),
+                log: BootstrapValueSource::from_clap(sources[2]),
+                log_format: BootstrapValueSource::from_clap(sources[3]),
+                color: BootstrapValueSource::from_clap(sources[4]),
+            },
+        }
+    }
+
     /// Explicit configuration file or directory.
     pub fn config(&self) -> Option<&std::path::Path> {
         self.config.as_deref()
@@ -188,6 +242,46 @@ impl BootstrapOptions {
     pub fn color(&self) -> Option<ColorChoice> {
         self.color
     }
+
+    pub(super) fn config_is_command_line(&self) -> bool {
+        self.sources.config.is_command_line()
+    }
+
+    pub(super) fn config_is_default(&self) -> bool {
+        self.sources.config.is_default()
+    }
+
+    pub(super) fn profiles_are_command_line(&self) -> bool {
+        self.sources.profiles.is_command_line()
+    }
+
+    pub(super) fn profiles_are_default(&self) -> bool {
+        self.sources.profiles.is_default()
+    }
+
+    pub(super) fn log_is_command_line(&self) -> bool {
+        self.sources.log.is_command_line()
+    }
+
+    pub(super) fn log_is_default(&self) -> bool {
+        self.sources.log.is_default()
+    }
+
+    pub(super) fn log_format_is_command_line(&self) -> bool {
+        self.sources.log_format.is_command_line()
+    }
+
+    pub(super) fn log_format_is_default(&self) -> bool {
+        self.sources.log_format.is_default()
+    }
+
+    pub(super) fn color_is_command_line(&self) -> bool {
+        self.sources.color.is_command_line()
+    }
+
+    pub(super) fn color_is_default(&self) -> bool {
+        self.sources.color.is_default()
+    }
 }
 
 /// Failures returned by generated CLI parsing and dispatch.
@@ -206,6 +300,18 @@ pub enum CliError {
     /// Rendering process-facing help or version output failed.
     #[error("failed to render command-line output: {0}")]
     Output(#[from] std::io::Error),
+    /// A completed tooling probe envelope could not be emitted.
+    #[cfg(feature = "tooling")]
+    #[error(transparent)]
+    ToolingOutput(#[from] crate::ToolingProbeOutputError),
+    /// The future Cargo invoker did not supply valid selected target identity.
+    #[cfg(feature = "tooling")]
+    #[error(transparent)]
+    ToolingTarget(#[from] crate::ToolingProbeTargetError),
+    /// Generated application declaration identity is incomplete.
+    #[cfg(feature = "tooling")]
+    #[error(transparent)]
+    ToolingIdentity(#[from] overseerd_tooling_schema::IdentityValidationError),
     /// Framework bootstrap failed before the app lifecycle began.
     #[error(transparent)]
     Bootstrap(#[from] BootstrapError),

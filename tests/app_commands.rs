@@ -24,12 +24,48 @@ static APPLICATION_PLUGIN_CONTRIBUTIONS: AtomicUsize = AtomicUsize::new(0);
 static PLUGIN_COMMAND_RUNS: AtomicUsize = AtomicUsize::new(0);
 static PROTOCOL_DROPS: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(feature = "tooling")]
+static CUSTOMIZED_TOOLING_BOOTSTRAP: std::sync::Mutex<Option<CustomizedToolingBootstrap>> =
+    std::sync::Mutex::new(None);
+
+/// Generated tooling bootstrap values captured by customized setup.
+#[cfg(feature = "tooling")]
+struct CustomizedToolingBootstrap {
+    profiles: Vec<String>,
+    log: String,
+    format: overseerd::LogFormat,
+    color: overseerd::ColorChoice,
+}
+
+#[cfg(feature = "tooling")]
+fn tooling_target(binary: &str) -> overseerd::tooling::ProbeTargetIdentity {
+    overseerd::tooling::ProbeTargetIdentity::new(
+        overseerd::tooling::PackageIdentity {
+            name: String::from("overseerd"),
+            version: Some(String::from(env!("CARGO_PKG_VERSION"))),
+            manifest_path: Some(format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"))),
+        },
+        overseerd::tooling::BinaryTargetIdentity {
+            name: binary.to_string(),
+        },
+    )
+    .expect("test target identity is valid")
+}
+
 /// Global arguments flattened into the generated application parser.
 #[derive(clap::Args)]
 pub struct OutputArgs {
     /// Output representation used by utility commands.
     #[arg(long, global = true, default_value = "text")]
     format: String,
+}
+
+/// Application arguments completing all generated default declaration forms.
+#[derive(clap::Args)]
+pub struct DefaultFormsArgs {
+    /// Default output channels used by customized inspection.
+    #[arg(long, global = true, default_values = ["audit", "metrics"])]
+    channels: Vec<String>,
 }
 
 /// Arguments intentionally colliding with framework-owned bootstrap options.
@@ -61,14 +97,14 @@ impl Plugin for CollidingCliPlugin {
     const ID: overseerd::PluginId =
         overseerd::namespaced_id!(overseerd::PluginId, "test/colliding-cli");
 
+    fn contribute(self, _contributions: &mut PluginContributions) {}
+
     fn cli(&self, cli: &mut PluginCliRegistrar) {
         cli.args::<CollidingPluginArgs>(overseerd::namespaced_id!(
             ContributionId,
             "test/colliding-args"
         ));
     }
-
-    fn contribute(self, _contributions: &mut PluginContributions) {}
 }
 
 /// Global arguments contributed by a protocol-default plugin.
@@ -137,6 +173,12 @@ impl Plugin for ProtocolCliPlugin {
     const ID: overseerd::PluginId =
         overseerd::namespaced_id!(overseerd::PluginId, "test/protocol-cli");
 
+    fn contribute(self, _contributions: &mut PluginContributions) {
+        assert!(self.marker);
+
+        PROTOCOL_PLUGIN_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
+    }
+
     fn cli(&self, cli: &mut PluginCliRegistrar) {
         cli.args::<ProtocolPluginArgs>(overseerd::namespaced_id!(
             ContributionId,
@@ -146,12 +188,6 @@ impl Plugin for ProtocolCliPlugin {
             ContributionId,
             "test/protocol-commands"
         ));
-    }
-
-    fn contribute(self, _contributions: &mut PluginContributions) {
-        assert!(self.marker);
-
-        PROTOCOL_PLUGIN_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -170,15 +206,15 @@ impl Plugin for ApplicationCliPlugin {
     const ID: overseerd::PluginId =
         overseerd::namespaced_id!(overseerd::PluginId, "test/application-cli");
 
+    fn contribute(self, _contributions: &mut PluginContributions) {
+        APPLICATION_PLUGIN_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
+    }
+
     fn cli(&self, cli: &mut PluginCliRegistrar) {
         cli.command::<PluginInspectCommand>(
             overseerd::namespaced_id!(ContributionId, "test/plugin-inspect-command"),
             "plugin-inspect",
         );
-    }
-
-    fn contribute(self, _contributions: &mut PluginContributions) {
-        APPLICATION_PLUGIN_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -242,6 +278,8 @@ impl Plugin for PluginOnlyCliPlugin {
     const ID: overseerd::PluginId =
         overseerd::namespaced_id!(overseerd::PluginId, "test/plugin-only-cli");
 
+    fn contribute(self, _contributions: &mut PluginContributions) {}
+
     fn cli(&self, cli: &mut PluginCliRegistrar) {
         cli.command::<PluginCatalogCommand>(
             overseerd::namespaced_id!(ContributionId, "test/plugin-catalog-command"),
@@ -252,8 +290,6 @@ impl Plugin for PluginOnlyCliPlugin {
             "plugin-build",
         );
     }
-
-    fn contribute(self, _contributions: &mut PluginContributions) {}
 }
 
 /// Component resolved by the migration-style built command.
@@ -278,10 +314,6 @@ impl ProtocolDefinition for TestProtocol {
         overseerd::namespaced_id!(overseerd::ProtocolId, "test/app-commands");
     const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
 
-    fn register_plugins(plugins: &mut ProtocolPluginRegistrar) {
-        plugins.mandatory(ProtocolCliPlugin::default());
-    }
-
     fn register(&self, _registry: &mut AppRegistry) {}
 
     fn prepare(
@@ -289,6 +321,10 @@ impl ProtocolDefinition for TestProtocol {
         _context: &overseerd::ValidationContext<'_>,
     ) -> Result<Self::Prepared, Self::Error> {
         Ok(PreparedTestProtocol)
+    }
+
+    fn register_plugins(plugins: &mut ProtocolPluginRegistrar) {
+        plugins.mandatory(ProtocolCliPlugin::default());
     }
 }
 
@@ -443,6 +479,33 @@ async fn serve(_context: BootstrapContext, _app: App<TestProtocol>) -> std::io::
     Ok(())
 }
 
+async fn serve_unit(_context: BootstrapContext, _app: App<()>) -> std::io::Result<()> {
+    SERVE_CALLS.fetch_add(1, Ordering::SeqCst);
+
+    Ok(())
+}
+
+async fn customized_setup(context: BootstrapContext) -> std::io::Result<BootstrapContext> {
+    #[cfg(feature = "tooling")]
+    if context.mode().is_tooling() {
+        let bootstrap = context
+            .bootstrap()
+            .expect("customized tooling bootstrap state exists");
+        let snapshot = CustomizedToolingBootstrap {
+            profiles: bootstrap.profiles().to_vec(),
+            log: bootstrap.logging().level.clone(),
+            format: bootstrap.logging().format,
+            color: bootstrap.color(),
+        };
+
+        *CUSTOMIZED_TOOLING_BOOTSTRAP
+            .lock()
+            .expect("customized tooling bootstrap lock is available") = Some(snapshot);
+    }
+
+    Ok(context)
+}
+
 app! {
     pub app CommandApplication {
         name: "command-app-test",
@@ -550,6 +613,18 @@ impl CliCommand<PluginCollidingApplication> for InspectCommand {
     }
 }
 
+impl CliCommand<CustomizedCollisionApplication> for InspectCommand {
+    type Phase = Setup;
+    type Error = std::io::Error;
+
+    async fn run(
+        &self,
+        _context: CommandContext<CustomizedCollisionApplication, Self::Phase>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 app! {
     app CommandOnlyApplication {
         name: "command-only-test",
@@ -557,6 +632,120 @@ app! {
         commands: {
             inspect: InspectCommand,
         },
+    }
+}
+
+app! {
+    app CustomizedCliApplication {
+        name: "customized-cli-test",
+        protocol: (),
+        cli: {
+            config: false,
+            profile: {
+                name: "environment",
+                short: 'e',
+                aliases: ["profile"],
+                help: "Configuration environment.",
+                value_name: "ENV",
+                default_values_t: [String::from("local")],
+            },
+            log: { default_value: "warn" },
+            log_format: { default_value_t: overseerd::LogFormat::Json },
+            color: { default_value: "never" },
+            serve: {
+                name: "start",
+                visible_aliases: ["run"],
+                help: "Start the customized application.",
+                default_command: false,
+            },
+        },
+        args: {
+            defaults: DefaultFormsArgs,
+        },
+        commands: {
+            inspect: CustomizedInspectCommand,
+        },
+        setup = customized_setup,
+        serve = serve_unit,
+    }
+}
+
+app! {
+    app DisabledServeApplication {
+        name: "disabled-serve-test",
+        protocol: (),
+        cli: { serve: false },
+        commands: {
+            serve: DisabledServeCommand,
+        },
+        serve = serve_unit,
+    }
+}
+
+app! {
+    app CustomizedCollisionApplication {
+        name: "customized-collision-test",
+        protocol: (),
+        cli: {
+            profile: { name: "environment", short: false },
+        },
+        plugins: [CollidingCliPlugin],
+        commands: {
+            inspect: InspectCommand,
+        },
+    }
+}
+
+/// Setup command observing customized bootstrap semantics.
+#[derive(clap::Args)]
+pub struct CustomizedInspectCommand {
+    /// Assert explicit CLI values rather than generated parser defaults.
+    #[arg(long)]
+    expect_cli: bool,
+}
+
+impl CliCommand<CustomizedCliApplication> for CustomizedInspectCommand {
+    type Phase = Setup;
+    type Error = std::io::Error;
+
+    async fn run(
+        &self,
+        context: CommandContext<CustomizedCliApplication, Self::Phase>,
+    ) -> Result<(), Self::Error> {
+        let bootstrap = context
+            .bootstrap()
+            .bootstrap()
+            .expect("generated bootstrap state exists");
+
+        if self.expect_cli {
+            assert_eq!(bootstrap.profiles(), ["production", "regional"]);
+            assert_eq!(bootstrap.logging().level, "trace,customized=debug");
+            assert_eq!(bootstrap.logging().format, overseerd::LogFormat::Pretty);
+            assert_eq!(bootstrap.color(), overseerd::ColorChoice::Always);
+        } else {
+            assert_eq!(bootstrap.profiles(), ["local"]);
+            assert_eq!(bootstrap.logging().level, "warn");
+            assert_eq!(bootstrap.logging().format, overseerd::LogFormat::Json);
+            assert_eq!(bootstrap.color(), overseerd::ColorChoice::Never);
+        }
+
+        Ok(())
+    }
+}
+
+/// Application-owned serve command enabled after framework serve opt-out.
+#[derive(clap::Args)]
+pub struct DisabledServeCommand;
+
+impl CliCommand<DisabledServeApplication> for DisabledServeCommand {
+    type Phase = Setup;
+    type Error = std::io::Error;
+
+    async fn run(
+        &self,
+        _context: CommandContext<DisabledServeApplication, Self::Phase>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
     }
 }
 
@@ -584,6 +773,328 @@ fn generated_help_contains_nested_docs_and_typed_arguments() {
     assert!(nested_help.contains("Lists users from the built application"));
     assert!(nested_help.contains("--limit"));
     assert!(nested_help.contains("--all"));
+}
+
+#[cfg(feature = "tooling")]
+#[tokio::test]
+async fn tooling_probe_projects_effective_application_and_plugin_cli_metadata() {
+    let envelope = CommandApplication::tooling_probe(tooling_target("command-bin"))
+        .await
+        .expect("generated declaration identity validates");
+    let overseerd::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
+        panic!("command application tooling probe failed");
+    };
+    let cli = document
+        .cli
+        .expect("CLI-enabled probe emits typed metadata");
+    let output = cli
+        .root
+        .arguments
+        .iter()
+        .find(|argument| argument.id == "format")
+        .expect("application args metadata exists");
+    let profile = cli
+        .root
+        .arguments
+        .iter()
+        .find(|argument| argument.id == "profiles")
+        .expect("framework profile metadata exists");
+    let api = cli
+        .root
+        .commands
+        .iter()
+        .find(|command| command.name == "api")
+        .expect("nested application command exists");
+    let plugin_inspect = cli
+        .root
+        .commands
+        .iter()
+        .find(|command| command.name == "plugin-inspect")
+        .expect("named plugin command exists");
+    let protocol_status = cli
+        .root
+        .commands
+        .iter()
+        .find(|command| command.name == "protocol-status")
+        .expect("plugin command-set entry exists");
+    let serve = cli
+        .root
+        .commands
+        .iter()
+        .find(|command| command.name == "serve")
+        .expect("framework serve command exists");
+    let root_help = cli
+        .root
+        .arguments
+        .iter()
+        .find(|argument| argument.id == "help")
+        .expect("generated root help exists");
+    let root_version = cli
+        .root
+        .arguments
+        .iter()
+        .find(|argument| argument.id == "version")
+        .expect("generated root version exists");
+    let api_help = api
+        .arguments
+        .iter()
+        .find(|argument| argument.id == "help")
+        .expect("generated nested help exists");
+
+    assert!(matches!(
+        output.owner,
+        overseerd::tooling::CliOwner::Application
+    ));
+    assert!(matches!(
+        profile.owner,
+        overseerd::tooling::CliOwner::Framework
+    ));
+    assert!(matches!(
+        api.owner,
+        overseerd::tooling::CliOwner::Application
+    ));
+    assert!(matches!(
+        plugin_inspect.owner,
+        overseerd::tooling::CliOwner::Plugin { .. }
+    ));
+    assert!(matches!(
+        protocol_status.owner,
+        overseerd::tooling::CliOwner::Plugin { .. }
+    ));
+    assert!(matches!(
+        serve.owner,
+        overseerd::tooling::CliOwner::Framework
+    ));
+    assert_eq!(serve.id.as_deref(), Some("serve"));
+    assert_eq!(cli.default_command.as_deref(), Some("serve"));
+    assert!(matches!(
+        root_help.owner,
+        overseerd::tooling::CliOwner::Framework
+    ));
+    assert!(matches!(
+        root_version.owner,
+        overseerd::tooling::CliOwner::Framework
+    ));
+    assert!(matches!(
+        api_help.owner,
+        overseerd::tooling::CliOwner::Framework
+    ));
+    assert!(cli.providers.iter().any(|provider| {
+        provider.contribution == "test/protocol-args"
+            && provider.kind == overseerd::tooling::CliProviderKind::Args
+    }));
+    assert!(cli.providers.iter().any(|provider| {
+        provider.contribution == "test/plugin-inspect-command"
+            && provider.kind == overseerd::tooling::CliProviderKind::Command
+    }));
+    assert!(cli.providers.iter().any(|provider| {
+        provider.contribution == "test/protocol-commands"
+            && provider.kind == overseerd::tooling::CliProviderKind::CommandSet
+    }));
+    assert_eq!(
+        api.commands
+            .iter()
+            .find(|command| command.name == "users")
+            .and_then(|command| {
+                command
+                    .commands
+                    .iter()
+                    .find(|command| command.name == "list")
+            })
+            .map(|command| command.name.as_str()),
+        Some("list")
+    );
+}
+
+#[cfg(feature = "tooling")]
+#[tokio::test]
+async fn tooling_projects_customized_framework_shape_from_the_effective_parser() {
+    let envelope = CustomizedCliApplication::tooling_probe(tooling_target("customized-bin"))
+        .await
+        .expect("generated declaration identity validates");
+    let overseerd::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
+        panic!("customized CLI tooling probe failed");
+    };
+    let cli = document.cli.expect("CLI metadata exists");
+    let profile = cli
+        .root
+        .arguments
+        .iter()
+        .find(|argument| argument.id == "profiles")
+        .expect("customized profile exists");
+    let serve = cli
+        .root
+        .commands
+        .iter()
+        .find(|command| command.name == "start")
+        .expect("customized serve exists");
+    let channels = cli
+        .root
+        .arguments
+        .iter()
+        .find(|argument| argument.id == "channels")
+        .expect("application default-values argument exists");
+    let log = cli
+        .root
+        .arguments
+        .iter()
+        .find(|argument| argument.id == "log")
+        .expect("literal scalar default exists");
+    let log_format = cli
+        .root
+        .arguments
+        .iter()
+        .find(|argument| argument.id == "log_format")
+        .expect("typed scalar default exists");
+    let color = cli
+        .root
+        .arguments
+        .iter()
+        .find(|argument| argument.id == "color")
+        .expect("literal choice default exists");
+
+    assert_eq!(profile.long.as_deref(), Some("environment"));
+    assert_eq!(profile.short, Some('e'));
+    assert_eq!(profile.aliases, ["profile"]);
+    assert!(matches!(
+        profile.owner,
+        overseerd::tooling::CliOwner::Framework
+    ));
+    assert_eq!(profile.default_values, ["local"]);
+    assert_eq!(profile.id, "profiles");
+    assert_eq!(channels.default_values, ["audit", "metrics"]);
+    assert_eq!(log.default_values, ["warn"]);
+    assert_eq!(log_format.default_values, ["json"]);
+    assert_eq!(color.default_values, ["never"]);
+    assert_eq!(serve.visible_aliases, ["run"]);
+    assert_eq!(serve.id.as_deref(), Some("serve"));
+    assert_eq!(cli.default_command, None);
+    assert!(matches!(
+        serve.owner,
+        overseerd::tooling::CliOwner::Framework
+    ));
+    let snapshot = CUSTOMIZED_TOOLING_BOOTSTRAP
+        .lock()
+        .expect("customized tooling bootstrap lock is available")
+        .take()
+        .expect("customized tooling setup captured bootstrap state");
+
+    assert_eq!(snapshot.profiles, ["local"]);
+    assert_eq!(snapshot.log, "warn");
+    assert_eq!(snapshot.format, overseerd::LogFormat::Json);
+    assert_eq!(snapshot.color, overseerd::ColorChoice::Never);
+
+    let envelope = CustomizedCliApplication::tooling_probe(tooling_target("customized-bin"))
+        .await
+        .expect("second generated tooling probe succeeds");
+    let json = envelope.to_json().expect("probe envelope serializes");
+    let decoded = overseerd::tooling::ProbeEnvelope::from_json(&json)
+        .expect("probe envelope metadata round-trips through process JSON");
+    let overseerd::tooling::ProbeOutcome::Success { document } = decoded.outcome else {
+        panic!("round-tripped customized CLI tooling probe failed");
+    };
+    let cli = document.cli.expect("round-tripped CLI metadata exists");
+
+    assert_eq!(
+        cli.root
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "profiles")
+            .and_then(|argument| argument.long.as_deref()),
+        Some("environment")
+    );
+    assert!(
+        cli.root
+            .arguments
+            .iter()
+            .all(|argument| argument.id != "config")
+    );
+    assert_eq!(
+        cli.root
+            .commands
+            .iter()
+            .find(|command| command.id.as_deref() == Some("serve"))
+            .map(|command| command.name.as_str()),
+        Some("start")
+    );
+}
+
+#[cfg(feature = "tooling")]
+#[tokio::test]
+async fn tooling_projects_generated_host_lifecycle_capabilities_without_invented_callbacks() {
+    let envelope = CommandApplication::tooling_probe(tooling_target("command-bin"))
+        .await
+        .expect("generated declaration identity validates");
+    let overseerd::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
+        panic!("command application tooling probe failed");
+    };
+
+    for (phase, callback) in [
+        ("setup", "true"),
+        ("configure", "true"),
+        ("before_build", "false"),
+        ("after_build", "true"),
+        ("serve", "true"),
+    ] {
+        let lifecycle = document
+            .resources
+            .iter()
+            .find(|resource| resource.id == format!("lifecycle:{phase}"))
+            .expect("generated lifecycle resource exists");
+
+        assert_eq!(lifecycle.labels["callback"], callback);
+    }
+
+    for phase in ["prepare", "build", "startup", "shutdown", "config_reload"] {
+        assert!(
+            document
+                .resources
+                .iter()
+                .any(|resource| resource.id == format!("lifecycle:{phase}"))
+        );
+    }
+}
+
+#[test]
+fn customized_framework_parser_exposes_only_effective_behavior() {
+    let mut command = CustomizedCliApplicationCli::command();
+    let help = command.render_long_help().to_string();
+
+    assert!(!help.contains("--config"));
+    assert!(help.contains("--environment <ENV>"));
+    assert!(help.contains("[default: local]"));
+    assert!(help.contains("[default: warn]"));
+    assert!(help.contains("[default: json]"));
+    assert!(help.contains("[default: never]"));
+    assert!(help.contains("--channels <CHANNELS>"));
+    assert!(help.contains("audit"));
+    assert!(help.contains("metrics"));
+    assert!(help.contains("start"));
+    assert!(help.contains("Start the customized application."));
+    assert!(
+        CustomizedCliApplicationCli::try_parse_from([
+            "customized-cli-test",
+            "--profile",
+            "production",
+            "run",
+        ])
+        .is_ok()
+    );
+}
+
+#[test]
+fn generated_parser_marks_application_defaults_as_default_values() {
+    let mut command = CustomizedCliApplicationCli::command();
+    let matches = command
+        .try_get_matches_from_mut(["customized-cli-test", "inspect"])
+        .expect("customized defaults parse");
+
+    for id in ["profiles", "log", "log_format", "color", "channels"] {
+        assert_eq!(
+            matches.value_source(id),
+            Some(clap::parser::ValueSource::DefaultValue)
+        );
+    }
 }
 
 fn reset_counters() {
@@ -792,6 +1303,57 @@ async fn omitted_command_defaults_to_serve() {
 }
 
 #[tokio::test]
+async fn customized_parser_defaults_and_serve_dispatch_are_typed() {
+    let serve_cli = CustomizedCliApplicationCli::try_parse_from(["customized-cli-test", "run"])
+        .expect("visible serve alias parses");
+
+    assert!(matches!(
+        serve_cli.command,
+        Some(CustomizedCliApplicationCommand::Serve)
+    ));
+
+    CustomizedCliApplication::run_with(["customized-cli-test", "inspect"])
+        .await
+        .expect("customized bootstrap defaults apply");
+
+    let missing = CustomizedCliApplication::run_with(["customized-cli-test"])
+        .await
+        .expect_err("serve is not the default command");
+
+    assert!(matches!(missing, CliError::Clap(_)));
+}
+
+#[tokio::test]
+async fn explicit_cli_values_override_customized_parser_defaults() {
+    CustomizedCliApplication::run_with([
+        "customized-cli-test",
+        "inspect",
+        "--expect-cli",
+        "--environment",
+        "production",
+        "--profile",
+        "regional",
+        "--log",
+        "trace,customized=debug",
+        "--log-format",
+        "pretty",
+        "--color",
+        "always",
+    ])
+    .await
+    .expect("explicit CLI values override application bootstrap defaults");
+}
+
+#[tokio::test]
+async fn disabled_framework_serve_allows_application_owned_command() {
+    DisabledServeApplication::run_with(["disabled-serve-test", "serve"])
+        .await
+        .expect("application-owned serve command runs");
+
+    assert_eq!(SERVE_CALLS.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn typed_command_errors_include_the_command_path() {
     reset_counters();
 
@@ -827,7 +1389,7 @@ async fn flattened_argument_collisions_return_typed_errors() {
     assert!(matches!(error, CliError::Definition(_)));
     assert_eq!(
         error.to_string(),
-        "invalid command-line definition at `colliding-command-test`: duplicate long option `profile`"
+        "invalid command-line definition at `colliding-command-test`: duplicate long option `profile` from Framework and Application"
     );
 }
 
@@ -849,4 +1411,11 @@ async fn plugin_argument_collisions_name_both_contributors() {
         ))
     );
     assert!(error.to_string().contains("test/colliding-cli"));
+}
+
+#[tokio::test]
+async fn renamed_framework_slot_releases_its_default_name() {
+    CustomizedCollisionApplication::run_with(["customized-collision-test", "inspect"])
+        .await
+        .expect("plugin can use a released framework option name");
 }

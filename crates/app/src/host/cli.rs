@@ -3,6 +3,8 @@
 mod bootstrap;
 mod clap;
 mod command;
+#[cfg(feature = "tooling")]
+pub(crate) mod metadata;
 mod plugin;
 mod types;
 

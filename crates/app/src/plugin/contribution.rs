@@ -1,5 +1,10 @@
 use std::collections::BTreeSet;
 
+#[cfg(feature = "tooling")]
+use std::any::TypeId;
+#[cfg(feature = "tooling")]
+use std::collections::BTreeMap;
+
 use overseerd_config::{ConfigBinding, ConfigProperties};
 use overseerd_core::{Descriptor, NamespacedIdType};
 use overseerd_di::{ComponentDescriptor, ProviderDescriptor};
@@ -49,6 +54,14 @@ impl PluginContribution {
 pub struct EffectivePluginPlan {
     resolution: PluginResolutionPlan,
     contributions: Vec<PluginContribution>,
+    #[cfg(feature = "tooling")]
+    observations: Vec<PluginContributionObservation>,
+    #[cfg(feature = "tooling")]
+    reconciliation: BTreeMap<PluginContributionKey, PluginContributionReconciliation>,
+    #[cfg(feature = "tooling")]
+    tooling: Vec<crate::tooling::ToolingContributionSet>,
+    #[cfg(all(feature = "cli", feature = "tooling"))]
+    cli_parser_metadata: Option<overseerd_tooling_schema::CliMetadata>,
 }
 
 impl EffectivePluginPlan {
@@ -61,12 +74,95 @@ impl EffectivePluginPlan {
     pub const fn emitted_contributions(&self) -> &[PluginContribution] {
         self.contributions.as_slice()
     }
+
+    /// Returns validated owner-scoped generic tooling metadata.
+    #[cfg(feature = "tooling")]
+    pub(crate) fn tooling_contributions(
+        &self,
+    ) -> impl Iterator<Item = &crate::tooling::ToolingContributionSet> {
+        self.tooling.iter()
+    }
+
+    #[cfg(all(feature = "cli", feature = "tooling"))]
+    pub(crate) const fn cli_parser_metadata(
+        &self,
+    ) -> Option<&overseerd_tooling_schema::CliMetadata> {
+        self.cli_parser_metadata.as_ref()
+    }
+
+    #[cfg(feature = "tooling")]
+    pub(crate) fn reconcile(&mut self, registry: &AppRegistry) {
+        self.reconciliation =
+            reconcile_contributions(&self.contributions, &self.observations, registry);
+    }
+
+    #[cfg(feature = "tooling")]
+    pub(crate) fn selected_contribution(&self, target: &str) -> Option<ContributionProvenance> {
+        self.contributions
+            .iter()
+            .copied()
+            .enumerate()
+            .find_map(|(index, contribution)| {
+                let key = PluginContributionKey::new(contribution.provenance(), index);
+                let reconciliation = self
+                    .reconciliation
+                    .get(&key)
+                    .expect("every plugin emission has one reconciliation outcome");
+
+                (reconciliation.decision == PluginContributionDecision::Applied
+                    && reconciliation.applied.as_deref() == Some(target))
+                .then_some(contribution.provenance())
+            })
+    }
+
+    #[cfg(feature = "tooling")]
+    pub(crate) fn reconciled_contributions(
+        &self,
+    ) -> impl Iterator<Item = (PluginContribution, &PluginContributionReconciliation)> {
+        self.contributions
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, contribution)| {
+                let key = PluginContributionKey::new(contribution.provenance(), index);
+                let reconciliation = self
+                    .reconciliation
+                    .get(&key)
+                    .expect("every plugin emission has one reconciliation outcome");
+
+                (contribution, reconciliation)
+            })
+    }
+}
+
+#[cfg(feature = "tooling")]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// Internal final-registry outcome for one emitted plugin contribution.
+pub(crate) enum PluginContributionDecision {
+    Applied,
+    Displaced,
+    NotApplied,
+    Duplicate,
+}
+
+#[cfg(feature = "tooling")]
+impl PluginContributionDecision {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::Displaced => "displaced",
+            Self::NotApplied => "not-applied",
+            Self::Duplicate => "duplicate",
+        }
+    }
 }
 
 /// A provenance-aware collector supplied to one effective plugin.
 pub struct PluginContributions {
     contributor: PluginId,
     contributions: Vec<CollectedContribution>,
+    #[cfg(feature = "tooling")]
+    tooling: crate::ToolingContributions,
 }
 
 impl PluginContributions {
@@ -74,6 +170,8 @@ impl PluginContributions {
         Self {
             contributor,
             contributions: Vec::new(),
+            #[cfg(feature = "tooling")]
+            tooling: crate::ToolingContributions::new(format!("plugin:{}", contributor.as_str())),
         }
     }
 
@@ -103,6 +201,12 @@ impl PluginContributions {
         );
     }
 
+    /// Returns this plugin's owner-scoped generic tooling metadata collector.
+    #[cfg(feature = "tooling")]
+    pub fn tooling(&mut self) -> &mut crate::ToolingContributions {
+        &mut self.tooling
+    }
+
     fn push(&mut self, id: ContributionId, payload: ContributionPayload) {
         let provenance = ContributionProvenance::new(Contributor::Plugin(self.contributor), id);
         let metadata = PluginContribution {
@@ -114,7 +218,7 @@ impl PluginContributions {
             .push(CollectedContribution { metadata, payload });
     }
 
-    pub(super) fn finish(self) -> Result<Vec<CollectedContribution>, PluginPlanError> {
+    pub(super) fn finish(self) -> Result<CollectedPluginContributions, PluginPlanError> {
         let mut identities = BTreeSet::new();
 
         for contribution in &self.contributions {
@@ -132,7 +236,11 @@ impl PluginContributions {
             }
         }
 
-        Ok(self.contributions)
+        Ok(CollectedPluginContributions {
+            contributions: self.contributions,
+            #[cfg(feature = "tooling")]
+            tooling: self.tooling.finish()?,
+        })
     }
 }
 
@@ -170,6 +278,11 @@ pub enum PluginPlanError {
         provenance: ContributionProvenance,
     },
 
+    /// Owner-scoped generic tooling metadata is structurally invalid.
+    #[cfg(feature = "tooling")]
+    #[error(transparent)]
+    Tooling(#[from] crate::ToolingContributionError),
+
     /// The structural resolver selected a plugin whose retained payload is absent.
     #[error("resolved plugin '{plugin}' has no retained installation ({provenance:?})")]
     MissingInstallation {
@@ -183,13 +296,24 @@ pub enum PluginPlanError {
 pub(crate) struct CollectedPluginPlan {
     pub(super) resolution: PluginResolutionPlan,
     pub(super) contributions: Vec<CollectedContribution>,
+    #[cfg(feature = "tooling")]
+    pub(super) tooling: Vec<crate::tooling::ToolingContributionSet>,
+    #[cfg(all(feature = "cli", feature = "tooling"))]
+    pub(super) cli_parser_metadata: Option<overseerd_tooling_schema::CliMetadata>,
 }
 
 impl CollectedPluginPlan {
     pub(crate) fn lower(self, registry: &mut AppRegistry) -> EffectivePluginPlan {
         let mut metadata = Vec::with_capacity(self.contributions.len());
+        #[cfg(feature = "tooling")]
+        let mut observations = Vec::with_capacity(self.contributions.len());
 
         for contribution in self.contributions {
+            #[cfg(feature = "tooling")]
+            observations.push(PluginContributionObservation::capture(
+                &contribution.payload,
+                registry,
+            ));
             metadata.push(contribution.metadata);
 
             match contribution.payload {
@@ -208,6 +332,14 @@ impl CollectedPluginPlan {
         EffectivePluginPlan {
             resolution: self.resolution,
             contributions: metadata,
+            #[cfg(feature = "tooling")]
+            observations,
+            #[cfg(feature = "tooling")]
+            reconciliation: BTreeMap::new(),
+            #[cfg(feature = "tooling")]
+            tooling: self.tooling,
+            #[cfg(all(feature = "cli", feature = "tooling"))]
+            cli_parser_metadata: self.cli_parser_metadata,
         }
     }
 }
@@ -367,6 +499,20 @@ pub(super) struct CollectedContribution {
     payload: ContributionPayload,
 }
 
+/// Collected runtime and tooling emissions from one synchronously consumed plugin.
+pub(super) struct CollectedPluginContributions {
+    pub(super) contributions: Vec<CollectedContribution>,
+    #[cfg(feature = "tooling")]
+    pub(super) tooling: crate::tooling::ToolingContributionSet,
+}
+
+#[cfg(test)]
+impl CollectedPluginContributions {
+    pub(super) fn len(&self) -> usize {
+        self.contributions.len()
+    }
+}
+
 impl CollectedContribution {
     #[cfg(feature = "cli")]
     pub(super) const fn provenance(&self) -> ContributionProvenance {
@@ -388,4 +534,221 @@ impl ContributionPayload {
             Self::ConfigBinding(_) => PluginContributionKind::ConfigBinding,
         }
     }
+
+    #[cfg(feature = "tooling")]
+    fn target(&self) -> ContributionTarget {
+        match self {
+            Self::Component(descriptor) => ContributionTarget::new(
+                format!("component:{}", descriptor.id),
+                ContributionTargetKey::Component(descriptor.ty.type_id),
+            ),
+            Self::Provider(descriptor) => ContributionTarget::new(
+                provider_target(descriptor),
+                ContributionTargetKey::Provider {
+                    trait_ty: descriptor.trait_ty.type_id,
+                    concrete_ty: descriptor.concrete_ty.type_id,
+                    qualifier: descriptor.qualifier.to_string(),
+                },
+            ),
+            Self::ConfigBinding(binding) => ContributionTarget::new(
+                format!(
+                    "config-binding:{}:{}",
+                    (binding.ty.type_name)(),
+                    binding.path
+                ),
+                ContributionTargetKey::ConfigBinding {
+                    ty: binding.ty.type_id,
+                    path: binding.path.clone(),
+                },
+            ),
+        }
+    }
+
+    #[cfg(feature = "tooling")]
+    fn exists_in(&self, registry: &AppRegistry) -> bool {
+        match self {
+            Self::Component(descriptor) => registry.components.iter().any(|existing| {
+                existing.ty.type_id == descriptor.ty.type_id && existing.id == descriptor.id
+            }),
+            Self::Provider(descriptor) => registry.providers.iter().any(|existing| {
+                existing.trait_ty.type_id == descriptor.trait_ty.type_id
+                    && existing.concrete_ty.type_id == descriptor.concrete_ty.type_id
+                    && existing.qualifier == descriptor.qualifier
+            }),
+            Self::ConfigBinding(binding) => registry.config_bindings.iter().any(|existing| {
+                existing.ty.type_id == binding.ty.type_id && existing.path == binding.path
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "tooling")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+/// Pre-lowering target observation retained only to interpret the final registry.
+struct PluginContributionObservation {
+    requested: String,
+    key: ContributionTargetKey,
+    preceded: bool,
+}
+
+#[cfg(feature = "tooling")]
+impl PluginContributionObservation {
+    fn capture(payload: &ContributionPayload, registry: &AppRegistry) -> Self {
+        let target = payload.target();
+
+        Self {
+            requested: target.requested,
+            key: target.key,
+            preceded: payload.exists_in(registry),
+        }
+    }
+}
+
+#[cfg(feature = "tooling")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+/// Final-registry reconciliation for one provenance-and-index keyed plugin emission.
+pub(crate) struct PluginContributionReconciliation {
+    pub(crate) requested: String,
+    pub(crate) applied: Option<String>,
+    pub(crate) decision: PluginContributionDecision,
+}
+
+#[cfg(feature = "tooling")]
+impl PluginContributionObservation {
+    fn final_target(&self, registry: &AppRegistry) -> Option<String> {
+        match &self.key {
+            ContributionTargetKey::Component(ty) => registry
+                .components
+                .iter()
+                .find(|component| component.ty.type_id == *ty)
+                .map(|component| format!("component:{}", component.id)),
+            ContributionTargetKey::Provider {
+                trait_ty,
+                concrete_ty,
+                qualifier,
+            } => registry
+                .providers
+                .iter()
+                .find(|provider| {
+                    provider.trait_ty.type_id == *trait_ty
+                        && provider.concrete_ty.type_id == *concrete_ty
+                        && provider.qualifier == qualifier
+                })
+                .map(provider_target),
+            ContributionTargetKey::ConfigBinding { ty, path } => registry
+                .config_bindings
+                .iter()
+                .find(|binding| binding.ty.type_id == *ty && binding.path == *path)
+                .map(config_binding_target),
+        }
+    }
+}
+
+#[cfg(feature = "tooling")]
+fn reconcile_contributions(
+    contributions: &[PluginContribution],
+    observations: &[PluginContributionObservation],
+    registry: &AppRegistry,
+) -> BTreeMap<PluginContributionKey, PluginContributionReconciliation> {
+    let mut selected = BTreeSet::new();
+    let mut reconciliations = BTreeMap::new();
+
+    for (index, (contribution, observation)) in
+        contributions.iter().copied().zip(observations).enumerate()
+    {
+        let key = PluginContributionKey::new(contribution.provenance(), index);
+        let final_target = observation.final_target(registry);
+        let selected_key = final_target
+            .as_ref()
+            .map(|applied| (observation.key.clone(), applied.clone()));
+
+        let decision = match (&final_target, selected_key) {
+            (None, _) => PluginContributionDecision::NotApplied,
+            (Some(applied), _) if observation.preceded && applied == &observation.requested => {
+                PluginContributionDecision::Duplicate
+            }
+            (Some(_), Some(key)) if !selected.insert(key.clone()) => {
+                PluginContributionDecision::Duplicate
+            }
+            (Some(applied), _) if applied == &observation.requested => {
+                PluginContributionDecision::Applied
+            }
+            (Some(_), _) => PluginContributionDecision::Displaced,
+        };
+
+        reconciliations.insert(
+            key,
+            PluginContributionReconciliation {
+                requested: observation.requested.clone(),
+                applied: final_target,
+                decision,
+            },
+        );
+    }
+
+    reconciliations
+}
+
+#[cfg(feature = "tooling")]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+/// Stable private key for one contributor-local emission occurrence.
+struct PluginContributionKey {
+    provenance: ContributionProvenance,
+    index: usize,
+}
+
+#[cfg(feature = "tooling")]
+impl PluginContributionKey {
+    const fn new(provenance: ContributionProvenance, index: usize) -> Self {
+        Self { provenance, index }
+    }
+}
+
+#[cfg(feature = "tooling")]
+/// Tooling-only requested resource identity and lookup key.
+struct ContributionTarget {
+    requested: String,
+    key: ContributionTargetKey,
+}
+
+#[cfg(feature = "tooling")]
+impl ContributionTarget {
+    fn new(requested: String, key: ContributionTargetKey) -> Self {
+        Self { requested, key }
+    }
+}
+
+#[cfg(feature = "tooling")]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+/// Stable registry lookup key for an emitted resource category.
+enum ContributionTargetKey {
+    Component(TypeId),
+    Provider {
+        trait_ty: TypeId,
+        concrete_ty: TypeId,
+        qualifier: String,
+    },
+    ConfigBinding {
+        ty: TypeId,
+        path: String,
+    },
+}
+
+#[cfg(feature = "tooling")]
+fn provider_target(descriptor: &ProviderDescriptor) -> String {
+    format!(
+        "provider:{}:{}:{}",
+        (descriptor.trait_ty.type_name)(),
+        (descriptor.concrete_ty.type_name)(),
+        descriptor.qualifier
+    )
+}
+
+#[cfg(feature = "tooling")]
+fn config_binding_target(binding: &ConfigBinding) -> String {
+    format!(
+        "config-binding:{}:{}",
+        (binding.ty.type_name)(),
+        binding.path
+    )
 }

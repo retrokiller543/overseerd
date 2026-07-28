@@ -21,8 +21,8 @@ protocol-agnostic `overseerd-macros`, so they get their own crate built on the s
 - `#[rpc]` marks a method inside a `#[handlers]` impl; a marker stripped by `#[handlers]` (used
   standalone it emits a `compile_error!`).
 
-`app!`/`daemon!` are **not** here — they are protocol-agnostic core macros in `overseerd-macros`,
-selecting the protocol via a `protocol:` field.
+`app!` is **not** here — it is the protocol-agnostic named application macro in
+`overseerd-macros`, selecting the protocol via a `protocol:` field.
 
 ## Usage
 

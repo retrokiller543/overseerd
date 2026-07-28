@@ -27,9 +27,10 @@ use super::{Cfg, CfgNext, ConfigError, ConfigManager, ConfigProperties};
 pub struct ConfigReload;
 
 impl HookKind for ConfigReload {
-    const NAME: &'static str = "config_reload";
     type Output = HookOutcome;
     type Cx = ReloadProposal;
+
+    const NAME: &'static str = "config_reload";
 }
 
 /// What a `#[hook(ConfigReload)]` hook reports back. `Err` from the hook aborts the reload;
@@ -540,9 +541,10 @@ pub const CONFIG_RELOADER_ID: &str = "overseerd:config-reloader";
 pub const CONFIG_RELOADER_NAME: &str = "ConfigReloader";
 
 impl overseerd_di::Component for ConfigReloader {
+    type Handle = ConfigReloader;
+
     const ID: &'static str = CONFIG_RELOADER_ID;
     const NAME: &'static str = CONFIG_RELOADER_NAME;
-    type Handle = ConfigReloader;
 
     fn into_handle(self) -> Self::Handle {
         self

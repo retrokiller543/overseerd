@@ -16,6 +16,14 @@ use overseerd::{component, methods};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
+app! {
+    /// Generated host for WebSocket integration tests.
+    app WebsocketTestApplication {
+        name: "ws-test",
+        protocol: overseerd::axum::Axum,
+    }
+}
+
 /// A shared greeting backend (singleton), field-injected into the ws controller.
 #[component(by_value)]
 #[derive(Clone)]
@@ -92,14 +100,12 @@ impl Sock {
 
 #[tokio::test]
 async fn ws_controller_dispatches_and_injects() {
-    let app = app! {
-        name: "ws-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .register_ws::<JsonWs>("/ws")
-    .build()
-    .await
-    .expect("app builds");
+    let app = WebsocketTestApplication::builder()
+        .expect("app builder")
+        .register_ws::<JsonWs>("/ws")
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");

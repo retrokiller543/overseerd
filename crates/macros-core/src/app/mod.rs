@@ -1,4 +1,4 @@
-//! `app!` expansion: defines a reusable application host or assembles a legacy builder.
+//! `app!` expansion: defines a reusable application host.
 //!
 //! ```ignore
 //! app! {
@@ -27,17 +27,15 @@ mod model;
 mod named;
 mod parsing;
 mod phase;
+mod policy;
 
 use proc_macro2::TokenStream;
 
-pub(crate) use model::{AppAssembly, AppInput, NamedApp};
+pub(crate) use model::{AppAssembly, NamedApp};
 
 /// Expands a parsed application definition.
-pub fn expand(input: AppInput) -> TokenStream {
-    match input {
-        AppInput::Named(input) => named::expand(input),
-        AppInput::Legacy(input) => builder::expand(input),
-    }
+pub fn expand(input: NamedApp) -> TokenStream {
+    named::expand(input)
 }
 
 #[cfg(test)]

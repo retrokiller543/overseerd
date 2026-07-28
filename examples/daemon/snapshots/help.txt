@@ -1,0 +1,58 @@
+Homeledger household ledger daemon and administration host
+
+Usage: homeledger [OPTIONS] [COMMAND]
+
+Commands:
+  run               Run the Homeledger RPC service until shutdown. [alias: serve]
+  inspect           Inspect Homeledger's validated application metadata [alias: describe]
+  operator-context  Prints generated bootstrap choices without preparing or building Homeledger
+  database          Run Homeledger database administration commands
+  help              Print this message or the help of the given subcommand(s)
+
+Options:
+  -c, --config-dir <CONFIG_DIR>
+          Homeledger configuration file or directory.
+
+          [default: examples/daemon/config]
+          [alias: --config]
+
+  -e, --environment <ENVIRONMENT>
+          Ordered Homeledger environment overlay; may be repeated.
+
+          [default: development]
+          [alias: --profile]
+
+      --log-filter <DIRECTIVES>
+          Override the configured tracing filter.
+
+          [alias: --log]
+
+      --log-format <FORMAT>
+          Override the configured tracing formatter.
+
+          Possible values:
+          - full:    Standard human-readable event output
+          - compact: Condensed human-readable event output
+          - pretty:  Multi-line human-readable event output
+          - json:    Structured JSON event output
+
+          [default: compact]
+
+      --verbose
+          Print detailed registry and lifecycle information
+
+      --audit-review-ticket <AUDIT_REVIEW_TICKET>
+          Review ticket attached to compliance-sensitive Homeledger operations
+
+          [default: local-review]
+
+      --operator <OPERATOR>
+          Operator recorded in Homeledger administration output
+
+          [default: local-admin]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version

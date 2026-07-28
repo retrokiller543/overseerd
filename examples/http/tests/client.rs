@@ -15,6 +15,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::TcpListener;
 
+app! {
+    /// Generated host for HTTP client integration tests.
+    app ClientTestApplication {
+        name: "client-test",
+        protocol: overseerd::axum::Axum,
+    }
+}
+
 #[dto]
 struct EchoOut {
     msg: String,
@@ -173,13 +181,11 @@ impl Api {
 
 #[tokio::test]
 async fn generated_client_round_trips_over_reqwest() {
-    let app = app! {
-        name: "client-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .build()
-    .await
-    .expect("app builds");
+    let app = ClientTestApplication::builder()
+        .expect("app builder")
+        .build()
+        .await
+        .expect("app builds");
 
     // Bind an ephemeral port, then serve on a background task so the test can issue requests
     // and shut the server down deterministically.
