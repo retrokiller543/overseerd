@@ -25,8 +25,9 @@ fn completion_drains_all_buffered_output() {
     let expected = "x".repeat(256 * 1024);
     let mut command = Command::new("sh");
 
-    command.arg("-c").arg("printf %s \"$OVERSEERD_CAPTURE\"");
-    command.env("OVERSEERD_CAPTURE", &expected);
+    command
+        .arg("-c")
+        .arg("dd if=/dev/zero bs=262144 count=1 2>/dev/null | tr '\\0' x");
 
     let output = execute(&mut command, &cancellation, expected.len(), 1024)
         .expect("completed output is captured");
