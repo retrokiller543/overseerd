@@ -25,7 +25,6 @@ use overseerd::axum::prelude::*;
 use overseerd::axum::tower::ServiceExt;
 use overseerd::axum::{AxumMiddleware, RequestMeta, ScopeHandle};
 use overseerd::config::Toml;
-use overseerd::prelude::*;
 use overseerd::{ConfigManager, component, methods};
 
 /// Reads a JSON response body into the given type.
@@ -68,14 +67,12 @@ async fn axum_config_is_automatic_and_enforces_body_and_request_limits() {
         "#,
     )
     .expect("parse axum config");
-    let app = app! {
-        name: "configured-axum",
-        protocol: overseerd::axum::Axum,
-    }
-    .config_source(config)
-    .build()
-    .await
-    .expect("app builds with the plugin-owned binding");
+    let app = overseerd::App::<overseerd::axum::Axum>::builder("configured-axum")
+        .auto_discover()
+        .config_source(config)
+        .build()
+        .await
+        .expect("app builds with the plugin-owned binding");
 
     assert_eq!(app.protocol().configured_addr().port(), 4321);
     assert_eq!(app.protocol().config().max_request_body_bytes, 4);
@@ -200,15 +197,13 @@ async fn raw_layer_and_global_controller_path_middleware_run_in_order() {
         next.run(req).await
     });
 
-    let app = app! {
-        name: "test-order",
-        protocol: overseerd::axum::Axum,
-    }
-    .layer(raw_layer)
-    .middleware::<GlobalMw>()
-    .build()
-    .await
-    .expect("app builds");
+    let app = overseerd::App::<overseerd::axum::Axum>::builder("test-order")
+        .auto_discover()
+        .layer(raw_layer)
+        .middleware::<GlobalMw>()
+        .build()
+        .await
+        .expect("app builds");
 
     let router: Router = app.protocol().router().clone();
 
@@ -266,14 +261,12 @@ impl SharedController {
 
 #[tokio::test]
 async fn same_middleware_type_shares_one_instance_across_attach_points() {
-    let app = app! {
-        name: "test-shared",
-        protocol: overseerd::axum::Axum,
-    }
-    .middleware::<SharedMw>()
-    .build()
-    .await
-    .expect("app builds");
+    let app = overseerd::App::<overseerd::axum::Axum>::builder("test-shared")
+        .auto_discover()
+        .middleware::<SharedMw>()
+        .build()
+        .await
+        .expect("app builds");
 
     let router: Router = app.protocol().router().clone();
 
@@ -348,13 +341,11 @@ impl AuthController {
 
 #[tokio::test]
 async fn request_scoped_component_reads_request_meta_and_is_shared() {
-    let app = app! {
-        name: "test-auth",
-        protocol: overseerd::axum::Axum,
-    }
-    .build()
-    .await
-    .expect("app builds");
+    let app = overseerd::App::<overseerd::axum::Axum>::builder("test-auth")
+        .auto_discover()
+        .build()
+        .await
+        .expect("app builds");
 
     let router: Router = app.protocol().router().clone();
 

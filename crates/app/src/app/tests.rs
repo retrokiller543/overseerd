@@ -24,10 +24,10 @@ static PROTOCOL_BUILD_CALLS: AtomicUsize = AtomicUsize::new(0);
 struct BoundaryComponent;
 
 impl Component for BoundaryComponent {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "boundary_component";
     const NAME: &'static str = "BoundaryComponent";
-
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Self::Handle {
         Arc::new(self)
@@ -38,10 +38,10 @@ impl Component for BoundaryComponent {
 struct SeededComponent;
 
 impl Component for SeededComponent {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "seeded_component";
     const NAME: &'static str = "SeededComponent";
-
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Self::Handle {
         Arc::new(self)
@@ -108,14 +108,6 @@ impl ProtocolDefinition for BoundaryProtocol {
 
     fn register(&self, _registry: &mut AppRegistry) {}
 
-    fn pre_build(&mut self, context: &mut PreBuildContext<'_>) -> Result<(), Self::Error> {
-        context.component_descriptor(&BOUNDARY_COMPONENT);
-        context.with_component(SeededComponent);
-        context.config::<LoggingConfig>("logging");
-
-        Ok(())
-    }
-
     fn prepare(self, context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error> {
         PRE_BUILD_CALLS.fetch_add(1, Ordering::SeqCst);
 
@@ -142,6 +134,14 @@ impl ProtocolDefinition for BoundaryProtocol {
         );
 
         Ok(PreparedBoundaryProtocol)
+    }
+
+    fn pre_build(&mut self, context: &mut PreBuildContext<'_>) -> Result<(), Self::Error> {
+        context.component_descriptor(&BOUNDARY_COMPONENT);
+        context.with_component(SeededComponent);
+        context.config::<LoggingConfig>("logging");
+
+        Ok(())
     }
 }
 

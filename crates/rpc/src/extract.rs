@@ -232,14 +232,14 @@ impl ErrorResponse {
 pub trait ResponseError {
     type Body: Serialize;
 
+    /// Renders the error to a code + serialized body, attaching
+    /// [`status_code`](Self::status_code).
+    fn error_response(self) -> ErrorResponse;
+
     /// The status code for this error. Defaults to `Internal`.
     fn status_code(&self) -> StatusCode {
         StatusCode::from(PredefinedCode::Internal)
     }
-
-    /// Renders the error to a code + serialized body, attaching
-    /// [`status_code`](Self::status_code).
-    fn error_response(self) -> ErrorResponse;
 }
 
 impl<E> ResponseError for E

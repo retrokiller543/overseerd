@@ -41,6 +41,7 @@ overseerd-axum = { path = "crates/axum", version = "0.20.0" }
 overseerd-axum-macros = { path = "crates/axum-macros", version = "0.20.0" }
 overseerd-axum-json-ws = { path = "crates/axum-json-ws", version = "0.20.0" }
 overseerd-axum-stomp = { path = "crates/axum-stomp", version = "0.20.0" }
+overseerd-tooling-schema = { path = "crates/tooling-schema", version = "0.20.0" }
 
 # Common dependencies
 arc-swap = "1.9.1"
@@ -145,6 +146,16 @@ default = ["cli", "di-check"]
 
 # Generate the standard application CLI and process runner for named app definitions.
 cli = ["dep:clap", "overseerd-app/cli", "overseerd-macros/cli", "overseerd-jobs?/cli"]
+
+# Project prepared application state into the protocol-neutral developer-tooling schema.
+# Independent of `cli`: CLI metadata is included only when both features are enabled.
+tooling = [
+    "dep:overseerd-tooling-schema",
+    "overseerd-app/tooling",
+    "overseerd-macros/tooling",
+    "overseerd-rpc?/tooling",
+    "overseerd-axum?/tooling",
+]
 
 # Re-export the native RPC daemon through the facade for convenience. The protocol crate owns
 # its own macros; the facade just enables its `facade` feature (so its codegen roots at
@@ -292,6 +303,7 @@ overseerd-hooks = { workspace = true }
 overseerd-dirs = { workspace = true }
 overseerd-config = { workspace = true }
 overseerd-app = { workspace = true }
+overseerd-tooling-schema = { workspace = true, optional = true }
 overseerd-rpc = { workspace = true, optional = true }
 overseerd-jobs = { workspace = true, optional = true }
 tokio = { workspace = true }
@@ -304,3 +316,10 @@ serde_json = { workspace = true }
 # example, a crate using those macros with `openapi` needs `utoipa` as a direct dependency; a
 # dev-dependency covers the tests without affecting downstream users.
 utoipa = { workspace = true }
+
+[[bin]]
+name = "tooling_probe_fixture"
+path = "tests/tooling_probe_process/fixture.rs"
+test = false
+bench = false
+required-features = ["cli", "tooling"]

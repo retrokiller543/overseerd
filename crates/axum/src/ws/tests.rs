@@ -59,10 +59,6 @@ impl WebsocketProtocol for MultiEndpointProtocol {
     type Options = ();
     type BuildError = std::convert::Infallible;
 
-    fn register(_registry: &mut overseerd_app::AppRegistry) {
-        MULTI_ENDPOINT_REGISTRATIONS.fetch_add(1, Ordering::Relaxed);
-    }
-
     fn build(
         _controllers: &[WsControllerDescriptor],
         _runtime: &AppRuntime,
@@ -80,6 +76,10 @@ impl WebsocketProtocol for MultiEndpointProtocol {
         shutdown: WsShutdown,
     ) {
         let _ = (self, socket, connection, shutdown);
+    }
+
+    fn register(_registry: &mut overseerd_app::AppRegistry) {
+        MULTI_ENDPOINT_REGISTRATIONS.fetch_add(1, Ordering::Relaxed);
     }
 }
 

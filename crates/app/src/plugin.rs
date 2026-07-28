@@ -23,15 +23,15 @@ pub trait Plugin: Send + 'static {
     /// Static dependency, conflict, and ordering relations.
     const RELATIONS: &'static [PluginRelation] = &[];
 
+    /// Emits deterministic app-neutral contributions for the effective application plan.
+    fn contribute(self, contributions: &mut PluginContributions);
+
     /// Folds link-time-discovered plugin state into this retained instance.
     fn auto_discover(&mut self) {}
 
     /// Declares optional parser-visible CLI facets without consuming plugin state.
     #[cfg(feature = "cli")]
     fn cli(&self, _cli: &mut PluginCliRegistrar) {}
-
-    /// Emits deterministic app-neutral contributions for the effective application plan.
-    fn contribute(self, contributions: &mut PluginContributions);
 }
 
 /// A plugin that can be synchronously constructed from explicit options.

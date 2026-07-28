@@ -120,9 +120,10 @@ impl<P: PubSubProtocol> Default for TopicBus<P> {
 }
 
 impl<P: PubSubProtocol> Component for TopicBus<P> {
+    type Handle = Self;
+
     const ID: &'static str = "overseerd:axum:topic-bus";
     const NAME: &'static str = "TopicBus";
-    type Handle = Self;
 
     fn into_handle(self) -> Self::Handle {
         self

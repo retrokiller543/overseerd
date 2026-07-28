@@ -248,10 +248,10 @@ mod tests {
     struct RegisteredComponent;
 
     impl Component for RegisteredComponent {
+        type Handle = std::sync::Arc<Self>;
+
         const ID: &'static str = "registered";
         const NAME: &'static str = "RegisteredComponent";
-
-        type Handle = std::sync::Arc<Self>;
 
         fn into_handle(self) -> Self::Handle {
             std::sync::Arc::new(self)

@@ -13,6 +13,7 @@ categories.workspace = true
 [features]
 default = ["cli"]
 cli = []
+tooling = []
 # Emit the generated client (the `cfg!(feature = "client")` gate in client codegen).
 # Forwarded from the macro crates' `client` feature.
 client = []
@@ -28,6 +29,9 @@ hybrid-registry = []
 syn = { workspace = true }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }
+
+[dev-dependencies]
+proc-macro2 = { workspace = true, features = ["span-locations"] }
 
 [build-dependencies]
 overseerd-build = { workspace = true }

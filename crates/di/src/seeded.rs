@@ -9,9 +9,10 @@ use overseerd_hooks::{HOOK_MANAGER_ID, HOOK_MANAGER_NAME, HookManager};
 use crate::descriptors::{Component, Injectable};
 
 impl Component for HookManager {
+    type Handle = HookManager;
+
     const ID: &'static str = HOOK_MANAGER_ID;
     const NAME: &'static str = HOOK_MANAGER_NAME;
-    type Handle = HookManager;
 
     fn into_handle(self) -> Self::Handle {
         self

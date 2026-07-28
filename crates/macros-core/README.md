@@ -8,7 +8,7 @@ Part of the [Overseerd](../../README.md) framework — the base codegen layer ev
 
 A proc-macro crate can only export proc-macros, so all the reusable parsing and code generation
 lives here as an ordinary library. It owns the base expansions for `#[component]`, `#[config]`,
-`#[methods]`, `#[injectable]`, and the `app!`/`daemon!` assembly macro, plus the building blocks the
+`#[methods]`, `#[injectable]`, and the named `app!` application macro, plus the building blocks the
 expansions share: attribute parsing (`attr`), the extension seams (`extend` — `ParseKeyed`,
 `ParseItem`, `ParseMethod`, `ComponentExt`), crate-path resolution (`paths::Paths`), field-injection
 (`inject`), hooks (`hook`), the DI assertions (`di`), provider wiring (`provide`), client generation

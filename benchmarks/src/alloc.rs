@@ -39,6 +39,12 @@ unsafe impl GlobalAlloc for TrackingAllocator {
         ptr
     }
 
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        LIVE_BYTES.fetch_sub(layout.size() as i64, Ordering::Relaxed);
+
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         let ptr = unsafe { System.alloc_zeroed(layout) };
 
@@ -47,12 +53,6 @@ unsafe impl GlobalAlloc for TrackingAllocator {
         }
 
         ptr
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        LIVE_BYTES.fetch_sub(layout.size() as i64, Ordering::Relaxed);
-
-        unsafe { System.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {

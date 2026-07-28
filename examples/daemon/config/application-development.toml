@@ -1,0 +1,10 @@
+# Development overrides selected by Homeledger's generated parser default environment.
+
+[logging]
+level = "debug,homeledger=trace,overseerd=debug"
+
+[homeledger.database.reader]
+pool_size = 2
+
+[homeledger.database.writer]
+pool_size = 1

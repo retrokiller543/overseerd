@@ -21,6 +21,14 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::net::TcpListener;
 
+app! {
+    /// Generated host shared by the STOMP integration tests.
+    app StompTestApplication {
+        name: "stomp-test",
+        protocol: overseerd::axum::Axum,
+    }
+}
+
 /// A message a client sends to the app (`/app/chat`).
 #[dto]
 struct SendChat {
@@ -85,14 +93,12 @@ impl RestEvents {
 
 #[tokio::test]
 async fn stomp_send_is_broadcast_to_typed_subscribers() {
-    let app = app! {
-        name: "stomp-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .register_ws::<Stomp>("/stomp")
-    .build()
-    .await
-    .expect("app builds");
+    let app = StompTestApplication::builder()
+        .expect("app builder")
+        .register_ws::<Stomp>("/stomp")
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -145,14 +151,12 @@ async fn stomp_connect_authentication_and_explicit_disconnect_share_lifecycle() 
             Err(StompAuthenticationError::new("invalid credentials"))
         }
     });
-    let app = app! {
-        name: "stomp-auth-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .register_ws_with::<Stomp>("/stomp", config)
-    .build()
-    .await
-    .expect("app builds");
+    let app = StompTestApplication::builder()
+        .expect("app builder")
+        .register_ws_with::<Stomp>("/stomp", config)
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -243,14 +247,12 @@ impl StompAuthenticator for TokenAuth {
 /// (`alice` / `secret`) are accepted while others are rejected — the shared body of the two
 /// DI-native authenticator tests.
 async fn assert_credentials_are_enforced(config: StompConfig) {
-    let app = app! {
-        name: "stomp-auth-di-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .register_ws_with::<Stomp>("/stomp", config)
-    .build()
-    .await
-    .expect("app builds");
+    let app = StompTestApplication::builder()
+        .expect("app builder")
+        .register_ws_with::<Stomp>("/stomp", config)
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -307,14 +309,12 @@ async fn stomp_authenticator_resolves_a_di_component() {
 
 #[tokio::test]
 async fn http_handler_can_publish_to_typed_stomp_subscribers() {
-    let app = app! {
-        name: "stomp-http-publish-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .register_ws::<Stomp>("/stomp")
-    .build()
-    .await
-    .expect("app builds");
+    let app = StompTestApplication::builder()
+        .expect("app builder")
+        .register_ws::<Stomp>("/stomp")
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -422,14 +422,12 @@ impl Marked {
 
 #[tokio::test]
 async fn a_custom_codec_is_honored_on_both_ends_of_the_send_path() {
-    let app = app! {
-        name: "stomp-codec-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .register_ws::<Stomp>("/stomp")
-    .build()
-    .await
-    .expect("app builds");
+    let app = StompTestApplication::builder()
+        .expect("app builder")
+        .register_ws::<Stomp>("/stomp")
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");

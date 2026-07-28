@@ -24,7 +24,8 @@ arc-swap = { workspace = true }
 # Native (server): the full protocol stack — ws/stomp controllers, DI middleware, both HTTP client
 # backends. The binary and the server-only modules use these.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-overseerd = { path = "../..", default-features = false, features = ["axum", "ws", "json-ws", "stomp", "multipart", "uuid", "reqwest", "hyper", "tungstenite", "tracing-subscriber", "openapi-swagger-ui"] }
+overseerd = { path = "../..", default-features = false, features = ["axum", "cli", "ws", "json-ws", "stomp", "multipart", "uuid", "reqwest", "hyper", "tungstenite", "tracing-subscriber", "openapi-swagger-ui"] }
+clap = { workspace = true }
 tokio = { workspace = true }
 tracing.workspace = true
 # The `openapi` feature makes `#[dto]`/`#[handlers]` emit `utoipa` derives/attributes, whose output

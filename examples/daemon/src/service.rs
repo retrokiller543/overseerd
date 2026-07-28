@@ -1,78 +1,89 @@
-//! A service tying the DI surface together: a runtime config (`Dynamic`), a
-//! by-value pool, the primary notifier, every notifier, and the notifiers keyed
-//! by channel — then an RPC that uses them.
+//! Homeledger's transaction RPC service and its injected runtime dependencies.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::components::{Config, DbConfig, DbConnection};
-use crate::notifiers::Notifier;
+use crate::audit::AuditSink;
+use crate::components::{DatabaseConfig, DatabaseConnection, LedgerConfig};
+use crate::operations::OperationsRegistry;
+use crate::protocol::AuditPolicyConfig;
 use overseerd::daemon::{Inject, Payload, handlers, service};
 use overseerd::{Cfg, CfgNext, ConfigReload, Dep, HookOutcome, ServerConfig, ShutdownHandle};
 use serde::{Deserialize, Serialize};
 
+/// A request to record one categorized household transaction.
 #[derive(Serialize, Deserialize)]
-pub struct NotifyRequest {
-    pub message: String,
+pub struct RecordTransactionRequest {
+    pub amount_minor: i64,
+    pub category: String,
 }
 
+/// A recorded Homeledger transaction.
 #[derive(Serialize, Deserialize)]
-pub struct NotifyResponse {
-    pub greeting: String,
-    pub delivered_to: Vec<String>,
-    pub query_count: u64,
+pub struct RecordTransactionResponse {
+    pub transaction_id: u64,
+    pub household: String,
+    pub currency: String,
+    pub audited_by: Vec<String>,
     pub reader_pool: u16,
     pub writer_pool: u16,
+    pub audit_retention_days: u16,
+    pub audit_review_required: bool,
 }
 
-/// Each field shows a different injection shape resolved from the container.
-#[service(id = "notifications", version = "0.1")]
-pub struct Notifications {
-    /// A config value bound at `app.greet`, injected by property path as `Cfg<T>`.
-    #[config("app.greet")]
-    config: Cfg<Config>,
-    /// The same `DbConfig` type bound at two paths — selected here by path, proving
+/// The transaction service demonstrates config, provider, plugin, and framework injection.
+#[service(id = "ledger", version = "0.1")]
+pub struct LedgerService {
+    /// A config value bound at `homeledger.ledger`, injected by property path as `Cfg<T>`.
+    #[config("homeledger.ledger")]
+    config: Cfg<LedgerConfig>,
+    /// The same `DatabaseConfig` type bound at two paths — selected here by path, proving
     /// configs key on the path rather than the type.
-    #[config("app.db.reader")]
-    reader: Cfg<DbConfig>,
-    #[config("app.db.writer")]
-    writer: Cfg<DbConfig>,
-    /// The primary `dyn Notifier` (`Email`).
-    default: Arc<dyn Notifier>,
-    /// Every provider of `dyn Notifier`.
-    all: Vec<Arc<dyn Notifier>>,
-    /// Providers keyed by qualifier (`"email"`, `"sms"`, `"push"`).
-    by_channel: HashMap<String, Arc<dyn Notifier>>,
-    /// The framework [`ServerConfig`] builtin, bound explicitly at `app.server`.
-    #[config("app.server")]
+    #[config("homeledger.database.reader")]
+    reader: Cfg<DatabaseConfig>,
+    #[config("homeledger.database.writer")]
+    writer: Cfg<DatabaseConfig>,
+    /// Every configured audit sink.
+    audit_sinks: Vec<Arc<dyn AuditSink>>,
+    /// Runtime marker contributed by the statically installed operations plugin.
+    operations: Arc<OperationsRegistry>,
+    /// Audit policy supplied by the selected protocol-default replacement plugin.
+    #[config("homeledger.audit")]
+    audit_policy: Cfg<AuditPolicyConfig>,
+    /// The framework [`ServerConfig`] builtin, bound explicitly at `homeledger.server`.
+    #[config("homeledger.server")]
     server: Cfg<ServerConfig>,
     /// The framework-seeded shutdown handle, injected by value.
     shutdown: ShutdownHandle,
 }
 
 #[handlers]
-impl Notifications {
-    /// Broadcasts to every channel, stamping the configured greeting and the
-    /// running query count from the shared by-value pool.
+impl LedgerService {
+    /// Records a household transaction and sends it to every audit destination.
     #[rpc]
-    async fn notify(
+    async fn record_transaction(
         &self,
-        Payload(req): Payload<NotifyRequest>,
-        Inject(db): Inject<Dep<DbConnection>>,
-    ) -> NotifyResponse {
-        let count = db.get().record_query();
+        Payload(request): Payload<RecordTransactionRequest>,
+        Inject(database): Inject<Dep<DatabaseConnection>>,
+    ) -> RecordTransactionResponse {
+        let transaction_id = database.get().record_transaction();
         let config = self.config.snapshot();
         let reader = self.reader.snapshot();
         let writer = self.writer.snapshot();
         let server = self.server.snapshot();
+        let audit_policy = self.audit_policy.snapshot();
 
-        let mut delivered: Vec<String> = self.all.iter().map(|n| n.channel().to_string()).collect();
-        delivered.sort_unstable();
+        let mut audited_by: Vec<String> = self
+            .audit_sinks
+            .iter()
+            .map(|sink| sink.destination().to_string())
+            .collect();
+
+        audited_by.sort_unstable();
 
         let _ = (
-            &self.default,
-            &self.by_channel,
-            &req.message,
+            &self.operations,
+            request.amount_minor,
+            &request.category,
             &reader.url,
             &writer.url,
             &self.shutdown,
@@ -80,27 +91,31 @@ impl Notifications {
             server.port,
         );
 
-        NotifyResponse {
-            greeting: config.greeting.clone(),
-            delivered_to: delivered,
-            query_count: count,
+        RecordTransactionResponse {
+            transaction_id,
+            household: config.household.clone(),
+            currency: config.currency.clone(),
+            audited_by,
             reader_pool: reader.pool_size,
             writer_pool: writer.pool_size,
+            audit_retention_days: audit_policy.retention_days,
+            audit_review_required: audit_policy.require_review_ticket,
         }
     }
 
-    /// Reacts to a reload of the `app.greet` config: it receives the proposed greeting
+    /// Reacts to a reload of the ledger config: it receives the proposed household
     /// before the swap is committed and reports that it applied cleanly. Fires only when
-    /// `app.greet` actually changes.
+    /// `homeledger.ledger` actually changes.
     #[hook(ConfigReload)]
-    async fn on_greet_reload(
+    async fn on_ledger_reload(
         &self,
-        #[config("app.greet")] next: CfgNext<Config>,
+        #[config("homeledger.ledger")] next: CfgNext<LedgerConfig>,
     ) -> overseerd::daemon::Result<HookOutcome> {
         tracing::info!(
-            target: "overseerd::example",
-            greeting = %next.greeting,
-            "greeting config reloaded"
+            target: "homeledger::config",
+            household = %next.household,
+            currency = %next.currency,
+            "ledger config reloaded"
         );
 
         Ok(HookOutcome::Reloaded)

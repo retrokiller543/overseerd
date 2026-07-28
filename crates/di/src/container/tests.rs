@@ -245,9 +245,10 @@ async fn component_source_does_not_keep_a_scope_alive() {
 struct NeverRegistered;
 
 impl Component for NeverRegistered {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "never-registered";
     const NAME: &'static str = "NeverRegistered";
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Self::Handle {
         Arc::new(self)

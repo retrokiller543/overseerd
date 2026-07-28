@@ -6,79 +6,114 @@ use syn::punctuated::Punctuated;
 use syn::{Ident, LitBool, Token, Type, braced, bracketed, parenthesized};
 
 use super::model::{
-    AppPhases, CliDeclarations, ConfigEntry, ConfigSettings, DirSettings, ManagerSource,
-    PhaseArgument, PhaseInput, PluginDirective,
+    AppPhases, CliDeclarations, ConfigEntry, ConfigSettings, Declared, DirSettings, ManagerSetting,
+    ManagerSource, ManagerValue, PhaseArgument, PhaseInput, PluginDirective,
 };
-use super::{AppAssembly, AppInput, NamedApp, command};
+use super::{AppAssembly, NamedApp, command};
 
 syn::custom_keyword!(app);
 syn::custom_keyword!(replace);
 syn::custom_keyword!(suppress);
 
-impl Parse for ConfigSettings {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut settings = ConfigSettings::default();
+fn parse_config_settings(input: ParseStream) -> syn::Result<ConfigSettings> {
+    let mut source = None;
+    let mut profiles = None;
+    let mut sighup = None;
+    let mut watch = None;
+    let mut debounce = None;
+    let mut keys = HashSet::new();
 
-        while !input.is_empty() {
-            let key = input.call(Ident::parse_any)?;
+    while !input.is_empty() {
+        let key = input.call(Ident::parse_any)?;
+        let name = key.to_string();
 
-            input.parse::<Token![:]>()?;
+        duplicate_manager_setting(&mut keys, &key, &name, "config")?;
 
-            match key.to_string().as_str() {
-                "source" => settings.source = Some(input.parse()?),
-                "profiles" => settings.profiles = Some(input.parse()?),
-                "sighup" => settings.sighup = input.parse::<LitBool>()?.value,
-                "watch" => settings.watch = input.parse::<LitBool>()?.value,
-                "debounce" => settings.debounce = Some(input.parse()?),
-                other => {
-                    return Err(syn::Error::new(
-                        key.span(),
-                        format!(
-                            "unknown `config` setting `{other}`; expected `source`, `profiles`, \
-                             `sighup`, `watch`, or `debounce`"
-                        ),
-                    ));
-                }
+        input.parse::<Token![:]>()?;
+
+        match name.as_str() {
+            "source" => source = Some(manager_setting(&key, input.parse()?)),
+            "profiles" => profiles = Some(manager_setting(&key, input.parse()?)),
+            "sighup" => {
+                sighup = Some(manager_setting(&key, input.parse::<LitBool>()?.value));
             }
-
-            if input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
+            "watch" => {
+                watch = Some(manager_setting(&key, input.parse::<LitBool>()?.value));
+            }
+            "debounce" => debounce = Some(manager_setting(&key, input.parse()?)),
+            other => {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!(
+                        "unknown `config` setting `{other}`; expected `source`, `profiles`, \
+                             `sighup`, `watch`, or `debounce`"
+                    ),
+                ));
             }
         }
 
-        Ok(settings)
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+        }
     }
+
+    if source.is_some()
+        && let Some(profiles) = &profiles
+    {
+        return Err(syn::Error::new(
+            profiles.key_span,
+            "`config` settings cannot combine `source` with `profiles`",
+        ));
+    }
+
+    Ok(ConfigSettings {
+        source,
+        profiles,
+        sighup,
+        watch,
+        debounce,
+    })
 }
 
-impl Parse for DirSettings {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut settings = DirSettings::default();
+fn parse_dir_settings(input: ParseStream) -> syn::Result<DirSettings> {
+    let mut app = None;
+    let mut root = None;
+    let mut keys = HashSet::new();
 
-        while !input.is_empty() {
-            let key = input.call(Ident::parse_any)?;
+    while !input.is_empty() {
+        let key = input.call(Ident::parse_any)?;
+        let name = key.to_string();
 
-            input.parse::<Token![:]>()?;
+        duplicate_manager_setting(&mut keys, &key, &name, "directories")?;
 
-            match key.to_string().as_str() {
-                "app" => settings.app = Some(input.parse()?),
-                "root" => settings.root = Some(input.parse()?),
-                other => {
-                    return Err(syn::Error::new(
-                        key.span(),
-                        format!(
-                            "unknown `directories` setting `{other}`; expected `app` or `root`"
-                        ),
-                    ));
-                }
-            }
+        input.parse::<Token![:]>()?;
 
-            if input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
+        match name.as_str() {
+            "app" => app = Some(manager_setting(&key, input.parse()?)),
+            "root" => root = Some(manager_setting(&key, input.parse()?)),
+            other => {
+                return Err(syn::Error::new(
+                    key.span(),
+                    format!("unknown `directories` setting `{other}`; expected `app` or `root`"),
+                ));
             }
         }
 
-        Ok(settings)
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+        }
     }
+
+    if app.is_some()
+        && let Some(root) = &root
+    {
+        return Err(syn::Error::new(
+            root.key_span,
+            "`directories` settings cannot combine `app` with `root`",
+        ));
+    }
+
+    Ok(DirSettings { app, root })
 }
 
 impl Parse for ConfigEntry {
@@ -90,16 +125,6 @@ impl Parse for ConfigEntry {
         let path = input.parse()?;
 
         Ok(ConfigEntry { ty, path })
-    }
-}
-
-impl Parse for AppInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.peek(Token![#]) || input.peek(Token![pub]) || input.peek(app) {
-            return Ok(Self::Named(input.parse()?));
-        }
-
-        Ok(Self::Legacy(AppAssembly::parse_with(input, false)?))
     }
 }
 
@@ -115,7 +140,7 @@ impl Parse for NamedApp {
 
         braced!(content in input);
 
-        let assembly = AppAssembly::parse_with(&content, true)?;
+        let assembly = AppAssembly::parse_with(&content)?;
 
         if !input.is_empty() {
             return Err(input.error("unexpected tokens after named app definition"));
@@ -140,7 +165,7 @@ impl Parse for NamedApp {
 }
 
 impl AppAssembly {
-    fn parse_with(input: ParseStream, reject_duplicates: bool) -> syn::Result<Self> {
+    fn parse_with(input: ParseStream) -> syn::Result<Self> {
         let mut name = None;
         let mut protocol = None;
         let mut services = Vec::new();
@@ -153,8 +178,8 @@ impl AppAssembly {
         let mut error_handler = None;
         let mut plugins = Vec::new();
         let mut overseerd = None;
-        let mut krate = None;
         let mut phases = AppPhases::default();
+        let mut cli_policy = super::policy::CliPolicy::default();
         let mut cli = CliDeclarations::default();
         let mut keys = HashSet::new();
 
@@ -162,7 +187,7 @@ impl AppAssembly {
             let key = input.call(Ident::parse_any)?;
             let key_name = key.to_string();
 
-            if reject_duplicates && !keys.insert(key_name.clone()) {
+            if !keys.insert(key_name.clone()) {
                 return Err(syn::Error::new(
                     key.span(),
                     format!("duplicate app key `{key_name}`"),
@@ -170,16 +195,9 @@ impl AppAssembly {
             }
 
             if is_lifecycle_phase(&key_name) {
-                if !reject_duplicates {
-                    return Err(syn::Error::new(
-                        key.span(),
-                        "lifecycle phases require a named app definition",
-                    ));
-                }
-
                 let phase = parse_phase(input, &key)?;
 
-                set_phase(&mut phases, &key_name, phase);
+                set_phase(&mut phases, &key, phase);
 
                 if input.peek(Token![,]) {
                     input.parse::<Token![,]>()?;
@@ -191,8 +209,8 @@ impl AppAssembly {
             input.parse::<Token![:]>()?;
 
             match key_name.as_str() {
-                "name" => name = Some(input.parse()?),
-                "protocol" => protocol = Some(input.parse()?),
+                "name" => name = Some(declared(key, input.parse()?)),
+                "protocol" => protocol = Some(declared(key, input.parse()?)),
                 "services" => services = bracketed_list::<Type>(input)?,
                 "components" => components = bracketed_list(input)?,
                 "configs" => configs = bracketed_list(input)?,
@@ -200,21 +218,9 @@ impl AppAssembly {
                 "middleware" => middleware = bracketed_list(input)?,
                 "guards" => guards = bracketed_list(input)?,
                 "error_handler" => error_handler = Some(input.parse()?),
-                "plugins" if !reject_duplicates => {
-                    return Err(syn::Error::new(
-                        key.span(),
-                        "static plugin declarations require a named app definition",
-                    ));
-                }
                 "plugins" => plugins = parse_plugins(input)?,
                 "overseerd" => overseerd = Some(input.parse()?),
-                "crate" => krate = Some(input.parse()?),
-                "args" | "commands" if !reject_duplicates => {
-                    return Err(syn::Error::new(
-                        key.span(),
-                        "CLI declarations require a named app definition",
-                    ));
-                }
+                "cli" => cli_policy = super::policy::parse(input)?,
                 "args" => cli.args = command::parse_args(input)?,
                 "commands" => cli.commands = command::parse_commands(input)?,
                 other => {
@@ -223,7 +229,8 @@ impl AppAssembly {
                         format!(
                             "unknown `app!` key `{other}`, expected `name`, `protocol`, \
                              `services`, `components`, `configs`, `managers`, `middleware`, \
-                             `guards`, `error_handler`, `plugins`, `args`, `commands`, `overseerd`, or `crate`"
+                             `guards`, `error_handler`, `plugins`, `cli`, `args`, `commands`, \
+                             `overseerd`, `setup`, `configure`, `before_build`, `after_build`, or `serve`"
                         ),
                     ));
                 }
@@ -239,6 +246,9 @@ impl AppAssembly {
             input.error("`app!` requires a `protocol: <ProtocolDefinition>` (e.g. `Rpc`)")
         })?;
 
+        validate_managers(&config_manager, &directories_manager)?;
+        command::validate_literal_collisions(&cli.commands, &cli_policy, phases.serve.is_some())?;
+
         Ok(Self {
             name,
             protocol,
@@ -252,8 +262,8 @@ impl AppAssembly {
             error_handler,
             plugins,
             overseerd,
-            krate,
             phases,
+            cli_policy,
             cli,
         })
     }
@@ -297,12 +307,6 @@ fn parse_plugins(input: ParseStream) -> syn::Result<Vec<PluginDirective>> {
     Ok(directives)
 }
 
-impl Parse for AppAssembly {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        Self::parse_with(input, false)
-    }
-}
-
 fn is_lifecycle_phase(key: &str) -> bool {
     matches!(
         key,
@@ -310,8 +314,13 @@ fn is_lifecycle_phase(key: &str) -> bool {
     )
 }
 
-fn set_phase(phases: &mut AppPhases, key: &str, phase: PhaseInput) {
-    match key {
+fn set_phase(phases: &mut AppPhases, key: &Ident, phase: PhaseInput) {
+    let phase = Declared {
+        key: key.clone(),
+        value: phase,
+    };
+
+    match key.to_string().as_str() {
         "setup" => phases.setup = Some(phase),
         "configure" => phases.configure = Some(phase),
         "before_build" => phases.before_build = Some(phase),
@@ -319,6 +328,10 @@ fn set_phase(phases: &mut AppPhases, key: &str, phase: PhaseInput) {
         "serve" => phases.serve = Some(phase),
         _ => unreachable!(),
     }
+}
+
+fn declared<T>(key: Ident, value: T) -> Declared<T> {
+    Declared { key, value }
 }
 
 fn parse_phase(input: ParseStream, key: &Ident) -> syn::Result<PhaseInput> {
@@ -420,7 +433,7 @@ fn parse_managers(
                     return Err(syn::Error::new(key.span(), "duplicate `config` manager"));
                 }
 
-                *config = Some(parse_manager_source(&content)?);
+                *config = Some(parse_manager_source(&content, &key, parse_config_settings)?);
             }
             "directories" => {
                 if directories.is_some() {
@@ -430,7 +443,7 @@ fn parse_managers(
                     ));
                 }
 
-                *directories = Some(parse_manager_source(&content)?);
+                *directories = Some(parse_manager_source(&content, &key, parse_dir_settings)?);
             }
             other => {
                 return Err(syn::Error::new(
@@ -448,16 +461,91 @@ fn parse_managers(
     Ok(())
 }
 
-fn parse_manager_source<S: Parse>(input: ParseStream) -> syn::Result<ManagerSource<S>> {
+fn parse_manager_source<S>(
+    input: ParseStream,
+    key: &Ident,
+    parse_settings: impl FnOnce(ParseStream) -> syn::Result<S>,
+) -> syn::Result<ManagerSource<S>> {
+    let key_span = key.span();
+
     if input.peek(syn::token::Brace) {
         let content;
 
-        braced!(content in input);
+        let brace = braced!(content in input);
+        let settings = parse_settings(&content)?;
 
-        return Ok(ManagerSource::Configure(content.parse()?));
+        return Ok(ManagerSource {
+            key_span,
+            value: ManagerValue::Configure {
+                block_span: brace.span.join(),
+                settings,
+            },
+        });
     }
 
-    Ok(ManagerSource::Instance(input.parse()?))
+    Ok(ManagerSource {
+        key_span,
+        value: ManagerValue::Instance(input.parse()?),
+    })
+}
+
+fn manager_setting<T>(key: &Ident, value: T) -> ManagerSetting<T> {
+    ManagerSetting {
+        key_span: key.span(),
+        value,
+    }
+}
+
+fn duplicate_manager_setting(
+    keys: &mut HashSet<String>,
+    key: &Ident,
+    name: &str,
+    manager: &str,
+) -> syn::Result<()> {
+    if !keys.insert(name.to_owned()) {
+        return Err(syn::Error::new(
+            key.span(),
+            format!("duplicate `{manager}` setting `{name}`"),
+        ));
+    }
+
+    Ok(())
+}
+
+fn validate_managers(
+    config: &Option<ManagerSource<ConfigSettings>>,
+    directories: &Option<ManagerSource<DirSettings>>,
+) -> syn::Result<()> {
+    if let Some(ManagerSource {
+        value: ManagerValue::Configure {
+            block_span,
+            settings,
+        },
+        ..
+    }) = directories
+        && settings.app.is_none()
+        && settings.root.is_none()
+    {
+        return Err(syn::Error::new(
+            *block_span,
+            "a `directories` config block needs `app` or `root`",
+        ));
+    }
+
+    if let Some(ManagerSource {
+        key_span,
+        value: ManagerValue::Configure { settings, .. },
+    }) = config
+        && settings.source.is_none()
+        && directories.is_none()
+    {
+        return Err(syn::Error::new(
+            *key_span,
+            "a `config` block without `source` requires a `directories` manager to load from",
+        ));
+    }
+
+    Ok(())
 }
 
 fn bracketed_list<T: Parse>(input: ParseStream) -> syn::Result<Vec<T>> {

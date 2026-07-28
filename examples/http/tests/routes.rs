@@ -18,6 +18,14 @@ use overseerd::{component, config, methods};
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt;
 
+app! {
+    /// Generated host for router integration tests.
+    app RoutesTestApplication {
+        name: "test-http",
+        protocol: overseerd::axum::Axum,
+    }
+}
+
 #[config(path = "greeting")]
 #[derive(Serialize, Deserialize)]
 struct GreetingConfig {
@@ -99,13 +107,11 @@ impl TestController {
 
 /// Builds the app and returns its assembled router.
 async fn router() -> Router {
-    let app = app! {
-        name: "test-http",
-        protocol: overseerd::axum::Axum,
-    }
-    .build()
-    .await
-    .expect("app builds");
+    let app = RoutesTestApplication::builder()
+        .expect("app builder")
+        .build()
+        .await
+        .expect("app builds");
 
     app.protocol().router().clone()
 }

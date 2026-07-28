@@ -16,6 +16,14 @@ use overseerd::axum::prelude::*;
 use overseerd::prelude::*;
 use tokio::net::TcpListener;
 
+app! {
+    /// Generated host for extractor integration tests.
+    app ExtractorsTestApplication {
+        name: "extractors-test",
+        protocol: overseerd::axum::Axum,
+    }
+}
+
 /// A custom `FromRequestParts` guard: the kind of auth/tenant extractor the client generator must
 /// treat as server-only context and drop, so a guarded route still gets a client method. It reads an
 /// optional header and never rejects, so the client (which does not send it) still round-trips.
@@ -192,13 +200,11 @@ impl Extras {
 
 #[tokio::test]
 async fn generated_client_covers_every_extractor() {
-    let app = app! {
-        name: "extractors-test",
-        protocol: overseerd::axum::Axum,
-    }
-    .build()
-    .await
-    .expect("app builds");
+    let app = ExtractorsTestApplication::builder()
+        .expect("app builder")
+        .build()
+        .await
+        .expect("app builds");
 
     let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
     let addr = listener.local_addr().expect("addr");

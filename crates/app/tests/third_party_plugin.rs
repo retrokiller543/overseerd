@@ -12,10 +12,10 @@ use overseerd_di::{Component, ComponentDescriptor};
 struct ThirdPartyComponent;
 
 impl Component for ThirdPartyComponent {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "third_party_plugin_component";
     const NAME: &'static str = "ThirdPartyPluginComponent";
-
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Self::Handle {
         Arc::new(self)
@@ -42,18 +42,18 @@ struct ThirdPartyArgs {
 impl Plugin for ThirdPartyPlugin {
     const ID: PluginId = overseerd_app::namespaced_id!(PluginId, "third-party/direct-app-plugin");
 
+    fn contribute(self, contributions: &mut PluginContributions) {
+        contributions.component::<ThirdPartyComponent>(overseerd_app::namespaced_id!(
+            ContributionId,
+            "third-party/component"
+        ));
+    }
+
     #[cfg(feature = "cli")]
     fn cli(&self, cli: &mut PluginCliRegistrar) {
         cli.args::<ThirdPartyArgs>(overseerd_app::namespaced_id!(
             ContributionId,
             "third-party/args"
-        ));
-    }
-
-    fn contribute(self, contributions: &mut PluginContributions) {
-        contributions.component::<ThirdPartyComponent>(overseerd_app::namespaced_id!(
-            ContributionId,
-            "third-party/component"
         ));
     }
 }
@@ -69,7 +69,7 @@ fn direct_crate_exports_support_third_party_plugins() {
         .resolution()
         .plugin(ThirdPartyPlugin::ID)
         .expect("third-party plugin is effective");
-    let contribution = prepared.plugin_plan().emitted_contributions()[0];
+    let contribution = &prepared.plugin_plan().emitted_contributions()[0];
 
     assert_eq!(plugin.id(), ThirdPartyPlugin::ID);
     assert_eq!(contribution.kind(), PluginContributionKind::Component);

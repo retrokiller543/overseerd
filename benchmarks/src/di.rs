@@ -44,9 +44,10 @@ impl<const N: usize> Default for Payloaded<N> {
 }
 
 impl<const N: usize> Component for Payloaded<N> {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "payloaded-component";
     const NAME: &'static str = "PayloadedComponent";
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Arc<Self> {
         Arc::new(self)
@@ -63,9 +64,10 @@ impl<const N: usize> Default for Empty<N> {
 }
 
 impl<const N: usize> Component for Empty<N> {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "empty-component";
     const NAME: &'static str = "EmptyComponent";
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Arc<Self> {
         Arc::new(self)

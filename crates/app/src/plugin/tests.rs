@@ -35,10 +35,10 @@ const TEST_SLOT: crate::PluginSlotId =
 struct ProtocolComponent;
 
 impl Component for ProtocolComponent {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "protocol_plugin_component";
     const NAME: &'static str = "ProtocolPluginComponent";
-
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Self::Handle {
         Arc::new(self)
@@ -48,10 +48,10 @@ impl Component for ProtocolComponent {
 struct ApplicationComponent;
 
 impl Component for ApplicationComponent {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "application_plugin_component";
     const NAME: &'static str = "ApplicationPluginComponent";
-
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Self::Handle {
         Arc::new(self)
@@ -144,16 +144,16 @@ struct ProtocolPlugin;
 impl Plugin for ProtocolPlugin {
     const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/protocol-plugin");
 
-    fn auto_discover(&mut self) {
-        PROTOCOL_DISCOVERIES.fetch_add(1, Ordering::SeqCst);
-    }
-
     fn contribute(self, contributions: &mut PluginContributions) {
         PROTOCOL_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
         contributions.component_descriptor(
             crate::namespaced_id!(crate::ContributionId, "test/protocol-component"),
             PROTOCOL_COMPONENT,
         );
+    }
+
+    fn auto_discover(&mut self) {
+        PROTOCOL_DISCOVERIES.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -167,16 +167,16 @@ impl Plugin for ApplicationPlugin {
         RelationTarget::Plugin(ProtocolPlugin::ID),
     )];
 
-    fn auto_discover(&mut self) {
-        APPLICATION_DISCOVERIES.fetch_add(1, Ordering::SeqCst);
-    }
-
     fn contribute(self, contributions: &mut PluginContributions) {
         APPLICATION_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
         contributions.component_descriptor(
             crate::namespaced_id!(crate::ContributionId, "test/application-component"),
             APPLICATION_COMPONENT,
         );
+    }
+
+    fn auto_discover(&mut self) {
+        APPLICATION_DISCOVERIES.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -223,17 +223,45 @@ impl Plugin for AllContributionKindsPlugin {
 }
 
 #[derive(Default)]
+struct FirstDuplicatePayloadPlugin;
+
+impl Plugin for FirstDuplicatePayloadPlugin {
+    const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/first-payload");
+
+    fn contribute(self, contributions: &mut PluginContributions) {
+        contributions.component_descriptor(
+            crate::namespaced_id!(crate::ContributionId, "test/first-payload"),
+            APPLICATION_COMPONENT,
+        );
+    }
+}
+
+#[derive(Default)]
+struct SecondDuplicatePayloadPlugin;
+
+impl Plugin for SecondDuplicatePayloadPlugin {
+    const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/second-payload");
+
+    fn contribute(self, contributions: &mut PluginContributions) {
+        contributions.component_descriptor(
+            crate::namespaced_id!(crate::ContributionId, "test/second-payload"),
+            APPLICATION_COMPONENT,
+        );
+    }
+}
+
+#[derive(Default)]
 struct DefaultPlugin;
 
 impl Plugin for DefaultPlugin {
     const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/default-plugin");
 
-    fn auto_discover(&mut self) {
-        DEFAULT_DISCOVERIES.fetch_add(1, Ordering::SeqCst);
-    }
-
     fn contribute(self, _contributions: &mut PluginContributions) {
         DEFAULT_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn auto_discover(&mut self) {
+        DEFAULT_DISCOVERIES.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -243,12 +271,12 @@ struct ReplacementPlugin;
 impl Plugin for ReplacementPlugin {
     const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/replacement-plugin");
 
-    fn auto_discover(&mut self) {
-        REPLACEMENT_DISCOVERIES.fetch_add(1, Ordering::SeqCst);
-    }
-
     fn contribute(self, _contributions: &mut PluginContributions) {
         REPLACEMENT_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn auto_discover(&mut self) {
+        REPLACEMENT_DISCOVERIES.fetch_add(1, Ordering::SeqCst);
     }
 }
 
@@ -262,10 +290,6 @@ impl ProtocolDefinition for DefaultProtocol {
     const ID: crate::ProtocolId = crate::namespaced_id!(crate::ProtocolId, "test/default-protocol");
     const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
 
-    fn register_plugins(plugins: &mut ProtocolPluginRegistrar) {
-        plugins.optional_default(TEST_SLOT, DefaultPlugin);
-    }
-
     fn register(&self, _registry: &mut AppRegistry) {}
 
     fn prepare(
@@ -274,6 +298,10 @@ impl ProtocolDefinition for DefaultProtocol {
     ) -> Result<Self::Prepared, Self::Error> {
         Ok(())
     }
+
+    fn register_plugins(plugins: &mut ProtocolPluginRegistrar) {
+        plugins.optional_default(TEST_SLOT, DefaultPlugin);
+    }
 }
 
 struct ReplacementHost;
@@ -281,16 +309,16 @@ struct ReplacementHost;
 impl AppHost for ReplacementHost {
     type Protocol = DefaultProtocol;
 
-    fn declare_plugins(plugins: &mut super::ApplicationPluginRegistrar) {
-        plugins.replace(TEST_SLOT, ReplacementPlugin);
-    }
-
     fn builder() -> Result<AppBuilder<Self::Protocol>, overseerd_config::ConfigError> {
         Ok(
             App::<DefaultProtocol>::builder("static-plugin-declarations")
                 .config_source(ConfigManager::<Toml>::empty())
                 .auto_discover(),
         )
+    }
+
+    fn declare_plugins(plugins: &mut super::ApplicationPluginRegistrar) {
+        plugins.replace(TEST_SLOT, ReplacementPlugin);
     }
 }
 
@@ -303,12 +331,12 @@ impl Default for StatefulPlugin {
 impl Plugin for StatefulPlugin {
     const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/stateful");
 
-    fn auto_discover(&mut self) {
-        self.value += 1;
-    }
-
     fn contribute(self, _contributions: &mut PluginContributions) {
         STATEFUL_VALUES.fetch_add(self.value, Ordering::SeqCst);
+    }
+
+    fn auto_discover(&mut self) {
+        self.value += 1;
     }
 }
 
@@ -343,10 +371,6 @@ impl ProtocolDefinition for TestProtocol {
     const ID: crate::ProtocolId = crate::namespaced_id!(crate::ProtocolId, "test/plugin-plan");
     const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
 
-    fn register_plugins(plugins: &mut ProtocolPluginRegistrar) {
-        plugins.mandatory(ProtocolPlugin);
-    }
-
     fn register(&self, _registry: &mut AppRegistry) {}
 
     fn prepare(
@@ -357,6 +381,83 @@ impl ProtocolDefinition for TestProtocol {
 
         Ok(())
     }
+
+    fn register_plugins(plugins: &mut ProtocolPluginRegistrar) {
+        plugins.mandatory(ProtocolPlugin);
+    }
+}
+
+fn assert_source_order(source: &str, markers: &[&str]) {
+    let mut remainder = source;
+
+    for marker in markers {
+        let position = remainder
+            .find(marker)
+            .unwrap_or_else(|| panic!("missing source marker `{marker}`"));
+
+        remainder = &remainder[position + marker.len()..];
+    }
+}
+
+fn source_between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
+    let source = source
+        .split_once(start)
+        .unwrap_or_else(|| panic!("missing source boundary `{start}`"))
+        .1;
+    source
+        .split_once(end)
+        .unwrap_or_else(|| panic!("missing source boundary `{end}`"))
+        .0
+}
+
+#[test]
+fn public_contract_members_follow_canonical_order() {
+    let protocol_source = include_str!("../protocol.rs");
+    let plugin_source = include_str!("../plugin.rs");
+    let definition = source_between(
+        protocol_source,
+        "pub trait ProtocolDefinition",
+        "pub trait PreparedProtocol",
+    );
+    let prepared = source_between(
+        protocol_source,
+        "pub trait PreparedProtocol",
+        "pub struct PreBuildContext",
+    );
+    let plugin = source_between(
+        plugin_source,
+        "pub trait Plugin:",
+        "pub trait PluginWithOptions",
+    );
+
+    assert_source_order(
+        definition,
+        &[
+            "type Prepared:",
+            "type Error:",
+            "const ID:",
+            "const SCOPE_TOPOLOGY:",
+            "fn register(",
+            "fn prepare(",
+            "fn auto_discover(",
+            "fn register_plugins(",
+            "fn pre_build(",
+        ],
+    );
+    assert_source_order(
+        prepared,
+        &["type Runtime:", "type Error:", "fn build(", "fn tooling("],
+    );
+    assert_source_order(
+        plugin,
+        &[
+            "const ID:",
+            "const RELATIONS:",
+            "fn contribute(",
+            "fn auto_discover(",
+            "fn cli(",
+        ],
+    );
 }
 
 #[test]
@@ -504,6 +605,32 @@ fn every_app_neutral_contribution_kind_lowers_with_metadata() {
             super::PluginContributionKind::Provider,
             super::PluginContributionKind::ConfigBinding,
         ]
+    );
+}
+
+#[test]
+fn duplicate_payloads_are_all_lowered_before_registry_resolution() {
+    let mut catalog = PluginCatalog::new();
+    let mut registry = AppRegistry::default();
+
+    catalog.with_plugin(FirstDuplicatePayloadPlugin);
+    catalog.with_plugin(SecondDuplicatePayloadPlugin);
+
+    let plan = catalog
+        .freeze::<()>(false)
+        .expect("duplicate payload plugins freeze")
+        .lower(&mut registry);
+
+    assert_eq!(plan.emitted_contributions().len(), 2);
+    assert_eq!(registry.components.len(), 2);
+    assert_eq!(registry.components[0].id, ApplicationComponent::ID);
+    assert_eq!(registry.components[1].id, ApplicationComponent::ID);
+    assert_eq!(
+        registry
+            .resolved_components()
+            .expect("registry resolves duplicate payloads")
+            .len(),
+        1
     );
 }
 

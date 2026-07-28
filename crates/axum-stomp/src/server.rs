@@ -160,15 +160,6 @@ impl WebsocketProtocol for Stomp {
     type Options = StompConfig;
     type BuildError = StompBuildError;
 
-    fn register(registry: &mut overseerd_axum::AppRegistry) {
-        overseerd_axum::register_topic_bus::<Self>(registry);
-        registry.components.extend([
-            STOMP_HEADERS_DESCRIPTOR,
-            STOMP_SESSION_DESCRIPTOR,
-            STOMP_PRINCIPAL_DESCRIPTOR,
-        ]);
-    }
-
     fn build(
         controllers: &[WsControllerDescriptor],
         runtime: &AppRuntime,
@@ -330,6 +321,15 @@ impl WebsocketProtocol for Stomp {
             writer.abort();
             let _ = writer.await;
         }
+    }
+
+    fn register(registry: &mut overseerd_axum::AppRegistry) {
+        overseerd_axum::register_topic_bus::<Self>(registry);
+        registry.components.extend([
+            STOMP_HEADERS_DESCRIPTOR,
+            STOMP_SESSION_DESCRIPTOR,
+            STOMP_PRINCIPAL_DESCRIPTOR,
+        ]);
     }
 }
 

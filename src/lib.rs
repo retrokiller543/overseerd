@@ -87,6 +87,9 @@ pub use overseerd_config::{
 #[cfg(not(target_family = "wasm"))]
 pub use overseerd_app::Error as AppError;
 #[cfg(not(target_family = "wasm"))]
+#[doc(hidden)]
+pub use overseerd_app::HostLifecycleCapabilities;
+#[cfg(not(target_family = "wasm"))]
 pub use overseerd_app::contribute;
 #[cfg(not(target_family = "wasm"))]
 pub use overseerd_app::{
@@ -108,6 +111,31 @@ pub use overseerd_app::{
     retain_host_plugin_catalog, serve_host, setup_host, setup_host_context,
 };
 
+/// Versioned protocol-neutral developer-tooling schema and prepared-state projection types.
+#[cfg(all(not(target_family = "wasm"), feature = "tooling"))]
+pub mod tooling {
+    pub use overseerd_app::{
+        ToolingContributionError, ToolingContributions, ToolingEndpoint, ToolingProbeOutputError,
+        ToolingProbeOutputTargetError, ToolingProbeTargetError, ToolingProjectionError,
+        ToolingRelationshipKind,
+    };
+    pub use overseerd_tooling_schema::*;
+}
+
+/// Internal contracts named by generated application code.
+#[cfg(not(target_family = "wasm"))]
+#[doc(hidden)]
+pub mod __private {
+    #[cfg(feature = "tooling")]
+    pub use overseerd_app::tooling::{
+        catch_probe_panic, emit_probe_envelope_from_env, install_process_probe_panic_hook,
+        probe_host, probe_target_identity_from_env,
+    };
+
+    #[cfg(all(feature = "cli", feature = "tooling"))]
+    pub use overseerd_app::tooling::probe_bootstrapped_host;
+}
+
 #[cfg(all(not(target_family = "wasm"), feature = "cli"))]
 pub use overseerd_app::{
     BootstrapError, BootstrapOptions, BootstrapPolicy, BootstrapState, CliCommand,
@@ -119,9 +147,9 @@ pub use overseerd_app::{
     finalize_bootstrap, prepare_cli_context, validate_cli,
 };
 
-// The generic `App<P>` / `AppBuilder<P>` are at the root (protocol-agnostic core); the `app!`
-// macro builds `App::<P>::builder(..)` for the protocol named in its `protocol:` field. A
-// protocol's own surface (the RPC daemon's services, client, …) lives in its module
+// The generic `App<P>` / `AppBuilder<P>` and named `app!` definitions are at the root
+// (protocol-agnostic core). A protocol's own surface (the RPC daemon's services, client, …) lives
+// in its module
 // (`overseerd::daemon::*`), so the facade root stays free of protocol-specific names.
 
 // ---------------------------------------------------------------------------
@@ -133,11 +161,11 @@ pub use overseerd_transport::{
 };
 
 // ---------------------------------------------------------------------------
-// Procedural macros: the core macros (including the protocol-agnostic `app!`/`daemon!`) are
+// Procedural macros: the core macros (including the protocol-agnostic `app!`) are
 // always available; the RPC daemon macros (`service`/`handlers`/`rpc`) live in the `daemon`
 // module behind the `daemon` feature.
 // ---------------------------------------------------------------------------
-pub use overseerd_macros::{app, component, config, daemon, injectable, methods};
+pub use overseerd_macros::{app, component, config, injectable, methods};
 
 /// Re-exported so macro-generated code can reference the `#[distributed_slice]` attribute
 /// through the facade crate without user crates depending on `linkme` directly. The generated
@@ -240,7 +268,7 @@ pub mod daemon {
     /// The RPC daemon macros, re-exported through `overseerd-rpc` (which owns them). With the
     /// facade's `daemon` feature, `overseerd-rpc/facade` is on, so their generated code roots
     /// protocol types at `::overseerd::daemon::*` and core types at `::overseerd::*`.
-    /// (`app!`/`daemon!` are protocol-agnostic core macros at the crate root, not here.)
+    /// (`app!` is a protocol-agnostic core macro at the crate root, not here.)
     pub use overseerd_rpc::{handlers, rpc, service};
 
     /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`.

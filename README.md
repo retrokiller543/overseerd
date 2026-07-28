@@ -7,9 +7,9 @@ typed config, and typed clients generated from the same source of truth.
 The goal is to make service development feel like writing ordinary Rust business logic while
 Overseerd handles dependency wiring, endpoint registration, lifecycle, config, and the client SDK.
 
-Unlike fully convention-driven frameworks, Overseerd never takes ownership of your entrypoint or
-runtime. You keep control of process startup, runtime construction, and deployment while benefiting
-from generated infrastructure and convention-assisted wiring.
+Unlike fully convention-driven frameworks, Overseerd does not require ownership of your entrypoint
+or runtime. A named application can generate the standard process runner, while direct lifecycle
+and builder APIs keep custom startup, runtime construction, and deployment under your control.
 
 > Overseerd is pre-1.0: the APIs below are implemented and exercised by the examples, but macro
 > syntax and semantics may still evolve.
@@ -41,8 +41,8 @@ libraries and fully managed application containers:
   (REST + STOMP) with no hand-written bindings.
 * **WebSockets & STOMP** — `#[controller(ws = ..)]` message handlers and a STOMP pub/sub broker with
   a typed `#[topics]` contract shared by server and client.
-* **User-owned runtime** — Overseerd never requires ownership of `main`; you build the runtime, set
-  up logging, and decide how to serve.
+* **Generated or user-owned runtime** — a named application generates the standard CLI runner, but
+  Overseerd never requires ownership of `main`; direct lifecycle and builder APIs remain available.
 
 ## Installation
 
@@ -50,10 +50,12 @@ libraries and fully managed application containers:
 cargo add overseerd
 ```
 
-Pick what you need with features (all off by default except `di-check`):
+Pick what you need with features (`cli` and `di-check` are enabled by default):
 
 | Feature | Enables |
 |---|---|
+| `cli` *(default)* | generated Clap parsers and `run`/`run_with` for named applications |
+| `tooling` | target-local projection of prepared application metadata; independent of `cli` |
 | `daemon` | the native RPC protocol (`overseerd::daemon`) |
 | `axum` | the HTTP protocol (`overseerd::axum`): `#[controller]`, routes, DI extractors |
 | `ws` / `stomp` | WebSocket controllers / the STOMP pub/sub broker (imply `axum`) |
@@ -105,24 +107,26 @@ impl GreetController {
 ```
 
 ```rust
-// main.rs — build and serve (you own the runtime)
+// main.rs — declare the generated host and delegate the standard process entry
 use overseerd::axum::prelude::*;
 use overseerd::prelude::*;
 
 // Anchor the library so its self-registering `#[controller]`s are linked in.
 extern crate my_service;
 
-#[tokio::main]
-async fn main() -> overseerd::axum::Result<()> {
-    // Each `#[controller]` self-registers; `app!` only needs the protocol.
-    let app = app! {
+app! {
+    app HttpApplication {
         name: "my-service",
         protocol: Axum,
+        serve(_context, app) {
+            app.serve_configured().await
+        },
     }
-    .build()
-    .await?;
+}
 
-    app.serve_configured().await
+#[tokio::main]
+async fn main() -> Result<(), overseerd::CliError> {
+    HttpApplication::run().await
 }
 ```
 
@@ -171,18 +175,23 @@ impl Notifications {
 
 ```rust
 use overseerd::daemon::prelude::*;
+use overseerd::prelude::*;
 
-#[tokio::main]
-async fn main() -> overseerd::daemon::Result<()> {
-    let app = app! {
+app! {
+    app NotifyApplication {
         name: "notifyd",
         protocol: Rpc,
-    }
-    .build()
-    .await?;
+        serve(_context, app) {
+            let transport = TcpTransport::bind("127.0.0.1:7000").await?;
 
-    // Serve over any transport — TCP, or a Unix socket on unix targets.
-    app.serve(TcpTransport::bind("127.0.0.1:7000").await?).await
+            app.serve(transport).await
+        },
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), overseerd::CliError> {
+    NotifyApplication::run().await
 }
 ```
 
@@ -289,7 +298,19 @@ watching, the serve loops) are native-only, so a wasm build with any feature set
 
 Overseerd never requires ownership of `main`. You remain free to configure logging before startup,
 build custom Tokio runtimes, load environment variables, run startup validation, and integrate with
-external tooling. The runtime helpers and convenience macros are optional.
+external tooling. Named hosts provide the standard generated runner, while their direct typestate
+lifecycle and the lower-level `App::<Protocol>::builder(..)` API remain available as escape hatches.
+
+Reserved bootstrap `default` values in a named application's `cli` block are emitted as real Clap
+defaults and displayed in generated help. Generated bootstrap captures Clap's per-field
+`ValueSource` before typed extraction, preserving the distinction between `DefaultValue` and
+explicit `CommandLine` so environment and loaded configuration retain their documented precedence.
+
+See the [named application migration guide](docs/named-application-migration.md) for the current
+named-host migration and custom-main boundaries. The
+[`app!` Rustdoc](https://docs.rs/overseerd/latest/overseerd/macro.app.html) is the authoritative
+reference for the complete declaration grammar, generated lifecycle API, exact CLI behavior,
+plugins, tooling, features, and errors.
 
 ### Convention-assisted discovery
 

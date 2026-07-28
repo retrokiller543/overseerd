@@ -1,7 +1,7 @@
-//! The Overseerd **RPC daemon** macros: `#[service]`, `#[handlers]`, `#[rpc]`, and
-//! `app!`/`daemon!`. They are RPC-protocol-specific (they emit `::overseerd::daemon::*` types),
-//! so they live in their own crate rather than the core `overseerd-macros`, built on the shared
-//! [`overseerd_macros_core`] codegen.
+//! The Overseerd **RPC daemon** macros: `#[service]`, `#[handlers]`, and `#[rpc]`. They are
+//! RPC-protocol-specific (they emit `::overseerd::daemon::*` types), so they live in their own
+//! crate rather than the core `overseerd-macros`, built on the shared [`overseerd_macros_core`]
+//! codegen.
 //!
 //! Re-exported through the `overseerd` facade's `daemon` module; depend on the facade, not this
 //! crate directly.
@@ -13,7 +13,7 @@
 //!   client methods.
 //! - `#[rpc]` marks a method inside a `#[handlers]` impl (a marker stripped by `#[handlers]`).
 //!
-//! `app!`/`daemon!` are **not** here — they are protocol-agnostic core macros (in
+//! `app!` is **not** here — it is the protocol-agnostic named application macro (in
 //! `overseerd-macros`), selecting a protocol via a required `protocol:` field.
 
 extern crate proc_macro;

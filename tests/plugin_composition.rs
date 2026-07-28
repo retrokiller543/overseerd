@@ -10,10 +10,10 @@ use overseerd::{
 struct FacadePluginComponent;
 
 impl Component for FacadePluginComponent {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "facade_plugin_component";
     const NAME: &'static str = "FacadePluginComponent";
-
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Self::Handle {
         Arc::new(self)
@@ -38,7 +38,40 @@ impl Plugin for FacadePlugin {
                 "third-party/facade-component" => type FacadePluginComponent,
             ],
         }
+
+        #[cfg(feature = "tooling")]
+        {
+            contributions.tooling().resource("worker", "Facade worker");
+            contributions.tooling().relationship(
+                overseerd::tooling::ToolingRelationshipKind::Contains,
+                overseerd::tooling::ToolingEndpoint::Owner,
+                overseerd::tooling::ToolingEndpoint::Resource("worker"),
+            );
+        }
     }
+}
+
+#[cfg(feature = "tooling")]
+#[test]
+fn third_party_facade_plugin_projects_owner_scoped_generic_metadata() {
+    let document = App::<()>::builder("facade-plugin-tooling")
+        .register_plugin::<FacadePlugin>()
+        .prepare()
+        .expect("facade-only plugin prepares")
+        .tooling_document()
+        .expect("facade-only plugin tooling projects");
+
+    assert!(
+        document
+            .resources
+            .iter()
+            .any(|resource| resource.id == "plugin:third-party/facade-plugin/tooling/worker")
+    );
+    assert!(document.relationships.iter().any(|relationship| {
+        relationship.kind == overseerd::tooling::RelationshipKind::Contains
+            && relationship.from == "plugin:third-party/facade-plugin"
+            && relationship.to == "plugin:third-party/facade-plugin/tooling/worker"
+    }));
 }
 
 #[test]

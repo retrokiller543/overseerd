@@ -20,7 +20,11 @@ pub mod protocol;
 pub mod registry;
 pub mod runtime;
 pub mod scope;
+#[cfg(feature = "tooling")]
+pub mod tooling;
 
+#[doc(hidden)]
+pub use app::HostLifecycleCapabilities;
 pub use app::{App, AppBuilder, PreparedApp};
 pub use builtins::{LogFormat, LoggingConfig, ServerConfig, SpanEvents};
 pub use composition::{
@@ -65,6 +69,15 @@ pub use runtime::AppRuntime;
 pub use scope::{
     PreparedScopeTopology, ScopeBoundary, ScopeParent, ScopeTopology, ScopeTopologyError,
 };
+#[cfg(feature = "tooling")]
+pub use tooling::{
+    ToolingContributionError, ToolingContributions, ToolingEndpoint, ToolingProbeOutputError,
+    ToolingProbeOutputTargetError, ToolingProbeTargetError, ToolingProjectionError,
+    ToolingRelationshipKind,
+};
+
+#[cfg(feature = "tooling")]
+pub use overseerd_tooling_schema as tooling_schema;
 
 #[cfg(feature = "cli")]
 pub use clap;

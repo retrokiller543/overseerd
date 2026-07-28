@@ -76,6 +76,10 @@ struct WsRegistration {
 /// One validated WebSocket endpoint and the exact route plan retained from preparation.
 #[cfg(feature = "ws")]
 struct PreparedWsRegistration {
+    #[cfg(feature = "tooling")]
+    path: String,
+    #[cfg(feature = "tooling")]
+    protocol_name: &'static str,
     controllers: Vec<crate::ws::WsControllerDescriptor>,
     mount: WsMount,
 }
@@ -95,14 +99,6 @@ impl ProtocolDefinition for Axum {
     const ID: overseerd_app::ProtocolId =
         overseerd_core::namespaced_id!(overseerd_app::ProtocolId, "overseerd/axum");
     const SCOPE_TOPOLOGY: overseerd_app::ScopeTopology = SCOPE_TOPOLOGY;
-
-    fn auto_discover(&mut self) {
-        self.controllers.extend(CONTROLLERS.iter().copied());
-
-        #[cfg(feature = "ws")]
-        self.ws_controllers
-            .extend(crate::ws::WS_CONTROLLERS.iter().copied());
-    }
 
     fn register(&self, registry: &mut AppRegistry) {
         // Protocol configuration is a builtin: it is present even when the app does not call
@@ -180,6 +176,10 @@ impl ProtocolDefinition for Axum {
 
                 crate::ws::validate_unique_destinations(&controllers, registration.protocol_name)?;
                 prepared.push(PreparedWsRegistration {
+                    #[cfg(feature = "tooling")]
+                    path: registration.path,
+                    #[cfg(feature = "tooling")]
+                    protocol_name: registration.protocol_name,
                     controllers,
                     mount: registration.mount,
                 });
@@ -204,6 +204,14 @@ impl ProtocolDefinition for Axum {
             #[cfg(feature = "ws")]
             ws_registrations,
         })
+    }
+
+    fn auto_discover(&mut self) {
+        self.controllers.extend(CONTROLLERS.iter().copied());
+
+        #[cfg(feature = "ws")]
+        self.ws_controllers
+            .extend(crate::ws::WS_CONTROLLERS.iter().copied());
     }
 }
 
@@ -345,6 +353,90 @@ impl PreparedProtocol for PreparedAxum {
 
         Ok(axum)
     }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
+        use std::collections::BTreeMap;
+
+        use overseerd_app::{ToolingEndpoint, ToolingRelationshipKind};
+
+        contributions.facet(
+            "summary",
+            1,
+            overseerd_app::tooling_schema::JsonValue::Object(
+                [
+                    (
+                        String::from("controller_count"),
+                        self.controllers.len().into(),
+                    ),
+                    (
+                        String::from("middleware_count"),
+                        self.middleware.len().into(),
+                    ),
+                    #[cfg(feature = "ws")]
+                    (
+                        String::from("websocket_endpoint_count"),
+                        self.ws_registrations.len().into(),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        );
+
+        for controller in &self.controllers {
+            let id = format!("controller/{}", controller.id);
+
+            contributions.resource_with_labels(
+                &id,
+                controller.name,
+                BTreeMap::from([
+                    (String::from("base-path"), controller.base.to_string()),
+                    (String::from("kind"), String::from("http-controller")),
+                    (
+                        String::from("rust-type"),
+                        (controller.ty.type_name)().to_string(),
+                    ),
+                ]),
+            );
+            contributions.relationship(
+                ToolingRelationshipKind::Contains,
+                ToolingEndpoint::Owner,
+                ToolingEndpoint::Resource(&id),
+            );
+        }
+
+        #[cfg(feature = "ws")]
+        for (ordinal, endpoint) in self.ws_registrations.iter().enumerate() {
+            let id = format!("websocket/{ordinal}");
+
+            contributions.resource_with_labels(
+                &id,
+                endpoint.protocol_name,
+                BTreeMap::from([
+                    (String::from("kind"), String::from("websocket-endpoint")),
+                    (String::from("path"), endpoint.path.clone()),
+                    (
+                        String::from("protocol-name"),
+                        endpoint.protocol_name.to_string(),
+                    ),
+                    (
+                        String::from("protocol-type"),
+                        endpoint.protocol_name.to_string(),
+                    ),
+                    (
+                        String::from("controller-count"),
+                        endpoint.controllers.len().to_string(),
+                    ),
+                ]),
+            );
+            contributions.relationship(
+                ToolingRelationshipKind::Contains,
+                ToolingEndpoint::Owner,
+                ToolingEndpoint::Resource(&id),
+            );
+        }
+    }
 }
 
 /// Nests `router` under an already-[normalized](normalize_base_path) global prefix. An empty prefix
@@ -372,6 +464,9 @@ fn normalize_base_path(base_path: &str) -> String {
         format!("/{trimmed}")
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 /// Configured serving for a built axum app.
 ///

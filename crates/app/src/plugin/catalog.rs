@@ -11,9 +11,10 @@ use overseerd_core::NamespacedIdType;
 use std::collections::BTreeSet;
 
 use super::Plugin;
-use super::contribution::{
-    CollectedContribution, CollectedPluginPlan, PluginContributions, PluginPlanError,
-};
+use super::contribution::{CollectedPluginPlan, PluginContributions, PluginPlanError};
+
+#[cfg(feature = "cli")]
+use super::contribution::CollectedContribution;
 
 #[cfg(feature = "cli")]
 use crate::{
@@ -190,12 +191,16 @@ impl PluginCatalog {
         )?;
         #[cfg(feature = "cli")]
         let cli_metadata = early.cli_provider_metadata().to_vec();
+        #[cfg(all(feature = "cli", feature = "tooling"))]
+        let cli_parser_metadata = early.cli_parser_metadata.clone();
         let mut installations: Vec<_> = early
             .into_installations()
             .chain(self.late)
             .map(Some)
             .collect();
         let mut contributions = Vec::new();
+        #[cfg(feature = "tooling")]
+        let mut tooling = Vec::new();
 
         for plugin in resolution.plugins() {
             let index = installations
@@ -220,14 +225,20 @@ impl PluginCatalog {
             let plugin_contributions = installation.collect(discover)?;
 
             #[cfg(feature = "cli")]
-            validate_contribution_identities(&cli_metadata, &plugin_contributions)?;
+            validate_contribution_identities(&cli_metadata, &plugin_contributions.contributions)?;
 
-            contributions.extend(plugin_contributions);
+            contributions.extend(plugin_contributions.contributions);
+            #[cfg(feature = "tooling")]
+            tooling.push(plugin_contributions.tooling);
         }
 
         Ok(CollectedPluginPlan {
             resolution,
             contributions,
+            #[cfg(feature = "tooling")]
+            tooling,
+            #[cfg(all(feature = "cli", feature = "tooling"))]
+            cli_parser_metadata,
         })
     }
 }
@@ -245,6 +256,8 @@ pub struct EarlyPluginCatalog {
     cli_providers: Vec<PluginCliProvider>,
     #[cfg(feature = "cli")]
     cli_metadata: Vec<PluginCliProviderMetadata>,
+    #[cfg(all(feature = "cli", feature = "tooling"))]
+    cli_parser_metadata: Option<overseerd_tooling_schema::CliMetadata>,
 }
 
 impl EarlyPluginCatalog {
@@ -318,6 +331,8 @@ impl EarlyPluginCatalog {
             cli_providers,
             #[cfg(feature = "cli")]
             cli_metadata,
+            #[cfg(all(feature = "cli", feature = "tooling"))]
+            cli_parser_metadata: None,
         })
     }
 
@@ -328,7 +343,7 @@ impl EarlyPluginCatalog {
 
     /// Deterministic effective CLI provider metadata in plugin resolution order.
     #[cfg(feature = "cli")]
-    pub fn cli_provider_metadata(&self) -> &[PluginCliProviderMetadata] {
+    pub(crate) fn cli_provider_metadata(&self) -> &[PluginCliProviderMetadata] {
         &self.cli_metadata
     }
 
@@ -336,12 +351,30 @@ impl EarlyPluginCatalog {
     #[cfg(feature = "cli")]
     #[doc(hidden)]
     pub fn augment_cli(
-        &self,
+        &mut self,
         command: clap::Command,
         framework: clap::Command,
         application_args: &[std::any::TypeId],
+        serve_default: bool,
     ) -> Result<clap::Command, CliDefinitionError> {
-        augment_plugin_cli(command, framework, &self.cli_providers, application_args)
+        let augmented = augment_plugin_cli(
+            command,
+            framework,
+            &self.cli_providers,
+            application_args,
+            serve_default,
+        )?;
+
+        #[cfg(feature = "tooling")]
+        let metadata = augmented.metadata;
+        let command = augmented.command;
+
+        #[cfg(feature = "tooling")]
+        {
+            self.cli_parser_metadata = Some(metadata);
+        }
+
+        Ok(command)
     }
 
     /// Extracts all effective plugin global argument groups from parsed matches.
@@ -480,7 +513,10 @@ impl RetainedPlugin {
         self.declaration.id() == plugin.id() && self.declaration.provenance() == plugin.provenance()
     }
 
-    fn collect(self, discover: bool) -> Result<Vec<CollectedContribution>, PluginPlanError> {
+    fn collect(
+        self,
+        discover: bool,
+    ) -> Result<super::contribution::CollectedPluginContributions, PluginPlanError> {
         self.plugin.collect(self.declaration.id(), discover)
     }
 
@@ -521,7 +557,7 @@ trait ErasedPlugin: Send {
         self: Box<Self>,
         contributor: PluginId,
         discover: bool,
-    ) -> Result<Vec<CollectedContribution>, PluginPlanError>;
+    ) -> Result<super::contribution::CollectedPluginContributions, PluginPlanError>;
 
     #[cfg(feature = "cli")]
     fn cli(&self, contributor: PluginId) -> Vec<PluginCliProvider>;
@@ -532,7 +568,7 @@ impl<P: Plugin> ErasedPlugin for P {
         mut self: Box<Self>,
         contributor: PluginId,
         discover: bool,
-    ) -> Result<Vec<CollectedContribution>, PluginPlanError> {
+    ) -> Result<super::contribution::CollectedPluginContributions, PluginPlanError> {
         if discover {
             self.auto_discover();
         }

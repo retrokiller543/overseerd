@@ -6,6 +6,8 @@ use crate::{
     ProtocolDefinition, ProtocolPluginRegistrar,
 };
 
+use crate::app::HostLifecycleCapabilities;
+
 /// Static lifecycle definition implemented by every generated named application.
 ///
 /// The trait contains only application-specific work. Framework orchestration lives in the
@@ -27,12 +29,10 @@ pub trait AppHost {
     /// [`BootstrapContext`] into the [`AppBuilder`] before [`configure`](Self::configure) runs.
     const BOOTSTRAP_OWNS_DIRECTORIES: bool = false;
 
-    /// Declares parser-visible application plugins and protocol-default slot directives.
-    ///
-    /// This static declaration seam is available before CLI parser construction. Dynamic
-    /// [`configure`](Self::configure) and [`before_build`](Self::before_build) hooks may only add
-    /// monotonic late plugins through [`AppBuilder::register_plugin`].
-    fn declare_plugins(_plugins: &mut ApplicationPluginRegistrar) {}
+    /// Generated host lifecycle callback capabilities retained for tooling projection.
+    #[doc(hidden)]
+    const LIFECYCLE_CAPABILITIES: HostLifecycleCapabilities =
+        HostLifecycleCapabilities::new(false, false, false, false, false);
 
     /// Creates the declaration-configured protocol-specific application builder.
     ///
@@ -40,6 +40,13 @@ pub trait AppHost {
     /// components, explicit config bindings, manager overrides, middleware, guards, and error
     /// handler declared in `app!`.
     fn builder() -> Result<AppBuilder<Self::Protocol>, overseerd_config::ConfigError>;
+
+    /// Declares parser-visible application plugins and protocol-default slot directives.
+    ///
+    /// This static declaration seam is available before CLI parser construction. Dynamic
+    /// [`configure`](Self::configure) and [`before_build`](Self::before_build) hooks may only add
+    /// monotonic late plugins through [`AppBuilder::register_plugin`].
+    fn declare_plugins(_plugins: &mut ApplicationPluginRegistrar) {}
 
     /// Runs the application-specific setup hook.
     ///
@@ -279,6 +286,15 @@ pub async fn prepare_setup_host_context<H: AppHost>(
     let prepared = builder
         .prepare()
         .map_err(|source| PhaseError::new(LifecyclePhase::Prepare, source))?;
+
+    #[cfg(feature = "tooling")]
+    let prepared = {
+        let mut prepared = prepared;
+
+        prepared.retain_host_lifecycle(H::LIFECYCLE_CAPABILITIES);
+
+        prepared
+    };
 
     Ok((context, prepared))
 }

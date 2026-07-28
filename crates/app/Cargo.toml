@@ -13,6 +13,7 @@ categories.workspace = true
 [features]
 default = ["cli"]
 cli = ["dep:clap", "overseerd-macros/cli"]
+tooling = ["dep:overseerd-tooling-schema", "overseerd-macros/tooling"]
 di-check = [
     "overseerd-di/di-check",
     "overseerd-config/di-check",
@@ -35,3 +36,4 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, optional = true }
 thiserror = { workspace = true }
 clap = { workspace = true, optional = true }
+overseerd-tooling-schema = { workspace = true, optional = true }

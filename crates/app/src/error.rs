@@ -126,6 +126,11 @@ pub enum Error {
     #[error(transparent)]
     PluginPlan(#[from] crate::PluginPlanError),
 
+    /// A protocol supplied structurally invalid owner-scoped tooling metadata.
+    #[cfg(feature = "tooling")]
+    #[error(transparent)]
+    ToolingContribution(#[from] crate::ToolingContributionError),
+
     /// An application-defined error surfaced through the framework.
     #[error(transparent)]
     Other(#[from] Box<dyn std::error::Error + Send + Sync>),

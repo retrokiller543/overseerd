@@ -9,6 +9,8 @@ use super::phase;
 use crate::paths::Paths;
 
 mod serve;
+#[cfg(feature = "tooling")]
+mod tooling;
 
 /// Expands a reusable typed-state application host and its lifecycle hooks.
 pub(super) fn expand(input: NamedApp) -> TokenStream {
@@ -19,12 +21,42 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
         mut assembly,
     } = input;
     let phases = std::mem::take(&mut assembly.phases);
+    let cli_policy = std::mem::take(&mut assembly.cli_policy);
     #[cfg(feature = "cli")]
     let cli_declarations = std::mem::take(&mut assembly.cli);
     let has_config_manager = assembly.config_manager.is_some();
     let has_directories_manager = assembly.directories_manager.is_some();
-    let paths = Paths::overseerd().resolve(assembly.overseerd.take(), assembly.krate.take());
-    let protocol = &assembly.protocol;
+    let has_setup_callback = phases.setup.is_some();
+    let has_configure_callback = phases.configure.is_some();
+    let has_before_build_callback = phases.before_build.is_some();
+    let has_after_build_callback = phases.after_build.is_some();
+    let has_serve_callback = phases.serve.is_some();
+    let paths = Paths::overseerd().resolve(assembly.overseerd.take(), None);
+    let protocol = &assembly.protocol.value;
+    let protocol_associated_type = syn::Ident::new(
+        "Protocol",
+        proc_macro2::Span::call_site().located_at(assembly.protocol.key.span()),
+    );
+    let setup_method = phases
+        .setup
+        .as_ref()
+        .map(|phase| phase.key.clone())
+        .unwrap_or_else(|| quote::format_ident!("setup", span = ident.span()));
+    let configure_method = phases
+        .configure
+        .as_ref()
+        .map(|phase| phase.key.clone())
+        .unwrap_or_else(|| quote::format_ident!("configure", span = ident.span()));
+    let before_build_method = phases
+        .before_build
+        .as_ref()
+        .map(|phase| phase.key.clone())
+        .unwrap_or_else(|| quote::format_ident!("before_build", span = ident.span()));
+    let after_build_method = phases
+        .after_build
+        .as_ref()
+        .map(|phase| phase.key.clone())
+        .unwrap_or_else(|| quote::format_ident!("after_build", span = ident.span()));
     let plugin_declarations = assembly
         .plugins
         .iter()
@@ -42,6 +74,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
     let app = paths.core("App");
     let app_builder = paths.core("AppBuilder");
     let app_host = paths.core("AppHost");
+    let host_lifecycle_capabilities = paths.core("HostLifecycleCapabilities");
     let app_stage = paths.core("AppStage");
     let bootstrap_context = paths.core("BootstrapContext");
     let build_host = paths.core("build_host");
@@ -69,6 +102,17 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
         quote!(#lifecycle_phase::Setup),
         &phase_error,
     );
+    #[cfg_attr(not(feature = "cli"), allow(unused_variables))]
+    let policy = match super::policy::expand(
+        &cli_policy,
+        phases.serve.as_ref(),
+        &visibility,
+        &ident,
+        &paths,
+    ) {
+        Ok(policy) => policy,
+        Err(error) => return error.into_compile_error(),
+    };
     let configure_call = phase::call(
         phases.configure.as_ref(),
         quote!(builder),
@@ -211,10 +255,10 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
         visibility: &visibility,
         ident: &ident,
         attributes: &attributes,
-        application_name: &assembly.name,
+        application_name: &assembly.name.value,
         paths: &paths,
-        has_serve: phases.serve.is_some(),
         declarations: &cli_declarations,
+        policy: &policy,
     }) {
         Ok(cli) => cli,
         Err(error) => return error.into_compile_error(),
@@ -223,9 +267,18 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
     #[cfg(not(feature = "cli"))]
     let cli = TokenStream::new();
 
+    #[cfg(feature = "tooling")]
+    let tooling = match tooling::expand(&ident, &assembly.name.value, &paths) {
+        Ok(tooling) => tooling,
+        Err(error) => return error.into_compile_error(),
+    };
+
+    #[cfg(not(feature = "tooling"))]
+    let tooling = TokenStream::new();
+
     let builder = builder::expand_with_paths(
-        &assembly.name,
-        &assembly.protocol,
+        &assembly.name.value,
+        &assembly.protocol.value,
         &assembly.services,
         &assembly.components,
         &assembly.configs,
@@ -590,24 +643,32 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
         }
 
         impl #app_host for #ident<#initial> {
-            type Protocol = #protocol;
+            type #protocol_associated_type = #protocol;
 
             const BOOTSTRAP_OWNS_CONFIG: bool = #has_config_manager == false;
             const BOOTSTRAP_OWNS_DIRECTORIES: bool = #has_directories_manager == false;
-
-            fn declare_plugins(plugins: &mut #application_plugin_registrar) {
-                #(#plugin_declarations)*
-            }
+            const LIFECYCLE_CAPABILITIES: #host_lifecycle_capabilities =
+                #host_lifecycle_capabilities::new(
+                    #has_setup_callback,
+                    #has_configure_callback,
+                    #has_before_build_callback,
+                    #has_after_build_callback,
+                    #has_serve_callback,
+                );
 
             fn builder() -> ::core::result::Result<#app_builder<#protocol>, #config_error> {
                 Self::__builder()
             }
 
-            async fn setup(context: #bootstrap_context) -> ::core::result::Result<#bootstrap_context, #phase_error> {
+            fn declare_plugins(plugins: &mut #application_plugin_registrar) {
+                #(#plugin_declarations)*
+            }
+
+            async fn #setup_method(context: #bootstrap_context) -> ::core::result::Result<#bootstrap_context, #phase_error> {
                 #setup_call
             }
 
-            async fn configure(
+            async fn #configure_method(
                 context: &mut #bootstrap_context,
                 builder: #app_builder<#protocol>,
             ) -> ::core::result::Result<#app_builder<#protocol>, #phase_error> {
@@ -616,7 +677,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
                 Ok(builder)
             }
 
-            async fn before_build(
+            async fn #before_build_method(
                 context: &mut #bootstrap_context,
                 builder: #app_builder<#protocol>,
             ) -> ::core::result::Result<#app_builder<#protocol>, #phase_error> {
@@ -625,7 +686,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
                 Ok(builder)
             }
 
-            async fn after_build(
+            async fn #after_build_method(
                 context: &mut #bootstrap_context,
                 app: #app<#protocol>,
             ) -> ::core::result::Result<#app<#protocol>, #phase_error> {
@@ -638,5 +699,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
         }
 
         #cli
+
+        #tooling
     }
 }

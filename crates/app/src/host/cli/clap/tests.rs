@@ -1,6 +1,13 @@
 use clap::{Arg, ArgGroup, Command};
 
-use super::validate_cli;
+use super::{CliDefinitionSource, validate_cli};
+
+#[test]
+fn framework_collision_source_is_a_unit_variant() {
+    let source = CliDefinitionSource::Framework;
+
+    assert_eq!(source, CliDefinitionSource::Framework);
+}
 
 #[test]
 fn accepts_distinct_local_and_inherited_arguments() {

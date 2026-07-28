@@ -1,6 +1,6 @@
 //! Phase 4 triggers: `ConfigManager` carries the opt-in reload triggers (config lives on the
-//! manager, never a protocol), the `app!` macro can construct + configure a manager from a
-//! per-manager config block, and — under the `watch` feature — a file change drives a reload.
+//! manager, never a protocol), an app builder can be configured with that manager, and — under the
+//! `watch` feature — a file change drives a reload.
 #![allow(dead_code)]
 
 use std::fs;
@@ -8,8 +8,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use overseerd::ConfigManager;
-#[cfg(feature = "daemon")]
-use overseerd::app;
 use overseerd::config::Toml;
 #[cfg(any(feature = "daemon", feature = "watch"))]
 use overseerd::dirs::{Config, DirectoriesManager};
@@ -42,25 +40,23 @@ fn config_manager_carries_its_triggers() {
 
 #[tokio::test]
 #[cfg(feature = "daemon")]
-async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::daemon::Result<()> {
+async fn app_builder_builds_with_a_configured_manager() -> overseerd::daemon::Result<()> {
     let root = temp_dir("macro");
     let dirs = DirectoriesManager::from_path(root);
 
     fs::create_dir_all(dirs.dir::<Config>().path()).expect("create config dir");
     fs::write(dirs.dir::<Config>().join("application.toml"), "").expect("write config");
 
-    // `config` is a block (no instance): the macro loads it from the `directories` instance
-    // and applies the triggers to the manager.
-    let built = app! {
-        name: "trigger-macro-test",
-        protocol: overseerd::daemon::Rpc,
-        managers: {
-            directories: dirs,
-            config: { sighup: true, debounce: Duration::from_millis(50) },
-        },
-    }
-    .build()
-    .await?;
+    let config = ConfigManager::<overseerd::config::Dynamic>::load_from(&dirs, &[])?
+        .reload_on_sighup()
+        .config_reload_debounce(Duration::from_millis(50));
+
+    let built = overseerd::App::<overseerd::daemon::Rpc>::builder("trigger-builder-test")
+        .auto_discover()
+        .directories(dirs)
+        .config_source(config)
+        .build()
+        .await?;
 
     // The reloader is always present; a manual reload still works.
     let report = built

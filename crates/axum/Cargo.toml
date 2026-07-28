@@ -59,6 +59,7 @@ hybrid-registry = ["overseerd-axum-macros/hybrid-registry"]
 yaml = ["overseerd-app/yaml", "overseerd-config/yaml"]
 watch = ["overseerd-app/watch", "overseerd-config/watch"]
 tracing-subscriber = ["overseerd-app/tracing-subscriber"]
+tooling = ["overseerd-app/tooling"]
 # OpenAPI 3.1 spec generation via utoipa. Turns on the `ToSchema` derive on `#[dto]`, the
 # `#[utoipa::path]` emission on routes, the operation/schema linkme slices, and the served
 # `/openapi.json` route. Off by default; a plain build pulls no utoipa. Native server surface only.

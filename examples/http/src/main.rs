@@ -41,36 +41,40 @@ mod server {
     use overseerd::prelude::*;
     use overseerd_example_http::auth;
 
-    pub async fn run() -> overseerd::axum::Result<()> {
-        overseerd::builtins::init_tracing(&Default::default()).ok();
-
-        // No `controllers:` listing: each `#[controller]` self-registers into the link-time slices
-        // `auto_discover` folds in, so `app!` only needs the protocol. WebSockets are opt-in via
-        // `register_ws`. `.layer(..)` takes a raw axum/tower layer directly (see `auth::log_requests`).
-        let app = app! {
+    app! {
+        /// Generated host for the native HTTP example server.
+        app HttpApplication {
             name: "example-http",
             protocol: Axum,
+            configure(_context, builder) {
+                Ok::<_, std::convert::Infallible>(
+                    builder
+                        .layer(overseerd::axum::axum::middleware::from_fn(
+                            auth::log_requests,
+                        ))
+                        .register_ws::<JsonWs>("/ws")
+                        .register_ws::<Stomp>("/ws/stomp"),
+                )
+            },
+            serve(_context, app) {
+                println!("{app}");
+
+                let addr = app.protocol().configured_addr();
+                println!("listening on http://{addr}");
+
+                app.serve_configured().await
+            },
         }
-        .layer(overseerd::axum::axum::middleware::from_fn(
-            auth::log_requests,
-        ))
-        .register_ws::<JsonWs>("/ws")
-        .register_ws::<Stomp>("/ws/stomp")
-        .build()
-        .await?;
+    }
 
-        println!("{app}");
-
-        let addr = app.protocol().configured_addr();
-        println!("listening on http://{addr}");
-
-        app.serve_configured().await
+    pub async fn run() -> Result<(), overseerd::CliError> {
+        HttpApplication::run().await
     }
 }
 
 #[cfg(not(target_family = "wasm"))]
 #[tokio::main]
-async fn main() -> overseerd::axum::Result<()> {
+async fn main() -> Result<(), overseerd::CliError> {
     server::run().await
 }
 

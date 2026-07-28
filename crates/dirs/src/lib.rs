@@ -340,9 +340,10 @@ fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
 }
 
 impl<K: DirKind> Component for Dir<K> {
+    type Handle = Dir<K>;
+
     const ID: &'static str = K::COMPONENT_ID;
     const NAME: &'static str = K::NAME;
-    type Handle = Dir<K>;
 
     fn into_handle(self) -> Self::Handle {
         self
@@ -480,9 +481,10 @@ impl DirectoriesManager {
 }
 
 impl Component for DirectoriesManager {
+    type Handle = DirectoriesManager;
+
     const ID: &'static str = "overseerd:directories";
     const NAME: &'static str = "DirectoriesManager";
-    type Handle = DirectoriesManager;
 
     fn into_handle(self) -> Self::Handle {
         self
