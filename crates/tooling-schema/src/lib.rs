@@ -680,6 +680,12 @@ pub enum DiagnosticValidationError {
         /// Diagnostic code.
         code: String,
     },
+    /// A diagnostic source position is not one-based.
+    #[error("diagnostic '{code}' contains invalid source coordinates")]
+    InvalidSourcePosition {
+        /// Diagnostic code.
+        code: String,
+    },
 }
 
 /// Transport-independent validation summary.
@@ -1228,6 +1234,14 @@ pub enum ValidationError {
         /// Duplicated one-based position.
         index: usize,
     },
+    /// A positional argument uses zero instead of a one-based index.
+    #[error("tooling CLI argument '{id}' at '{path}' uses invalid positional index zero")]
+    InvalidCliPosition {
+        /// Containing command path.
+        path: String,
+        /// Argument ID.
+        id: String,
+    },
     /// An argument cardinality has a maximum below its minimum.
     #[error("tooling CLI argument '{id}' at '{path}' has invalid cardinality {min}..={max}")]
     InvalidCliCardinality {
@@ -1326,6 +1340,12 @@ pub enum ValidationError {
         /// Resource identity.
         id: String,
     },
+    /// A resource provenance source position is not one-based.
+    #[error("resource '{id}' provenance contains invalid source coordinates")]
+    InvalidProvenanceSource {
+        /// Resource identity.
+        id: String,
+    },
     /// A non-owner resource claims to own itself.
     #[error("resource '{id}' has self-inconsistent provenance ownership")]
     SelfOwnedResource {
@@ -1411,14 +1431,20 @@ fn validate_diagnostic(diagnostic: &Diagnostic) -> Result<(), DiagnosticValidati
         });
     }
 
-    if diagnostic
-        .sources
-        .iter()
-        .any(|source| is_blank(&source.file))
-    {
-        return Err(DiagnosticValidationError::EmptySource {
-            code: diagnostic.code.clone(),
-        });
+    for source in &diagnostic.sources {
+        match validate_source_location(source) {
+            Ok(()) => {}
+            Err(IdentityValidationError::MissingSource) => {
+                return Err(DiagnosticValidationError::EmptySource {
+                    code: diagnostic.code.clone(),
+                });
+            }
+            Err(_) => {
+                return Err(DiagnosticValidationError::InvalidSourcePosition {
+                    code: diagnostic.code.clone(),
+                });
+            }
+        }
     }
 
     Ok(())
@@ -1457,15 +1483,20 @@ fn validate_provenance(
     let Some(provenance) = resource.provenance.as_ref() else {
         return Ok(());
     };
-    let source_is_empty = provenance
-        .source
-        .as_ref()
-        .is_some_and(|source| is_blank(&source.file));
-
-    if source_is_empty {
-        return Err(ValidationError::EmptyProvenanceSource {
-            id: resource.id.clone(),
-        });
+    if let Some(source) = provenance.source.as_ref() {
+        match validate_source_location(source) {
+            Ok(()) => {}
+            Err(IdentityValidationError::MissingSource) => {
+                return Err(ValidationError::EmptyProvenanceSource {
+                    id: resource.id.clone(),
+                });
+            }
+            Err(_) => {
+                return Err(ValidationError::InvalidProvenanceSource {
+                    id: resource.id.clone(),
+                });
+            }
+        }
     }
 
     let Some(owner) = provenance.owner.as_deref() else {
@@ -1781,10 +1812,17 @@ fn validate_cli_command(
             });
         }
 
-        if let Some(index) = argument.index
-            && !positions.insert(index)
-        {
-            return Err(ValidationError::DuplicateCliPosition { path, index });
+        if let Some(index) = argument.index {
+            if index == 0 {
+                return Err(ValidationError::InvalidCliPosition {
+                    path,
+                    id: argument.id.clone(),
+                });
+            }
+
+            if !positions.insert(index) {
+                return Err(ValidationError::DuplicateCliPosition { path, index });
+            }
         }
 
         if let Some(max) = argument.cardinality.max_values

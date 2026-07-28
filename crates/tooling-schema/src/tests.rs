@@ -228,6 +228,47 @@ fn diagnostic_validation_requires_message_and_source_file() {
 }
 
 #[test]
+fn diagnostic_and_provenance_sources_require_one_based_coordinates() {
+    let mut diagnostic = fixture();
+
+    diagnostic.diagnostics.push(Diagnostic {
+        code: String::from("test/invalid-source"),
+        severity: DiagnosticSeverity::Error,
+        message: String::from("invalid source"),
+        sources: vec![SourceLocation {
+            file: String::from("src/main.rs"),
+            line: Some(0),
+            column: Some(1),
+        }],
+        ..Diagnostic::default()
+    });
+    diagnostic.canonicalize();
+
+    assert!(matches!(
+        diagnostic.validate(),
+        Err(ValidationError::Diagnostic(
+            super::DiagnosticValidationError::InvalidSourcePosition { .. }
+        ))
+    ));
+
+    let mut provenance = fixture();
+
+    provenance.resources[0].provenance = Some(Provenance {
+        source: Some(SourceLocation {
+            file: String::from("src/main.rs"),
+            line: Some(1),
+            column: Some(0),
+        }),
+        ..Provenance::default()
+    });
+
+    assert!(matches!(
+        provenance.validate(),
+        Err(ValidationError::InvalidProvenanceSource { .. })
+    ));
+}
+
+#[test]
 fn inconsistent_serialized_validation_summary_is_rejected() {
     let mut document = fixture();
 
@@ -848,6 +889,26 @@ fn typed_cli_validation_checks_aliases_inherited_globals_and_default_command_ids
     document
         .validate()
         .expect("canonical default command resolves independently of its parser name");
+}
+
+#[test]
+fn typed_cli_validation_rejects_zero_positional_index() {
+    let mut document = fixture();
+    let mut cli = cli_fixture();
+
+    add_cli_resources(&mut document);
+    cli.root.arguments.push(CliArgument {
+        id: String::from("invalid-position"),
+        index: Some(0),
+        owner: CliOwner::Application,
+        ..CliArgument::default()
+    });
+    document.cli = Some(cli);
+
+    assert!(matches!(
+        document.validate(),
+        Err(ValidationError::InvalidCliPosition { .. })
+    ));
 }
 
 #[test]

@@ -587,7 +587,10 @@ async fn generated_tooling_entry_prepares_real_target_without_constructing_runti
             .identity
             .source
             .as_ref()
-            .is_some_and(|source| source.file.ends_with("tests/app_definition.rs"))
+            .is_some_and(|source| source_path_ends_with(
+                &source.file,
+                &["tests", "app_definition.rs"]
+            ))
     );
     assert!(document.resources.iter().any(|resource| {
         resource.id == "component:toolingcomponent" || resource.name == "ToolingComponent"
@@ -678,8 +681,21 @@ async fn library_defined_application_uses_explicit_thin_binary_identity() {
             .identity
             .source
             .as_ref()
-            .is_some_and(|source| source.file.ends_with("tests/app_definition.rs"))
+            .is_some_and(|source| source_path_ends_with(
+                &source.file,
+                &["tests", "app_definition.rs"]
+            ))
     );
+}
+
+#[cfg(feature = "tooling")]
+fn source_path_ends_with(source: &str, suffix: &[&str]) -> bool {
+    let components = std::path::Path::new(source)
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
+
+    components.ends_with(suffix)
 }
 
 #[tokio::test]
