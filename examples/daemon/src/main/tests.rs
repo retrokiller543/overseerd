@@ -119,13 +119,9 @@ async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() 
             .map(|binary| binary.name.as_str()),
         Some("overseerd-example-daemon")
     );
-    assert!(
-        document
-            .identity
-            .source
-            .as_ref()
-            .is_some_and(|source| source.file.ends_with("examples/daemon/src/main.rs"))
-    );
+    assert!(document.identity.source.as_ref().is_some_and(|source| {
+        source_path_ends_with(&source.file, &["examples", "daemon", "src", "main.rs"])
+    }));
     assert_eq!(crate::components::database_builds(), 0);
     assert_eq!(crate::protocol::protocol_builds(), 0);
 
@@ -210,6 +206,15 @@ async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() 
         resource.id.contains("homeledger/audit-policy-config")
             && resource.labels.get("decision").map(String::as_str) == Some("applied")
     }));
+}
+
+fn source_path_ends_with(source: &str, suffix: &[&str]) -> bool {
+    let components = std::path::Path::new(source)
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
+
+    components.ends_with(suffix)
 }
 
 #[tokio::test(flavor = "current_thread")]
