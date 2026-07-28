@@ -69,19 +69,29 @@ fn cancellation_is_always_operational_and_retains_selected_target() {
 #[test]
 fn local_probe_failures_are_operational_and_retain_selected_target() {
     let target = selected_target();
-    let report = super::report_error(
-        CommandKind::Check,
-        ProbeRequestError::Probe {
-            target: Box::new(target.clone()),
-            source: Box::new(ProbeError::Cancelled {
-                evidence: Box::new(empty_probe_evidence()),
-            }),
+    let errors = [
+        ProbeError::Cancelled {
+            evidence: Box::new(empty_probe_evidence()),
         },
-    );
+        ProbeError::Launch(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "fixture launch failure",
+        )),
+    ];
 
-    assert_eq!(report.outcome, CommandOutcome::OperationalFailure);
-    assert_eq!(report.exit_code, CommandExitCode::OperationalFailure.code());
-    assert_eq!(report.target, Some((&target).into()));
+    for error in errors {
+        let report = super::report_error(
+            CommandKind::Check,
+            ProbeRequestError::Probe {
+                target: Box::new(target.clone()),
+                source: Box::new(error),
+            },
+        );
+
+        assert_eq!(report.outcome, CommandOutcome::OperationalFailure);
+        assert_eq!(report.exit_code, CommandExitCode::OperationalFailure.code());
+        assert_eq!(report.target, Some((&target).into()));
+    }
 }
 
 fn selected_target() -> SelectedTarget {
