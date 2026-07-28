@@ -250,10 +250,13 @@ name = "cargo-overseerd"
 version = "0.20.0"
 dependencies = [
  "cargo_metadata",
+ "clap",
  "command-group",
  "fs2",
  "libc",
  "overseerd-tooling-schema",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 
