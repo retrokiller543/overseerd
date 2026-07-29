@@ -2,11 +2,27 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use cargo_overseerd::{CargoExecutable, CommandKind, DiscoveryRequest, FeatureSelection};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::builder::styling::{AnsiColor, Effects, Styles};
+use clap::{
+    Args, ColorChoice, CommandFactory as _, FromArgMatches as _, Parser, Subcommand, ValueEnum,
+};
+
+const CARGO_HELP_STYLES: Styles = Styles::styled()
+    .header(AnsiColor::BrightGreen.on_default().effects(Effects::BOLD))
+    .usage(AnsiColor::BrightGreen.on_default().effects(Effects::BOLD))
+    .literal(AnsiColor::BrightCyan.on_default().effects(Effects::BOLD))
+    .placeholder(AnsiColor::BrightCyan.on_default());
 
 /// Parsed `cargo overseerd` process arguments.
 #[derive(Debug, Parser)]
-#[command(name = "cargo overseerd", version, about)]
+#[command(
+    name = "cargo overseerd",
+    bin_name = "cargo overseerd",
+    version,
+    about,
+    styles = CARGO_HELP_STYLES,
+    color = ColorChoice::Auto
+)]
 pub(crate) struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -232,7 +248,12 @@ pub(crate) enum InspectCliProviderKind {
 
 impl Cli {
     pub(crate) fn parse_cargo() -> Self {
-        Self::parse_from(normalized_arguments(std::env::args_os()))
+        let arguments = normalized_arguments(std::env::args_os());
+        let mut matches = Self::command()
+            .color(help_color_policy())
+            .get_matches_from(arguments);
+
+        Self::from_arg_matches_mut(&mut matches).expect("Clap arguments match the derived CLI")
     }
 
     pub(crate) fn into_request(self) -> CommandRequest {
@@ -260,6 +281,16 @@ impl Cli {
                 output: arguments.output,
             },
         }
+    }
+}
+
+fn help_color_policy() -> ColorChoice {
+    match std::env::var("CARGO_TERM_COLOR").as_deref() {
+        Ok("always") => ColorChoice::Always,
+        Ok("never") => ColorChoice::Never,
+        _ if std::env::var_os("NO_COLOR").is_some() => ColorChoice::Never,
+        _ if std::env::var_os("TERM").is_some_and(|value| value == "dumb") => ColorChoice::Never,
+        _ => ColorChoice::Auto,
     }
 }
 

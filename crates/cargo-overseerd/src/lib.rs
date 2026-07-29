@@ -16,7 +16,7 @@ pub use build::{BuildError, BuildEvidence, BuildResult, CargoDiagnostic};
 use build::{BuildRequest, build_target};
 pub use command::{
     CommandCheck, CommandCheckStatus, CommandExitCode, CommandKind, CommandOutcome, CommandReport,
-    SelectedTargetReport, probe_request_exit_code, run_command,
+    SelectedTargetReport, probe_request_exit_code, run_command, run_command_with_options,
 };
 pub use discovery::{CargoExecutable, DiscoveryError, DiscoveryRequest, discover};
 use fs2::FileExt as _;
@@ -82,6 +82,22 @@ pub fn run_probe(
     request: &DiscoveryRequest,
     cancellation: &CancellationToken,
 ) -> Result<ToolingProbe, ProbeRequestError> {
+    run_probe_with_options(request, cancellation, ProbeOptions::default())
+}
+
+/// Presentation options for one complete application probe.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ProbeOptions {
+    /// Show Cargo's human-readable build output on this process's stderr.
+    pub show_cargo_output: bool,
+}
+
+/// Discovers, builds, and executes one selected application probe with presentation options.
+pub fn run_probe_with_options(
+    request: &DiscoveryRequest,
+    cancellation: &CancellationToken,
+    options: ProbeOptions,
+) -> Result<ToolingProbe, ProbeRequestError> {
     let (workspace, _) = discover(request, cancellation)?;
     let _lock = InvocationLock::acquire(&workspace.target_directory, cancellation)?;
     let (workspace, target) = discover(request, cancellation)?;
@@ -93,6 +109,7 @@ pub fn run_probe(
             features: request.features.clone(),
             workspace_target_directory: workspace.target_directory.clone(),
             selected: target.clone(),
+            show_cargo_output: options.show_cargo_output,
         },
         cancellation,
     )

@@ -1,3 +1,4 @@
+use std::io::Write as _;
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -73,6 +74,49 @@ pub(crate) fn execute(
     stdout_limit: usize,
     stderr_limit: usize,
 ) -> Result<ProcessOutput, ProcessExecutionError> {
+    execute_with_stderr(command, cancellation, stdout_limit, stderr_limit, false)
+}
+
+pub(crate) fn execute_with_stderr(
+    command: &mut Command,
+    cancellation: &CancellationToken,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    mirror_stderr: bool,
+) -> Result<ProcessOutput, ProcessExecutionError> {
+    execute_with_mirror(
+        command,
+        cancellation,
+        stdout_limit,
+        stderr_limit,
+        mirror_stderr.then_some(MirrorOutput::Stderr),
+    )
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn execute_with_mirror_writer(
+    command: &mut Command,
+    cancellation: &CancellationToken,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    writer: Box<dyn std::io::Write + Send>,
+) -> Result<ProcessOutput, ProcessExecutionError> {
+    execute_with_mirror(
+        command,
+        cancellation,
+        stdout_limit,
+        stderr_limit,
+        Some(MirrorOutput::Writer(writer)),
+    )
+}
+
+fn execute_with_mirror(
+    command: &mut Command,
+    cancellation: &CancellationToken,
+    stdout_limit: usize,
+    stderr_limit: usize,
+    mirror_stderr: Option<MirrorOutput>,
+) -> Result<ProcessOutput, ProcessExecutionError> {
     let capture_complete = Arc::new(AtomicBool::new(false));
     let mut cancelled = false;
 
@@ -106,6 +150,7 @@ pub(crate) fn execute(
             .expect("piped child stdout is available after spawn"),
         stdout_limit,
         Arc::clone(&capture_complete),
+        None,
     );
     let stderr_thread = capture(
         child
@@ -115,6 +160,7 @@ pub(crate) fn execute(
             .expect("piped child stderr is available after spawn"),
         stderr_limit,
         Arc::clone(&capture_complete),
+        mirror_stderr,
     );
 
     let monitored = loop {
@@ -188,10 +234,35 @@ struct CapturedOutput {
     truncated: bool,
 }
 
+enum MirrorOutput {
+    Stderr,
+    #[cfg(all(test, unix))]
+    Writer(Box<dyn std::io::Write + Send>),
+}
+
+impl MirrorOutput {
+    fn write_all(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        match self {
+            Self::Stderr => {
+                let mut stderr = std::io::stderr().lock();
+
+                stderr.write_all(bytes)?;
+                stderr.flush()
+            }
+            #[cfg(all(test, unix))]
+            Self::Writer(writer) => {
+                writer.write_all(bytes)?;
+                writer.flush()
+            }
+        }
+    }
+}
+
 fn capture(
     mut reader: impl CaptureReader,
     limit: usize,
     complete: Arc<AtomicBool>,
+    mut mirror: Option<MirrorOutput>,
 ) -> JoinHandle<std::io::Result<CapturedOutput>> {
     std::thread::spawn(move || {
         let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
@@ -232,6 +303,12 @@ fn capture(
 
             bytes.extend_from_slice(&buffer[..retained]);
             truncated |= retained < read;
+
+            if let Some(output) = &mut mirror
+                && output.write_all(&buffer[..read]).is_err()
+            {
+                mirror = None;
+            }
         }
 
         Ok(CapturedOutput { bytes, truncated })

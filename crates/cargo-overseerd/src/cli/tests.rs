@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 
-use clap::Parser;
+use clap::{CommandFactory as _, Parser};
 
 use super::{
     Cli, CommandRequest, ExportFormat, InspectFormat, InspectResourceKind, ReportFormat,
@@ -119,4 +119,26 @@ fn export_parses_payload_and_output_path() {
         output.as_deref(),
         Some(std::path::Path::new("inspection.json"))
     );
+}
+
+#[test]
+fn cargo_help_uses_external_subcommand_invocation_name() {
+    let mut command = Cli::command();
+    let mut output = Vec::new();
+
+    command
+        .write_long_help(&mut output)
+        .expect("long help writes");
+
+    let output = String::from_utf8(output).expect("help is UTF-8");
+
+    assert!(output.contains("Usage: cargo overseerd <COMMAND>"));
+}
+
+#[test]
+fn cargo_help_uses_colored_cargo_style_headings_and_literals() {
+    let styles = Cli::command().get_styles().clone();
+
+    assert_eq!(styles.get_header().to_string(), "\u{1b}[1m\u{1b}[92m");
+    assert_eq!(styles.get_literal().to_string(), "\u{1b}[1m\u{1b}[96m");
 }
