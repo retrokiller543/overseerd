@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use overseerd_tooling_schema::{
-    CliArgument, CliCommand, Diagnostic, Facet, Provenance, SourceLocation, ToolingDocument,
+    CliArgument, CliCommand, Diagnostic, Facet, Provenance, Resource, ResourceKind, SourceLocation,
+    ToolingDocument,
 };
 
 use crate::cli::InspectFilters;
@@ -262,28 +263,43 @@ fn matches_cli_provider(
             .cli_provider_kinds
             .iter()
             .any(|kind| cli_provider_kind_matches(provider.kind, *kind));
-    let resource_matches = filters.resources.is_empty()
-        || filters.resources.iter().any(|filter| {
-            filter == &provider.id
-                || filter == &provider.contributor
-                || filter == &provider.contribution
-        });
     let contributor = document
         .resources
         .iter()
         .find(|resource| resource.id == provider.contributor);
+    let contribution_id = format!(
+        "contribution:{}:{}",
+        provider.contributor, provider.contribution
+    );
+    let contribution = document
+        .resources
+        .iter()
+        .find(|resource| resource.id == contribution_id);
+    let resource_matches = filters.resources.is_empty()
+        || filters.resources.iter().any(|filter| {
+            filter == &provider.id
+                || resource_matches_filter(contributor, filter)
+                || resource_matches_filter(contribution, filter)
+        });
     let contributor_matches = filters.contributors.is_empty()
         || filters.contributors.iter().any(|filter| {
             filter == &provider.contributor
                 || contributor.is_some_and(|resource| filter == &resource.name)
         });
     let plugin_matches = filters.plugins.is_empty()
-        || filters.plugins.iter().any(|filter| {
-            filter == &provider.contributor
-                || contributor.is_some_and(|resource| filter == &resource.name)
+        || contributor.is_some_and(|resource| {
+            matches!(resource.kind, ResourceKind::Plugin)
+                && filters
+                    .plugins
+                    .iter()
+                    .any(|filter| filter == &resource.id || filter == &resource.name)
         });
 
     kind_matches && resource_matches && contributor_matches && plugin_matches
+}
+
+fn resource_matches_filter(resource: Option<&Resource>, filter: &str) -> bool {
+    resource.is_some_and(|resource| filter == resource.id || filter == resource.name)
 }
 
 fn write_cli_command(

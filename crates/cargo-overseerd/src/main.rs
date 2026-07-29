@@ -32,15 +32,9 @@ fn execute(request: CommandRequest) -> ExitCode {
         } => {
             let report = run_command(command, &discovery, &cancellation);
             let exit_code = report.exit_code().code();
+            let result = render::write_report(&report, format, &mut std::io::stdout().lock());
 
-            if let Err(error) = render::write_report(&report, format, &mut std::io::stdout().lock())
-            {
-                eprintln!("cargo overseerd could not write its command report: {error}");
-
-                return operational_failure();
-            }
-
-            ExitCode::from(exit_code)
+            finish_output(result, ExitCode::from(exit_code), "command report")
         }
         CommandRequest::Inspect {
             discovery,
@@ -48,10 +42,20 @@ fn execute(request: CommandRequest) -> ExitCode {
             filters,
             color,
             pager,
-        } => match run_probe(&discovery, &cancellation) {
-            Ok(probe) => inspect(probe.probe.envelope, format, filters, color, pager),
-            Err(error) => probe_error(error),
-        },
+        } => {
+            if format == InspectFormat::Json && !filters.is_empty() {
+                eprintln!(
+                    "cargo overseerd inspect filters require text output; canonical JSON is always the complete document"
+                );
+
+                return ExitCode::from(CommandExitCode::Misuse.code());
+            }
+
+            match run_probe(&discovery, &cancellation) {
+                Ok(probe) => inspect(probe.probe.envelope, format, filters, color, pager),
+                Err(error) => probe_error(error),
+            }
+        }
         CommandRequest::Export {
             discovery,
             format,
@@ -70,14 +74,6 @@ fn inspect(
     color: TerminalPolicy,
     pager: TerminalPolicy,
 ) -> ExitCode {
-    if format == InspectFormat::Json && !filters.is_empty() {
-        eprintln!(
-            "cargo overseerd inspect filters require text output; canonical JSON is always the complete document"
-        );
-
-        return ExitCode::from(CommandExitCode::Misuse.code());
-    }
-
     let ProbeOutcome::Success { document } = envelope.outcome else {
         eprintln!("cargo overseerd inspect could not prepare an inspection document");
 
@@ -89,13 +85,7 @@ fn inspect(
         InspectFormat::Json => write_document_json(&document, &mut io::stdout().lock()),
     };
 
-    if let Err(error) = result {
-        eprintln!("cargo overseerd could not write its inspection: {error}");
-
-        return operational_failure();
-    }
-
-    exit_code
+    finish_output(result, exit_code, "inspection")
 }
 
 fn export(envelope: ProbeEnvelope, format: ExportFormat, output: Option<&Path>) -> ExitCode {
@@ -122,13 +112,19 @@ fn export(envelope: ProbeEnvelope, format: ExportFormat, output: Option<&Path>) 
         }),
     };
 
-    if let Err(error) = result {
-        eprintln!("cargo overseerd could not write its export: {error}");
+    finish_output(result, exit_code, "export")
+}
 
-        return operational_failure();
+fn finish_output(result: io::Result<()>, exit_code: ExitCode, output: &str) -> ExitCode {
+    match result {
+        Ok(()) => exit_code,
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => exit_code,
+        Err(error) => {
+            eprintln!("cargo overseerd could not write its {output}: {error}");
+
+            operational_failure()
+        }
     }
-
-    exit_code
 }
 
 fn write_document_json(document: &ToolingDocument, output: &mut dyn io::Write) -> io::Result<()> {
