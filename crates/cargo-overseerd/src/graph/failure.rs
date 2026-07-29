@@ -22,7 +22,7 @@ pub fn query_failure_graph(
     query: &GraphQuery,
 ) -> Result<GraphView, GraphQueryError> {
     let mut diagnostics = canonical_diagnostics(&failure.diagnostics);
-    let mut nodes = diagnostic_nodes(&mut diagnostics);
+    let mut nodes = diagnostic_nodes(&mut diagnostics, &failure.resource_kinds);
     let selected = resolve_query_roots(&nodes, query)?;
 
     if query.has_selectors() {
@@ -73,7 +73,10 @@ fn canonical_diagnostics(diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
     diagnostics
 }
 
-fn diagnostic_nodes(diagnostics: &mut [Diagnostic]) -> Vec<Resource> {
+fn diagnostic_nodes(
+    diagnostics: &mut [Diagnostic],
+    resource_kinds: &BTreeMap<String, ResourceKind>,
+) -> Vec<Resource> {
     let mut identities = diagnostics
         .iter()
         .flat_map(|diagnostic| diagnostic.resources.iter().cloned())
@@ -100,7 +103,14 @@ fn diagnostic_nodes(diagnostics: &mut [Diagnostic]) -> Vec<Resource> {
 
     identities
         .iter()
-        .map(|id| diagnostic_node(id.clone(), resource_kind(id, &identities)))
+        .map(|id| {
+            let kind = resource_kinds
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| resource_kind(id));
+
+            diagnostic_node(id.clone(), kind)
+        })
         .collect()
 }
 
@@ -125,11 +135,7 @@ fn diagnostic_node(id: String, kind: ResourceKind) -> Resource {
     }
 }
 
-fn resource_kind(id: &str, identities: &BTreeSet<String>) -> ResourceKind {
-    if tooling_owner(id).is_some_and(|owner| identities.contains(owner)) {
-        return ResourceKind::Contribution;
-    }
-
+fn resource_kind(id: &str) -> ResourceKind {
     let prefix = id.split_once(':').map_or(id, |(prefix, _)| prefix);
 
     match prefix {
@@ -148,17 +154,6 @@ fn resource_kind(id: &str, identities: &BTreeSet<String>) -> ResourceKind {
         "framework" => ResourceKind::Contributor,
         _ => ResourceKind::Type,
     }
-}
-
-fn tooling_owner(id: &str) -> Option<&str> {
-    let (owner, local) = id.rsplit_once("/tooling/")?;
-
-    (!local.is_empty()
-        && matches!(
-            owner.split_once(':'),
-            Some(("plugin" | "protocol", value)) if !value.is_empty()
-        ))
-    .then_some(owner)
 }
 
 fn resolve_query_roots(

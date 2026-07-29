@@ -19,7 +19,46 @@ pub(super) fn app_diagnostics(error: &crate::Error, phase: Option<String>) -> Op
         _ => return None,
     };
 
-    Some(ProbeFailure { phase, diagnostics })
+    let resource_kinds = diagnostic_resource_kinds(&diagnostics);
+
+    Some(ProbeFailure {
+        phase,
+        diagnostics,
+        resource_kinds,
+    })
+}
+
+pub(super) fn diagnostic_resource_kinds(
+    diagnostics: &[Diagnostic],
+) -> std::collections::BTreeMap<String, overseerd_tooling_schema::ResourceKind> {
+    diagnostics
+        .iter()
+        .flat_map(|diagnostic| diagnostic.resources.iter())
+        .filter_map(|id| diagnostic_resource_kind(id).map(|kind| (id.clone(), kind)))
+        .collect()
+}
+
+fn diagnostic_resource_kind(id: &str) -> Option<overseerd_tooling_schema::ResourceKind> {
+    use overseerd_tooling_schema::ResourceKind;
+
+    let kind = match id.split_once(':').map_or(id, |(prefix, _)| prefix) {
+        "application" => ResourceKind::Application,
+        "protocol" => ResourceKind::Protocol,
+        "plugin" => ResourceKind::Plugin,
+        "component" => ResourceKind::Component,
+        "provider" => ResourceKind::Provider,
+        "config-binding" => ResourceKind::ConfigBinding,
+        "hook" => ResourceKind::Hook,
+        "lifecycle" => ResourceKind::Lifecycle,
+        "scope" => ResourceKind::Scope,
+        "type" => ResourceKind::Type,
+        "contribution" => ResourceKind::Contribution,
+        "plugin-slot" => ResourceKind::PluginSlot,
+        "framework" => ResourceKind::Contributor,
+        _ => return None,
+    };
+
+    Some(kind)
 }
 
 fn composition_diagnostic(error: &crate::CompositionDiagnostic) -> Diagnostic {

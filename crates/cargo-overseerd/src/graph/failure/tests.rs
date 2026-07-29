@@ -152,7 +152,7 @@ fn orphan_provider_graph_has_provider_component_and_type_nodes() {
 
 #[test]
 fn owner_qualified_tooling_resources_remain_contributions() {
-    let failure = failure(
+    let mut failure = failure(
         Some("prepare"),
         vec![diagnostic(
             "fixture/tooling-resource",
@@ -165,6 +165,16 @@ fn owner_qualified_tooling_resources_remain_contributions() {
             ],
         )],
     );
+    failure.resource_kinds.extend([
+        (
+            String::from("plugin:fixture/worker/tooling/route"),
+            ResourceKind::Contribution,
+        ),
+        (
+            String::from("protocol:fixture/http/tooling/controller"),
+            ResourceKind::Contribution,
+        ),
+    ]);
     let view = failure_graph(&failure, &GraphQuery::default()).expect("failure graph resolves");
 
     assert_eq!(
@@ -341,6 +351,7 @@ fn failure(phase: Option<&str>, diagnostics: Vec<Diagnostic>) -> ProbeFailure {
     ProbeFailure {
         phase: phase.map(str::to_string),
         diagnostics,
+        resource_kinds: Default::default(),
     }
 }
 

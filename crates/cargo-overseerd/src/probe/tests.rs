@@ -74,6 +74,7 @@ fn envelope() -> ProbeEnvelope {
                 message: String::from("fixture"),
                 ..overseerd_tooling_schema::Diagnostic::default()
             }],
+            resource_kinds: Default::default(),
         },
     )
 }

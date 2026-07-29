@@ -409,6 +409,7 @@ fn probe_envelopes_round_trip_target_identity_for_success_and_failure() {
                 sources: Vec::new(),
                 fix: Some(String::from("fix the fixture")),
             }],
+            resource_kinds: BTreeMap::new(),
         },
     );
 
@@ -641,6 +642,7 @@ fn failure_fixture() -> ProbeFailure {
             sources: Vec::new(),
             fix: None,
         }],
+        resource_kinds: BTreeMap::new(),
     }
 }
 

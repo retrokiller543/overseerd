@@ -184,6 +184,7 @@ impl ToolingProbeError {
         ProbeFailure {
             phase,
             diagnostics: vec![diagnostic],
+            resource_kinds: BTreeMap::new(),
         }
     }
 
@@ -194,6 +195,7 @@ impl ToolingProbeError {
             Self::CliDefinition(error) => Some(ProbeFailure {
                 phase: None,
                 diagnostics: vec![failure::cli_definition_diagnostic(error)],
+                resource_kinds: BTreeMap::new(),
             }),
             Self::Lifecycle(error) => error
                 .source()
