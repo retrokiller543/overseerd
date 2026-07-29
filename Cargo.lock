@@ -259,6 +259,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1866,6 +1867,7 @@ dependencies = [
 name = "overseerd-tooling-schema"
 version = "0.20.0"
 dependencies = [
+ "semver",
  "serde",
  "serde_json",
  "thiserror",

@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -12,8 +13,8 @@ use thiserror::Error;
 /// JSON value used by opaque protocol and plugin facets.
 pub use serde_json::Value as JsonValue;
 
-/// The schema major emitted by this crate.
-pub const SCHEMA_MAJOR: u16 = 1;
+/// Tooling schema version published by this package.
+pub const TOOLING_SCHEMA_VERSION: Version = parse_package_version(env!("CARGO_PKG_VERSION"));
 
 /// Exact hidden process argument used to request one target-local tooling probe.
 pub const TOOLING_PROBE_ARGUMENT: &str = "--__overseerd-tooling-probe-v1";
@@ -33,18 +34,55 @@ pub const TOOLING_PROBE_MANIFEST_PATH_ENV: &str = "OVERSEERD_TOOLING_PROBE_MANIF
 /// Environment variable containing the Cargo binary target selected by the tooling invoker.
 pub const TOOLING_PROBE_BINARY_NAME_ENV: &str = "OVERSEERD_TOOLING_PROBE_BINARY_NAME";
 
-/// The compatibility version of a tooling document.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct SchemaVersion {
-    /// The breaking-change boundary for the document.
-    pub major: u16,
+const fn parse_package_version(version: &str) -> Version {
+    let bytes = version.as_bytes();
+    let mut components = [0_u64; 3];
+    let mut component = 0_usize;
+    let mut has_digit = false;
+    let mut index = 0_usize;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+
+        if byte >= b'0' && byte <= b'9' {
+            components[component] = match components[component].checked_mul(10) {
+                Some(value) => value,
+                None => panic!("tooling schema package version component overflows u64"),
+            };
+            components[component] = match components[component].checked_add((byte - b'0') as u64) {
+                Some(value) => value,
+                None => panic!("tooling schema package version component overflows u64"),
+            };
+            has_digit = true;
+        } else if byte == b'.' {
+            assert!(
+                has_digit && component < 2,
+                "tooling schema package version must contain major, minor, and patch components"
+            );
+
+            component += 1;
+            has_digit = false;
+        } else {
+            panic!("tooling schema package version must not contain prerelease or build metadata");
+        }
+
+        index += 1;
+    }
+
+    assert!(
+        component == 2 && has_digit,
+        "tooling schema package version must contain major, minor, and patch components"
+    );
+
+    Version::new(components[0], components[1], components[2])
 }
 
-impl SchemaVersion {
-    /// The current schema version.
-    pub const CURRENT: Self = Self {
-        major: SCHEMA_MAJOR,
-    };
+fn schema_requirement() -> VersionReq {
+    VersionReq::parse(&format!(
+        "^{}.{}",
+        TOOLING_SCHEMA_VERSION.major, TOOLING_SCHEMA_VERSION.minor
+    ))
+    .expect("the package-derived tooling schema requirement is valid")
 }
 
 /// Cargo package identity, when a target-local entry supplies it.
@@ -208,7 +246,7 @@ pub enum ProbeOutcome {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ProbeEnvelope {
     /// Envelope compatibility version.
-    pub schema: SchemaVersion,
+    pub schema: Version,
     /// Target identity retained even when preparation fails.
     pub identity: DocumentIdentity,
     /// Probe result.
@@ -222,7 +260,7 @@ impl ProbeEnvelope {
         document.identity = identity.clone();
 
         Self {
-            schema: SchemaVersion::CURRENT,
+            schema: TOOLING_SCHEMA_VERSION,
             identity,
             outcome: ProbeOutcome::Success {
                 document: Box::new(document),
@@ -233,7 +271,7 @@ impl ProbeEnvelope {
     /// Creates a failed envelope with target identity and a stable typed failure.
     pub fn failure(identity: DocumentIdentity, failure: ProbeFailure) -> Self {
         Self {
-            schema: SchemaVersion::CURRENT,
+            schema: TOOLING_SCHEMA_VERSION,
             identity,
             outcome: ProbeOutcome::Failure { failure },
         }
@@ -244,11 +282,17 @@ impl ProbeEnvelope {
         matches!(self.outcome, ProbeOutcome::Success { .. })
     }
 
+    /// Whether this envelope's schema satisfies a consumer's semantic-version requirement.
+    pub fn schema_matches(&self, requirement: &VersionReq) -> bool {
+        requirement.matches(&self.schema)
+    }
+
     /// Validates the envelope, its payload, and cross-boundary identity invariants.
     pub fn validate(&self) -> Result<(), ProbeValidationError> {
-        if self.schema.major != SCHEMA_MAJOR {
-            return Err(ProbeValidationError::UnsupportedSchemaMajor {
-                actual: self.schema.major,
+        if !schema_requirement().matches(&self.schema) {
+            return Err(ProbeValidationError::IncompatibleSchema {
+                actual: self.schema.clone(),
+                required: schema_requirement(),
             });
         }
 
@@ -299,11 +343,13 @@ impl ProbeEnvelope {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum ProbeValidationError {
-    /// The envelope belongs to another breaking schema generation.
-    #[error("unsupported probe envelope schema major {actual}; expected {SCHEMA_MAJOR}")]
-    UnsupportedSchemaMajor {
-        /// Encountered major version.
-        actual: u16,
+    /// The envelope belongs to an incompatible tooling-schema release.
+    #[error("incompatible probe envelope schema {actual}; expected {required}")]
+    IncompatibleSchema {
+        /// Encountered schema version.
+        actual: Version,
+        /// Compatible schema releases.
+        required: VersionReq,
     },
     /// Target or declaration identity is incomplete.
     #[error(transparent)]
@@ -897,7 +943,7 @@ impl Default for ValidationResult {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ToolingDocument {
     /// Document compatibility version.
-    pub schema: SchemaVersion,
+    pub schema: Version,
     /// Overseerd framework version that produced the document.
     pub framework_version: String,
     /// Application/package/binary/source identity.
@@ -978,11 +1024,17 @@ impl ToolingDocument {
         self.validation = validation_result(&self.diagnostics);
     }
 
+    /// Whether this document's schema satisfies a consumer's semantic-version requirement.
+    pub fn schema_matches(&self, requirement: &VersionReq) -> bool {
+        requirement.matches(&self.schema)
+    }
+
     /// Validates schema and referential invariants without changing the document.
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if self.schema.major != SCHEMA_MAJOR {
-            return Err(ValidationError::UnsupportedSchemaMajor {
-                actual: self.schema.major,
+        if !schema_requirement().matches(&self.schema) {
+            return Err(ValidationError::IncompatibleSchema {
+                actual: self.schema.clone(),
+                required: schema_requirement(),
             });
         }
 
@@ -1090,7 +1142,7 @@ impl ToolingDocument {
 impl Default for ToolingDocument {
     fn default() -> Self {
         Self {
-            schema: SchemaVersion::CURRENT,
+            schema: TOOLING_SCHEMA_VERSION,
             framework_version: String::new(),
             identity: DocumentIdentity::default(),
             protocol: String::new(),
@@ -1108,11 +1160,13 @@ impl Default for ToolingDocument {
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 #[non_exhaustive]
 pub enum ValidationError {
-    /// The document belongs to another breaking schema generation.
-    #[error("unsupported tooling schema major {actual}; expected {SCHEMA_MAJOR}")]
-    UnsupportedSchemaMajor {
-        /// Encountered major version.
-        actual: u16,
+    /// The document belongs to an incompatible tooling-schema release.
+    #[error("incompatible tooling schema {actual}; expected {required}")]
+    IncompatibleSchema {
+        /// Encountered schema version.
+        actual: Version,
+        /// Compatible schema releases.
+        required: VersionReq,
     },
     /// The application identity is absent.
     #[error("tooling document has no application identity")]

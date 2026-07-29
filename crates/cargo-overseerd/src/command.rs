@@ -1,4 +1,6 @@
-use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity, DocumentIdentity, ProbeOutcome};
+use overseerd_tooling_schema::{
+    Diagnostic, DiagnosticSeverity, DocumentIdentity, ProbeOutcome, TOOLING_SCHEMA_VERSION,
+};
 use semver::{Version, VersionReq};
 use serde::Serialize;
 
@@ -12,57 +14,6 @@ use diagnostic::{
     append_evidence_diagnostics, build_diagnostics, discovery_diagnostics, probe_diagnostics,
     tool_diagnostic,
 };
-
-/// Machine-readable command schema version published by this package.
-///
-/// Cargo Overseerd release versions must contain exactly major, minor, and patch components so
-/// prerelease or build metadata cannot be silently advertised with stable schema semantics.
-pub const COMMAND_SCHEMA_VERSION: Version = parse_package_version(env!("CARGO_PKG_VERSION"));
-
-const fn parse_package_version(version: &str) -> Version {
-    let bytes = version.as_bytes();
-    let mut components = [0_u64; 3];
-    let mut component = 0_usize;
-    let mut has_digit = false;
-    let mut index = 0_usize;
-
-    while index < bytes.len() {
-        let byte = bytes[index];
-
-        if byte >= b'0' && byte <= b'9' {
-            components[component] = match components[component].checked_mul(10) {
-                Some(value) => value,
-                None => panic!("Cargo package version component overflows u64"),
-            };
-            components[component] = match components[component].checked_add((byte - b'0') as u64) {
-                Some(value) => value,
-                None => panic!("Cargo package version component overflows u64"),
-            };
-            has_digit = true;
-        } else if byte == b'.' {
-            assert!(
-                has_digit && component < 2,
-                "Cargo package version must contain major, minor, and patch components"
-            );
-
-            component += 1;
-            has_digit = false;
-        } else {
-            panic!(
-                "Cargo Overseerd package versions must not contain prerelease or build metadata"
-            );
-        }
-
-        index += 1;
-    }
-
-    assert!(
-        component == 2 && has_digit,
-        "Cargo package version must contain major, minor, and patch components"
-    );
-
-    Version::new(components[0], components[1], components[2])
-}
 
 /// Cargo Overseerd command represented by a report.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -104,6 +55,31 @@ impl CommandExitCode {
             Self::BuildFailure => 4,
             Self::ProbeFailure => 5,
             Self::OperationalFailure => 6,
+        }
+    }
+}
+
+/// Returns the stable process exit category for a failed probe request.
+pub fn probe_request_exit_code(error: &ProbeRequestError) -> CommandExitCode {
+    probe_request_outcome(error).exit_code()
+}
+
+fn probe_request_outcome(error: &ProbeRequestError) -> CommandOutcome {
+    match error {
+        ProbeRequestError::Discovery(error) if discovery_cancelled(error) => {
+            CommandOutcome::OperationalFailure
+        }
+        ProbeRequestError::Discovery(_) => CommandOutcome::TargetSelectionFailure,
+        ProbeRequestError::Build { source, .. } if build_cancelled(source) => {
+            CommandOutcome::OperationalFailure
+        }
+        ProbeRequestError::Build { .. } => CommandOutcome::BuildFailure,
+        ProbeRequestError::Probe { source, .. } if probe_operational(source) => {
+            CommandOutcome::OperationalFailure
+        }
+        ProbeRequestError::Probe { .. } => CommandOutcome::ProbeFailure,
+        ProbeRequestError::Lock(_) | ProbeRequestError::LockCancelled => {
+            CommandOutcome::OperationalFailure
         }
     }
 }
@@ -236,7 +212,7 @@ impl CommandReport {
 
     fn new(command: CommandKind, outcome: CommandOutcome) -> Self {
         Self {
-            schema: COMMAND_SCHEMA_VERSION,
+            schema: TOOLING_SCHEMA_VERSION,
             command,
             outcome,
             exit_code: outcome.exit_code().code(),
@@ -407,39 +383,18 @@ fn add_framework_version_check(report: &mut CommandReport, framework_version: &s
 }
 
 fn report_error(command: CommandKind, error: ProbeRequestError) -> CommandReport {
-    let (outcome, target, diagnostics) = match error {
-        ProbeRequestError::Discovery(error) if discovery_cancelled(&error) => (
-            CommandOutcome::OperationalFailure,
-            None,
-            discovery_diagnostics(&error),
-        ),
-        ProbeRequestError::Discovery(error) => (
-            CommandOutcome::TargetSelectionFailure,
-            None,
-            discovery_diagnostics(&error),
-        ),
-        ProbeRequestError::Build { target, source } if build_cancelled(&source) => (
-            CommandOutcome::OperationalFailure,
-            Some(SelectedTargetReport::from(target.as_ref())),
-            build_diagnostics(&source),
-        ),
+    let outcome = probe_request_outcome(&error);
+    let (target, diagnostics) = match error {
+        ProbeRequestError::Discovery(error) => (None, discovery_diagnostics(&error)),
         ProbeRequestError::Build { target, source } => (
-            CommandOutcome::BuildFailure,
             Some(SelectedTargetReport::from(target.as_ref())),
             build_diagnostics(&source),
-        ),
-        ProbeRequestError::Probe { target, source } if probe_operational(&source) => (
-            CommandOutcome::OperationalFailure,
-            Some(SelectedTargetReport::from(target.as_ref())),
-            probe_diagnostics(&source),
         ),
         ProbeRequestError::Probe { target, source } => (
-            CommandOutcome::ProbeFailure,
             Some(SelectedTargetReport::from(target.as_ref())),
             probe_diagnostics(&source),
         ),
         ProbeRequestError::Lock(error) => (
-            CommandOutcome::OperationalFailure,
             None,
             vec![tool_diagnostic(
                 "cargo-overseerd/invocation-lock",
@@ -450,7 +405,6 @@ fn report_error(command: CommandKind, error: ProbeRequestError) -> CommandReport
             )],
         ),
         ProbeRequestError::LockCancelled => (
-            CommandOutcome::OperationalFailure,
             None,
             vec![tool_diagnostic(
                 "cargo-overseerd/cancelled",

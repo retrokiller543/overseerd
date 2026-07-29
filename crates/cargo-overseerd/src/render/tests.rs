@@ -1,15 +1,15 @@
 use cargo_overseerd::{
-    COMMAND_SCHEMA_VERSION, CommandKind, CommandOutcome, CommandReport, SelectedTargetReport,
+    CommandKind, CommandOutcome, CommandReport, SelectedTargetReport, TOOLING_SCHEMA_VERSION,
 };
 use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity, DocumentIdentity, SourceLocation};
 
 use super::write_report;
-use crate::cli::OutputFormat;
+use crate::cli::ReportFormat;
 
 #[test]
 fn terminal_report_exposes_live_application_identity() {
     let report = CommandReport {
-        schema: COMMAND_SCHEMA_VERSION,
+        schema: TOOLING_SCHEMA_VERSION,
         command: CommandKind::Check,
         outcome: CommandOutcome::Success,
         exit_code: 0,
@@ -30,7 +30,7 @@ fn terminal_report_exposes_live_application_identity() {
     };
     let mut output = Vec::new();
 
-    write_report(&report, OutputFormat::Terminal, &mut output).expect("terminal report writes");
+    write_report(&report, ReportFormat::Terminal, &mut output).expect("terminal report writes");
 
     let output = String::from_utf8(output).expect("terminal report is UTF-8");
 
@@ -41,7 +41,7 @@ fn terminal_report_exposes_live_application_identity() {
 #[test]
 fn json_report_is_one_machine_readable_line() {
     let report = CommandReport {
-        schema: COMMAND_SCHEMA_VERSION,
+        schema: TOOLING_SCHEMA_VERSION,
         command: CommandKind::Check,
         outcome: CommandOutcome::Success,
         exit_code: 0,
@@ -54,7 +54,7 @@ fn json_report_is_one_machine_readable_line() {
     };
     let mut output = Vec::new();
 
-    write_report(&report, OutputFormat::Json, &mut output).expect("JSON report writes");
+    write_report(&report, ReportFormat::Json, &mut output).expect("JSON report writes");
 
     let output = String::from_utf8(output).expect("JSON report is UTF-8");
 
@@ -65,7 +65,7 @@ fn json_report_is_one_machine_readable_line() {
 #[test]
 fn terminal_report_preserves_line_without_column() {
     let report = CommandReport {
-        schema: COMMAND_SCHEMA_VERSION,
+        schema: TOOLING_SCHEMA_VERSION,
         command: CommandKind::Check,
         outcome: CommandOutcome::BuildFailure,
         exit_code: 4,
@@ -88,7 +88,7 @@ fn terminal_report_preserves_line_without_column() {
     };
     let mut output = Vec::new();
 
-    write_report(&report, OutputFormat::Terminal, &mut output).expect("terminal report writes");
+    write_report(&report, ReportFormat::Terminal, &mut output).expect("terminal report writes");
 
     let output = String::from_utf8(output).expect("terminal report is UTF-8");
 
