@@ -15,11 +15,12 @@ use std::fs::OpenOptions;
 pub use build::{BuildError, BuildEvidence, BuildResult, CargoDiagnostic};
 use build::{BuildRequest, build_target};
 pub use command::{
-    COMMAND_SCHEMA_VERSION, CommandCheck, CommandCheckStatus, CommandExitCode, CommandKind,
-    CommandOutcome, CommandReport, SelectedTargetReport, run_command,
+    CommandCheck, CommandCheckStatus, CommandExitCode, CommandKind, CommandOutcome, CommandReport,
+    SelectedTargetReport, probe_request_exit_code, run_command,
 };
 pub use discovery::{CargoExecutable, DiscoveryError, DiscoveryRequest, discover};
 use fs2::FileExt as _;
+pub use overseerd_tooling_schema::TOOLING_SCHEMA_VERSION;
 use probe::execute_probe;
 pub use probe::{ProbeError, ProbeEvidence, ProbeResult};
 pub use process::{CancellationToken, ProcessStatus};

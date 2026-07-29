@@ -4,10 +4,10 @@ use crate::{
     BuildError, BuildEvidence, ProbeError, ProbeEvidence, ProbeRequestError, ProcessStatus,
     SelectedTarget,
 };
-use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity};
-use semver::{Version, VersionReq};
+use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity, TOOLING_SCHEMA_VERSION};
+use semver::VersionReq;
 
-use super::{COMMAND_SCHEMA_VERSION, CommandExitCode, CommandKind, CommandOutcome, CommandReport};
+use super::{CommandExitCode, CommandKind, CommandOutcome, CommandReport};
 
 #[test]
 fn exit_categories_have_stable_distinct_codes() {
@@ -43,11 +43,8 @@ fn json_report_is_versioned_and_canonicalizes_diagnostics() {
 
     let json = report.to_json().expect("command report serializes");
 
-    assert_eq!(report.schema, COMMAND_SCHEMA_VERSION);
-    assert_eq!(
-        report.schema,
-        Version::parse(env!("CARGO_PKG_VERSION")).expect("package version parses")
-    );
+    assert_eq!(report.schema, TOOLING_SCHEMA_VERSION);
+    assert_eq!(report.schema.to_string(), env!("CARGO_PKG_VERSION"));
     assert!(json.starts_with(&format!(
         "{{\"schema\":\"{}\",\"command\":\"check\"",
         env!("CARGO_PKG_VERSION")
@@ -67,16 +64,6 @@ fn schema_compatibility_uses_semantic_version_requirements() {
 
     assert!(report.schema_matches(&compatible));
     assert!(!report.schema_matches(&incompatible));
-}
-
-#[test]
-fn package_version_parser_rejects_metadata_instead_of_dropping_it() {
-    assert_eq!(
-        super::parse_package_version("12.34.56"),
-        Version::new(12, 34, 56)
-    );
-    assert!(std::panic::catch_unwind(|| super::parse_package_version("1.2.3-rc.1")).is_err());
-    assert!(std::panic::catch_unwind(|| super::parse_package_version("1.2.3+build.1")).is_err());
 }
 
 #[test]

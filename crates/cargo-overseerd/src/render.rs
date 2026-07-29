@@ -3,16 +3,20 @@ use std::io;
 use cargo_overseerd::{CommandCheckStatus, CommandOutcome, CommandReport};
 use overseerd_tooling_schema::DiagnosticSeverity;
 
-use crate::cli::OutputFormat;
+use crate::cli::ReportFormat;
+
+mod inspect;
+
+pub(crate) use inspect::write_inspection;
 
 pub(crate) fn write_report(
     report: &CommandReport,
-    format: OutputFormat,
+    format: ReportFormat,
     stdout: &mut impl io::Write,
 ) -> io::Result<()> {
     match format {
-        OutputFormat::Terminal => write_terminal(report, stdout),
-        OutputFormat::Json => {
+        ReportFormat::Terminal => write_terminal(report, stdout),
+        ReportFormat::Json => {
             let json = report.to_json().map_err(io::Error::other)?;
 
             writeln!(stdout, "{json}")
