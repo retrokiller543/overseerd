@@ -2,13 +2,13 @@ mod cli;
 mod output;
 mod render;
 
-use std::io;
+use std::io::{self, IsTerminal as _};
 use std::path::Path;
 use std::process::ExitCode;
 
 use cargo_overseerd::{
-    CancellationToken, CommandExitCode, ProbeRequestError, probe_request_exit_code, run_command,
-    run_probe,
+    CancellationToken, CommandExitCode, ProbeOptions, ProbeRequestError, probe_request_exit_code,
+    run_command_with_options, run_probe_with_options,
 };
 use overseerd_tooling_schema::{ProbeEnvelope, ProbeOutcome, ToolingDocument};
 
@@ -23,6 +23,7 @@ fn main() -> ExitCode {
 
 fn execute(request: CommandRequest) -> ExitCode {
     let cancellation = CancellationToken::default();
+    let interactive = io::stderr().is_terminal();
 
     match request {
         CommandRequest::Report {
@@ -30,7 +31,10 @@ fn execute(request: CommandRequest) -> ExitCode {
             discovery,
             format,
         } => {
-            let report = run_command(command, &discovery, &cancellation);
+            let options = ProbeOptions {
+                show_cargo_output: interactive,
+            };
+            let report = run_command_with_options(command, &discovery, &cancellation, options);
             let exit_code = report.exit_code().code();
             let result = render::write_report(&report, format, &mut std::io::stdout().lock());
 
@@ -51,7 +55,11 @@ fn execute(request: CommandRequest) -> ExitCode {
                 return ExitCode::from(CommandExitCode::Misuse.code());
             }
 
-            match run_probe(&discovery, &cancellation) {
+            let options = ProbeOptions {
+                show_cargo_output: interactive,
+            };
+
+            match run_probe_with_options(&discovery, &cancellation, options) {
                 Ok(probe) => inspect(probe.probe.envelope, format, filters, color, pager),
                 Err(error) => probe_error(error),
             }
@@ -60,7 +68,13 @@ fn execute(request: CommandRequest) -> ExitCode {
             discovery,
             format,
             output,
-        } => match run_probe(&discovery, &cancellation) {
+        } => match run_probe_with_options(
+            &discovery,
+            &cancellation,
+            ProbeOptions {
+                show_cargo_output: interactive,
+            },
+        ) {
             Ok(probe) => export(probe.probe.envelope, format, output.as_deref()),
             Err(error) => probe_error(error),
         },

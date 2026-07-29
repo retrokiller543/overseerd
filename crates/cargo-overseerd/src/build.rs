@@ -5,7 +5,9 @@ use std::process::Command;
 use cargo_metadata::{CompilerMessage, Message};
 use thiserror::Error;
 
-use crate::process::{CARGO_STDERR_LIMIT, CARGO_STDOUT_LIMIT, ProcessExecutionError, execute};
+use crate::process::{
+    CARGO_STDERR_LIMIT, CARGO_STDOUT_LIMIT, ProcessExecutionError, execute_with_stderr,
+};
 use crate::{CancellationToken, CargoExecutable, FeatureSelection, ProcessStatus, SelectedTarget};
 
 /// One structured rustc diagnostic emitted by Cargo while building the selected target.
@@ -44,6 +46,8 @@ pub struct BuildRequest {
     pub workspace_target_directory: PathBuf,
     /// Explicitly selected package and binary target.
     pub selected: SelectedTarget,
+    /// Whether Cargo's human-readable terminal output should also be shown live.
+    pub show_cargo_output: bool,
 }
 
 /// Structured evidence emitted by Cargo while building the selected target.
@@ -177,11 +181,16 @@ pub fn build_target(
         command.current_dir(current_dir);
     }
 
-    let output = execute(
+    if request.show_cargo_output {
+        configure_cargo_output(&mut command);
+    }
+
+    let output = execute_with_stderr(
         &mut command,
         cancellation,
         CARGO_STDOUT_LIMIT,
         CARGO_STDERR_LIMIT,
+        request.show_cargo_output,
     )
     .map_err(map_process_error)?;
 
@@ -277,6 +286,31 @@ pub fn build_target(
     })
 }
 
+fn cargo_color_policy() -> &'static str {
+    match std::env::var("CARGO_TERM_COLOR").as_deref() {
+        Ok("always") => "always",
+        Ok("never") => "never",
+        Ok("auto") => "always",
+        _ if std::env::var_os("NO_COLOR").is_some() => "never",
+        _ if std::env::var_os("TERM").is_some_and(|value| value == "dumb") => "never",
+        _ => "always",
+    }
+}
+
+fn configure_cargo_output(command: &mut Command) {
+    let color = cargo_color_policy();
+    let width = std::env::var("COLUMNS")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|width| *width > 0)
+        .unwrap_or(100);
+
+    command
+        .arg(format!("--color={color}"))
+        .env("CARGO_TERM_PROGRESS_WHEN", "always")
+        .env("CARGO_TERM_PROGRESS_WIDTH", width.to_string());
+}
+
 fn apply_feature_arguments(command: &mut Command, features: &FeatureSelection) {
     let normalized = features.normalized_features();
 
@@ -302,3 +336,6 @@ fn map_process_error(error: ProcessExecutionError) -> BuildError {
         ProcessExecutionError::CapturePanic => BuildError::Capture,
     }
 }
+
+#[cfg(test)]
+mod tests;

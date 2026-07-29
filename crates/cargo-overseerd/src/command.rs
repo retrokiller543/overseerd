@@ -5,7 +5,8 @@ use semver::{Version, VersionReq};
 use serde::Serialize;
 
 use crate::{
-    CancellationToken, DiscoveryRequest, ProbeRequestError, SelectedTarget, ToolingProbe, run_probe,
+    CancellationToken, DiscoveryRequest, ProbeOptions, ProbeRequestError, SelectedTarget,
+    ToolingProbe, run_probe_with_options,
 };
 
 mod diagnostic;
@@ -261,7 +262,17 @@ pub fn run_command(
     request: &DiscoveryRequest,
     cancellation: &CancellationToken,
 ) -> CommandReport {
-    let mut report = match run_probe(request, cancellation) {
+    run_command_with_options(command, request, cancellation, ProbeOptions::default())
+}
+
+/// Runs one command with explicit probe presentation options.
+pub fn run_command_with_options(
+    command: CommandKind,
+    request: &DiscoveryRequest,
+    cancellation: &CancellationToken,
+    options: ProbeOptions,
+) -> CommandReport {
+    let mut report = match run_probe_with_options(request, cancellation, options) {
         Ok(probe) => report_probe(command, probe),
         Err(error) => report_error(command, error),
     };
