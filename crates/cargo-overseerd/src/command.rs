@@ -1,4 +1,5 @@
 use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity, DocumentIdentity, ProbeOutcome};
+use semver::{Version, VersionReq};
 use serde::Serialize;
 
 use crate::{
@@ -12,20 +13,44 @@ use diagnostic::{
     tool_diagnostic,
 };
 
-const COMMAND_SCHEMA_MAJOR: u16 = 1;
+/// Machine-readable command schema version published by this package.
+pub const COMMAND_SCHEMA_VERSION: Version = Version::new(
+    parse_package_version_component(env!("CARGO_PKG_VERSION_MAJOR")),
+    parse_package_version_component(env!("CARGO_PKG_VERSION_MINOR")),
+    parse_package_version_component(env!("CARGO_PKG_VERSION_PATCH")),
+);
 
-/// Version of the machine-readable Cargo command report.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-pub struct CommandSchemaVersion {
-    /// Breaking-change boundary for command reports.
-    pub major: u16,
-}
+const fn parse_package_version_component(component: &str) -> u64 {
+    let bytes = component.as_bytes();
+    let mut index = 0_usize;
+    let mut value = 0_u64;
 
-impl CommandSchemaVersion {
-    /// Current command report version.
-    pub const CURRENT: Self = Self {
-        major: COMMAND_SCHEMA_MAJOR,
-    };
+    assert!(
+        !bytes.is_empty(),
+        "Cargo package version components must not be empty"
+    );
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+
+        assert!(
+            byte >= b'0' && byte <= b'9',
+            "Cargo package version components must be numeric"
+        );
+
+        value = match value.checked_mul(10) {
+            Some(value) => value,
+            None => panic!("Cargo package version component overflows u64"),
+        };
+        value = match value.checked_add((byte - b'0') as u64) {
+            Some(value) => value,
+            None => panic!("Cargo package version component overflows u64"),
+        };
+
+        index += 1;
+    }
+
+    value
 }
 
 /// Cargo Overseerd command represented by a report.
@@ -155,7 +180,7 @@ pub struct CommandCheck {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CommandReport {
     /// Command report compatibility version.
-    pub schema: CommandSchemaVersion,
+    pub schema: Version,
     /// Command that produced this report.
     pub command: CommandKind,
     /// Stable outcome category.
@@ -193,9 +218,14 @@ impl CommandReport {
         self.outcome.exit_code()
     }
 
+    /// Whether this report's schema satisfies a consumer's semantic-version requirement.
+    pub fn schema_matches(&self, requirement: &VersionReq) -> bool {
+        requirement.matches(&self.schema)
+    }
+
     fn new(command: CommandKind, outcome: CommandOutcome) -> Self {
         Self {
-            schema: CommandSchemaVersion::CURRENT,
+            schema: COMMAND_SCHEMA_VERSION,
             command,
             outcome,
             exit_code: outcome.exit_code().code(),

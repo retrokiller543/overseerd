@@ -255,6 +255,7 @@ dependencies = [
  "fs2",
  "libc",
  "overseerd-tooling-schema",
+ "semver",
  "serde",
  "serde_json",
  "thiserror",

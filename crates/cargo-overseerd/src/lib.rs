@@ -15,8 +15,8 @@ use std::fs::OpenOptions;
 pub use build::{BuildError, BuildEvidence, BuildResult, CargoDiagnostic};
 use build::{BuildRequest, build_target};
 pub use command::{
-    CommandCheck, CommandCheckStatus, CommandExitCode, CommandKind, CommandOutcome, CommandReport,
-    CommandSchemaVersion, SelectedTargetReport, run_command,
+    COMMAND_SCHEMA_VERSION, CommandCheck, CommandCheckStatus, CommandExitCode, CommandKind,
+    CommandOutcome, CommandReport, SelectedTargetReport, run_command,
 };
 pub use discovery::{CargoExecutable, DiscoveryError, DiscoveryRequest, discover};
 use fs2::FileExt as _;
