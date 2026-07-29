@@ -133,6 +133,37 @@ fn terminal_report_escapes_controls_in_shared_diagnostics() {
 }
 
 #[test]
+fn terminal_report_escapes_bidirectional_formatting_controls() {
+    let report = CommandReport {
+        schema: TOOLING_SCHEMA_VERSION,
+        command: CommandKind::Doctor,
+        outcome: CommandOutcome::ValidationFailure,
+        exit_code: 1,
+        target: None,
+        application: None,
+        protocol: None,
+        framework_version: None,
+        checks: Vec::new(),
+        diagnostics: vec![Diagnostic {
+            code: String::from("fixture/\u{202e}code"),
+            severity: DiagnosticSeverity::Error,
+            message: String::from("before\u{2066}after"),
+            ..Diagnostic::default()
+        }],
+    };
+    let mut output = Vec::new();
+
+    write_report(&report, ReportFormat::Terminal, &mut output).expect("terminal report writes");
+
+    let output = String::from_utf8(output).expect("terminal report is UTF-8");
+
+    assert!(!output.contains('\u{202e}'));
+    assert!(!output.contains('\u{2066}'));
+    assert!(output.contains(r"fixture/\u{202e}code"));
+    assert!(output.contains(r"before\u{2066}after"));
+}
+
+#[test]
 fn hostile_heading_is_one_line_and_preserves_unicode() {
     let mut output = Vec::new();
 

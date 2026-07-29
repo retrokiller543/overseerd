@@ -151,6 +151,38 @@ fn orphan_provider_graph_has_provider_component_and_type_nodes() {
 }
 
 #[test]
+fn owner_qualified_tooling_resources_remain_contributions() {
+    let failure = failure(
+        Some("prepare"),
+        vec![diagnostic(
+            "fixture/tooling-resource",
+            "tooling contribution failed",
+            [
+                "plugin:fixture/worker/tooling/route",
+                "protocol:fixture/http/tooling/controller",
+            ],
+        )],
+    );
+    let view = failure_graph(&failure, &GraphQuery::default()).expect("failure graph resolves");
+
+    assert!(
+        view.nodes
+            .iter()
+            .all(|node| node.kind == ResourceKind::Contribution)
+    );
+    assert!(
+        failure_graph(
+            &failure,
+            &GraphQuery {
+                plugins: vec![String::from("plugin:fixture/worker/tooling/route")],
+                ..GraphQuery::default()
+            },
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn diagnostic_without_resources_gets_stable_attached_placeholder() {
     let failure = failure(
         None,

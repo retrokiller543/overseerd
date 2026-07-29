@@ -497,11 +497,12 @@ impl ProviderSelectionModel {
         let mut selected = BTreeMap::new();
 
         if resolution == ResolutionMode::Fresh {
-            for provider in matching
-                .iter()
-                .filter(|provider| self.is_visible(consumer, provider, can_access))
-            {
-                selected.insert(provider.qualifier, *provider);
+            let groups = self.visible_groups(consumer, matching, can_access, |_| true);
+
+            for providers in groups.values().rev() {
+                for provider in providers {
+                    selected.insert(provider.qualifier, *provider);
+                }
             }
 
             return keyed_results(selected);
