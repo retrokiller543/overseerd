@@ -70,6 +70,16 @@ fn schema_compatibility_uses_semantic_version_requirements() {
 }
 
 #[test]
+fn package_version_parser_rejects_metadata_instead_of_dropping_it() {
+    assert_eq!(
+        super::parse_package_version("12.34.56"),
+        Version::new(12, 34, 56)
+    );
+    assert!(std::panic::catch_unwind(|| super::parse_package_version("1.2.3-rc.1")).is_err());
+    assert!(std::panic::catch_unwind(|| super::parse_package_version("1.2.3+build.1")).is_err());
+}
+
+#[test]
 fn cancellation_is_always_operational_and_retains_selected_target() {
     let target = selected_target();
     let report = super::report_error(

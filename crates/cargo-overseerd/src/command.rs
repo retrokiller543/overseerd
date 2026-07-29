@@ -14,43 +14,54 @@ use diagnostic::{
 };
 
 /// Machine-readable command schema version published by this package.
-pub const COMMAND_SCHEMA_VERSION: Version = Version::new(
-    parse_package_version_component(env!("CARGO_PKG_VERSION_MAJOR")),
-    parse_package_version_component(env!("CARGO_PKG_VERSION_MINOR")),
-    parse_package_version_component(env!("CARGO_PKG_VERSION_PATCH")),
-);
+///
+/// Cargo Overseerd release versions must contain exactly major, minor, and patch components so
+/// prerelease or build metadata cannot be silently advertised with stable schema semantics.
+pub const COMMAND_SCHEMA_VERSION: Version = parse_package_version(env!("CARGO_PKG_VERSION"));
 
-const fn parse_package_version_component(component: &str) -> u64 {
-    let bytes = component.as_bytes();
+const fn parse_package_version(version: &str) -> Version {
+    let bytes = version.as_bytes();
+    let mut components = [0_u64; 3];
+    let mut component = 0_usize;
+    let mut has_digit = false;
     let mut index = 0_usize;
-    let mut value = 0_u64;
-
-    assert!(
-        !bytes.is_empty(),
-        "Cargo package version components must not be empty"
-    );
 
     while index < bytes.len() {
         let byte = bytes[index];
 
-        assert!(
-            byte >= b'0' && byte <= b'9',
-            "Cargo package version components must be numeric"
-        );
+        if byte >= b'0' && byte <= b'9' {
+            components[component] = match components[component].checked_mul(10) {
+                Some(value) => value,
+                None => panic!("Cargo package version component overflows u64"),
+            };
+            components[component] = match components[component].checked_add((byte - b'0') as u64) {
+                Some(value) => value,
+                None => panic!("Cargo package version component overflows u64"),
+            };
+            has_digit = true;
+        } else if byte == b'.' {
+            assert!(
+                has_digit && component < 2,
+                "Cargo package version must contain major, minor, and patch components"
+            );
 
-        value = match value.checked_mul(10) {
-            Some(value) => value,
-            None => panic!("Cargo package version component overflows u64"),
-        };
-        value = match value.checked_add((byte - b'0') as u64) {
-            Some(value) => value,
-            None => panic!("Cargo package version component overflows u64"),
-        };
+            component += 1;
+            has_digit = false;
+        } else {
+            panic!(
+                "Cargo Overseerd package versions must not contain prerelease or build metadata"
+            );
+        }
 
         index += 1;
     }
 
-    value
+    assert!(
+        component == 2 && has_digit,
+        "Cargo package version must contain major, minor, and patch components"
+    );
+
+    Version::new(components[0], components[1], components[2])
 }
 
 /// Cargo Overseerd command represented by a report.
