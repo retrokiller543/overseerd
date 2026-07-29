@@ -158,17 +158,32 @@ fn owner_qualified_tooling_resources_remain_contributions() {
             "fixture/tooling-resource",
             "tooling contribution failed",
             [
+                "plugin:fixture/worker",
                 "plugin:fixture/worker/tooling/route",
+                "protocol:fixture/http",
                 "protocol:fixture/http/tooling/controller",
             ],
         )],
     );
     let view = failure_graph(&failure, &GraphQuery::default()).expect("failure graph resolves");
 
-    assert!(
+    assert_eq!(
         view.nodes
             .iter()
-            .all(|node| node.kind == ResourceKind::Contribution)
+            .map(|node| (node.id.as_str(), node.kind.clone()))
+            .collect::<Vec<_>>(),
+        [
+            ("plugin:fixture/worker", ResourceKind::Plugin),
+            (
+                "plugin:fixture/worker/tooling/route",
+                ResourceKind::Contribution,
+            ),
+            ("protocol:fixture/http", ResourceKind::Protocol),
+            (
+                "protocol:fixture/http/tooling/controller",
+                ResourceKind::Contribution,
+            ),
+        ]
     );
     assert!(
         failure_graph(
@@ -180,6 +195,28 @@ fn owner_qualified_tooling_resources_remain_contributions() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn owner_ids_may_contain_a_tooling_segment() {
+    let failure = failure(
+        Some("prepare"),
+        vec![diagnostic(
+            "fixture/plugin-owner",
+            "plugin failed",
+            ["plugin:acme/tooling/worker"],
+        )],
+    );
+    let view = failure_graph(
+        &failure,
+        &GraphQuery {
+            plugins: vec![String::from("plugin:acme/tooling/worker")],
+            ..GraphQuery::default()
+        },
+    )
+    .expect("tooling segment remains valid in an owner ID");
+
+    assert_eq!(view.nodes[0].kind, ResourceKind::Plugin);
 }
 
 #[test]

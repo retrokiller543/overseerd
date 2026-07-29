@@ -99,8 +99,8 @@ fn diagnostic_nodes(diagnostics: &mut [Diagnostic]) -> Vec<Resource> {
     }
 
     identities
-        .into_iter()
-        .map(|id| diagnostic_node(id.clone(), resource_kind(&id)))
+        .iter()
+        .map(|id| diagnostic_node(id.clone(), resource_kind(id, &identities)))
         .collect()
 }
 
@@ -125,8 +125,8 @@ fn diagnostic_node(id: String, kind: ResourceKind) -> Resource {
     }
 }
 
-fn resource_kind(id: &str) -> ResourceKind {
-    if id.contains("/tooling/") {
+fn resource_kind(id: &str, identities: &BTreeSet<String>) -> ResourceKind {
+    if tooling_owner(id).is_some_and(|owner| identities.contains(owner)) {
         return ResourceKind::Contribution;
     }
 
@@ -148,6 +148,17 @@ fn resource_kind(id: &str) -> ResourceKind {
         "framework" => ResourceKind::Contributor,
         _ => ResourceKind::Type,
     }
+}
+
+fn tooling_owner(id: &str) -> Option<&str> {
+    let (owner, local) = id.rsplit_once("/tooling/")?;
+
+    (!local.is_empty()
+        && matches!(
+            owner.split_once(':'),
+            Some(("plugin" | "protocol", value)) if !value.is_empty()
+        ))
+    .then_some(owner)
 }
 
 fn resolve_query_roots(
