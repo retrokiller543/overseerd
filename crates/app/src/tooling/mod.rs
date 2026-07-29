@@ -10,8 +10,8 @@ use futures::FutureExt as _;
 use overseerd_di::ProviderDescriptor;
 use overseerd_tooling_schema::{
     BinaryTargetIdentity, Diagnostic, DiagnosticSeverity, DocumentIdentity, PackageIdentity,
-    ProbeEnvelope, ProbeFailure, ProbeTargetIdentity, Provenance, Relationship, RelationshipKind,
-    Resource, ResourceKind, ToolingDocument,
+    ProbeEnvelope, ProbeFailure, ProbeTargetIdentity, Provenance, Resource, ResourceKind,
+    ToolingDocument,
 };
 use thiserror::Error;
 
@@ -26,6 +26,7 @@ mod contribution;
 mod failure;
 mod output;
 mod panic;
+mod relationship;
 mod resources;
 mod snapshot;
 
@@ -407,7 +408,7 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
             Some("Name the intended configuration path explicitly."),
         ),
         crate::Error::Config(error) => config_failure(error, phase),
-        crate::Error::Di(error) => di_failure(error, phase),
+        crate::Error::Di(error) => failure::di_failure(error, phase),
         crate::Error::Hook(_) => (
             "overseerd/tooling-hook",
             "A framework lifecycle hook could not be prepared.",
@@ -432,11 +433,11 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
             Vec::new(),
             Some("Correct duplicate or reserved plugin contribution identities."),
         ),
-        crate::Error::ScopeTopology(_) => (
+        crate::Error::ScopeTopology(error) => (
             "overseerd/tooling-scope-topology",
             "The protocol scope topology is structurally invalid.",
             phase,
-            Vec::new(),
+            failure::scope_topology_resources(error),
             Vec::new(),
             Some("Correct duplicate, missing, cyclic, or invalid scope parent declarations."),
         ),
@@ -510,46 +511,6 @@ fn config_failure(error: &overseerd_config::ConfigError, phase: Option<String>) 
             Vec::new(),
             Vec::new(),
             Some("Run the selected target normally to investigate the configuration failure."),
-        ),
-    }
-}
-
-fn di_failure(error: &overseerd_di::Error, phase: Option<String>) -> FailureDetails {
-    match error {
-        overseerd_di::Error::MissingDependency {
-            component,
-            type_name,
-        } => (
-            "overseerd/tooling-dependency-missing",
-            "A component dependency has no registered provider.",
-            phase,
-            vec![component_resource(component), format!("type:{type_name}")],
-            Vec::new(),
-            Some("Register one provider for the missing dependency type."),
-        ),
-        overseerd_di::Error::DependencyCycle(_) => (
-            "overseerd/tooling-dependency-cycle",
-            "Component dependencies contain a construction cycle.",
-            phase,
-            Vec::new(),
-            Vec::new(),
-            Some("Break the component dependency cycle."),
-        ),
-        overseerd_di::Error::AmbiguousProvider(type_name) => (
-            "overseerd/tooling-provider-ambiguous",
-            "A dependency has more than one eligible provider.",
-            phase,
-            vec![format!("type:{type_name}")],
-            Vec::new(),
-            Some("Mark one provider primary or request a provider collection."),
-        ),
-        _ => (
-            "overseerd/tooling-dependency-graph",
-            "The dependency graph is structurally invalid.",
-            phase,
-            Vec::new(),
-            Vec::new(),
-            Some("Run the selected target normally to investigate the dependency failure."),
         ),
     }
 }
@@ -722,31 +683,6 @@ impl<'a, D: ProtocolDefinition> Projection<'a, D> {
         }
 
         id
-    }
-
-    fn relationship<const N: usize>(
-        &mut self,
-        kind: RelationshipKind,
-        from: &str,
-        to: &str,
-        labels: [(String, String); N],
-    ) {
-        self.relationship_map(kind, from, to, BTreeMap::from(labels));
-    }
-
-    fn relationship_map(
-        &mut self,
-        kind: RelationshipKind,
-        from: &str,
-        to: &str,
-        labels: BTreeMap<String, String>,
-    ) {
-        self.document.relationships.push(Relationship {
-            kind,
-            from: from.to_string(),
-            to: to.to_string(),
-            labels,
-        });
     }
 }
 

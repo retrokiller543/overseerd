@@ -4,7 +4,7 @@ use overseerd_tooling_schema::{
 
 use crate::cli::InspectCliProviderKind;
 
-pub(super) fn resource_kind_name(kind: &ResourceKind) -> &'static str {
+pub(crate) fn resource_kind_name(kind: &ResourceKind) -> &'static str {
     match kind {
         ResourceKind::Application => "application",
         ResourceKind::Protocol => "protocol",
@@ -23,7 +23,7 @@ pub(super) fn resource_kind_name(kind: &ResourceKind) -> &'static str {
     }
 }
 
-pub(super) fn relationship_kind_name(kind: &RelationshipKind) -> &'static str {
+pub(crate) fn relationship_kind_name(kind: &RelationshipKind) -> &'static str {
     match kind {
         RelationshipKind::DependsOn => "depends-on",
         RelationshipKind::Provides => "provides",
@@ -42,7 +42,7 @@ pub(super) fn relationship_kind_name(kind: &RelationshipKind) -> &'static str {
     }
 }
 
-pub(super) fn cli_provider_kind_matches(
+pub(crate) fn cli_provider_kind_matches(
     kind: CliProviderKind,
     filter: InspectCliProviderKind,
 ) -> bool {
@@ -57,7 +57,7 @@ pub(super) fn cli_provider_kind_matches(
     )
 }
 
-pub(super) fn cli_provider_kind_name(kind: CliProviderKind) -> &'static str {
+pub(crate) fn cli_provider_kind_name(kind: CliProviderKind) -> &'static str {
     match kind {
         CliProviderKind::Args => "args",
         CliProviderKind::Command => "command",
@@ -66,7 +66,7 @@ pub(super) fn cli_provider_kind_name(kind: CliProviderKind) -> &'static str {
     }
 }
 
-pub(super) fn cli_owner_name(owner: &CliOwner) -> &str {
+pub(crate) fn cli_owner_name(owner: &CliOwner) -> &str {
     match owner {
         CliOwner::Framework => "framework",
         CliOwner::Application => "application",
@@ -74,7 +74,7 @@ pub(super) fn cli_owner_name(owner: &CliOwner) -> &str {
     }
 }
 
-pub(super) fn diagnostic_severity_name(severity: DiagnosticSeverity) -> &'static str {
+pub(crate) fn diagnostic_severity_name(severity: DiagnosticSeverity) -> &'static str {
     match severity {
         DiagnosticSeverity::Info => "info",
         DiagnosticSeverity::Warning => "warning",

@@ -223,6 +223,20 @@ impl Plugin for AllContributionKindsPlugin {
 }
 
 #[derive(Default)]
+struct OrphanProviderPlugin;
+
+impl Plugin for OrphanProviderPlugin {
+    const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/orphan-provider");
+
+    fn contribute(self, contributions: &mut PluginContributions) {
+        contributions.provider(
+            crate::namespaced_id!(crate::ContributionId, "test/orphan-provider"),
+            PLUGIN_PROVIDER,
+        );
+    }
+}
+
+#[derive(Default)]
 struct FirstDuplicatePayloadPlugin;
 
 impl Plugin for FirstDuplicatePayloadPlugin {
@@ -387,6 +401,28 @@ impl ProtocolDefinition for TestProtocol {
     }
 }
 
+#[derive(Default)]
+struct OrphanProviderProtocol;
+
+impl ProtocolDefinition for OrphanProviderProtocol {
+    type Prepared = ();
+    type Error = crate::Error;
+
+    const ID: crate::ProtocolId = crate::namespaced_id!(crate::ProtocolId, "test/orphan-provider");
+    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
+
+    fn register(&self, registry: &mut AppRegistry) {
+        registry.providers.push(PLUGIN_PROVIDER);
+    }
+
+    fn prepare(
+        self,
+        _context: &crate::ValidationContext<'_>,
+    ) -> Result<Self::Prepared, Self::Error> {
+        Ok(())
+    }
+}
+
 fn assert_source_order(source: &str, markers: &[&str]) {
     let mut remainder = source;
 
@@ -506,6 +542,34 @@ fn duplicate_contribution_ids_are_typed_errors() {
     assert!(matches!(
         error,
         crate::Error::PluginPlan(super::PluginPlanError::DuplicateContribution { .. })
+    ));
+}
+
+#[test]
+fn plugin_provider_without_component_is_rejected_during_preparation() {
+    let result = App::<()>::builder("orphan-plugin-provider")
+        .register_plugin::<OrphanProviderPlugin>()
+        .prepare();
+    let Err(error) = result else {
+        panic!("orphan plugin provider must fail preparation");
+    };
+
+    assert!(matches!(
+        error,
+        crate::Error::Di(overseerd_di::Error::ProviderComponentMissing(_))
+    ));
+}
+
+#[test]
+fn protocol_provider_without_component_is_rejected_during_preparation() {
+    let result = App::<OrphanProviderProtocol>::builder("orphan-protocol-provider").prepare();
+    let Err(error) = result else {
+        panic!("orphan protocol provider must fail preparation");
+    };
+
+    assert!(matches!(
+        error,
+        crate::Error::Di(overseerd_di::Error::ProviderComponentMissing(_))
     ));
 }
 

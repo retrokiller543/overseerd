@@ -61,6 +61,30 @@ fn colored_inspection_decorates_only_headings() {
 }
 
 #[test]
+fn inspection_escapes_controls_in_identity_resources_and_labels() {
+    let mut document = fixture();
+
+    document.identity.application = String::from("fixture\u{1b}[31m\nnext\rline");
+    document.resources[2].name = String::from("Worker\u{1b}\nname");
+    document.resources[2].labels.insert(
+        String::from("hostile\nlabel"),
+        String::from("value\r\u{1b}"),
+    );
+    let mut output = Vec::new();
+
+    write_inspection(&document, &InspectFilters::default(), false, &mut output)
+        .expect("inspection writes");
+
+    let output = String::from_utf8(output).expect("inspection is UTF-8");
+
+    assert!(!output.contains('\u{1b}'));
+    assert!(!output.contains('\r'));
+    assert!(output.contains(r"name: fixture\u{1b}[31m\nnext\rline"));
+    assert!(output.contains(r"Worker\u{1b}\nname"));
+    assert!(output.contains(r"hostile\nlabel: value\r\u{1b}"));
+}
+
+#[test]
 fn scope_name_filter_includes_assigned_resources() {
     let document = fixture();
     let filters = InspectFilters {

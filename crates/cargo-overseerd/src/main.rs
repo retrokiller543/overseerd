@@ -7,15 +7,17 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use cargo_overseerd::{
-    CancellationToken, CommandExitCode, ProbeOptions, ProbeRequestError, probe_request_exit_code,
-    run_command_with_options, run_probe_with_options,
+    CancellationToken, CommandExitCode, GraphQuery, GraphQueryError, ProbeOptions,
+    ProbeRequestError, ResourceExplanation, probe_request_exit_code, run_command_with_options,
+    run_probe_with_options,
 };
-use overseerd_tooling_schema::{ProbeEnvelope, ProbeOutcome, ToolingDocument};
+use overseerd_tooling_schema::{Diagnostic, ProbeEnvelope, ProbeOutcome, ToolingDocument};
 
 use crate::cli::{
-    Cli, CommandRequest, ExportFormat, InspectFilters, InspectFormat, TerminalPolicy,
+    Cli, CommandRequest, ExplainFormat, ExportFormat, GraphFormat, InspectFilters, InspectFormat,
+    TerminalPolicy,
 };
-use crate::output::{write_export, write_text_inspection};
+use crate::output::{write_export, write_text};
 
 fn main() -> ExitCode {
     execute(Cli::parse_cargo().into_request())
@@ -78,6 +80,38 @@ fn execute(request: CommandRequest) -> ExitCode {
             Ok(probe) => export(probe.probe.envelope, format, output.as_deref()),
             Err(error) => probe_error(error),
         },
+        CommandRequest::Graph {
+            discovery,
+            format,
+            query,
+            color,
+            pager,
+        } => match run_probe_with_options(
+            &discovery,
+            &cancellation,
+            ProbeOptions {
+                show_cargo_output: interactive,
+            },
+        ) {
+            Ok(probe) => graph(probe.probe.envelope, format, query, color, pager),
+            Err(error) => probe_error(error),
+        },
+        CommandRequest::Explain {
+            discovery,
+            format,
+            resource,
+            color,
+            pager,
+        } => match run_probe_with_options(
+            &discovery,
+            &cancellation,
+            ProbeOptions {
+                show_cargo_output: interactive,
+            },
+        ) {
+            Ok(probe) => explain(probe.probe.envelope, format, &resource, color, pager),
+            Err(error) => probe_error(error),
+        },
     }
 }
 
@@ -88,18 +122,87 @@ fn inspect(
     color: TerminalPolicy,
     pager: TerminalPolicy,
 ) -> ExitCode {
-    let ProbeOutcome::Success { document } = envelope.outcome else {
-        eprintln!("cargo overseerd inspect could not prepare an inspection document");
-
-        return validation_failure();
+    let document = match envelope.outcome {
+        ProbeOutcome::Success { document } => document,
+        ProbeOutcome::Failure { failure } => {
+            return preparation_failure("inspect", &failure.diagnostics);
+        }
     };
     let exit_code = document_exit_code(&document);
     let result = match format {
-        InspectFormat::Text => write_text_inspection(&document, &filters, color, pager),
+        InspectFormat::Text => write_text(color, pager, |color, output| {
+            render::write_inspection(&document, &filters, color, output)
+        }),
         InspectFormat::Json => write_document_json(&document, &mut io::stdout().lock()),
     };
 
     finish_output(result, exit_code, "inspection")
+}
+
+fn graph(
+    envelope: ProbeEnvelope,
+    format: GraphFormat,
+    query: GraphQuery,
+    color: TerminalPolicy,
+    pager: TerminalPolicy,
+) -> ExitCode {
+    let (view, exit_code) = match envelope.outcome {
+        ProbeOutcome::Success { document } => {
+            let view = match query.execute(&document) {
+                Ok(view) => view,
+                Err(error) => return graph_query_error("graph", error),
+            };
+            let exit_code = document_exit_code(&document);
+
+            (view, exit_code)
+        }
+        ProbeOutcome::Failure { failure } => {
+            let view = match query.execute_failure(envelope.schema, &envelope.identity, &failure) {
+                Ok(view) => view,
+                Err(error) => return graph_query_error("graph", error),
+            };
+
+            (view, validation_failure())
+        }
+    };
+    let result = if format == GraphFormat::Text {
+        write_text(color, pager, |color, output| {
+            render::write_graph(&view, format, color, output)
+        })
+    } else {
+        render::write_graph(&view, format, false, &mut io::stdout().lock())
+    };
+
+    finish_output(result, exit_code, "graph")
+}
+
+fn explain(
+    envelope: ProbeEnvelope,
+    format: ExplainFormat,
+    resource: &str,
+    color: TerminalPolicy,
+    pager: TerminalPolicy,
+) -> ExitCode {
+    let document = match envelope.outcome {
+        ProbeOutcome::Success { document } => document,
+        ProbeOutcome::Failure { failure } => {
+            return preparation_failure("explain", &failure.diagnostics);
+        }
+    };
+    let explanation = match ResourceExplanation::query(&document, resource) {
+        Ok(explanation) => explanation,
+        Err(error) => return graph_query_error("explain", error),
+    };
+    let exit_code = document_exit_code(&document);
+    let result = if format == ExplainFormat::Text {
+        write_text(color, pager, |color, output| {
+            render::write_explanation(&explanation, format, color, output)
+        })
+    } else {
+        render::write_explanation(&explanation, format, false, &mut io::stdout().lock())
+    };
+
+    finish_output(result, exit_code, "explanation")
 }
 
 fn export(envelope: ProbeEnvelope, format: ExportFormat, output: Option<&Path>) -> ExitCode {
@@ -168,6 +271,37 @@ fn probe_error(error: ProbeRequestError) -> ExitCode {
     eprintln!("cargo overseerd could not read the application tooling probe: {error}");
 
     ExitCode::from(exit_code.code())
+}
+
+fn preparation_failure(command: &str, diagnostics: &[Diagnostic]) -> ExitCode {
+    let result = render::write_diagnostics(diagnostics, "", &mut io::stderr().lock());
+
+    if let Err(error) = result
+        && error.kind() != io::ErrorKind::BrokenPipe
+    {
+        eprintln!("cargo overseerd could not write {command} failure diagnostics: {error}");
+
+        return operational_failure();
+    }
+
+    validation_failure()
+}
+
+fn graph_query_error(command: &str, error: GraphQueryError) -> ExitCode {
+    let command = render::terminal_text(command);
+    let error_text = render::terminal_text(&error.to_string());
+
+    eprintln!("cargo overseerd {command}: {error_text}");
+
+    if let GraphQueryError::Ambiguous { candidates, .. } = error {
+        eprintln!("candidates:");
+
+        for candidate in candidates {
+            eprintln!("  {}", render::terminal_text(&candidate));
+        }
+    }
+
+    ExitCode::from(CommandExitCode::Misuse.code())
 }
 
 fn validation_failure() -> ExitCode {

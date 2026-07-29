@@ -218,6 +218,8 @@ impl<H: AppHost> CommandContext<H, Built> {
                 .await?
                 .ok_or_else(|| overseerd_di::Error::MissingDependency {
                     component: std::any::type_name::<H>().to_string(),
+                    component_id: std::any::type_name::<H>().to_string(),
+                    dependency: std::any::type_name::<T>().to_string(),
                     type_name: std::any::type_name::<T>().to_string(),
                 })
         }

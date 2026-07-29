@@ -1,28 +1,28 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
-use overseerd_tooling_schema::{
-    CliArgument, CliCommand, Diagnostic, Facet, Provenance, Resource, ResourceKind, SourceLocation,
-    ToolingDocument,
-};
+use overseerd_tooling_schema::{CliArgument, CliCommand, Resource, ResourceKind, ToolingDocument};
 
 use crate::cli::InspectFilters;
 
 mod filter;
-mod name;
 
-use filter::selected_resources;
-use name::{
-    cli_owner_name, cli_provider_kind_matches, cli_provider_kind_name, diagnostic_severity_name,
-    relationship_kind_name, resource_kind_name,
+use super::detail::{
+    terminal_text, write_diagnostics, write_facets, write_heading, write_identity, write_labels,
+    write_provenance,
 };
+use super::name::{
+    cli_owner_name, cli_provider_kind_matches, cli_provider_kind_name, relationship_kind_name,
+    resource_kind_name,
+};
+use filter::selected_resources;
 
 /// Writes one protocol-neutral human-readable inspection.
 pub(crate) fn write_inspection(
     document: &ToolingDocument,
     filters: &InspectFilters,
     color: bool,
-    output: &mut impl io::Write,
+    output: &mut dyn io::Write,
 ) -> io::Result<()> {
     let mut document = document.clone();
 
@@ -35,9 +35,17 @@ pub(crate) fn write_inspection(
         .collect::<BTreeSet<_>>();
 
     write_heading(output, "Application", color)?;
-    writeln!(output, "  name: {}", document.identity.application)?;
-    writeln!(output, "  protocol: {}", document.protocol)?;
-    writeln!(output, "  framework: {}", document.framework_version)?;
+    writeln!(
+        output,
+        "  name: {}",
+        terminal_text(&document.identity.application)
+    )?;
+    writeln!(output, "  protocol: {}", terminal_text(&document.protocol))?;
+    writeln!(
+        output,
+        "  framework: {}",
+        terminal_text(&document.framework_version)
+    )?;
     writeln!(output, "  schema: {}", document.schema)?;
     writeln!(
         output,
@@ -61,8 +69,8 @@ pub(crate) fn write_inspection(
             output,
             "  {} {} ({})",
             resource_kind_name(&resource.kind),
-            resource.name,
-            resource.id
+            terminal_text(&resource.name),
+            terminal_text(&resource.id)
         )?;
         write_provenance(resource.provenance.as_ref(), output)?;
         write_labels(&resource.labels, output)?;
@@ -86,9 +94,9 @@ pub(crate) fn write_inspection(
             writeln!(
                 output,
                 "  {} --{}--> {}",
-                relationship.from,
+                terminal_text(&relationship.from),
                 relationship_kind_name(&relationship.kind),
-                relationship.to
+                terminal_text(&relationship.to)
             )?;
             write_labels(&relationship.labels, output)?;
             relationship_count += 1;
@@ -100,7 +108,13 @@ pub(crate) fn write_inspection(
     }
 
     write_cli(&document, filters, color, output)?;
-    write_diagnostics(&document.diagnostics, color, output)?;
+    write_heading(output, "Diagnostics", color)?;
+
+    if document.diagnostics.is_empty() {
+        writeln!(output, "  none")?;
+    } else {
+        write_diagnostics(&document.diagnostics, "  ", output)?;
+    }
 
     let document_facets = document
         .facets
@@ -117,90 +131,11 @@ pub(crate) fn write_inspection(
     output.flush()
 }
 
-fn write_identity(document: &ToolingDocument, output: &mut impl io::Write) -> io::Result<()> {
-    if let Some(package) = &document.identity.package {
-        write!(output, "  package: {}", package.name)?;
-
-        if let Some(version) = &package.version {
-            write!(output, " {version}")?;
-        }
-
-        writeln!(output)?;
-
-        if let Some(manifest_path) = &package.manifest_path {
-            writeln!(output, "  manifest: {manifest_path}")?;
-        }
-    }
-
-    if let Some(binary) = &document.identity.binary {
-        writeln!(output, "  binary: {}", binary.name)?;
-    }
-
-    if let Some(source) = &document.identity.source {
-        writeln!(output, "  source: {}", source_location(source))?;
-    }
-
-    Ok(())
-}
-
-fn write_provenance(
-    provenance: Option<&Provenance>,
-    output: &mut impl io::Write,
-) -> io::Result<()> {
-    let Some(provenance) = provenance else {
-        return Ok(());
-    };
-
-    if let Some(owner) = &provenance.owner {
-        writeln!(output, "    owner: {owner}")?;
-    }
-
-    if let Some(origin) = &provenance.origin {
-        writeln!(output, "    origin: {origin}")?;
-    }
-
-    if let Some(ordinal) = provenance.ordinal {
-        writeln!(output, "    ordinal: {ordinal}")?;
-    }
-
-    if let Some(source) = &provenance.source {
-        writeln!(output, "    source: {}", source_location(source))?;
-    }
-
-    Ok(())
-}
-
-fn write_labels(labels: &BTreeMap<String, String>, output: &mut impl io::Write) -> io::Result<()> {
-    for (name, value) in labels {
-        writeln!(output, "    {name}: {value}")?;
-    }
-
-    Ok(())
-}
-
-fn write_facets(
-    facets: &BTreeMap<String, Facet>,
-    output: &mut impl io::Write,
-    indentation: &str,
-) -> io::Result<()> {
-    for (namespace, facet) in facets {
-        let value = serde_json::to_string(&facet.value).map_err(io::Error::other)?;
-
-        writeln!(
-            output,
-            "{indentation}facet {namespace}@{}: {value}",
-            facet.schema_version
-        )?;
-    }
-
-    Ok(())
-}
-
 fn write_cli(
     document: &ToolingDocument,
     filters: &InspectFilters,
     color: bool,
-    output: &mut impl io::Write,
+    output: &mut dyn io::Write,
 ) -> io::Result<()> {
     write_heading(output, "CLI", color)?;
 
@@ -219,7 +154,7 @@ fn write_cli(
     if filters.is_empty()
         && let Some(default_command) = &cli.default_command
     {
-        writeln!(output, "  default: {default_command}")?;
+        writeln!(output, "  default: {}", terminal_text(default_command))?;
     }
 
     let provider_ids = cli
@@ -243,10 +178,10 @@ fn write_cli(
         writeln!(
             output,
             "  provider {} [{}] contributor={} contribution={}",
-            provider.id,
+            terminal_text(&provider.id),
             cli_provider_kind_name(provider.kind),
-            provider.contributor,
-            provider.contribution
+            terminal_text(&provider.contributor),
+            terminal_text(&provider.contribution)
         )?;
     }
 
@@ -307,7 +242,7 @@ fn write_cli_command(
     depth: usize,
     provider_ids: &BTreeSet<&str>,
     include_all: bool,
-    output: &mut impl io::Write,
+    output: &mut dyn io::Write,
 ) -> io::Result<()> {
     let indentation = "  ".repeat(depth);
 
@@ -318,8 +253,8 @@ fn write_cli_command(
     writeln!(
         output,
         "{indentation}command {} [{}]",
-        command.name,
-        cli_owner_name(&command.owner)
+        terminal_text(&command.name),
+        terminal_text(cli_owner_name(&command.owner))
     )?;
 
     for argument in command
@@ -364,79 +299,33 @@ fn owner_uses_provider(
 fn write_cli_argument(
     argument: &CliArgument,
     depth: usize,
-    output: &mut impl io::Write,
+    output: &mut dyn io::Write,
 ) -> io::Result<()> {
     let indentation = "  ".repeat(depth);
 
-    write!(output, "{indentation}argument {}", argument.id)?;
+    write!(
+        output,
+        "{indentation}argument {}",
+        terminal_text(&argument.id)
+    )?;
 
     if let Some(long) = &argument.long {
-        write!(output, " --{long}")?;
+        write!(output, " --{}", terminal_text(long))?;
     }
 
     if let Some(short) = argument.short {
-        write!(output, " -{short}")?;
+        write!(output, " -{}", terminal_text(&short.to_string()))?;
     }
 
     if let Some(index) = argument.index {
         write!(output, " positional={index}")?;
     }
 
-    writeln!(output, " [{}]", cli_owner_name(&argument.owner))
-}
-
-fn write_diagnostics(
-    diagnostics: &[Diagnostic],
-    color: bool,
-    output: &mut impl io::Write,
-) -> io::Result<()> {
-    write_heading(output, "Diagnostics", color)?;
-
-    if diagnostics.is_empty() {
-        writeln!(output, "  none")?;
-
-        return Ok(());
-    }
-
-    for diagnostic in diagnostics {
-        writeln!(
-            output,
-            "  {}[{}]: {}",
-            diagnostic_severity_name(diagnostic.severity),
-            diagnostic.code,
-            diagnostic.message
-        )?;
-
-        if !diagnostic.resources.is_empty() {
-            writeln!(output, "    resources: {}", diagnostic.resources.join(", "))?;
-        }
-
-        for source in &diagnostic.sources {
-            writeln!(output, "    source: {}", source_location(source))?;
-        }
-
-        if let Some(fix) = &diagnostic.fix {
-            writeln!(output, "    fix: {fix}")?;
-        }
-    }
-
-    Ok(())
-}
-
-fn write_heading(output: &mut impl io::Write, heading: &str, color: bool) -> io::Result<()> {
-    if color {
-        writeln!(output, "\u{1b}[1;36m{heading}\u{1b}[0m")
-    } else {
-        writeln!(output, "{heading}")
-    }
-}
-
-fn source_location(source: &SourceLocation) -> String {
-    match (source.line, source.column) {
-        (Some(line), Some(column)) => format!("{}:{line}:{column}", source.file),
-        (Some(line), None) => format!("{}:{line}", source.file),
-        _ => source.file.clone(),
-    }
+    writeln!(
+        output,
+        " [{}]",
+        terminal_text(cli_owner_name(&argument.owner))
+    )
 }
 
 #[cfg(test)]

@@ -3,15 +3,12 @@ use std::fs::OpenOptions;
 use std::io::{self, IsTerminal as _, Write as _};
 use std::path::Path;
 
-use overseerd_tooling_schema::ToolingDocument;
+use crate::cli::TerminalPolicy;
 
-use crate::cli::{InspectFilters, TerminalPolicy};
-
-pub(crate) fn write_text_inspection(
-    document: &ToolingDocument,
-    filters: &InspectFilters,
+pub(crate) fn write_text(
     color: TerminalPolicy,
     pager: TerminalPolicy,
+    render: impl FnOnce(bool, &mut dyn io::Write) -> io::Result<()>,
 ) -> io::Result<()> {
     let terminal = io::stdout().is_terminal();
     let color = policy_enabled(color, terminal)
@@ -20,12 +17,12 @@ pub(crate) fn write_text_inspection(
     let page = policy_enabled(pager, terminal) && pager_command.is_some();
 
     if !page {
-        return crate::render::write_inspection(document, filters, color, &mut io::stdout().lock());
+        return render(color, &mut io::stdout().lock());
     }
 
     let mut rendered = Vec::new();
 
-    crate::render::write_inspection(document, filters, color, &mut rendered)?;
+    render(color, &mut rendered)?;
     let command = pager_command.expect("paging requires a pager command");
 
     match write_to_pager(&rendered, &command) {

@@ -68,12 +68,10 @@ impl Scope for TestScope {
 async fn build_runtime(
     seed_destinations: HashMap<TypeId, SeedDestination>,
 ) -> (AppRuntime, Arc<ScopeRegistry>) {
-    let registry = Arc::new(ScopeRegistry::new(
-        HashMap::new(),
-        HashMap::new(),
-        Vec::new(),
-        HashMap::new(),
-    ));
+    let registry = Arc::new(
+        ScopeRegistry::new(HashMap::new(), HashMap::new(), Vec::new(), HashMap::new())
+            .expect("empty scope registry validates"),
+    );
     let root =
         ScopeContainer::build_root(&[], Vec::new(), ResolverSet::new(), Arc::clone(&registry))
             .await

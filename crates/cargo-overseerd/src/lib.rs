@@ -6,6 +6,7 @@
 mod build;
 mod command;
 mod discovery;
+pub mod graph;
 mod probe;
 mod process;
 mod selection;
@@ -20,6 +21,11 @@ pub use command::{
 };
 pub use discovery::{CargoExecutable, DiscoveryError, DiscoveryRequest, discover};
 use fs2::FileExt as _;
+pub use graph::{
+    CliArgumentOwnership, CliCommandOwnership, CliOwnershipSummary, GraphDirection, GraphEmitError,
+    GraphQuery, GraphQueryError, GraphRelationFamily, GraphSelectorKind, GraphSource, GraphView,
+    ResourceExplanation, explain_resource, query_failure_graph, query_graph,
+};
 pub use overseerd_tooling_schema::TOOLING_SCHEMA_VERSION;
 use probe::execute_probe;
 pub use probe::{ProbeError, ProbeEvidence, ProbeResult};

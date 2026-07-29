@@ -27,6 +27,7 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
         for suppression in plan.resolution().suppressions() {
             let decision = format!("suppression:{}", suppression.slot().as_str());
 
+            self.plugin_slot_resource(suppression.slot().as_str());
             self.inactive_plugin_resource(
                 &plugin_id(suppression.suppressed().as_str()),
                 suppression.suppressed().as_str(),
@@ -43,6 +44,12 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
                     suppression.slot().as_str().to_string(),
                 )]),
             );
+            self.relationship(
+                RelationshipKind::DependsOn,
+                &decision,
+                &plugin_slot_id(suppression.slot().as_str()),
+                [(String::from("role"), String::from("suppressed-slot"))],
+            );
         }
 
         for (order, plugin) in plan.resolution().plugins().iter().enumerate() {
@@ -54,6 +61,7 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
                 ),
                 (String::from("plugin-id"), plugin.id().as_str().to_string()),
                 (String::from("resolution-order"), order.to_string()),
+                (String::from("effective"), String::from("true")),
             ]);
 
             if let Some((slot, policy)) = plugin.slot() {
@@ -170,8 +178,14 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
                 ),
             ]);
 
-            if let Some(applied) = &reconciliation.applied {
-                labels.insert(String::from("applied-target"), applied.to_string());
+            if let Some(target) = &reconciliation.applied {
+                let label = if decision == "applied" {
+                    "applied-target"
+                } else {
+                    "effective-target"
+                };
+
+                labels.insert(String::from(label), target.to_string());
             }
 
             self.resource(
@@ -183,7 +197,9 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
             );
             self.relationship(RelationshipKind::Contributes, &contributor, &id, []);
 
-            if let Some(applied) = &reconciliation.applied {
+            if decision == "applied"
+                && let Some(applied) = &reconciliation.applied
+            {
                 self.relationship(
                     RelationshipKind::Contributes,
                     &id,
@@ -197,6 +213,52 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
     #[cfg(feature = "cli")]
     pub(super) fn project_cli(&mut self) {
         self.document.cli = self.app.plugin_plan().cli_parser_metadata().cloned();
+
+        let providers = self
+            .document
+            .cli
+            .as_ref()
+            .map(|cli| cli.providers.clone())
+            .unwrap_or_default();
+
+        for provider in providers {
+            let id = format!(
+                "contribution:{}:{}",
+                provider.contributor, provider.contribution
+            );
+
+            if !self
+                .document
+                .resources
+                .iter()
+                .any(|resource| resource.id == id)
+            {
+                self.resource(
+                    &id,
+                    ResourceKind::Contribution,
+                    &provider.contribution,
+                    Some(overseerd_tooling_schema::Provenance {
+                        owner: Some(provider.contributor.clone()),
+                        origin: Some(String::from("cli-provider")),
+                        ..overseerd_tooling_schema::Provenance::default()
+                    }),
+                    BTreeMap::from([
+                        (String::from("provider-id"), provider.id),
+                        (
+                            String::from("provider-kind"),
+                            cli_provider_kind_name(provider.kind).to_string(),
+                        ),
+                    ]),
+                );
+            }
+
+            self.relationship(
+                RelationshipKind::Contributes,
+                &provider.contributor,
+                &id,
+                [],
+            );
+        }
     }
 
     #[cfg(not(feature = "cli"))]
@@ -280,5 +342,15 @@ fn contribution_kind_name(kind: PluginContributionKind) -> &'static str {
         PluginContributionKind::Component => "component",
         PluginContributionKind::Provider => "provider",
         PluginContributionKind::ConfigBinding => "config-binding",
+    }
+}
+
+#[cfg(feature = "cli")]
+fn cli_provider_kind_name(kind: overseerd_tooling_schema::CliProviderKind) -> &'static str {
+    match kind {
+        overseerd_tooling_schema::CliProviderKind::Args => "args",
+        overseerd_tooling_schema::CliProviderKind::Command => "command",
+        overseerd_tooling_schema::CliProviderKind::CommandSet => "command-set",
+        _ => "unknown",
     }
 }

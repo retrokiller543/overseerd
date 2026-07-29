@@ -3,6 +3,10 @@ use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity, ProbeFailure};
 use super::{contribution_id, contributor_id};
 use crate::{ContributionProvenance, InstallationOrigin, InstallationProvenance};
 
+mod di;
+
+pub(in crate::tooling) use di::di_failure;
+
 pub(super) fn app_diagnostics(error: &crate::Error, phase: Option<String>) -> Option<ProbeFailure> {
     let diagnostics = match error {
         crate::Error::Composition(error) => error
@@ -195,9 +199,20 @@ fn plugin_plan_diagnostic(error: &crate::PluginPlanError) -> Diagnostic {
 }
 
 fn scope_topology_diagnostic(error: &crate::ScopeTopologyError) -> Diagnostic {
+    let resources = scope_topology_resources(error);
+
+    framework_diagnostic(
+        "overseerd/tooling-scope-topology",
+        error.to_string(),
+        resources,
+        "Correct duplicate, missing, cyclic, or invalid scope parent declarations.",
+    )
+}
+
+pub(super) fn scope_topology_resources(error: &crate::ScopeTopologyError) -> Vec<String> {
     use crate::ScopeTopologyError;
 
-    let resources = match error {
+    match error {
         ScopeTopologyError::DuplicateId { id }
         | ScopeTopologyError::ReservedId { id }
         | ScopeTopologyError::SelfParent { id } => vec![scope_resource(*id)],
@@ -210,14 +225,7 @@ fn scope_topology_diagnostic(error: &crate::ScopeTopologyError) -> Diagnostic {
         ScopeTopologyError::InvalidParentRank { child, parent, .. } => {
             vec![scope_resource(*child), scope_resource(*parent)]
         }
-    };
-
-    framework_diagnostic(
-        "overseerd/tooling-scope-topology",
-        error.to_string(),
-        resources,
-        "Correct duplicate, missing, cyclic, or invalid scope parent declarations.",
-    )
+    }
 }
 
 #[cfg(feature = "cli")]

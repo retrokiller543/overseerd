@@ -256,12 +256,10 @@ impl Scope for Layer3 {
 static LAYER_SCOPES: [&'static dyn Scope; 4] = [&Singleton, &Layer1, &Layer2, &Layer3];
 
 async fn build_graph(entries: &[Entry], width: usize, layers: usize) -> Arc<ScopeContainer> {
-    let registry = Arc::new(ScopeRegistry::new(
-        HashMap::new(),
-        HashMap::new(),
-        Vec::new(),
-        HashMap::new(),
-    ));
+    let registry = Arc::new(
+        ScopeRegistry::new(HashMap::new(), HashMap::new(), Vec::new(), HashMap::new())
+            .expect("empty scope registry validates"),
+    );
 
     let root = &entries[0..width];
     let root_descs: Vec<ComponentDescriptor> = root.iter().map(|entry| entry.desc).collect();

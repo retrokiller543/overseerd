@@ -199,6 +199,202 @@ fn inspect_filters_are_rejected_for_canonical_json() {
 }
 
 #[test]
+fn graph_renders_every_format_from_homeledger_without_stderr_noise() {
+    let workspace = workspace_root();
+
+    for (format, prefix) in [
+        ("text", "Application\n  name: homeledger"),
+        ("mermaid", "flowchart LR\n"),
+        ("dot", "digraph overseerd {\n"),
+        ("json", "{\"schema\":"),
+    ] {
+        let output = run_homeledger(&workspace, ["graph", "--format", format]);
+
+        assert!(
+            output.status.success(),
+            "graph {format} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stdout.starts_with(prefix.as_bytes()));
+        assert!(output.stderr.is_empty());
+        assert!(!output.stdout.windows(2).any(|bytes| bytes == b"\x1b["));
+    }
+}
+
+#[test]
+fn graph_selectors_filter_homeledger_and_preserve_repeated_values() {
+    let workspace = workspace_root();
+    let output = run_homeledger(
+        &workspace,
+        [
+            "graph",
+            "--format",
+            "json",
+            "--family",
+            "composition",
+            "--direction",
+            "downstream",
+            "--plugin",
+            "homeledger/audit-policy-compliance",
+            "--resource",
+            "plugin-slot:homeledger/audit-policy",
+        ],
+    );
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+
+    let graph: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("graph JSON parses");
+
+    assert_eq!(graph["family"], "composition");
+    assert_eq!(graph["direction"], "downstream");
+    assert!(
+        graph["roots"]
+            .as_array()
+            .is_some_and(|roots| roots.len() == 2)
+    );
+    assert!(graph["nodes"].as_array().is_some_and(|nodes| {
+        nodes
+            .iter()
+            .any(|node| node["id"] == "plugin:homeledger/audit-policy-household")
+    }));
+}
+
+#[test]
+fn explain_resolves_exact_id_and_unique_name_in_both_formats() {
+    let workspace = workspace_root();
+    let exact = run_homeledger(
+        &workspace,
+        [
+            "explain",
+            "plugin:homeledger/audit-policy-compliance",
+            "--format",
+            "text",
+        ],
+    );
+    let unique_name = run_homeledger(&workspace, ["explain", "Connection", "--format", "json"]);
+
+    assert!(exact.status.success());
+    assert!(exact.stderr.is_empty());
+    assert!(
+        String::from_utf8_lossy(&exact.stdout)
+            .contains("id: plugin:homeledger/audit-policy-compliance")
+    );
+    assert!(String::from_utf8_lossy(&exact.stdout).contains("CLI Provider Ownership"));
+    assert!(unique_name.status.success());
+    assert!(unique_name.stderr.is_empty());
+
+    let explanation: serde_json::Value =
+        serde_json::from_slice(&unique_name.stdout).expect("explanation JSON parses");
+
+    assert_eq!(
+        explanation["resource"]["id"],
+        "scope:overseerd/rpc-connection"
+    );
+    assert!(!unique_name.stdout.windows(2).any(|bytes| bytes == b"\x1b["));
+}
+
+#[test]
+fn missing_and_ambiguous_explanations_are_misuse_with_empty_stdout() {
+    let workspace = workspace_root();
+    let missing = run_homeledger(
+        &workspace,
+        ["explain", "missing,resource", "--format", "json"],
+    );
+    let ambiguous = run_homeledger(&workspace, ["explain", "DatabaseConfig"]);
+
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(missing.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("missing,resource"));
+    assert_eq!(ambiguous.status.code(), Some(2));
+    assert!(ambiguous.stdout.is_empty());
+
+    let stderr = String::from_utf8_lossy(&ambiguous.stderr);
+
+    assert!(stderr.contains("is ambiguous"));
+    assert!(stderr.contains("candidates:"));
+    assert!(stderr.contains("config-binding:"));
+}
+
+#[test]
+fn graph_resource_selector_with_commas_is_not_split() {
+    let workspace = workspace_root();
+    let output = run_homeledger(
+        &workspace,
+        ["graph", "--format", "json", "--resource", "missing,a,b"],
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(stderr.contains("resource selector 'missing,a,b' was not found"));
+    assert!(!stderr.contains("resource selector 'missing' was not found"));
+}
+
+#[test]
+fn machine_graph_ignores_forced_color_and_pager() {
+    let workspace = workspace_root();
+    let output = run_homeledger(
+        &workspace,
+        [
+            "graph", "--format", "json", "--color", "always", "--pager", "always",
+        ],
+    );
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("stdout is pure JSON");
+    assert!(!output.stdout.windows(2).any(|bytes| bytes == b"\x1b["));
+}
+
+#[test]
+fn graph_preparation_failure_emits_incomplete_diagnostic_json_only_to_stdout() {
+    let workspace = workspace_root();
+    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
+    let output = Command::new(binary)
+        .arg("graph")
+        .arg("--format")
+        .arg("json")
+        .arg("--manifest-path")
+        .arg(workspace.join("Cargo.toml"))
+        .arg("--package")
+        .arg("overseerd")
+        .arg("--bin")
+        .arg("tooling_probe_fixture")
+        .arg("--features")
+        .arg("cli,tooling")
+        .current_dir(&workspace)
+        .output()
+        .expect("cargo-overseerd graph launches");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+
+    let graph: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("failure graph JSON parses");
+
+    assert_eq!(graph["complete"], false);
+    assert!(graph["failure_phase"].is_null());
+    assert_eq!(graph["diagnostics"][0]["code"], "overseerd/tooling-panic");
+    assert!(
+        graph["diagnostics"][0]["resources"]
+            .as_array()
+            .is_some_and(|resources| {
+                !resources.is_empty()
+                    && resources.iter().all(|resource| {
+                        graph["nodes"]
+                            .as_array()
+                            .is_some_and(|nodes| nodes.iter().any(|node| node["id"] == *resource))
+                    })
+            })
+    );
+    assert!(graph["edges"].as_array().is_some_and(Vec::is_empty));
+}
+
+#[test]
 fn document_export_file_matches_stdout_bytes() {
     let workspace = workspace_root();
     let stdout = run_homeledger(&workspace, ["export", "--format", "document"]);

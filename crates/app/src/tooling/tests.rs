@@ -23,7 +23,8 @@ use crate::{
     App, AppRegistry, CompositionDiagnostic, CompositionDiagnostics, InstallationOrigin,
     InstallationProvenance, Plugin, PluginContributions, PluginId, PluginRelation, PluginSlotId,
     PreparedProtocol, ProtocolDefinition, ProtocolPluginRegistrar, ProtocolRuntime, RelationKind,
-    RelationTarget, ScopeTopology, ToolingEndpoint, ToolingRelationshipKind, ValidationContext,
+    RelationTarget, ScopeBoundary, ScopeParent, ScopeTopology, ToolingEndpoint,
+    ToolingRelationshipKind, ValidationContext,
 };
 use overseerd_hooks::{HookCall, HookKind};
 
@@ -34,6 +35,182 @@ static DEPENDENCY_DESCRIPTOR_CALLS: AtomicUsize = AtomicUsize::new(0);
 static HOOK_DESCRIPTOR_CALLS: AtomicUsize = AtomicUsize::new(0);
 static HOOK_DEPENDENCY_CALLS: AtomicUsize = AtomicUsize::new(0);
 static PROJECTION_CALLBACK_POISONED: AtomicBool = AtomicBool::new(false);
+
+const DIAGNOSTIC_CONSUMER_SCOPE_ID: overseerd_core::ScopeId =
+    overseerd_core::namespaced_id!(overseerd_core::ScopeId, "test/diagnostic-consumer");
+const DIAGNOSTIC_DEPENDENCY_SCOPE_ID: overseerd_core::ScopeId =
+    overseerd_core::namespaced_id!(overseerd_core::ScopeId, "test/diagnostic-dependency");
+
+struct DiagnosticConsumerScope;
+
+impl StaticScope for DiagnosticConsumerScope {
+    const ID: overseerd_core::ScopeId = DIAGNOSTIC_CONSUMER_SCOPE_ID;
+    const RANK: u8 = 1;
+    const NAME: &'static str = "Diagnostic Consumer";
+}
+
+struct DiagnosticDependencyScope;
+
+impl StaticScope for DiagnosticDependencyScope {
+    const ID: overseerd_core::ScopeId = DIAGNOSTIC_DEPENDENCY_SCOPE_ID;
+    const RANK: u8 = 2;
+    const NAME: &'static str = "Diagnostic Dependency";
+}
+
+struct DiagnosticConsumer;
+struct DiagnosticDependency;
+
+/// Trait requested by the topology-aware unreachable-provider fixture.
+trait DiagnosticProvider: Send + Sync {}
+
+/// Consumer of a trait provider registered in an inaccessible sibling scope.
+struct DiagnosticProviderConsumer;
+
+/// Trait provider registered in an inaccessible sibling scope.
+struct DiagnosticProviderComponent;
+
+impl DiagnosticProvider for DiagnosticProviderComponent {}
+
+fn diagnostic_dependency() -> Vec<DependencyDescriptor> {
+    vec![DependencyDescriptor {
+        name: "DiagnosticDependency",
+        ty: TypeDescriptor::of::<DiagnosticDependency>("DiagnosticDependency"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+        config: false,
+        resolution: ResolutionMode::Eager,
+    }]
+}
+
+fn diagnostic_provider_dependency() -> Vec<DependencyDescriptor> {
+    vec![DependencyDescriptor {
+        name: "DiagnosticProvider",
+        ty: TypeDescriptor::of::<dyn DiagnosticProvider>("DiagnosticProvider"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+        config: false,
+        resolution: ResolutionMode::Eager,
+    }]
+}
+
+static DIAGNOSTIC_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] =
+    [ComponentFactoryDescriptor {
+        construct,
+        dependencies: diagnostic_dependency,
+        default: false,
+    }];
+
+fn diagnostic_consumer_factories() -> &'static [ComponentFactoryDescriptor] {
+    &DIAGNOSTIC_CONSUMER_FACTORIES
+}
+
+static DIAGNOSTIC_PROVIDER_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] =
+    [ComponentFactoryDescriptor {
+        construct,
+        dependencies: diagnostic_provider_dependency,
+        default: false,
+    }];
+
+fn diagnostic_provider_consumer_factories() -> &'static [ComponentFactoryDescriptor] {
+    &DIAGNOSTIC_PROVIDER_CONSUMER_FACTORIES
+}
+
+static DIAGNOSTIC_CONSUMER: ComponentDescriptor = ComponentDescriptor {
+    id: "stable-consumer-id",
+    name: "Friendly Consumer Name",
+    ty: TypeDescriptor::of::<DiagnosticConsumer>("DiagnosticConsumer"),
+    scope: &DiagnosticConsumerScope,
+    factories: diagnostic_consumer_factories,
+    hooks: overseerd_hooks::no_hooks,
+};
+
+static DIAGNOSTIC_DEPENDENCY: ComponentDescriptor = ComponentDescriptor {
+    id: "stable-dependency-id",
+    name: "Friendly Dependency Name",
+    ty: TypeDescriptor::of::<DiagnosticDependency>("DiagnosticDependency"),
+    scope: &DiagnosticDependencyScope,
+    factories,
+    hooks: overseerd_hooks::no_hooks,
+};
+
+static DIAGNOSTIC_PROVIDER_CONSUMER: ComponentDescriptor = ComponentDescriptor {
+    id: "stable-provider-consumer-id",
+    name: "Friendly Provider Consumer",
+    ty: TypeDescriptor::of::<DiagnosticProviderConsumer>("DiagnosticProviderConsumer"),
+    scope: &DiagnosticConsumerScope,
+    factories: diagnostic_provider_consumer_factories,
+    hooks: overseerd_hooks::no_hooks,
+};
+
+static DIAGNOSTIC_PROVIDER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
+    id: "stable-provider-component-id",
+    name: "Friendly Provider Component",
+    ty: TypeDescriptor::of::<DiagnosticProviderComponent>("DiagnosticProviderComponent"),
+    scope: &DiagnosticDependencyScope,
+    factories,
+    hooks: overseerd_hooks::no_hooks,
+};
+
+fn erase_diagnostic_provider(_: &BoxedComponent) -> BoxedComponent {
+    unreachable!("provider validation never erases components")
+}
+
+static DIAGNOSTIC_PROVIDER: ProviderDescriptor = ProviderDescriptor {
+    trait_ty: TypeDescriptor::of::<dyn DiagnosticProvider>("DiagnosticProvider"),
+    concrete_ty: TypeDescriptor::of::<DiagnosticProviderComponent>("DiagnosticProviderComponent"),
+    qualifier: "sibling",
+    primary: false,
+    priority: 0,
+    ordering: &[],
+    erase: erase_diagnostic_provider,
+};
+
+static DIAGNOSTIC_SCOPE_BOUNDARIES: [ScopeBoundary; 2] = [
+    ScopeBoundary::new(&DiagnosticConsumerScope, ScopeParent::Root),
+    ScopeBoundary::new(&DiagnosticDependencyScope, ScopeParent::Root),
+];
+
+#[derive(Default)]
+struct DiagnosticFailureProtocol;
+
+impl ProtocolDefinition for DiagnosticFailureProtocol {
+    type Prepared = ();
+    type Error = crate::Error;
+
+    const ID: crate::ProtocolId =
+        crate::namespaced_id!(crate::ProtocolId, "test/diagnostic-failure");
+    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::new(&DIAGNOSTIC_SCOPE_BOUNDARIES);
+
+    fn register(&self, _registry: &mut AppRegistry) {}
+
+    fn prepare(self, _context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct DiagnosticProviderFailureProtocol;
+
+impl ProtocolDefinition for DiagnosticProviderFailureProtocol {
+    type Prepared = ();
+    type Error = crate::Error;
+
+    const ID: crate::ProtocolId =
+        crate::namespaced_id!(crate::ProtocolId, "test/diagnostic-provider-failure");
+    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::new(&DIAGNOSTIC_SCOPE_BOUNDARIES);
+
+    fn register(&self, registry: &mut AppRegistry) {
+        registry.providers.push(DIAGNOSTIC_PROVIDER);
+    }
+
+    fn prepare(self, _context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error> {
+        Ok(())
+    }
+}
 
 #[test]
 fn typed_config_failures_emit_safe_diagnostics_without_source_display() {
@@ -111,6 +288,237 @@ fn plugin_composition_failures_preserve_stable_plugin_and_installation_identitie
 }
 
 #[test]
+fn di_failures_use_stable_component_and_underlying_type_identities() {
+    let error = crate::Error::Di(overseerd_di::Error::MissingDependency {
+        component: String::from("Friendly Worker Name"),
+        component_id: String::from("worker-component"),
+        dependency: String::from("fixture::Service (qualifier `primary`)"),
+        type_name: String::from("fixture::Service"),
+    });
+    let failure = super::ToolingProbeError::Lifecycle(crate::PhaseError::new(
+        crate::LifecyclePhase::Prepare,
+        error,
+    ))
+    .failure();
+
+    assert_eq!(
+        failure.diagnostics[0].resources,
+        ["component:worker-component", "type:fixture::Service"]
+    );
+    assert!(
+        !failure.diagnostics[0]
+            .resources
+            .iter()
+            .any(|resource| resource.contains("qualifier"))
+    );
+}
+
+#[test]
+fn orphan_provider_failures_emit_provider_component_and_type_identities() {
+    let error = crate::Error::Di(overseerd_di::Error::ProviderComponentMissing(Box::new(
+        overseerd_di::ProviderComponentMissing {
+            trait_name: String::from("Friendly Service"),
+            trait_type: String::from("fixture::Service"),
+            component: String::from("Friendly Provider"),
+            component_type: String::from("fixture::Provider"),
+            qualifier: String::from("primary"),
+        },
+    )));
+    let failure = super::ToolingProbeError::Lifecycle(crate::PhaseError::new(
+        crate::LifecyclePhase::Prepare,
+        error,
+    ))
+    .failure();
+    let diagnostic = &failure.diagnostics[0];
+
+    assert_eq!(
+        diagnostic.code,
+        "overseerd/tooling-provider-component-missing"
+    );
+    assert_eq!(
+        diagnostic.resources,
+        [
+            "provider:fixture::Service:fixture::Provider:primary",
+            "component:fixture::Provider",
+            "type:fixture::Service",
+            "type:fixture::Provider",
+        ]
+    );
+    assert_eq!(
+        diagnostic.fix.as_deref(),
+        Some(
+            "Register the provider's concrete component or remove the orphan provider descriptor."
+        )
+    );
+}
+
+#[test]
+fn scope_violation_diagnostics_include_component_type_and_scope_identities() {
+    let consumer_scope =
+        overseerd_core::ScopeId::new("fixture/request").expect("valid consumer scope identity");
+    let dependency_scope = overseerd_core::ScopeId::new("fixture/connection")
+        .expect("valid dependency scope identity");
+    let error = crate::Error::Di(overseerd_di::Error::ScopeViolation(Box::new(
+        overseerd_di::ScopeViolation {
+            component: String::from("Friendly Consumer"),
+            component_id: String::from("consumer-component"),
+            dependency: String::from("Friendly Dependency"),
+            dependency_type: String::from("fixture::Dependency"),
+            component_scope: "Request",
+            component_scope_id: consumer_scope,
+            dependency_scope: "Connection",
+            dependency_scope_id: dependency_scope,
+        },
+    )));
+    let failure = super::ToolingProbeError::Lifecycle(crate::PhaseError::new(
+        crate::LifecyclePhase::Prepare,
+        error,
+    ))
+    .failure();
+
+    assert_eq!(
+        failure.diagnostics[0].resources,
+        [
+            "component:consumer-component",
+            "type:fixture::Dependency",
+            "scope:fixture/request",
+            "scope:fixture/connection",
+        ]
+    );
+}
+
+#[test]
+fn scope_unreachable_diagnostics_include_consumer_and_candidate_provider_identities() {
+    let consumer_scope =
+        overseerd_core::ScopeId::new("fixture/request").expect("valid consumer scope identity");
+    let provider_scope =
+        overseerd_core::ScopeId::new("fixture/sibling").expect("valid provider scope identity");
+    let error = crate::Error::Di(overseerd_di::Error::ScopeUnreachableDependency(Box::new(
+        overseerd_di::ScopeUnreachableDependency {
+            component: String::from("Friendly Consumer"),
+            component_id: String::from("consumer-component"),
+            dependency: String::from("Friendly Service"),
+            dependency_type: String::from("fixture::Service"),
+            component_scope: String::from("Request"),
+            component_scope_id: consumer_scope,
+            providers: vec![overseerd_di::ScopeUnreachableProvider {
+                component: String::from("Friendly Provider"),
+                component_id: String::from("provider-component"),
+                component_type: String::from("fixture::Provider"),
+                scope: String::from("Sibling"),
+                scope_id: provider_scope,
+                qualifier: String::from("primary"),
+            }],
+        },
+    )));
+    let failure = super::ToolingProbeError::Lifecycle(crate::PhaseError::new(
+        crate::LifecyclePhase::Prepare,
+        error,
+    ))
+    .failure();
+    let diagnostic = &failure.diagnostics[0];
+
+    assert_eq!(diagnostic.code, "overseerd/tooling-scope-unreachable");
+    assert_eq!(
+        diagnostic.resources,
+        [
+            "component:consumer-component",
+            "type:fixture::Service",
+            "scope:fixture/request",
+            "provider:fixture::Service:fixture::Provider:primary",
+            "component:provider-component",
+            "type:fixture::Provider",
+            "scope:fixture/sibling",
+        ]
+    );
+    assert_eq!(
+        diagnostic.fix.as_deref(),
+        Some(
+            "Move a provider into the consumer's scope chain or move the consumer beneath a provider scope."
+        )
+    );
+}
+
+#[test]
+fn actual_prepare_failure_preserves_component_id_distinct_from_name() {
+    let result = App::<DiagnosticFailureProtocol>::builder("diagnostic-failure")
+        .config_source(ConfigManager::<Toml>::empty())
+        .component_descriptor(&DIAGNOSTIC_CONSUMER)
+        .component_descriptor(&DIAGNOSTIC_DEPENDENCY)
+        .prepare();
+    let error = match result {
+        Ok(_) => panic!("sibling scope dependency is rejected"),
+        Err(error) => error,
+    };
+    let failure = super::ToolingProbeError::Lifecycle(crate::PhaseError::new(
+        crate::LifecyclePhase::Prepare,
+        error,
+    ))
+    .failure();
+    let resources = &failure.diagnostics[0].resources;
+
+    assert!(resources.contains(&String::from("component:stable-consumer-id")));
+    assert!(!resources.contains(&String::from("component:Friendly Consumer Name")));
+    assert!(resources.contains(&format!(
+        "type:{}",
+        std::any::type_name::<DiagnosticDependency>()
+    )));
+    assert!(resources.contains(&String::from("scope:test/diagnostic-consumer")));
+    assert!(resources.contains(&String::from("scope:test/diagnostic-dependency")));
+}
+
+#[test]
+fn actual_prepare_failure_classifies_sibling_trait_provider_as_scope_unreachable() {
+    let result = App::<DiagnosticProviderFailureProtocol>::builder("diagnostic-provider-failure")
+        .config_source(ConfigManager::<Toml>::empty())
+        .component_descriptor(&DIAGNOSTIC_PROVIDER_CONSUMER)
+        .component_descriptor(&DIAGNOSTIC_PROVIDER_COMPONENT)
+        .prepare();
+    let error = match result {
+        Ok(_) => panic!("sibling provider is unreachable"),
+        Err(error) => error,
+    };
+    let failure = super::ToolingProbeError::Lifecycle(crate::PhaseError::new(
+        crate::LifecyclePhase::Prepare,
+        error,
+    ))
+    .failure();
+    let diagnostic = &failure.diagnostics[0];
+
+    assert_eq!(diagnostic.code, "overseerd/tooling-scope-unreachable");
+    assert!(
+        diagnostic
+            .resources
+            .contains(&String::from("component:stable-provider-consumer-id"))
+    );
+    assert!(
+        diagnostic
+            .resources
+            .contains(&String::from("component:stable-provider-component-id"))
+    );
+    assert!(
+        diagnostic
+            .resources
+            .contains(&String::from("scope:test/diagnostic-consumer"))
+    );
+    assert!(
+        diagnostic
+            .resources
+            .contains(&String::from("scope:test/diagnostic-dependency"))
+    );
+    assert!(diagnostic.resources.contains(&format!(
+        "type:{}",
+        std::any::type_name::<dyn DiagnosticProvider>()
+    )));
+    assert!(diagnostic.resources.iter().any(|resource| {
+        resource.starts_with("provider:")
+            && resource.contains(std::any::type_name::<dyn DiagnosticProvider>())
+            && resource.contains(std::any::type_name::<DiagnosticProviderComponent>())
+            && resource.ends_with(":sibling")
+    }));
+}
+
+#[test]
 fn invalid_envelope_does_not_open_or_truncate_response_path() {
     let path = probe_output_path("invalid-before-open");
     let mut envelope = ProbeEnvelope::failure(
@@ -185,6 +593,18 @@ struct SecondProvider;
 
 /// Component with one exact qualified config dependency.
 struct ConfigConsumer;
+
+/// Component consuming one plugin-contributed qualified provider.
+struct ProviderConsumer;
+
+/// Plugin-owned global arguments used to verify CLI contribution projection.
+#[cfg(feature = "cli")]
+#[derive(clap::Args)]
+struct ProjectedPluginArgs {
+    /// Enables the projected plugin fixture.
+    #[arg(long)]
+    projected: bool,
+}
 
 /// Trait identity used by provider projection tests.
 trait OrderedProvider: Send + Sync {}
@@ -305,8 +725,20 @@ impl Component for ConfigConsumer {
     }
 }
 
+impl Component for ProviderConsumer {
+    type Handle = Arc<Self>;
+
+    const ID: &'static str = "provider-consumer";
+    const NAME: &'static str = "ProviderConsumer";
+
+    fn into_handle(self) -> Self::Handle {
+        Arc::new(self)
+    }
+}
+
 impl OrderedProvider for FirstProvider {}
 impl OrderedProvider for SecondProvider {}
+impl OrderedProvider for ProjectedComponent {}
 
 fn construct(
     _context: &mut ComponentConstructionContext,
@@ -477,6 +909,10 @@ fn ambiguous_config_dependency() -> Vec<DependencyDescriptor> {
     vec![config_dependency(None)]
 }
 
+fn missing_config_dependency() -> Vec<DependencyDescriptor> {
+    vec![config_dependency(Some("missing"))]
+}
+
 fn config_dependency(qualifier: Option<&'static str>) -> DependencyDescriptor {
     DependencyDescriptor {
         name: DuplicateConfig::NAME,
@@ -525,8 +961,22 @@ static AMBIGUOUS_CONFIG_HOOKS: [overseerd_hooks::HookDescriptor; 1] =
         unreachable_hook_call as HookCall,
     )];
 
+static MISSING_CONFIG_HOOKS: [overseerd_hooks::HookDescriptor; 1] =
+    [overseerd_hooks::HookDescriptor::new(
+        4,
+        TypeDescriptor::of::<ReloadHookComponent>(ReloadHookComponent::NAME),
+        ConfigReload::NAME,
+        config_reload_type_id,
+        missing_config_dependency,
+        unreachable_hook_call as HookCall,
+    )];
+
 fn ambiguous_config_hooks() -> &'static [overseerd_hooks::HookDescriptor] {
     &AMBIGUOUS_CONFIG_HOOKS
+}
+
+fn missing_config_hooks() -> &'static [overseerd_hooks::HookDescriptor] {
+    &MISSING_CONFIG_HOOKS
 }
 
 static AMBIGUOUS_CONFIG_HOOK_COMPONENT: ComponentDescriptor = ComponentDescriptor {
@@ -536,6 +986,15 @@ static AMBIGUOUS_CONFIG_HOOK_COMPONENT: ComponentDescriptor = ComponentDescripto
     scope: &Singleton,
     factories: no_component_factories,
     hooks: ambiguous_config_hooks,
+};
+
+static MISSING_CONFIG_HOOK_COMPONENT: ComponentDescriptor = ComponentDescriptor {
+    id: ReloadHookComponent::ID,
+    name: ReloadHookComponent::NAME,
+    ty: TypeDescriptor::of::<ReloadHookComponent>(ReloadHookComponent::NAME),
+    scope: &Singleton,
+    factories: no_component_factories,
+    hooks: missing_config_hooks,
 };
 
 static CONFIG_CONSUMER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
@@ -598,6 +1057,62 @@ static SECOND_PROVIDER_DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
     ordering: &[],
     erase: erase_second_provider,
 };
+
+fn erase_projected_provider(component: &BoxedComponent) -> BoxedComponent {
+    let concrete = component
+        .value
+        .downcast_ref::<Arc<ProjectedComponent>>()
+        .expect("projected provider has the declared stored type");
+    let value: Arc<dyn OrderedProvider> = Arc::clone(concrete) as Arc<dyn OrderedProvider>;
+
+    BoxedComponent {
+        ty: TypeDescriptor::of::<dyn OrderedProvider>("OrderedProvider"),
+        value: Box::new(value),
+    }
+}
+
+static PROJECTED_PROVIDER_DESCRIPTOR: ProviderDescriptor = ProviderDescriptor {
+    trait_ty: TypeDescriptor::of::<dyn OrderedProvider>("OrderedProvider"),
+    concrete_ty: TypeDescriptor::of::<ProjectedComponent>(ProjectedComponent::NAME),
+    qualifier: "projected",
+    primary: false,
+    priority: 0,
+    ordering: &[],
+    erase: erase_projected_provider,
+};
+
+fn provider_consumer_dependencies() -> Vec<DependencyDescriptor> {
+    vec![DependencyDescriptor {
+        name: "OrderedProvider",
+        ty: TypeDescriptor::of::<dyn OrderedProvider>("OrderedProvider"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: Some("projected"),
+        config: false,
+        resolution: ResolutionMode::Eager,
+    }]
+}
+
+static PROVIDER_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] =
+    [ComponentFactoryDescriptor {
+        construct: construct_config_consumer,
+        dependencies: provider_consumer_dependencies,
+        default: true,
+    }];
+
+fn provider_consumer_factories() -> &'static [ComponentFactoryDescriptor] {
+    &PROVIDER_CONSUMER_FACTORIES
+}
+
+static PROVIDER_CONSUMER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
+    id: ProviderConsumer::ID,
+    name: ProviderConsumer::NAME,
+    ty: TypeDescriptor::of::<ProviderConsumer>(ProviderConsumer::NAME),
+    scope: &Singleton,
+    factories: provider_consumer_factories,
+    hooks: overseerd_hooks::no_hooks,
+};
 static DISPLACED_COMPONENT: ComponentDescriptor = ComponentDescriptor::manual(
     "protocol-projected-component",
     "ProtocolProjectedComponent",
@@ -648,6 +1163,15 @@ impl Plugin for SecondConfigPlugin {
 #[derive(Default)]
 struct DisplacedComponentPlugin;
 
+/// Plugin contributing both a component and its trait provider.
+#[derive(Default)]
+struct ProviderContributionPlugin;
+
+/// Early plugin contributing one parser-visible argument provider.
+#[cfg(feature = "cli")]
+#[derive(Default)]
+struct CliContributionPlugin;
+
 impl Plugin for DisplacedComponentPlugin {
     const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/displaced-component");
 
@@ -656,6 +1180,36 @@ impl Plugin for DisplacedComponentPlugin {
             crate::namespaced_id!(crate::ContributionId, "test/projected-component"),
             COMPONENT,
         );
+    }
+}
+
+impl Plugin for ProviderContributionPlugin {
+    const ID: crate::PluginId =
+        crate::namespaced_id!(crate::PluginId, "test/provider-contribution");
+
+    fn contribute(self, contributions: &mut PluginContributions) {
+        contributions.component_descriptor(
+            crate::namespaced_id!(crate::ContributionId, "test/provider-component"),
+            COMPONENT,
+        );
+        contributions.provider(
+            crate::namespaced_id!(crate::ContributionId, "test/provider-binding"),
+            PROJECTED_PROVIDER_DESCRIPTOR,
+        );
+    }
+}
+
+#[cfg(feature = "cli")]
+impl Plugin for CliContributionPlugin {
+    const ID: crate::PluginId = crate::namespaced_id!(crate::PluginId, "test/cli-contribution");
+
+    fn contribute(self, _contributions: &mut PluginContributions) {}
+
+    fn cli(&self, cli: &mut crate::PluginCliRegistrar) {
+        cli.args::<ProjectedPluginArgs>(crate::namespaced_id!(
+            crate::ContributionId,
+            "test/cli-args"
+        ));
     }
 }
 
@@ -765,6 +1319,9 @@ fn prepared_projection_is_read_only_stable_and_redacted() {
         resource.id == "component:projected-component"
             && resource.labels["rust-type"].ends_with("ProjectedComponent")
             && resource.labels["construction"] == "planned-factory"
+            && resource.labels["factory-selection"] == "default"
+            && resource.labels["factory-candidate-count"] == "1"
+            && resource.labels["factory-explicit-count"] == "0"
     }));
     assert!(first.resources.iter().any(|resource| {
         resource
@@ -815,14 +1372,14 @@ fn displaced_plugin_contribution_points_to_the_final_registry_resource() {
         "component:projected-component"
     );
     assert_eq!(
-        contribution.labels["applied-target"],
+        contribution.labels["effective-target"],
         "component:protocol-projected-component"
     );
-    assert!(document.relationships.iter().any(|relationship| {
+    assert!(!contribution.labels.contains_key("applied-target"));
+    assert!(!document.relationships.iter().any(|relationship| {
         relationship.kind == RelationshipKind::Contributes
             && relationship.from == contribution.id
             && relationship.to == "component:protocol-projected-component"
-            && relationship.labels["decision"] == "displaced"
     }));
 }
 
@@ -857,6 +1414,134 @@ fn replacement_and_suppression_decisions_project_explicitly() {
     assert!(suppression.resources.iter().any(|resource| {
         resource.id == "plugin:test/projection-default"
             && resource.labels["decision"] == "suppressed"
+    }));
+    assert!(replacement.resources.iter().any(|resource| {
+        resource.id == "plugin:test/projection-replacement"
+            && resource.labels["effective"] == "true"
+    }));
+    assert!(
+        suppression
+            .resources
+            .iter()
+            .any(|resource| { resource.id == "plugin-slot:test/projection-slot" })
+    );
+    assert!(suppression.relationships.iter().any(|relationship| {
+        relationship.kind == RelationshipKind::DependsOn
+            && relationship.from == "suppression:test/projection-slot"
+            && relationship.to == "plugin-slot:test/projection-slot"
+            && relationship.labels["role"] == "suppressed-slot"
+    }));
+}
+
+#[test]
+fn selected_plugin_component_and_provider_retain_provenance_and_resolution() {
+    let document = App::<()>::builder("provider-contribution")
+        .config_source(ConfigManager::<Toml>::empty())
+        .register_plugin::<ProviderContributionPlugin>()
+        .component_descriptor(&PROVIDER_CONSUMER_COMPONENT)
+        .prepare()
+        .expect("provider contribution prepares")
+        .tooling_document()
+        .expect("provider contribution projects");
+    let component = document
+        .resources
+        .iter()
+        .find(|resource| resource.id == "component:projected-component")
+        .expect("contributed component exists");
+    let provider = document
+        .resources
+        .iter()
+        .find(|resource| {
+            resource.kind == overseerd_tooling_schema::ResourceKind::Provider
+                && resource.labels.get("qualifier") == Some(&String::from("projected"))
+        })
+        .expect("contributed provider exists");
+
+    assert_eq!(
+        component
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.owner.as_deref()),
+        Some("plugin:test/provider-contribution")
+    );
+    assert_eq!(
+        provider
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.owner.as_deref()),
+        Some("plugin:test/provider-contribution")
+    );
+    assert!(document.relationships.iter().any(|relationship| {
+        relationship.kind == RelationshipKind::DependsOn
+            && relationship.from == "component:provider-consumer"
+            && relationship.to == provider.id
+            && relationship.labels["role"] == "resolved-provider"
+            && relationship.labels["selection-reason"] == "qualified"
+            && relationship.labels["resolution"] == "eager"
+            && relationship.labels["cardinality"] == "one"
+    }));
+    assert!(document.relationships.iter().any(|relationship| {
+        relationship.kind == RelationshipKind::DependsOn
+            && relationship.from == "component:provider-consumer"
+            && relationship.to.starts_with("type:")
+            && !relationship.labels.contains_key("role")
+    }));
+}
+
+#[test]
+#[cfg(feature = "cli")]
+fn cli_providers_project_as_owned_contribution_resources() {
+    let protocol = ProtocolPluginRegistrar::new(<() as ProtocolDefinition>::ID);
+    let mut application = crate::ApplicationPluginRegistrar::new();
+
+    application.register::<CliContributionPlugin>();
+
+    let mut catalog = crate::EarlyPluginCatalog::resolve(protocol, application)
+        .expect("CLI plugin catalog resolves");
+    let command = clap::Command::new("cli-contribution");
+    let framework = clap::Command::new("cli-contribution");
+
+    catalog
+        .augment_cli(command, framework, &[], false)
+        .expect("CLI provider composes");
+
+    let document = App::<()>::builder("cli-contribution")
+        .config_source(ConfigManager::<Toml>::empty())
+        .with_early_plugin_catalog(catalog)
+        .prepare()
+        .expect("CLI contribution prepares")
+        .tooling_document()
+        .expect("CLI contribution projects");
+    let id = "contribution:plugin:test/cli-contribution:test/cli-args";
+    let contribution = document
+        .resources
+        .iter()
+        .find(|resource| resource.id == id)
+        .expect("CLI contribution resource exists");
+
+    assert_eq!(
+        contribution.kind,
+        overseerd_tooling_schema::ResourceKind::Contribution
+    );
+    assert_eq!(contribution.labels["provider-kind"], "args");
+    assert_eq!(
+        contribution
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.owner.as_deref()),
+        Some("plugin:test/cli-contribution")
+    );
+    assert_eq!(
+        contribution
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.origin.as_deref()),
+        Some("cli-provider")
+    );
+    assert!(document.relationships.iter().any(|relationship| {
+        relationship.kind == RelationshipKind::Contributes
+            && relationship.from == "plugin:test/cli-contribution"
+            && relationship.to == id
     }));
 }
 
@@ -1277,4 +1962,29 @@ fn config_dependencies_target_exact_bindings_or_mark_type_ambiguity() {
     assert!(ambiguous.to.starts_with("type:"));
     assert_eq!(ambiguous.labels["binding-resolution"], "ambiguous");
     assert_eq!(ambiguous.labels["binding-cardinality"], "2");
+}
+
+#[test]
+fn config_dependencies_distinguish_missing_bindings() {
+    let document = App::<()>::builder("missing-config-dependency")
+        .config_source(ConfigManager::<Toml>::empty())
+        .component_descriptor(&MISSING_CONFIG_HOOK_COMPONENT)
+        .with_component(ReloadHookComponent)
+        .prepare()
+        .expect("missing hook config dependency prepares")
+        .tooling_document()
+        .expect("missing hook config dependency projects");
+    let missing = document
+        .relationships
+        .iter()
+        .find(|relationship| {
+            relationship.kind == RelationshipKind::DependsOn
+                && relationship
+                    .from
+                    .starts_with("hook:reload-hook-component:config_reload:")
+        })
+        .expect("missing hook config dependency exists");
+
+    assert_eq!(missing.labels["binding-resolution"], "missing");
+    assert_eq!(missing.labels["binding-cardinality"], "0");
 }

@@ -2,7 +2,7 @@ use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
 use overseerd_core::{ScopeId, Singleton, StaticScope, Transient};
-use overseerd_di::{ComponentDescriptor, ProviderDescriptor, topological_sort};
+use overseerd_di::{ComponentDescriptor, ProviderSelectionModel, topological_sort};
 
 use super::PreparedScopeTopology;
 
@@ -36,11 +36,11 @@ impl ScopePlan {
     /// Partitions resolved descriptors and computes each boundary's local factory order.
     pub(crate) fn partition(
         resolved: &[ComponentDescriptor],
-        providers: &[ProviderDescriptor],
+        selection: &ProviderSelectionModel,
         topology: &PreparedScopeTopology,
     ) -> crate::Result<Self> {
         let partitions = DescriptorPartitions::classify(resolved, topology)?;
-        let orders = partitions.orders(topology, providers)?;
+        let orders = partitions.orders(topology, selection)?;
 
         Ok(Self {
             singletons: partitions.singletons,
@@ -125,7 +125,7 @@ impl DescriptorPartitions {
     fn orders(
         &self,
         topology: &PreparedScopeTopology,
-        providers: &[ProviderDescriptor],
+        selection: &ProviderSelectionModel,
     ) -> crate::Result<HashMap<ScopeId, Vec<ComponentDescriptor>>> {
         let root = self
             .singletons
@@ -138,10 +138,12 @@ impl DescriptorPartitions {
             let scope = boundary.id();
             let prebuilt = self.prebuilt(&scope, &root, topology);
             let local = self.by_scope.get(&scope).map_or(&[][..], Vec::as_slice);
-            let order = topological_sort(local, &prebuilt, providers, &self.transient)?
-                .into_iter()
-                .copied()
-                .collect();
+            let order = topological_sort(local, &prebuilt, selection, |consumer, dependency| {
+                topology.is_reachable(&consumer, &dependency)
+            })?
+            .into_iter()
+            .copied()
+            .collect();
 
             orders.insert(scope, order);
         }

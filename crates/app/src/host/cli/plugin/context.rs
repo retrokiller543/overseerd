@@ -136,6 +136,8 @@ impl PluginCommandContext<Built> {
                 .await?
                 .ok_or_else(|| overseerd_di::Error::MissingDependency {
                     component: String::from("plugin CLI command"),
+                    component_id: String::from("plugin-cli-command"),
+                    dependency: std::any::type_name::<T>().to_string(),
                     type_name: std::any::type_name::<T>().to_string(),
                 })
         }

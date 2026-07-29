@@ -3,7 +3,7 @@ use cargo_overseerd::{
 };
 use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity, DocumentIdentity, SourceLocation};
 
-use super::write_report;
+use super::{detail::write_heading, write_report};
 use crate::cli::ReportFormat;
 
 #[test]
@@ -93,4 +93,53 @@ fn terminal_report_preserves_line_without_column() {
     let output = String::from_utf8(output).expect("terminal report is UTF-8");
 
     assert!(output.contains("at src/main.rs:12\n"));
+}
+
+#[test]
+fn terminal_report_escapes_controls_in_shared_diagnostics() {
+    let report = CommandReport {
+        schema: TOOLING_SCHEMA_VERSION,
+        command: CommandKind::Doctor,
+        outcome: CommandOutcome::BuildFailure,
+        exit_code: 4,
+        target: None,
+        application: None,
+        protocol: None,
+        framework_version: None,
+        checks: Vec::new(),
+        diagnostics: vec![Diagnostic {
+            code: String::from("rustc/hostile\u{1b}"),
+            severity: DiagnosticSeverity::Error,
+            message: String::from("failure\nnext\rreturn\u{1b}[2J"),
+            resources: vec![String::from("component\nworker")],
+            sources: vec![SourceLocation {
+                file: String::from("src/main.rs\r\u{1b}"),
+                line: Some(12),
+                column: None,
+            }],
+            fix: Some(String::from("fix\nthis\rnow")),
+        }],
+    };
+    let mut output = Vec::new();
+
+    write_report(&report, ReportFormat::Terminal, &mut output).expect("terminal report writes");
+
+    let output = String::from_utf8(output).expect("terminal report is UTF-8");
+
+    assert!(!output.contains('\u{1b}'));
+    assert!(!output.contains('\r'));
+    assert!(output.contains(r"error[rustc/hostile\u{1b}]: failure\nnext\rreturn\u{1b}[2J"));
+    assert!(output.contains(r"at src/main.rs\r\u{1b}:12"));
+}
+
+#[test]
+fn hostile_heading_is_one_line_and_preserves_unicode() {
+    let mut output = Vec::new();
+
+    write_heading(&mut output, "Café\u{1b}[31m\nnext\rline", false).expect("heading writes");
+
+    let output = String::from_utf8(output).expect("heading is UTF-8");
+
+    assert_eq!(output.lines().count(), 1);
+    assert_eq!(output, "Café\\u{1b}[31m\\nnext\\rline\n");
 }

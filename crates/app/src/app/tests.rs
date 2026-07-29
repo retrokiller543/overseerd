@@ -201,3 +201,35 @@ async fn prepare_validates_without_constructing_components_or_protocol() {
     assert!(app.container().get::<BoundaryComponent>().is_some());
     assert!(app.container().get::<SeededComponent>().is_some());
 }
+
+#[test]
+#[cfg(feature = "tooling")]
+fn retained_tooling_construction_plan_equals_the_runtime_build_plan() {
+    let prepared = App::<BoundaryProtocol>::builder("prepare-boundary-test")
+        .config_source(
+            ConfigManager::<Toml>::from_str(
+                r#"
+                    [logging]
+                    level = "debug"
+                    format = "compact"
+                    ansi = false
+                "#,
+            )
+            .expect("test config parses"),
+        )
+        .prepare()
+        .expect("application prepares");
+    let runtime = prepared
+        .root_order
+        .iter()
+        .map(|component| component.id)
+        .collect::<Vec<_>>();
+    let tooling = prepared
+        .tooling_snapshot()
+        .root_plan()
+        .iter()
+        .map(|entry| entry.descriptor.id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(tooling, runtime);
+}

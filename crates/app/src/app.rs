@@ -358,8 +358,6 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
 
         let scope_topology = Arc::new(D::SCOPE_TOPOLOGY.prepare().map_err(Error::from)?);
 
-        registry.validate_with_scope_topology(&scope_topology)?;
-
         // Collapse to the effective component set (explicit factories override defaults).
         let resolved = registry.resolved_components()?;
         registry.components = resolved.clone();
@@ -377,7 +375,18 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
             value: Box::new(Injectable::into_stored(hook_manager.clone())),
         });
 
-        let scopes = ScopePlan::partition(&resolved, &registry.providers, &scope_topology)?;
+        let component_registry = registry.component_registry();
+        let provider_selection = Arc::new(
+            component_registry
+                .provider_selection_model(&resolved)
+                .map_err(Error::from)?,
+        );
+        registry.validate_effective_with_scope_topology(
+            &resolved,
+            &provider_selection,
+            &scope_topology,
+        )?;
+        let scopes = ScopePlan::partition(&resolved, &provider_selection, &scope_topology)?;
         let prebuilt: HashSet<_> = instances
             .iter()
             .map(|instance| instance.ty.type_id)
@@ -385,8 +394,8 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
         let root_order: Vec<_> = topological_sort(
             &scopes.singletons,
             &prebuilt,
-            &registry.providers,
-            &scopes.transient,
+            &provider_selection,
+            |consumer, dependency| scope_topology.is_reachable(&consumer, &dependency),
         )
         .map_err(Error::from)?
         .into_iter()
@@ -427,28 +436,45 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
             value: Box::new(Injectable::into_stored(reloader.clone())),
         });
 
-        let provider_order = registry
-            .component_registry()
-            .provider_order(&resolved)
-            .map_err(Error::from)?;
-        let scope_registry = Arc::new(ScopeRegistry::new(
-            scopes.transient,
-            resolved
+        let provider_order =
+            registry
+                .providers
                 .iter()
-                .filter(|component| component.effective_factory().ok().flatten().is_some())
-                .map(|component| (component.ty.type_id, *component))
-                .collect(),
-            registry.providers.clone(),
-            provider_order.clone(),
-        ));
+                .fold(HashMap::new(), |mut order, provider| {
+                    order
+                        .entry(provider.trait_ty.type_id)
+                        .or_insert_with(HashMap::new)
+                        .insert(
+                            provider.concrete_ty.type_id,
+                            provider_selection.ordinal(provider),
+                        );
+
+                    order
+                });
+        let scope_registry = Arc::new(
+            ScopeRegistry::from_selection_model(
+                scopes.transient,
+                resolved
+                    .iter()
+                    .map(|component| (component.ty.type_id, *component))
+                    .collect(),
+                Arc::clone(&provider_selection),
+            )
+            .map_err(Error::from)?,
+        );
         #[cfg(feature = "tooling")]
-        let tooling_snapshot = Arc::new(crate::tooling::ProjectionSnapshot::capture(
-            &registry.components,
-            &root_order,
-            &scopes.orders,
-            &instances,
-            &scopes.seed_destinations,
-        ));
+        let tooling_snapshot = Arc::new(
+            crate::tooling::ProjectionSnapshot::capture(
+                &provider_selection,
+                &scope_topology,
+                &registry.components,
+                &root_order,
+                &scopes.orders,
+                &instances,
+                &scopes.seed_destinations,
+            )
+            .map_err(Error::from)?,
+        );
 
         Ok(PreparedApp {
             name: self.name,
