@@ -175,6 +175,7 @@ fn envelope() -> ProbeEnvelope {
                 message: String::from("Application setup failed during the tooling probe."),
                 ..Diagnostic::default()
             }],
+            resource_kinds: Default::default(),
         },
     )
 }

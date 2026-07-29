@@ -224,6 +224,9 @@ pub struct ProbeFailure {
     pub phase: Option<String>,
     /// One or more authoritative schema diagnostics describing the failure.
     pub diagnostics: Vec<Diagnostic>,
+    /// Authoritative generic kinds for diagnostic resource identities when known.
+    #[serde(default)]
+    pub resource_kinds: BTreeMap<String, ResourceKind>,
 }
 
 /// Success or failure payload emitted by a target-local tooling probe.

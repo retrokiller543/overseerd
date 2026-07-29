@@ -531,6 +531,7 @@ fn invalid_envelope_does_not_open_or_truncate_response_path() {
                 message: String::from("invalid fixture"),
                 ..overseerd_tooling_schema::Diagnostic::default()
             }],
+            resource_kinds: Default::default(),
         },
     );
 
