@@ -7,6 +7,7 @@ use overseerd_config::{CONFIG_BINDINGS, ConfigBinding};
 use overseerd_core::DependencyDescriptor;
 use overseerd_di::{
     COMPONENTS, Component, ComponentDescriptor, ComponentRegistry, PROVIDERS, ProviderDescriptor,
+    ProviderSelectionModel,
 };
 
 use crate::error::Error;
@@ -112,6 +113,24 @@ impl AppRegistry {
         let components = self.resolved_components()?;
 
         self.validate_configs(&components)?;
+
+        Ok(())
+    }
+
+    pub(crate) fn validate_effective_with_scope_topology(
+        &self,
+        components: &[ComponentDescriptor],
+        selection: &ProviderSelectionModel,
+        topology: &PreparedScopeTopology,
+    ) -> crate::Result<()> {
+        self.component_registry()
+            .validate_with_scope_reachability_using(
+                components,
+                selection,
+                |consumer, dependency| topology.is_reachable(&consumer, &dependency),
+            )?;
+
+        self.validate_configs(components)?;
 
         Ok(())
     }

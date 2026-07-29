@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use overseerd_core::{ResolverSet, ScopeId, TypeDescriptor};
 
 use super::*;
+use crate::registry::selection::select_single_provider;
 
 /// A throwaway intermediate scope for exercising child-container construction
 /// without depending on any protocol's concrete scopes.
@@ -41,12 +42,10 @@ impl Scope for SameNameScope {
 }
 
 fn registry() -> Arc<ScopeRegistry> {
-    Arc::new(ScopeRegistry::new(
-        HashMap::new(),
-        HashMap::new(),
-        Vec::new(),
-        HashMap::new(),
-    ))
+    Arc::new(
+        ScopeRegistry::new(HashMap::new(), HashMap::new(), Vec::new(), HashMap::new())
+            .expect("empty scope registry validates"),
+    )
 }
 
 async fn root() -> Arc<ScopeContainer> {
@@ -146,12 +145,14 @@ fn provider_lookup_uses_the_prebuilt_concrete_index() {
         ordering: &[],
         erase: erase_unreachable,
     };
+    let component = ComponentDescriptor::manual("counted", "Counted", concrete_ty, &Singleton);
     let registry = ScopeRegistry::new(
         HashMap::new(),
-        HashMap::new(),
+        HashMap::from([(component.ty.type_id, component)]),
         vec![provider; PROVIDERS],
         HashMap::new(),
-    );
+    )
+    .expect("provider component is registered");
 
     CONCRETE_ID_CALLS.store(0, Ordering::SeqCst);
 
@@ -215,15 +216,92 @@ fn single_provider_selection_is_shared_and_ambiguity_aware() {
 #[test]
 fn registry_construction_completes_missing_provider_ordinals() {
     let provider = test_provider("Unplanned", "unplanned", false);
+    let component =
+        ComponentDescriptor::manual("unplanned", "Unplanned", provider.concrete_ty, &Singleton);
     let registry = ScopeRegistry::new(
+        HashMap::new(),
+        HashMap::from([(component.ty.type_id, component)]),
+        vec![provider],
+        HashMap::new(),
+    )
+    .expect("provider component is registered");
+
+    // Previously this expect() panicked for providers missing from the plan.
+    assert_eq!(registry.provider_ordinal(&provider), 0);
+}
+
+#[test]
+fn registry_indexes_follow_final_provider_order_for_first_wins_lookups() {
+    let first = ProviderDescriptor {
+        trait_ty: TypeDescriptor::of::<dyn Send>("dyn Send"),
+        concrete_ty: TypeDescriptor::of::<u8>("First"),
+        qualifier: "shared",
+        primary: false,
+        priority: 20,
+        ordering: &[],
+        erase: erase_unreachable,
+    };
+    let winning = ProviderDescriptor {
+        trait_ty: TypeDescriptor::of::<dyn Send>("dyn Send"),
+        concrete_ty: TypeDescriptor::of::<u16>("Winning"),
+        qualifier: "shared",
+        primary: false,
+        priority: -10,
+        ordering: &[],
+        erase: erase_unreachable,
+    };
+    let order = HashMap::from([(
+        TypeId::of::<dyn Send>(),
+        HashMap::from([(TypeId::of::<u8>(), 1), (TypeId::of::<u16>(), 0)]),
+    )]);
+    let components = [first, winning]
+        .into_iter()
+        .map(|provider| {
+            let component = ComponentDescriptor::manual(
+                provider.qualifier,
+                provider.concrete_ty.name,
+                provider.concrete_ty,
+                &Singleton,
+            );
+
+            (component.ty.type_id, component)
+        })
+        .collect();
+    let registry = ScopeRegistry::new(HashMap::new(), components, vec![first, winning], order)
+        .expect("provider components are registered");
+
+    assert_eq!(
+        registry
+            .selection
+            .select_global(TypeId::of::<dyn Send>(), Some("shared"))
+            .map(|provider| provider.concrete_ty.type_id),
+        Some(TypeId::of::<u16>())
+    );
+    assert_eq!(
+        registry
+            .selection
+            .providers_for_trait(TypeId::of::<dyn Send>())
+            .iter()
+            .map(|provider| provider.concrete_ty.type_id)
+            .collect::<Vec<_>>(),
+        [TypeId::of::<u16>(), TypeId::of::<u8>()]
+    );
+}
+
+#[test]
+fn registry_construction_rejects_orphan_provider() {
+    let provider = test_provider("Orphan", "orphan", false);
+    let error = match ScopeRegistry::new(
         HashMap::new(),
         HashMap::new(),
         vec![provider],
         HashMap::new(),
-    );
+    ) {
+        Ok(_) => panic!("orphan provider must be rejected"),
+        Err(error) => error,
+    };
 
-    // Previously this expect() panicked for providers missing from the plan.
-    assert_eq!(registry.provider_ordinal(&provider), 0);
+    assert!(matches!(error, Error::ProviderComponentMissing(_)));
 }
 
 #[tokio::test]

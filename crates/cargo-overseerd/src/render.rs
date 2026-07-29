@@ -4,9 +4,17 @@ use cargo_overseerd::{CommandCheckStatus, CommandOutcome, CommandReport};
 use overseerd_tooling_schema::DiagnosticSeverity;
 
 use crate::cli::ReportFormat;
+use detail::source_location;
 
+mod detail;
+mod explain;
+mod graph;
 mod inspect;
+mod name;
 
+pub(crate) use detail::{terminal_text, write_diagnostics};
+pub(crate) use explain::write_explanation;
+pub(crate) use graph::write_graph;
 pub(crate) use inspect::write_inspection;
 
 pub(crate) fn write_report(
@@ -26,10 +34,14 @@ pub(crate) fn write_report(
 
 fn write_terminal(report: &CommandReport, output: &mut impl io::Write) -> io::Result<()> {
     if let Some(application) = &report.application {
-        write!(output, "Application {}", application.application)?;
+        write!(
+            output,
+            "Application {}",
+            terminal_text(&application.application)
+        )?;
 
         if let Some(protocol) = &report.protocol {
-            write!(output, " ({protocol})")?;
+            write!(output, " ({})", terminal_text(protocol))?;
         }
 
         writeln!(output)?;
@@ -39,12 +51,14 @@ fn write_terminal(report: &CommandReport, output: &mut impl io::Write) -> io::Re
         writeln!(
             output,
             "Target {} {} / {}",
-            target.package, target.version, target.binary
+            terminal_text(&target.package),
+            terminal_text(&target.version),
+            terminal_text(&target.binary)
         )?;
     }
 
     if let Some(version) = &report.framework_version {
-        writeln!(output, "Framework Overseerd {version}")?;
+        writeln!(output, "Framework Overseerd {}", terminal_text(version))?;
     }
 
     for check in &report.checks {
@@ -54,7 +68,12 @@ fn write_terminal(report: &CommandReport, output: &mut impl io::Write) -> io::Re
             CommandCheckStatus::Failed => "FAIL",
         };
 
-        writeln!(output, "[{status}] {}: {}", check.code, check.message)?;
+        writeln!(
+            output,
+            "[{status}] {}: {}",
+            terminal_text(&check.code),
+            terminal_text(&check.message)
+        )?;
     }
 
     for diagnostic in &report.diagnostics {
@@ -68,25 +87,27 @@ fn write_terminal(report: &CommandReport, output: &mut impl io::Write) -> io::Re
         writeln!(
             output,
             "{severity}[{}]: {}",
-            diagnostic.code, diagnostic.message
+            terminal_text(&diagnostic.code),
+            terminal_text(&diagnostic.message)
         )?;
 
         if !diagnostic.resources.is_empty() {
-            writeln!(output, "  resources: {}", diagnostic.resources.join(", "))?;
+            let resources = diagnostic
+                .resources
+                .iter()
+                .map(|resource| terminal_text(resource))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            writeln!(output, "  resources: {resources}")?;
         }
 
         for source in &diagnostic.sources {
-            match (source.line, source.column) {
-                (Some(line), Some(column)) => {
-                    writeln!(output, "  at {}:{line}:{column}", source.file)?;
-                }
-                (Some(line), None) => writeln!(output, "  at {}:{line}", source.file)?,
-                _ => writeln!(output, "  at {}", source.file)?,
-            }
+            writeln!(output, "  at {}", source_location(source))?;
         }
 
         if let Some(fix) = &diagnostic.fix {
-            writeln!(output, "  fix: {fix}")?;
+            writeln!(output, "  fix: {}", terminal_text(fix))?;
         }
     }
 

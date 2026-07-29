@@ -366,7 +366,9 @@ where
             .resolve::<H>()
             .await?
             .ok_or_else(|| overseerd_di::Error::MissingDependency {
-                component: consumer,
+                component: consumer.clone(),
+                component_id: consumer,
+                dependency: std::any::type_name::<H>().to_string(),
                 type_name: std::any::type_name::<H>().to_string(),
             })
     }

@@ -233,7 +233,8 @@ pub async fn build_graph(entries: &[Entry], width: usize, layers: usize) -> Arc<
         HashMap::new(),
         Vec::new(),
         HashMap::new(),
-    ));
+    )
+    .expect("empty scope registry validates"));
 
     let root = &entries[0..width];
     let root_descs: Vec<ComponentDescriptor> = root.iter().map(|entry| entry.desc).collect();
@@ -286,10 +287,14 @@ pub async fn build_with_providers(entries: &[Entry], count: usize) -> Arc<ScopeC
     .expect("benchmark provider ordering validates");
     let registry = Arc::new(ScopeRegistry::new(
         HashMap::new(),
-        HashMap::new(),
+        components
+            .iter()
+            .map(|component| (component.ty.type_id, *component))
+            .collect(),
         providers,
         provider_order,
-    ));
+    )
+    .expect("provider scope registry validates"));
 
     let seeds: Vec<BoxedComponent> = slice.iter().map(|entry| (entry.make)()).collect();
 

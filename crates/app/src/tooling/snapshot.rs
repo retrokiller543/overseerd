@@ -2,9 +2,11 @@ use std::any::TypeId;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use overseerd_core::{DependencyDescriptor, ScopeId, Singleton, StaticScope};
-use overseerd_di::{BoxedComponent, ComponentDescriptor};
+use overseerd_di::{
+    BoxedComponent, ComponentDescriptor, ProviderSelectionModel, SelectedDependency,
+};
 
-use crate::scope::SeedDestination;
+use crate::scope::{PreparedScopeTopology, SeedDestination};
 
 /// Immutable callback-free input for prepared-state tooling projection.
 pub(crate) struct ProjectionSnapshot {
@@ -15,20 +17,30 @@ pub(crate) struct ProjectionSnapshot {
 
 impl ProjectionSnapshot {
     pub(crate) fn capture(
+        selection: &ProviderSelectionModel,
+        topology: &PreparedScopeTopology,
         descriptors: &[ComponentDescriptor],
         root_order: &[ComponentDescriptor],
         scope_orders: &HashMap<ScopeId, Vec<ComponentDescriptor>>,
         instances: &[BoxedComponent],
         seed_destinations: &HashMap<TypeId, SeedDestination>,
-    ) -> Self {
+    ) -> overseerd_di::Result<Self> {
         let seeded: HashSet<_> = instances
             .iter()
             .map(|instance| instance.ty.type_id)
             .collect();
         let components: Vec<_> = descriptors
             .iter()
-            .map(|descriptor| ComponentSnapshot::capture(*descriptor, &seeded, seed_destinations))
-            .collect();
+            .map(|descriptor| {
+                ComponentSnapshot::capture(
+                    selection,
+                    topology,
+                    *descriptor,
+                    &seeded,
+                    seed_destinations,
+                )
+            })
+            .collect::<overseerd_di::Result<_>>()?;
         let root_ids: BTreeSet<_> = root_order
             .iter()
             .map(|component| component.ty.type_id)
@@ -62,11 +74,11 @@ impl ProjectionSnapshot {
             })
             .collect();
 
-        Self {
+        Ok(Self {
             components,
             root_plan,
             scope_plans,
-        }
+        })
     }
 
     pub(crate) fn components(&self) -> &[ComponentSnapshot] {
@@ -87,7 +99,10 @@ impl ProjectionSnapshot {
 pub(crate) struct ComponentSnapshot {
     pub(crate) descriptor: ComponentDescriptor,
     pub(crate) has_factory: bool,
-    pub(crate) dependencies: Vec<DependencyDescriptor>,
+    pub(crate) factory_selection: FactorySelection,
+    pub(crate) factory_candidate_count: usize,
+    pub(crate) factory_explicit_count: usize,
+    pub(crate) dependencies: Vec<DependencySnapshot>,
     pub(crate) hooks: Vec<HookSnapshot>,
     pub(crate) seeded: bool,
     pub(crate) seed_destination: Option<ScopeId>,
@@ -95,19 +110,38 @@ pub(crate) struct ComponentSnapshot {
 
 impl ComponentSnapshot {
     fn capture(
+        selection: &ProviderSelectionModel,
+        topology: &PreparedScopeTopology,
         descriptor: ComponentDescriptor,
         seeded: &HashSet<TypeId>,
         seed_destinations: &HashMap<TypeId, SeedDestination>,
-    ) -> Self {
+    ) -> overseerd_di::Result<Self> {
+        let factories = (descriptor.factories)();
+        let factory_explicit_count = factories.iter().filter(|factory| !factory.default).count();
         let factory = descriptor
             .effective_factory()
             .expect("validated component factory remains unambiguous");
-        let dependencies = factory.map_or_else(Vec::new, |factory| (factory.dependencies)());
+        let factory_selection = match factory {
+            None => FactorySelection::Manual,
+            Some(factory) if factory.default => FactorySelection::Default,
+            Some(_) => FactorySelection::Explicit,
+        };
+        let dependencies = factory.map_or_else(
+            || Ok(Vec::new()),
+            |factory| {
+                (factory.dependencies)()
+                    .into_iter()
+                    .map(|dependency| {
+                        DependencySnapshot::capture(selection, topology, descriptor, dependency)
+                    })
+                    .collect::<overseerd_di::Result<_>>()
+            },
+        )?;
         let mut hooks: Vec<_> = (descriptor.hooks)()
             .iter()
             .copied()
-            .map(HookSnapshot::capture)
-            .collect();
+            .map(|hook| HookSnapshot::capture(selection, topology, descriptor, hook))
+            .collect::<overseerd_di::Result<_>>()?;
 
         hooks.sort_by(|left, right| {
             left.kind
@@ -115,16 +149,64 @@ impl ComponentSnapshot {
                 .then_with(|| left.ordinal.cmp(&right.ordinal))
         });
 
-        Self {
+        Ok(Self {
             descriptor,
             has_factory: factory.is_some(),
+            factory_selection,
+            factory_candidate_count: factories.len(),
+            factory_explicit_count,
             dependencies,
             hooks,
             seeded: seeded.contains(&descriptor.ty.type_id),
             seed_destination: seed_destinations
                 .get(&descriptor.ty.type_id)
                 .map(|seed| seed.scope),
+        })
+    }
+}
+
+/// Stable category of the effective component factory decision.
+#[derive(Clone, Copy)]
+pub(crate) enum FactorySelection {
+    Manual,
+    Default,
+    Explicit,
+}
+
+impl FactorySelection {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Default => "default",
+            Self::Explicit => "explicit",
         }
+    }
+}
+
+/// One declared dependency and its producer-selected runtime targets.
+#[derive(Clone)]
+pub(crate) struct DependencySnapshot {
+    pub(crate) descriptor: DependencyDescriptor,
+    pub(crate) selected: Vec<SelectedDependency>,
+}
+
+impl DependencySnapshot {
+    fn capture(
+        selection: &ProviderSelectionModel,
+        topology: &PreparedScopeTopology,
+        consumer: ComponentDescriptor,
+        descriptor: DependencyDescriptor,
+    ) -> overseerd_di::Result<Self> {
+        let selected = selection.selected_dependencies_with_scope_reachability(
+            &consumer,
+            &descriptor,
+            |consumer, dependency| topology.is_reachable(&consumer, &dependency),
+        );
+
+        Ok(Self {
+            descriptor,
+            selected,
+        })
     }
 }
 
@@ -133,16 +215,26 @@ impl ComponentSnapshot {
 pub(crate) struct HookSnapshot {
     pub(crate) ordinal: u32,
     pub(crate) kind: &'static str,
-    pub(crate) dependencies: Vec<DependencyDescriptor>,
+    pub(crate) dependencies: Vec<DependencySnapshot>,
 }
 
 impl HookSnapshot {
-    fn capture(descriptor: overseerd_hooks::HookDescriptor) -> Self {
-        Self {
+    fn capture(
+        selection: &ProviderSelectionModel,
+        topology: &PreparedScopeTopology,
+        consumer: ComponentDescriptor,
+        descriptor: overseerd_hooks::HookDescriptor,
+    ) -> overseerd_di::Result<Self> {
+        Ok(Self {
             ordinal: descriptor.ordinal,
             kind: descriptor.kind,
-            dependencies: (descriptor.dependencies)(),
-        }
+            dependencies: (descriptor.dependencies)()
+                .into_iter()
+                .map(|dependency| {
+                    DependencySnapshot::capture(selection, topology, consumer, dependency)
+                })
+                .collect::<overseerd_di::Result<_>>()?,
+        })
     }
 }
 

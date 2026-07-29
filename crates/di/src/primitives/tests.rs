@@ -238,25 +238,25 @@ fn branch_provider(
 async fn sibling_branches() -> (Arc<ScopeContainer>, Arc<ScopeContainer>) {
     let visible = visible_descriptor();
     let sibling = sibling_descriptor();
-    let factory_backed = [visible, sibling]
+    let sibling_seed = ComponentDescriptor::manual(
+        "sibling-seed-provider",
+        "SiblingSeedProvider",
+        TypeDescriptor::of::<SiblingSeedProvider>("SiblingSeedProvider"),
+        &SiblingScope,
+    );
+    let components = [visible, sibling, sibling_seed]
         .into_iter()
         .map(|descriptor| (descriptor.ty.type_id, descriptor))
         .collect::<HashMap<TypeId, ComponentDescriptor>>();
     let providers = vec![
         branch_provider(sibling.ty, true, erase_sibling),
         branch_provider(visible.ty, false, erase_visible),
-        branch_provider(
-            TypeDescriptor::of::<SiblingSeedProvider>("SiblingSeedProvider"),
-            false,
-            erase_sibling_seed,
-        ),
+        branch_provider(sibling_seed.ty, false, erase_sibling_seed),
     ];
-    let registry = Arc::new(ScopeRegistry::new(
-        HashMap::new(),
-        factory_backed,
-        providers,
-        HashMap::new(),
-    ));
+    let registry = Arc::new(
+        ScopeRegistry::new(HashMap::new(), components, providers, HashMap::new())
+            .expect("scope registry validates"),
+    );
     let root =
         ScopeContainer::build_root(&[], Vec::new(), ResolverSet::new(), Arc::clone(&registry))
             .await
@@ -289,18 +289,48 @@ async fn transient_and_inaccessible_provider() -> Arc<ScopeContainer> {
         branch_provider(sibling.ty, true, erase_sibling),
         branch_provider(transient.ty, false, erase_transient),
     ];
-    let registry = Arc::new(ScopeRegistry::new(
-        transient_components,
-        factory_backed,
-        providers,
-        HashMap::new(),
-    ));
+    let registry = Arc::new(
+        ScopeRegistry::new(
+            transient_components,
+            factory_backed,
+            providers,
+            HashMap::new(),
+        )
+        .expect("scope registry validates"),
+    );
     let root =
         ScopeContainer::build_root(&[], Vec::new(), ResolverSet::new(), Arc::clone(&registry))
             .await
             .expect("root builds");
 
     ScopeContainer::open_child(&VisibleScope, root, registry, &[], Vec::new())
+        .await
+        .expect("visible branch opens")
+}
+
+async fn accessible_factoryless_provider() -> Arc<ScopeContainer> {
+    let manual = ComponentDescriptor::manual(
+        "visible-seed-provider",
+        "VisibleSeedProvider",
+        TypeDescriptor::of::<SiblingSeedProvider>("VisibleSeedProvider"),
+        &VisibleScope,
+    );
+    let components = [(manual.ty.type_id, manual)].into_iter().collect();
+    let providers = vec![branch_provider(manual.ty, false, erase_sibling_seed)];
+    let registry = Arc::new(
+        ScopeRegistry::new(HashMap::new(), components, providers, HashMap::new())
+            .expect("scope registry validates"),
+    );
+    let root =
+        ScopeContainer::build_root(&[], Vec::new(), ResolverSet::new(), Arc::clone(&registry))
+            .await
+            .expect("root builds");
+    let seed = BoxedComponent {
+        ty: manual.ty,
+        value: Box::new(Injectable::into_stored(Arc::new(SiblingSeedProvider))),
+    };
+
+    ScopeContainer::open_child(&VisibleScope, root, registry, &[], vec![seed])
         .await
         .expect("visible branch opens")
 }
@@ -374,4 +404,49 @@ async fn fresh_collection_ignores_inaccessible_factoryless_provider() {
         .collect();
 
     assert_eq!(sources, ["visible"]);
+}
+
+#[tokio::test]
+async fn fresh_collection_rejects_accessible_factoryless_provider() {
+    let visible_branch = accessible_factoryless_provider().await;
+    let error = match <Vec<Arc<dyn BranchProvider>> as FreshFromContainer>::fresh_from_container(
+        visible_branch,
+        None,
+    )
+    .await
+    {
+        Ok(_) => panic!("visible factory-less provider cannot be reconstructed"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        Error::UnsupportedFreshFactory {
+            component_id: Some(component_id),
+            ..
+        } if component_id == "visible-seed-provider"
+    ));
+}
+
+#[tokio::test]
+async fn fresh_keyed_rejects_accessible_factoryless_provider() {
+    let visible_branch = accessible_factoryless_provider().await;
+    let error = match
+        <HashMap<String, Arc<dyn BranchProvider>> as FreshFromContainer>::fresh_from_container(
+            visible_branch,
+            None,
+        )
+        .await
+    {
+        Ok(_) => panic!("visible factory-less provider cannot be reconstructed"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        Error::UnsupportedFreshFactory {
+            component_id: Some(component_id),
+            ..
+        } if component_id == "visible-seed-provider"
+    ));
 }

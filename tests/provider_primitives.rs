@@ -191,15 +191,18 @@ async fn deferred_hydrates_after_construction_without_retaining_a_cycle() {
         <DeferredCycleA as Descriptor<ComponentDescriptor>>::DESCRIPTOR,
         <DeferredCycleB as Descriptor<ComponentDescriptor>>::DESCRIPTOR,
     ];
-    let registry = Arc::new(ScopeRegistry::new(
-        HashMap::new(),
-        components
-            .iter()
-            .map(|component| (component.ty.type_id, *component))
-            .collect::<HashMap<TypeId, ComponentDescriptor>>(),
-        Vec::new(),
-        HashMap::new(),
-    ));
+    let registry = Arc::new(
+        ScopeRegistry::new(
+            HashMap::new(),
+            components
+                .iter()
+                .map(|component| (component.ty.type_id, *component))
+                .collect::<HashMap<TypeId, ComponentDescriptor>>(),
+            Vec::new(),
+            HashMap::new(),
+        )
+        .expect("scope registry validates"),
+    );
     let container =
         ScopeContainer::build_root(&components, Vec::new(), ResolverSet::new(), registry)
             .await

@@ -137,7 +137,8 @@ async fn empty_scope() -> Arc<ScopeContainer> {
         HashMap::new(),
         Vec::new(),
         HashMap::new(),
-    ));
+    )
+    .expect("empty scope registry validates"));
 
     ScopeContainer::build_root(&[], Vec::new(), ResolverSet::new(), registry)
         .await

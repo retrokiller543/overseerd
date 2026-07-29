@@ -8,8 +8,8 @@ use std::{
 };
 
 use overseerd::{
-    ComponentDescriptor, Descriptor, PROVIDERS, ResolverSet, ScopeContainer, ScopeId,
-    ScopeRegistry, StaticScope, component, injectable, topological_sort,
+    ComponentDescriptor, ComponentRegistry, Descriptor, PROVIDERS, ResolverSet, ScopeContainer,
+    ScopeId, ScopeRegistry, StaticScope, component, injectable, topological_sort,
 };
 
 /// A throwaway child scope for scope-local provider selection tests.
@@ -19,6 +19,10 @@ impl StaticScope for ChildScope {
     const ID: ScopeId = overseerd::namespaced_id!(ScopeId, "test/provider-child");
     const RANK: u8 = 1;
     const NAME: &'static str = "Child";
+}
+
+fn can_reach(consumer: ScopeId, dependency: ScopeId) -> bool {
+    consumer == dependency || (consumer == ChildScope::ID && dependency == overseerd::Singleton::ID)
 }
 
 /// A trait with providers in two scopes, exercising scope-local selection.
@@ -109,15 +113,25 @@ async fn child_scope_consumer_waits_for_its_scope_local_provider() {
         .filter(|provider| provider.trait_ty.type_id == TypeId::of::<dyn ScopedChoice>())
         .copied()
         .collect();
-    let registry = Arc::new(ScopeRegistry::new(
-        HashMap::new(),
-        components
-            .iter()
-            .map(|component| (component.ty.type_id, *component))
-            .collect::<HashMap<TypeId, ComponentDescriptor>>(),
-        providers.clone(),
-        HashMap::new(),
-    ));
+    let selection = Arc::new(
+        ComponentRegistry {
+            components: components.to_vec(),
+            providers: providers.clone(),
+        }
+        .provider_selection_model(&components)
+        .expect("provider selection model validates"),
+    );
+    let registry = Arc::new(
+        ScopeRegistry::from_selection_model(
+            HashMap::new(),
+            components
+                .iter()
+                .map(|component| (component.ty.type_id, *component))
+                .collect::<HashMap<TypeId, ComponentDescriptor>>(),
+            Arc::clone(&selection),
+        )
+        .expect("scope registry validates"),
+    );
 
     let root =
         ScopeContainer::build_root(&[parent], Vec::new(), ResolverSet::new(), registry.clone())
@@ -129,7 +143,7 @@ async fn child_scope_consumer_waits_for_its_scope_local_provider() {
     // child-scope provider it actually captures, not treat the globally primary
     // (already-built) parent provider as its wait set.
     let child_components = [consumer, local];
-    let order = topological_sort(&child_components, &prebuilt, &providers, &HashMap::new())
+    let order = topological_sort(&child_components, &prebuilt, &selection, can_reach)
         .expect("child scope sorts");
     let names: Vec<_> = order.iter().map(|component| component.name).collect();
 
@@ -163,15 +177,25 @@ async fn ambiguous_local_set_waits_for_all_locals_before_parent_fallback() {
         .filter(|provider| provider.trait_ty.type_id == TypeId::of::<dyn AmbiguousChoice>())
         .copied()
         .collect();
-    let registry = Arc::new(ScopeRegistry::new(
-        HashMap::new(),
-        components
-            .iter()
-            .map(|component| (component.ty.type_id, *component))
-            .collect::<HashMap<TypeId, ComponentDescriptor>>(),
-        providers.clone(),
-        HashMap::new(),
-    ));
+    let selection = Arc::new(
+        ComponentRegistry {
+            components: components.to_vec(),
+            providers: providers.clone(),
+        }
+        .provider_selection_model(&components)
+        .expect("provider selection model validates"),
+    );
+    let registry = Arc::new(
+        ScopeRegistry::from_selection_model(
+            HashMap::new(),
+            components
+                .iter()
+                .map(|component| (component.ty.type_id, *component))
+                .collect::<HashMap<TypeId, ComponentDescriptor>>(),
+            Arc::clone(&selection),
+        )
+        .expect("scope registry validates"),
+    );
 
     let root =
         ScopeContainer::build_root(&[parent], Vec::new(), ResolverSet::new(), registry.clone())
@@ -183,7 +207,7 @@ async fn ambiguous_local_set_waits_for_all_locals_before_parent_fallback() {
     // runtime would see a partially registered local set as temporarily sole and
     // capture it instead of deterministically falling back to the parent primary.
     let child_components = [consumer, first, second];
-    let order = topological_sort(&child_components, &prebuilt, &providers, &HashMap::new())
+    let order = topological_sort(&child_components, &prebuilt, &selection, can_reach)
         .expect("child scope sorts");
     let names: Vec<_> = order.iter().map(|component| component.name).collect();
 
@@ -259,15 +283,25 @@ async fn qualified_edge_without_local_match_does_not_wait_for_unrelated_locals()
         .filter(|provider| provider.trait_ty.type_id == TypeId::of::<dyn QualChoice>())
         .copied()
         .collect();
-    let registry = Arc::new(ScopeRegistry::new(
-        HashMap::new(),
-        components
-            .iter()
-            .map(|component| (component.ty.type_id, *component))
-            .collect::<HashMap<TypeId, ComponentDescriptor>>(),
-        providers.clone(),
-        HashMap::new(),
-    ));
+    let selection = Arc::new(
+        ComponentRegistry {
+            components: components.to_vec(),
+            providers: providers.clone(),
+        }
+        .provider_selection_model(&components)
+        .expect("provider selection model validates"),
+    );
+    let registry = Arc::new(
+        ScopeRegistry::from_selection_model(
+            HashMap::new(),
+            components
+                .iter()
+                .map(|component| (component.ty.type_id, *component))
+                .collect::<HashMap<TypeId, ComponentDescriptor>>(),
+            Arc::clone(&selection),
+        )
+        .expect("scope registry validates"),
+    );
 
     let root =
         ScopeContainer::build_root(&[parent], Vec::new(), ResolverSet::new(), registry.clone())
@@ -276,7 +310,7 @@ async fn qualified_edge_without_local_match_does_not_wait_for_unrelated_locals()
     let prebuilt: HashSet<TypeId> = [parent.ty.type_id].into_iter().collect();
 
     let child_components = [other, consumer];
-    let order = topological_sort(&child_components, &prebuilt, &providers, &HashMap::new())
+    let order = topological_sort(&child_components, &prebuilt, &selection, can_reach)
         .expect("no false cycle through the unrelated local provider");
     let names: Vec<_> = order.iter().map(|component| component.name).collect();
 

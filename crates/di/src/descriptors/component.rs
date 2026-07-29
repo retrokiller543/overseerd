@@ -11,8 +11,8 @@ use std::{
 };
 
 use overseerd_core::{
-    DependencyDescriptor, OverseerdDescriptor, ResolverCtx, ResolverSet, Scope, Singleton,
-    TypeDescriptor,
+    DependencyDescriptor, OverseerdDescriptor, ResolutionMode, ResolverCtx, ResolverSet, Scope,
+    Singleton, TypeDescriptor,
 };
 use overseerd_hooks::{HookDescriptor, no_hooks};
 
@@ -333,9 +333,8 @@ impl fmt::Debug for BoxedComponent {
 
 /// One trait provider's constructed value, plus the metadata that selects it.
 pub(crate) struct ProviderInstance {
+    pub(crate) descriptor: ProviderDescriptor,
     pub(crate) ordinal: usize,
-    pub(crate) qualifier: &'static str,
-    pub(crate) primary: bool,
     pub(crate) value: BoxedComponent,
 }
 
@@ -374,7 +373,10 @@ impl ScopeStore {
             return from_boxed::<H>(component);
         }
 
-        let chosen = pick_single(self.providers.get(&type_id)?)?;
+        let chosen =
+            crate::registry::selection::select_single_by(self.providers.get(&type_id)?, |entry| {
+                entry.descriptor.primary
+            })?;
 
         from_boxed::<H>(&chosen.value)
     }
@@ -386,41 +388,26 @@ impl ScopeStore {
             .providers
             .get(&type_id)?
             .iter()
-            .find(|entry| entry.qualifier == qualifier)?;
+            .find(|entry| entry.descriptor.qualifier == qualifier)?;
 
         from_boxed::<H>(&entry.value)
     }
 
-    /// Every scope-local provider of the trait `H::Target`.
-    pub(crate) fn collect_all_local<H: Injectable>(&self) -> Vec<(usize, H)> {
-        let type_id = TypeId::of::<H::Target>();
+    /// Resolves one exact provider descriptor from this scope.
+    pub(crate) fn resolve_provider_local<H: Injectable>(
+        &self,
+        provider: &ProviderDescriptor,
+    ) -> Option<H> {
+        let entry = self
+            .providers
+            .get(&provider.trait_ty.type_id)?
+            .iter()
+            .find(|entry| {
+                entry.descriptor.concrete_ty.type_id == provider.concrete_ty.type_id
+                    && entry.descriptor.qualifier == provider.qualifier
+            })?;
 
-        self.providers
-            .get(&type_id)
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| {
-                let value = from_boxed::<H>(&entry.value)?;
-
-                Some((entry.ordinal, value))
-            })
-            .collect()
-    }
-
-    /// Every scope-local provider of the trait `H::Target`, keyed by qualifier.
-    pub(crate) fn collect_keyed_local<H: Injectable>(&self) -> HashMap<String, H> {
-        let type_id = TypeId::of::<H::Target>();
-
-        self.providers
-            .get(&type_id)
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| {
-                let value = from_boxed::<H>(&entry.value)?;
-
-                Some((entry.qualifier.to_string(), value))
-            })
-            .collect()
+        from_boxed::<H>(&entry.value)
     }
 
     pub(crate) fn insert(&mut self, component: BoxedComponent) {
@@ -443,11 +430,15 @@ impl ScopeStore {
             .entry(provider.trait_ty.type_id)
             .or_default()
             .push(ProviderInstance {
-                qualifier: provider.qualifier,
+                descriptor: *provider,
                 ordinal,
-                primary: provider.primary,
                 value: erased,
             });
+
+        self.providers
+            .get_mut(&provider.trait_ty.type_id)
+            .expect("provider entry was inserted")
+            .sort_by_key(|provider| provider.ordinal);
     }
 
     pub(crate) fn contains(&self, type_id: TypeId) -> bool {
@@ -578,16 +569,51 @@ impl ComponentConstructionContext {
     /// `H::Target`: this scope first, then each longer-lived parent scope, then —
     /// if `H::Target` is a `Transient` component — a freshly constructed instance.
     pub async fn resolve<H: Injectable>(&self) -> crate::Result<Option<H>> {
-        if let Some(handle) = crate::container::construct_selected_transient_provider::<H>(
-            &self.registry,
-            self.parent.clone(),
-            self.slot.clone(),
-            self.store_handle(),
+        let target = TypeId::of::<H::Target>();
+        let can_access = |scope: &'static dyn Scope| {
+            scope.is_transient()
+                || scope.id() == self.scope.id()
+                || self
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| parent.can_access(scope))
+        };
+
+        if let Some(provider) = self.registry.selected_runtime_provider(
+            target,
             None,
-        )
-        .await?
-        {
-            return Ok(Some(handle));
+            ResolutionMode::Eager,
+            self.scope,
+            &can_access,
+        ) {
+            if self
+                .registry
+                .transient(provider.concrete_ty.type_id)
+                .is_some()
+            {
+                return crate::container::construct_transient_provider::<H>(
+                    &self.registry,
+                    self.parent.clone(),
+                    self.slot.clone(),
+                    self.store_handle(),
+                    provider,
+                )
+                .await;
+            }
+
+            if let Some(handle) = self
+                .store
+                .read()
+                .expect(STORE_POISON)
+                .resolve_provider_local::<H>(&provider)
+            {
+                return Ok(Some(handle));
+            }
+
+            return Ok(self
+                .parent
+                .as_ref()
+                .and_then(|parent| parent.resolve_provider_built::<H>(&provider)));
         }
 
         if let Some(handle) = self.store.read().expect(STORE_POISON).resolve_local::<H>() {
@@ -596,18 +622,6 @@ impl ComponentConstructionContext {
 
         if let Some(parent) = &self.parent
             && let Some(handle) = parent.resolve_built::<H>()
-        {
-            return Ok(Some(handle));
-        }
-
-        if let Some(handle) = crate::container::construct_fallback_transient_provider::<H>(
-            &self.registry,
-            self.parent.clone(),
-            self.slot.clone(),
-            self.store_handle(),
-            None,
-        )
-        .await?
         {
             return Ok(Some(handle));
         }
@@ -626,103 +640,144 @@ impl ComponentConstructionContext {
         &self,
         qualifier: &str,
     ) -> crate::Result<Option<H>> {
-        if let Some(handle) = crate::container::construct_selected_transient_provider::<H>(
-            &self.registry,
-            self.parent.clone(),
-            self.slot.clone(),
-            self.store_handle(),
+        let target = TypeId::of::<H::Target>();
+        let can_access = |scope: &'static dyn Scope| {
+            scope.is_transient()
+                || scope.id() == self.scope.id()
+                || self
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| parent.can_access(scope))
+        };
+        let Some(provider) = self.registry.selected_runtime_provider(
+            target,
             Some(qualifier),
-        )
-        .await?
+            ResolutionMode::Eager,
+            self.scope,
+            &can_access,
+        ) else {
+            return Ok(None);
+        };
+
+        if self
+            .registry
+            .transient(provider.concrete_ty.type_id)
+            .is_some()
         {
-            return Ok(Some(handle));
+            return crate::container::construct_transient_provider::<H>(
+                &self.registry,
+                self.parent.clone(),
+                self.slot.clone(),
+                self.store_handle(),
+                provider,
+            )
+            .await;
         }
 
         if let Some(handle) = self
             .store
             .read()
             .expect(STORE_POISON)
-            .resolve_qualified_local::<H>(qualifier)
+            .resolve_provider_local::<H>(&provider)
         {
             return Ok(Some(handle));
         }
 
-        let handle = self
+        Ok(self
             .parent
             .as_ref()
-            .and_then(|parent| parent.resolve_qualified_built::<H>(qualifier));
-
-        if handle.is_some() {
-            return Ok(handle);
-        }
-
-        crate::container::construct_fallback_transient_provider::<H>(
-            &self.registry,
-            self.parent.clone(),
-            self.slot.clone(),
-            self.store_handle(),
-            Some(qualifier),
-        )
-        .await
+            .and_then(|parent| parent.resolve_provider_built::<H>(&provider)))
     }
 
     /// Every provider of the trait `H::Target` across this scope and its parents.
     pub async fn resolve_all<H: Injectable>(&self) -> crate::Result<Vec<H>> {
         let target = TypeId::of::<H::Target>();
-        let mut all = self
-            .store
-            .read()
-            .expect(STORE_POISON)
-            .collect_all_local::<H>();
+        let can_access = |scope: &'static dyn Scope| {
+            scope.is_transient()
+                || scope.id() == self.scope.id()
+                || self
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| parent.can_access(scope))
+        };
+        let providers = self.registry.selected_runtime_collection(
+            target,
+            ResolutionMode::Eager,
+            self.scope,
+            &can_access,
+        );
+        let mut all = Vec::new();
 
-        if let Some(parent) = &self.parent {
-            all.extend(parent.collect_all_built::<H>());
-        }
-
-        for provider in self.registry.transient_providers_for(target) {
+        for provider in providers {
             if let Some(value) = crate::container::construct_transient_provider::<H>(
                 &self.registry,
                 self.parent.clone(),
                 self.slot.clone(),
                 self.store_handle(),
-                *provider,
+                provider,
             )
             .await?
             {
-                all.push((self.registry.provider_ordinal(provider), value));
+                all.push(value);
+            } else if let Some(value) = self
+                .store
+                .read()
+                .expect(STORE_POISON)
+                .resolve_provider_local::<H>(&provider)
+                .or_else(|| {
+                    self.parent
+                        .as_ref()
+                        .and_then(|parent| parent.resolve_provider_built::<H>(&provider))
+                })
+            {
+                all.push(value);
             }
         }
 
-        all.sort_by_key(|(ordinal, _)| *ordinal);
-
-        Ok(all.into_iter().map(|(_, value)| value).collect())
+        Ok(all)
     }
 
     /// Every provider of the trait `H::Target` keyed by qualifier, across this scope
     /// and its parents (a closer scope wins a qualifier collision).
     pub async fn resolve_keyed<H: Injectable>(&self) -> crate::Result<HashMap<String, H>> {
         let target = TypeId::of::<H::Target>();
-        let mut keyed = match &self.parent {
-            Some(parent) => parent.collect_keyed_built::<H>(),
-            None => HashMap::new(),
+        let can_access = |scope: &'static dyn Scope| {
+            scope.is_transient()
+                || scope.id() == self.scope.id()
+                || self
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| parent.can_access(scope))
         };
-
-        keyed.extend(
-            self.store
-                .read()
-                .expect(STORE_POISON)
-                .collect_keyed_local::<H>(),
+        let providers = self.registry.selected_runtime_keyed(
+            target,
+            ResolutionMode::Eager,
+            self.scope,
+            &can_access,
         );
+        let mut keyed = HashMap::new();
 
-        for provider in self.registry.transient_providers_for(target) {
+        for provider in providers {
             if let Some(value) = crate::container::construct_transient_provider::<H>(
                 &self.registry,
                 self.parent.clone(),
                 self.slot.clone(),
                 self.store_handle(),
-                *provider,
+                provider,
             )
             .await?
+            {
+                keyed.insert(provider.qualifier.to_string(), value);
+            } else if let Some(value) = self
+                .store
+                .read()
+                .expect(STORE_POISON)
+                .resolve_provider_local::<H>(&provider)
+                .or_else(|| {
+                    self.parent
+                        .as_ref()
+                        .and_then(|parent| parent.resolve_provider_built::<H>(&provider))
+                })
             {
                 keyed.insert(provider.qualifier.to_string(), value);
             }
@@ -764,22 +819,6 @@ impl ComponentConstructionContext {
     /// this scope.
     pub(crate) fn contains(&self, type_id: TypeId) -> bool {
         self.store.read().expect(STORE_POISON).contains(type_id)
-    }
-}
-
-/// Picks the single provider for an `Arc<dyn Trait>` dependency: the sole entry,
-/// or the unique `#[primary]` one. Returns `None` when zero or ambiguous.
-fn pick_single(entries: &[ProviderInstance]) -> Option<&ProviderInstance> {
-    if entries.len() == 1 {
-        return entries.first();
-    }
-
-    let mut primaries = entries.iter().filter(|entry| entry.primary);
-    let first = primaries.next()?;
-
-    match primaries.next() {
-        Some(_) => None,
-        None => Some(first),
     }
 }
 

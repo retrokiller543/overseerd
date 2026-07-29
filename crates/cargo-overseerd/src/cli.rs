@@ -1,11 +1,19 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use cargo_overseerd::{CargoExecutable, CommandKind, DiscoveryRequest, FeatureSelection};
-use clap::builder::styling::{AnsiColor, Effects, Styles};
-use clap::{
-    Args, ColorChoice, CommandFactory as _, FromArgMatches as _, Parser, Subcommand, ValueEnum,
+use cargo_overseerd::{
+    CargoExecutable, CommandKind, DiscoveryRequest, FeatureSelection, GraphQuery,
 };
+use clap::builder::styling::{AnsiColor, Effects, Styles};
+use clap::{Args, ColorChoice, CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
+
+mod format;
+
+pub(crate) use format::{
+    ExplainFormat, ExportFormat, GraphFormat, InspectCliProviderKind, InspectFormat,
+    InspectResourceKind, ReportFormat, TerminalPolicy,
+};
+use format::{GraphFamily, GraphTraversalDirection};
 
 const CARGO_HELP_STYLES: Styles = Styles::styled()
     .header(AnsiColor::BrightGreen.on_default().effects(Effects::BOLD))
@@ -39,6 +47,10 @@ enum Command {
     Inspect(InspectArgs),
     /// Emits the canonical tooling document or probe envelope.
     Export(ExportArgs),
+    /// Renders application resources and their relationships.
+    Graph(GraphArgs),
+    /// Explains one exact resource identity or unique name.
+    Explain(ExplainArgs),
 }
 
 /// Cargo target selection shared by application commands.
@@ -102,6 +114,47 @@ struct ExportArgs {
     /// Write to a file instead of stdout.
     #[arg(short, long)]
     output: Option<PathBuf>,
+}
+
+/// Arguments for deterministic graph rendering.
+#[derive(Clone, Debug, Args)]
+struct GraphArgs {
+    #[command(flatten)]
+    target: TargetArgs,
+    /// Output representation.
+    #[arg(long, value_enum, default_value_t = GraphFormat::Text)]
+    format: GraphFormat,
+    /// Semantic relationship family to include.
+    #[arg(long, value_enum, default_value_t = GraphFamily::All)]
+    family: GraphFamily,
+    /// Semantic traversal direction from selected roots.
+    #[arg(long, value_enum, default_value_t = GraphTraversalDirection::Both)]
+    direction: GraphTraversalDirection,
+    /// Select an exact stable resource ID or exact unique name.
+    #[arg(long = "resource", action = clap::ArgAction::Append)]
+    resources: Vec<String>,
+    /// Select an exact contributor stable ID or exact unique name.
+    #[arg(long = "contributor", action = clap::ArgAction::Append)]
+    contributors: Vec<String>,
+    /// Select an exact plugin stable ID or exact unique name.
+    #[arg(long = "plugin", action = clap::ArgAction::Append)]
+    plugins: Vec<String>,
+    #[command(flatten)]
+    terminal: TerminalArgs,
+}
+
+/// Arguments for one resource explanation.
+#[derive(Clone, Debug, Args)]
+struct ExplainArgs {
+    /// Exact stable resource ID or exact unique name.
+    resource: String,
+    #[command(flatten)]
+    target: TargetArgs,
+    /// Output representation.
+    #[arg(long, value_enum, default_value_t = ExplainFormat::Text)]
+    format: ExplainFormat,
+    #[command(flatten)]
+    terminal: TerminalArgs,
 }
 
 /// Generic inspection filters combined across dimensions.
@@ -176,74 +229,22 @@ pub(crate) enum CommandRequest {
         format: ExportFormat,
         output: Option<PathBuf>,
     },
-}
-
-/// Supported check and doctor output representations.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
-pub(crate) enum ReportFormat {
-    /// Human-readable terminal output.
-    #[default]
-    Terminal,
-    /// Versioned machine-readable JSON.
-    Json,
-}
-
-/// Supported inspection output representations.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
-pub(crate) enum InspectFormat {
-    /// Human-readable generic inspection.
-    #[default]
-    Text,
-    /// Canonical tooling document JSON.
-    Json,
-}
-
-/// Canonical export payload.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
-pub(crate) enum ExportFormat {
-    /// Successful canonical tooling document.
-    #[default]
-    Document,
-    /// Complete canonical success or failure probe envelope.
-    Envelope,
-}
-
-/// Automatic, forced, or disabled terminal behavior.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
-pub(crate) enum TerminalPolicy {
-    /// Enable behavior only for an interactive terminal.
-    #[default]
-    Auto,
-    /// Always enable behavior.
-    Always,
-    /// Never enable behavior.
-    Never,
-}
-
-/// Generic resource kind accepted by inspection filters.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum InspectResourceKind {
-    Application,
-    Protocol,
-    Plugin,
-    Component,
-    Provider,
-    ConfigBinding,
-    Hook,
-    Lifecycle,
-    Scope,
-    Type,
-    Contribution,
-    Contributor,
-    PluginSlot,
-}
-
-/// CLI provider kind accepted by inspection filters.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub(crate) enum InspectCliProviderKind {
-    Args,
-    Command,
-    CommandSet,
+    /// Deterministic graph projection.
+    Graph {
+        discovery: DiscoveryRequest,
+        format: GraphFormat,
+        query: GraphQuery,
+        color: TerminalPolicy,
+        pager: TerminalPolicy,
+    },
+    /// One deterministic resource explanation.
+    Explain {
+        discovery: DiscoveryRequest,
+        format: ExplainFormat,
+        resource: String,
+        color: TerminalPolicy,
+        pager: TerminalPolicy,
+    },
 }
 
 impl Cli {
@@ -279,6 +280,26 @@ impl Cli {
                 discovery: discovery_request(arguments.target),
                 format: arguments.format,
                 output: arguments.output,
+            },
+            Command::Graph(arguments) => CommandRequest::Graph {
+                discovery: discovery_request(arguments.target),
+                format: arguments.format,
+                query: GraphQuery {
+                    resources: arguments.resources,
+                    contributors: arguments.contributors,
+                    plugins: arguments.plugins,
+                    family: arguments.family.into(),
+                    direction: arguments.direction.into(),
+                },
+                color: arguments.terminal.color,
+                pager: arguments.terminal.pager,
+            },
+            Command::Explain(arguments) => CommandRequest::Explain {
+                discovery: discovery_request(arguments.target),
+                format: arguments.format,
+                resource: arguments.resource,
+                color: arguments.terminal.color,
+                pager: arguments.terminal.pager,
             },
         }
     }

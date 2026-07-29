@@ -36,9 +36,16 @@ pub use descriptors::{
     Registration, RegistryFor, ResolutionMode, Scope, ScopeId, ServiceComponent, Singleton,
     StaticScope, Transient, TypeDescriptor, Wired, Wiring,
 };
-pub use error::{Error, Result};
+pub use error::{
+    DeferredTransientDependency, Error, InvalidFreshDependency, ProviderComponentMissing,
+    ProviderOrderCycle, ProviderOrderSourceTraitMismatch, ProviderOrderTargetTraitMismatch, Result,
+    ScopeUnreachableDependency, ScopeUnreachableProvider, ScopeViolation,
+};
 pub use primitives::{Deferred, Fresh, FreshFromContainer, Lazy};
-pub use registry::ComponentRegistry;
+pub use registry::{
+    ComponentRegistry, DependencySelectionReason, DependencySelectionStage, DependencyTarget,
+    ProviderSelectionModel, SelectedDependency,
+};
 pub use root::{ROOT_RESOLVER_ID, ROOT_RESOLVER_NAME, RootResolver, root_resolver_descriptor};
 
 /// Re-exported so macro-generated code can reach the `#[distributed_slice]` attribute

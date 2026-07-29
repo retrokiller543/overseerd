@@ -236,7 +236,11 @@ where
         let registry = scope.registry();
         let descriptor = registry
             .factory_backed(std::any::TypeId::of::<H>())
-            .ok_or_else(|| Error::UnsupportedFreshFactory(short_name::<H>().into()))?;
+            .ok_or_else(|| Error::UnsupportedFreshFactory {
+                component: short_name::<H>().into(),
+                component_id: None,
+                type_name: std::any::type_name::<H>().to_string(),
+            })?;
 
         if !scope.can_access(descriptor.scope) {
             return Err(Error::MissingComponent(short_name::<H>()));
@@ -306,9 +310,10 @@ where
     }
 }
 
-/// Rebuilds every factory-backed, scope-accessible provider of trait `T` against
-/// `scope`, returning each provider descriptor with its fresh value. Shared by the
-/// collection and keyed [`Fresh`] shapes so both apply identical eligibility rules.
+/// Rebuilds every scope-accessible provider of trait `T` against `scope`, returning
+/// each provider descriptor with its fresh value. A selected factory-less provider
+/// returns [`Error::UnsupportedFreshFactory`]. Shared by the collection and keyed
+/// [`Fresh`] shapes so both apply identical eligibility rules.
 async fn fresh_construct_all<T>(
     scope: &Arc<ScopeContainer>,
 ) -> crate::Result<Vec<(ProviderDescriptor, Arc<T>)>>
@@ -317,15 +322,21 @@ where
 {
     let registry = scope.registry();
     let mut values = Vec::new();
+    let providers = registry.selected_runtime_collection(
+        std::any::TypeId::of::<T>(),
+        ResolutionMode::Fresh,
+        scope.scope(),
+        &|dependency| scope.can_access(dependency),
+    );
 
-    for provider in registry.providers_for_trait(std::any::TypeId::of::<T>()) {
+    for provider in &providers {
         let Some(descriptor) = registry.factory_backed(provider.concrete_ty.type_id) else {
-            if registry.transient(provider.concrete_ty.type_id).is_some()
-                || scope.contains_built(provider.concrete_ty.type_id)
-            {
-                return Err(Error::UnsupportedFreshFactory(
-                    provider.concrete_ty.name.into(),
-                ));
+            if let Some(component) = registry.component(provider.concrete_ty.type_id) {
+                return Err(Error::UnsupportedFreshFactory {
+                    component: component.name.to_string(),
+                    component_id: Some(component.id.to_string()),
+                    type_name: (component.ty.type_name)().to_string(),
+                });
             }
 
             continue;
@@ -366,13 +377,23 @@ where
         return Ok(from_boxed::<Arc<T>>(&boxed));
     }
 
-    let provider = registry.fresh_provider(scope, target, qualifier);
+    let provider = registry.selected_runtime_provider(
+        target,
+        qualifier,
+        ResolutionMode::Fresh,
+        scope.scope(),
+        &|dependency| scope.can_access(dependency),
+    );
     let Some(provider) = provider else {
         return Ok(None);
     };
     let descriptor = registry
         .factory_backed(provider.concrete_ty.type_id)
-        .ok_or_else(|| Error::UnsupportedFreshFactory(provider.concrete_ty.name.into()))?;
+        .ok_or_else(|| Error::UnsupportedFreshFactory {
+            component: provider.concrete_ty.name.into(),
+            component_id: None,
+            type_name: (provider.concrete_ty.type_name)().to_string(),
+        })?;
 
     if !scope.can_access(descriptor.scope) {
         return Ok(None);

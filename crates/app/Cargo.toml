@@ -13,7 +13,11 @@ categories.workspace = true
 [features]
 default = ["cli"]
 cli = ["dep:clap", "overseerd-macros/cli"]
-tooling = ["dep:overseerd-tooling-schema", "overseerd-macros/tooling"]
+tooling = [
+    "dep:overseerd-tooling-schema",
+    "dep:serde_json",
+    "overseerd-macros/tooling",
+]
 di-check = [
     "overseerd-di/di-check",
     "overseerd-config/di-check",
@@ -32,6 +36,7 @@ overseerd-macros = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true, optional = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, optional = true }
 thiserror = { workspace = true }
