@@ -335,6 +335,32 @@ fn fresh_qualified_and_keyed_selection_match_ordered_runtime_precedence() {
 }
 
 #[test]
+fn fresh_keyed_collisions_prefer_nearer_scope_over_later_global_order() {
+    let consumer = component::<Consumer>("consumer", &NearScope, factory);
+    let near = component::<Near>("near", &NearScope, factory);
+    let far = component::<Far>("far", &FarScope, factory);
+    let components = vec![consumer, near, far];
+    let registry = ComponentRegistry {
+        components: components.clone(),
+        providers: vec![
+            provider::<Near>("shared", false, -10),
+            provider::<Far>("shared", false, 20),
+        ],
+    };
+    let keyed = registry
+        .selected_dependencies_with_scope_reachability(
+            &consumer,
+            &dependency(Cardinality::Keyed, ResolutionMode::Fresh, None),
+            &components,
+            reaches,
+        )
+        .expect("fresh keyed selection validates");
+
+    assert_eq!(selected_types(&keyed), [TypeId::of::<Near>()]);
+    assert_eq!(keyed[0].scope, Some(NEAR_ID));
+}
+
+#[test]
 fn transient_fallback_uses_the_same_ordered_qualified_sets_as_runtime() {
     let consumer = component::<Consumer>("consumer", &Transient, factory);
     let inaccessible = component::<Near>("inaccessible", &NearScope, factory);

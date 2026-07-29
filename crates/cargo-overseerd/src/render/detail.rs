@@ -77,7 +77,7 @@ pub(crate) fn terminal_text(value: &str) -> String {
             '\n' => escaped.push_str("\\n"),
             '\r' => escaped.push_str("\\r"),
             '\t' => escaped.push_str("\\t"),
-            character if character.is_control() => {
+            character if character.is_control() || is_bidi_formatting(character) => {
                 use std::fmt::Write as _;
 
                 write!(escaped, "\\u{{{:x}}}", character as u32)
@@ -88,6 +88,13 @@ pub(crate) fn terminal_text(value: &str) -> String {
     }
 
     escaped
+}
+
+fn is_bidi_formatting(character: char) -> bool {
+    matches!(
+        character,
+        '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+    )
 }
 
 pub(crate) fn write_identity(

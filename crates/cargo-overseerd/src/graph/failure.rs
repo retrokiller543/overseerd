@@ -126,6 +126,10 @@ fn diagnostic_node(id: String, kind: ResourceKind) -> Resource {
 }
 
 fn resource_kind(id: &str) -> ResourceKind {
+    if id.contains("/tooling/") {
+        return ResourceKind::Contribution;
+    }
+
     let prefix = id.split_once(':').map_or(id, |(prefix, _)| prefix);
 
     match prefix {
