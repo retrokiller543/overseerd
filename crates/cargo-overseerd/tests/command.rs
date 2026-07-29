@@ -80,7 +80,7 @@ fn json_validation_failure_uses_the_stable_exit_code_and_diagnostic() {
     let report: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("JSON report parses");
 
-    assert_eq!(report["schema"]["major"], 1);
+    assert_eq!(report["schema"], env!("CARGO_PKG_VERSION"));
     assert_eq!(report["outcome"], "validation-failure");
     assert_eq!(report["exit_code"], 1);
     assert_eq!(report["diagnostics"][0]["code"], "overseerd/tooling-panic");

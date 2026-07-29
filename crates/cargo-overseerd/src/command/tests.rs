@@ -5,8 +5,9 @@ use crate::{
     SelectedTarget,
 };
 use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity};
+use semver::{Version, VersionReq};
 
-use super::{CommandExitCode, CommandKind, CommandOutcome, CommandReport, CommandSchemaVersion};
+use super::{COMMAND_SCHEMA_VERSION, CommandExitCode, CommandKind, CommandOutcome, CommandReport};
 
 #[test]
 fn exit_categories_have_stable_distinct_codes() {
@@ -42,10 +43,30 @@ fn json_report_is_versioned_and_canonicalizes_diagnostics() {
 
     let json = report.to_json().expect("command report serializes");
 
-    assert_eq!(report.schema, CommandSchemaVersion::CURRENT);
-    assert!(json.starts_with("{\"schema\":{\"major\":1},\"command\":\"check\""));
+    assert_eq!(report.schema, COMMAND_SCHEMA_VERSION);
+    assert_eq!(
+        report.schema,
+        Version::parse(env!("CARGO_PKG_VERSION")).expect("package version parses")
+    );
+    assert!(json.starts_with(&format!(
+        "{{\"schema\":\"{}\",\"command\":\"check\"",
+        env!("CARGO_PKG_VERSION")
+    )));
     assert!(json.find("fixture/a-first") < json.find("fixture/z-last"));
     assert_eq!(report.diagnostics[0].resources, ["a", "z"]);
+}
+
+#[test]
+fn schema_compatibility_uses_semantic_version_requirements() {
+    let report = CommandReport::new(CommandKind::Check, CommandOutcome::Success);
+    let compatible =
+        VersionReq::parse(&format!("^{}.{}", report.schema.major, report.schema.minor))
+            .expect("compatible requirement parses");
+    let incompatible = VersionReq::parse(&format!(">={}", report.schema.major + 1))
+        .expect("incompatible requirement parses");
+
+    assert!(report.schema_matches(&compatible));
+    assert!(!report.schema_matches(&incompatible));
 }
 
 #[test]

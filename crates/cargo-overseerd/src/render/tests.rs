@@ -1,5 +1,5 @@
 use cargo_overseerd::{
-    CommandKind, CommandOutcome, CommandReport, CommandSchemaVersion, SelectedTargetReport,
+    COMMAND_SCHEMA_VERSION, CommandKind, CommandOutcome, CommandReport, SelectedTargetReport,
 };
 use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity, DocumentIdentity, SourceLocation};
 
@@ -9,7 +9,7 @@ use crate::cli::OutputFormat;
 #[test]
 fn terminal_report_exposes_live_application_identity() {
     let report = CommandReport {
-        schema: CommandSchemaVersion::CURRENT,
+        schema: COMMAND_SCHEMA_VERSION,
         command: CommandKind::Check,
         outcome: CommandOutcome::Success,
         exit_code: 0,
@@ -41,7 +41,7 @@ fn terminal_report_exposes_live_application_identity() {
 #[test]
 fn json_report_is_one_machine_readable_line() {
     let report = CommandReport {
-        schema: CommandSchemaVersion::CURRENT,
+        schema: COMMAND_SCHEMA_VERSION,
         command: CommandKind::Check,
         outcome: CommandOutcome::Success,
         exit_code: 0,
@@ -65,7 +65,7 @@ fn json_report_is_one_machine_readable_line() {
 #[test]
 fn terminal_report_preserves_line_without_column() {
     let report = CommandReport {
-        schema: CommandSchemaVersion::CURRENT,
+        schema: COMMAND_SCHEMA_VERSION,
         command: CommandKind::Check,
         outcome: CommandOutcome::BuildFailure,
         exit_code: 4,
