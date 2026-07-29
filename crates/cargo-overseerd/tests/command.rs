@@ -184,10 +184,14 @@ fn document_export_failure_keeps_stdout_empty() {
 #[test]
 fn inspect_filters_are_rejected_for_canonical_json() {
     let workspace = workspace_root();
-    let output = run_homeledger(
-        &workspace,
-        ["inspect", "--format", "json", "--kind", "component"],
-    );
+    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
+    let output = Command::new(binary)
+        .args(["inspect", "--format", "json", "--kind", "component"])
+        .arg("--manifest-path")
+        .arg(workspace.join("does-not-exist/Cargo.toml"))
+        .current_dir(&workspace)
+        .output()
+        .expect("cargo-overseerd inspect launches");
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());

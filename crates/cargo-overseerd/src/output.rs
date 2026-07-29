@@ -16,7 +16,8 @@ pub(crate) fn write_text_inspection(
     let terminal = io::stdout().is_terminal();
     let color = policy_enabled(color, terminal)
         && !(color == TerminalPolicy::Auto && std::env::var_os("NO_COLOR").is_some());
-    let page = policy_enabled(pager, terminal) && pager_command().is_some();
+    let pager_command = pager_command();
+    let page = policy_enabled(pager, terminal) && pager_command.is_some();
 
     if !page {
         return crate::render::write_inspection(document, filters, color, &mut io::stdout().lock());
@@ -25,7 +26,18 @@ pub(crate) fn write_text_inspection(
     let mut rendered = Vec::new();
 
     crate::render::write_inspection(document, filters, color, &mut rendered)?;
-    write_to_pager(&rendered)
+    let command = pager_command.expect("paging requires a pager command");
+
+    match write_to_pager(&rendered, &command) {
+        Err(error)
+            if pager == TerminalPolicy::Auto
+                && !command.explicit
+                && error.kind() == io::ErrorKind::NotFound =>
+        {
+            io::stdout().lock().write_all(&rendered)
+        }
+        result => result,
+    }
 }
 
 pub(crate) fn write_export(
@@ -38,10 +50,9 @@ pub(crate) fn write_export(
     }
 }
 
-fn write_to_pager(rendered: &[u8]) -> io::Result<()> {
-    let (program, arguments) = pager_command().ok_or_else(|| io::Error::other("pager disabled"))?;
-    let mut child = std::process::Command::new(program)
-        .args(arguments)
+fn write_to_pager(rendered: &[u8], command: &PagerCommand) -> io::Result<()> {
+    let mut child = std::process::Command::new(&command.program)
+        .args(&command.arguments)
         .env("LESS", "FRX")
         .stdin(std::process::Stdio::piped())
         .spawn()?;
@@ -168,9 +179,19 @@ fn replace_file_windows(temporary: &Path, destination: &Path) -> io::Result<()> 
     Ok(())
 }
 
-fn pager_command() -> Option<(OsString, Vec<OsString>)> {
+struct PagerCommand {
+    program: OsString,
+    arguments: Vec<OsString>,
+    explicit: bool,
+}
+
+fn pager_command() -> Option<PagerCommand> {
     let configured = std::env::var_os("PAGER");
-    let command = configured.as_deref().and_then(|value| value.to_str());
+    pager_command_from(configured.as_deref())
+}
+
+fn pager_command_from(configured: Option<&std::ffi::OsStr>) -> Option<PagerCommand> {
+    let command = configured.and_then(|value| value.to_str());
     let command = command.unwrap_or("less").trim();
 
     if command.is_empty() || command == "cat" {
@@ -181,7 +202,11 @@ fn pager_command() -> Option<(OsString, Vec<OsString>)> {
     let program = parts.next()?;
     let arguments = parts.map(OsString::from).collect();
 
-    Some((OsString::from(program), arguments))
+    Some(PagerCommand {
+        program: OsString::from(program),
+        arguments,
+        explicit: configured.is_some(),
+    })
 }
 
 fn split_shell_words(value: &str) -> Result<Vec<String>, ()> {
@@ -235,7 +260,7 @@ fn policy_enabled(policy: TerminalPolicy, terminal: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::split_shell_words;
+    use super::{pager_command_from, split_shell_words};
 
     #[test]
     fn pager_shell_words_preserve_quoted_paths_and_arguments() {
@@ -258,5 +283,16 @@ mod tests {
                 .expect("Windows pager command parses"),
             [r#"C:\Program Files\Pager\pager.exe"#, "-R"]
         );
+    }
+
+    #[test]
+    fn implicit_and_explicit_pagers_are_distinguished() {
+        let implicit = pager_command_from(None).expect("default pager exists");
+        let explicit = pager_command_from(Some(std::ffi::OsStr::new("custom-pager --flag")))
+            .expect("configured pager exists");
+
+        assert!(!implicit.explicit);
+        assert!(explicit.explicit);
+        assert_eq!(explicit.program, "custom-pager");
     }
 }

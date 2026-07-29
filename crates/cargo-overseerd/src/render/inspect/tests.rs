@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use overseerd_tooling_schema::{
-    DocumentIdentity, Facet, Provenance, Relationship, RelationshipKind, Resource, ResourceKind,
-    ToolingDocument,
+    CliCommand, CliMetadata, CliOwner, CliProvider, CliProviderKind, DocumentIdentity, Facet,
+    Provenance, Relationship, RelationshipKind, Resource, ResourceKind, ToolingDocument,
 };
 use serde_json::json;
 
@@ -77,6 +77,42 @@ fn scope_name_filter_includes_assigned_resources() {
     assert!(output.contains("component Worker (component:worker)"));
 }
 
+#[test]
+fn resource_names_select_cli_provider_resources_consistently() {
+    let document = cli_fixture(ResourceKind::Plugin);
+
+    for resource in ["Worker Plugin", "Worker CLI Contribution"] {
+        let filters = InspectFilters {
+            resources: vec![String::from(resource)],
+            ..InspectFilters::default()
+        };
+        let mut output = Vec::new();
+
+        write_inspection(&document, &filters, false, &mut output).expect("inspection writes");
+
+        let output = String::from_utf8(output).expect("inspection is UTF-8");
+
+        assert!(output.contains("provider cli-provider:plugin:test/worker:test/worker-cli"));
+    }
+}
+
+#[test]
+fn plugin_filter_excludes_non_plugin_cli_contributors() {
+    let document = cli_fixture(ResourceKind::Protocol);
+    let filters = InspectFilters {
+        plugins: vec![String::from("Worker Protocol")],
+        ..InspectFilters::default()
+    };
+    let mut output = Vec::new();
+
+    write_inspection(&document, &filters, false, &mut output).expect("inspection writes");
+
+    let output = String::from_utf8(output).expect("inspection is UTF-8");
+
+    assert!(output.contains("CLI\n  none"));
+    assert!(!output.contains("provider cli-provider:plugin:test/worker:test/worker-cli"));
+}
+
 fn fixture() -> ToolingDocument {
     let mut document = ToolingDocument::new(
         "0.20.0",
@@ -125,6 +161,43 @@ fn fixture() -> ToolingDocument {
         from: String::from("component:worker"),
         to: String::from("scope:test/request"),
         labels: BTreeMap::new(),
+    });
+
+    document
+}
+
+fn cli_fixture(contributor_kind: ResourceKind) -> ToolingDocument {
+    let mut document = fixture();
+
+    document.resources[0].kind = contributor_kind;
+    document.resources[0].name = if matches!(document.resources[0].kind, ResourceKind::Plugin) {
+        String::from("Worker Plugin")
+    } else {
+        String::from("Worker Protocol")
+    };
+    document.resources.push(Resource {
+        id: String::from("contribution:plugin:test/worker:test/worker-cli"),
+        kind: ResourceKind::Contribution,
+        name: String::from("Worker CLI Contribution"),
+        provenance: Some(Provenance {
+            owner: Some(String::from("plugin:test/worker")),
+            ..Provenance::default()
+        }),
+        ..Resource::default()
+    });
+    document.cli = Some(CliMetadata {
+        root: CliCommand {
+            name: String::from("fixture"),
+            owner: CliOwner::Application,
+            ..CliCommand::default()
+        },
+        providers: vec![CliProvider {
+            id: String::from("cli-provider:plugin:test/worker:test/worker-cli"),
+            contributor: String::from("plugin:test/worker"),
+            contribution: String::from("test/worker-cli"),
+            kind: CliProviderKind::Command,
+        }],
+        default_command: None,
     });
 
     document
