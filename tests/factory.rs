@@ -3,12 +3,14 @@
 //! the newly-enabled non-`Arc` parameter shapes (`Cfg<T>`).
 #![cfg(feature = "daemon")]
 
+mod common;
+
 use std::sync::Arc;
 
 use overseerd::daemon::{App, Inject, Payload, handlers, service};
-use overseerd::{
-    CallResult, Cfg, MemoryClient, MemoryConnectionHandle, component, config, methods,
-};
+use overseerd::{CallResult, Cfg, component, config, methods};
+
+use common::{MemoryServer, deadline};
 
 #[config]
 #[derive(serde::Deserialize)]
@@ -125,9 +127,7 @@ struct Manual {
     note: String,
 }
 
-async fn start() -> MemoryConnectionHandle {
-    let (client, transport) = MemoryClient::pair();
-
+async fn start() -> MemoryServer {
     let config =
         overseerd::ConfigManager::<overseerd::config::Toml>::from_str("[factory]\nseed = 100\n")
             .expect("parse config");
@@ -143,11 +143,7 @@ async fn start() -> MemoryConnectionHandle {
         .await
         .expect("build daemon");
 
-    tokio::spawn(async move {
-        let _ = daemon.serve(transport).await;
-    });
-
-    client.connect().await.expect("connect")
+    MemoryServer::start(daemon)
 }
 
 fn enc<T: serde::Serialize>(value: &T) -> Vec<u8> {
@@ -160,9 +156,15 @@ fn dec<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
 
 #[tokio::test]
 async fn init_factory_resolves_component_and_config_params() {
-    let conn = start().await;
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let result = conn.call("FactorySvc.total", enc(&())).await.unwrap();
+    let result = deadline(
+        "FactorySvc.total call",
+        conn.call("FactorySvc.total", enc(&())),
+    )
+    .await
+    .expect("total call succeeds");
 
     match result {
         // Counter.base defaults to 0; cfg.seed = 100 → total = 100.
@@ -170,13 +172,21 @@ async fn init_factory_resolves_component_and_config_params() {
 
         other => panic!("expected ok, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn explicit_factory_path_constructs() {
-    let conn = start().await;
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let result = conn.call("FactorySvc.label", enc(&())).await.unwrap();
+    let result = deadline(
+        "FactorySvc.label call",
+        conn.call("FactorySvc.label", enc(&())),
+    )
+    .await
+    .expect("label call succeeds");
 
     match result {
         // Tagged::make ran with its injected Counter (base 0).
@@ -184,26 +194,42 @@ async fn explicit_factory_path_constructs() {
 
         other => panic!("expected ok, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn manual_component_is_provided_not_built() {
-    let conn = start().await;
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let result = conn.call("FactorySvc.note", enc(&())).await.unwrap();
+    let result = deadline(
+        "FactorySvc.note call",
+        conn.call("FactorySvc.note", enc(&())),
+    )
+    .await
+    .expect("note call succeeds");
 
     match result {
         CallResult::Ok(body) => assert_eq!(dec::<String>(&body), "manual-note"),
 
         other => panic!("expected ok, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn boxed_error_init_constructs() {
-    let conn = start().await;
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let result = conn.call("FactorySvc.boxed", enc(&())).await.unwrap();
+    let result = deadline(
+        "FactorySvc.boxed call",
+        conn.call("FactorySvc.boxed", enc(&())),
+    )
+    .await
+    .expect("boxed call succeeds");
 
     match result {
         // cfg.seed = 100, parsed = 7 → value = 107.
@@ -211,4 +237,6 @@ async fn boxed_error_init_constructs() {
 
         other => panic!("expected ok, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }

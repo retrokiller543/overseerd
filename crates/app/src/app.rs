@@ -436,6 +436,7 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
             value: Box::new(Injectable::into_stored(reloader.clone())),
         });
 
+        #[cfg(feature = "tooling")]
         let provider_order =
             registry
                 .providers

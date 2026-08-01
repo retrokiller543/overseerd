@@ -51,6 +51,11 @@ impl Resolver for MapResolver {
 pub struct ResolverChain(pub Vec<Box<dyn Resolver>>);
 
 impl ResolverChain {
+    /// An empty chain that never consults ambient process state.
+    pub fn empty() -> Self {
+        Self(Vec::new())
+    }
+
     /// The default chain: environment variables only.
     pub fn env_default() -> Self {
         Self(vec![Box::new(EnvResolver)])

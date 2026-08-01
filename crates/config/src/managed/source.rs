@@ -129,7 +129,8 @@ pub struct ConfigManager<F = Dynamic> {
 }
 
 impl<F: Format> ConfigManager<F> {
-    /// An empty configuration, for daemons that bind no config. Reads no files.
+    /// An empty configuration, for daemons that bind no config. Reads no files but retains
+    /// environment placeholder resolution; replace the resolver chain for deterministic tests.
     pub fn empty() -> Self {
         Self::wrap(ConfigValue::Table(Vec::new()), Vec::new())
     }
@@ -164,17 +165,29 @@ impl<F: Format> ConfigManager<F> {
     /// skipped; a malformed one is an error.
     #[instrument(target = "overseerd::config", level = "debug", skip(dir, profiles), fields(dir = %dir.display()))]
     pub fn load_in(dir: &Path, profiles: &[String]) -> Result<Self, ConfigError> {
-        let active = resolve_profiles(profiles);
+        Self::load_in_with_resolvers(dir, profiles, ResolverChain::env_default())
+    }
 
-        Self::load_in_profiles(dir, &active)
+    /// Like [`load_in`](Self::load_in), but uses an explicit resolver chain for both
+    /// `OVERSEERD_PROFILES` and later placeholder substitution.
+    #[instrument(target = "overseerd::config", level = "debug", skip(dir, profiles, resolvers), fields(dir = %dir.display()))]
+    pub fn load_in_with_resolvers(
+        dir: &Path,
+        profiles: &[String],
+        resolvers: ResolverChain,
+    ) -> Result<Self, ConfigError> {
+        let active = resolve_profiles(profiles, &resolvers);
+
+        Self::load_in_profiles(dir, &active, resolvers)
     }
 
     /// Loads base and profile files from `dir` without consulting `OVERSEERD_PROFILES`.
     ///
     /// This is the deterministic counterpart to [`load_in`](Self::load_in) used when a
     /// higher-precedence caller, such as the generated CLI, supplied the complete profile list.
+    /// Placeholder substitution retains the default environment resolver.
     pub fn load_in_explicit(dir: &Path, profiles: &[String]) -> Result<Self, ConfigError> {
-        Self::load_in_profiles(dir, profiles)
+        Self::load_in_profiles(dir, profiles, ResolverChain::env_default())
     }
 
     /// Loads one exact base file followed by sibling `<stem>-<profile>.<ext>` overlays.
@@ -219,7 +232,11 @@ impl<F: Format> ConfigManager<F> {
         Ok(Self::wrap(root, sources))
     }
 
-    fn load_in_profiles(dir: &Path, active: &[String]) -> Result<Self, ConfigError> {
+    fn load_in_profiles(
+        dir: &Path,
+        active: &[String],
+        resolvers: ResolverChain,
+    ) -> Result<Self, ConfigError> {
         let parsers = F::parsers();
 
         let mut root = ConfigValue::Table(Vec::new());
@@ -237,7 +254,7 @@ impl<F: Format> ConfigManager<F> {
 
         info!(target: "overseerd::config", sources = sources.len(), profiles = active.len(), "config loaded");
 
-        Ok(Self::wrap(root, sources))
+        Ok(Self::wrap_with_resolvers(root, sources, resolvers))
     }
 
     /// Loads and merges config from `directories`' config directory **with the `${@kind}`
@@ -253,15 +270,35 @@ impl<F: Format> ConfigManager<F> {
         directories: &DirectoriesManager,
         profiles: &[String],
     ) -> Result<Self, ConfigError> {
-        let manager = Self::load_in(&directories.config_path(), profiles)?;
+        Self::load_from_with_resolvers(directories, profiles, ResolverChain::env_default())
+    }
+
+    /// Like [`load_from`](Self::load_from), but uses an explicit resolver chain for
+    /// profile selection and placeholder substitution before appending the directory
+    /// namespace resolver. Profile selection is frozen when the manager is loaded.
+    pub fn load_from_with_resolvers(
+        directories: &DirectoriesManager,
+        profiles: &[String],
+        resolvers: ResolverChain,
+    ) -> Result<Self, ConfigError> {
+        let manager =
+            Self::load_in_with_resolvers(&directories.config_path(), profiles, resolvers)?;
 
         Ok(manager.with_directories(directories))
     }
 
     fn wrap(root: ConfigValue, sources: Vec<PathBuf>) -> Self {
+        Self::wrap_with_resolvers(root, sources, ResolverChain::env_default())
+    }
+
+    fn wrap_with_resolvers(
+        root: ConfigValue,
+        sources: Vec<PathBuf>,
+        resolvers: ResolverChain,
+    ) -> Self {
         Self {
             root,
-            resolvers: ResolverChain::env_default(),
+            resolvers,
             format: F::ID,
             sources,
             bindings: Vec::new(),
@@ -273,8 +310,8 @@ impl<F: Format> ConfigManager<F> {
 
 impl<F> ConfigManager<F> {
     /// Deserializes the subtree at `path` into `T`, resolving `${...}` placeholders
-    /// against environment variables and other config paths. The single entry point
-    /// shared by transport setup in `main` and DI-seeded `Cfg<T>` injection.
+    /// against the configured resolver chain and other config paths. The single entry
+    /// point shared by transport setup in `main` and DI-seeded `Cfg<T>` injection.
     #[instrument(target = "overseerd::config", level = "debug", skip(self))]
     pub fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ConfigError> {
         let subtree = self
@@ -392,8 +429,15 @@ impl<F> ConfigManager<F> {
         ))
     }
 
+    /// Replaces the chain consulted during placeholder substitution.
+    pub fn with_resolvers(mut self, resolvers: ResolverChain) -> Self {
+        self.resolvers = resolvers;
+
+        self
+    }
+
     /// Appends a [`Resolver`] to the chain consulted during placeholder substitution. Later
-    /// resolvers are tried only when earlier ones (env by default) have no value.
+    /// resolvers are tried only when earlier resolvers have no value.
     pub fn with_resolver(mut self, resolver: Box<dyn Resolver>) -> Self {
         self.resolvers.0.push(resolver);
 
@@ -723,16 +767,16 @@ fn ensure_path_mut<'a>(root: &'a mut ConfigValue, path: &str) -> Option<&'a mut 
 
 /// Combines `OVERSEERD_PROFILES` (consulted first) with the explicitly supplied
 /// profiles, preserving order.
-fn resolve_profiles(explicit: &[String]) -> Vec<String> {
+fn resolve_profiles(explicit: &[String], resolvers: &ResolverChain) -> Vec<String> {
     let mut profiles = Vec::new();
 
-    if let Ok(env) = std::env::var("OVERSEERD_PROFILES") {
-        let from_env = env
+    if let Some(value) = resolvers.resolve("OVERSEERD_PROFILES") {
+        let from_resolvers = value
             .split(',')
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
-        profiles.extend(from_env);
+        profiles.extend(from_resolvers);
     }
 
     profiles.extend(explicit.iter().cloned());

@@ -1,22 +1,28 @@
-use std::path::{Path, PathBuf};
+mod common;
+
+use std::path::Path;
 use std::process::Command;
+
+use common::{cargo_build_lock, workspace_root};
+use overseerd_test_utils::TempFixture;
 
 #[test]
 fn cargo_subcommand_reports_the_live_homeledger_application() {
     let workspace = workspace_root();
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
-    let output = Command::new(binary)
-        .arg("overseerd")
-        .arg("check")
-        .arg("--manifest-path")
-        .arg(workspace.join("examples/daemon/Cargo.toml"))
-        .arg("--package")
-        .arg("overseerd-example-daemon")
-        .arg("--bin")
-        .arg("overseerd-example-daemon")
-        .current_dir(&workspace)
-        .output()
-        .expect("cargo-overseerd command launches");
+    let binary = cargo_overseerd_binary();
+    let output = run_command(
+        "cargo-overseerd command",
+        Command::new(binary)
+            .arg("overseerd")
+            .arg("check")
+            .arg("--manifest-path")
+            .arg(workspace.join("examples/daemon/Cargo.toml"))
+            .arg("--package")
+            .arg("overseerd-example-daemon")
+            .arg("--bin")
+            .arg("overseerd-example-daemon")
+            .current_dir(&workspace),
+    );
 
     assert!(output.status.success());
 
@@ -31,14 +37,13 @@ fn cargo_subcommand_reports_the_live_homeledger_application() {
 #[test]
 fn commands_run_from_the_selected_crate_with_workspace_relative_defaults() {
     let example = workspace_root().join("examples/daemon");
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
+    let binary = cargo_overseerd_binary();
 
     for command in ["check", "doctor"] {
-        let output = Command::new(binary)
-            .arg(command)
-            .current_dir(&example)
-            .output()
-            .expect("cargo-overseerd command launches");
+        let output = run_command(
+            "cargo-overseerd command",
+            Command::new(&binary).arg(command).current_dir(&example),
+        );
 
         assert!(
             output.status.success(),
@@ -57,22 +62,23 @@ fn commands_run_from_the_selected_crate_with_workspace_relative_defaults() {
 #[test]
 fn json_validation_failure_uses_the_stable_exit_code_and_diagnostic() {
     let workspace = workspace_root();
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
-    let output = Command::new(binary)
-        .arg("check")
-        .arg("--manifest-path")
-        .arg(workspace.join("Cargo.toml"))
-        .arg("--package")
-        .arg("overseerd")
-        .arg("--bin")
-        .arg("tooling_probe_fixture")
-        .arg("--features")
-        .arg("cli,tooling")
-        .arg("--format")
-        .arg("json")
-        .current_dir(&workspace)
-        .output()
-        .expect("cargo-overseerd command launches");
+    let binary = cargo_overseerd_binary();
+    let output = run_command(
+        "cargo-overseerd command",
+        Command::new(binary)
+            .arg("check")
+            .arg("--manifest-path")
+            .arg(workspace.join("Cargo.toml"))
+            .arg("--package")
+            .arg("overseerd")
+            .arg("--bin")
+            .arg("tooling_probe_fixture")
+            .arg("--features")
+            .arg("cli,tooling")
+            .arg("--format")
+            .arg("json")
+            .current_dir(&workspace),
+    );
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stderr.is_empty());
@@ -88,11 +94,11 @@ fn json_validation_failure_uses_the_stable_exit_code_and_diagnostic() {
 
 #[test]
 fn invalid_command_uses_the_stable_misuse_exit_code() {
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
-    let output = Command::new(binary)
-        .arg("unknown-command")
-        .output()
-        .expect("cargo-overseerd command launches");
+    let binary = cargo_overseerd_binary();
+    let output = run_command(
+        "cargo-overseerd command",
+        Command::new(binary).arg("unknown-command"),
+    );
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
@@ -130,22 +136,23 @@ fn inspect_json_and_document_export_are_byte_identical() {
 #[test]
 fn envelope_export_preserves_structured_probe_failure_without_stdout_noise() {
     let workspace = workspace_root();
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
-    let output = Command::new(binary)
-        .arg("export")
-        .arg("--manifest-path")
-        .arg(workspace.join("Cargo.toml"))
-        .arg("--package")
-        .arg("overseerd")
-        .arg("--bin")
-        .arg("tooling_probe_fixture")
-        .arg("--features")
-        .arg("cli,tooling")
-        .arg("--format")
-        .arg("envelope")
-        .current_dir(&workspace)
-        .output()
-        .expect("cargo-overseerd export launches");
+    let binary = cargo_overseerd_binary();
+    let output = run_command(
+        "cargo-overseerd export",
+        Command::new(binary)
+            .arg("export")
+            .arg("--manifest-path")
+            .arg(workspace.join("Cargo.toml"))
+            .arg("--package")
+            .arg("overseerd")
+            .arg("--bin")
+            .arg("tooling_probe_fixture")
+            .arg("--features")
+            .arg("cli,tooling")
+            .arg("--format")
+            .arg("envelope")
+            .current_dir(&workspace),
+    );
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stderr.is_empty());
@@ -161,20 +168,21 @@ fn envelope_export_preserves_structured_probe_failure_without_stdout_noise() {
 #[test]
 fn document_export_failure_keeps_stdout_empty() {
     let workspace = workspace_root();
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
-    let output = Command::new(binary)
-        .arg("export")
-        .arg("--manifest-path")
-        .arg(workspace.join("Cargo.toml"))
-        .arg("--package")
-        .arg("overseerd")
-        .arg("--bin")
-        .arg("tooling_probe_fixture")
-        .arg("--features")
-        .arg("cli,tooling")
-        .current_dir(&workspace)
-        .output()
-        .expect("cargo-overseerd export launches");
+    let binary = cargo_overseerd_binary();
+    let output = run_command(
+        "cargo-overseerd export",
+        Command::new(binary)
+            .arg("export")
+            .arg("--manifest-path")
+            .arg(workspace.join("Cargo.toml"))
+            .arg("--package")
+            .arg("overseerd")
+            .arg("--bin")
+            .arg("tooling_probe_fixture")
+            .arg("--features")
+            .arg("cli,tooling")
+            .current_dir(&workspace),
+    );
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
@@ -184,14 +192,15 @@ fn document_export_failure_keeps_stdout_empty() {
 #[test]
 fn inspect_filters_are_rejected_for_canonical_json() {
     let workspace = workspace_root();
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
-    let output = Command::new(binary)
-        .args(["inspect", "--format", "json", "--kind", "component"])
-        .arg("--manifest-path")
-        .arg(workspace.join("does-not-exist/Cargo.toml"))
-        .current_dir(&workspace)
-        .output()
-        .expect("cargo-overseerd inspect launches");
+    let binary = cargo_overseerd_binary();
+    let output = run_command(
+        "cargo-overseerd inspect",
+        Command::new(binary)
+            .args(["inspect", "--format", "json", "--kind", "component"])
+            .arg("--manifest-path")
+            .arg(workspace.join("does-not-exist/Cargo.toml"))
+            .current_dir(&workspace),
+    );
 
     assert_eq!(output.status.code(), Some(2));
     assert!(output.stdout.is_empty());
@@ -353,22 +362,23 @@ fn machine_graph_ignores_forced_color_and_pager() {
 #[test]
 fn graph_preparation_failure_emits_incomplete_diagnostic_json_only_to_stdout() {
     let workspace = workspace_root();
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
-    let output = Command::new(binary)
-        .arg("graph")
-        .arg("--format")
-        .arg("json")
-        .arg("--manifest-path")
-        .arg(workspace.join("Cargo.toml"))
-        .arg("--package")
-        .arg("overseerd")
-        .arg("--bin")
-        .arg("tooling_probe_fixture")
-        .arg("--features")
-        .arg("cli,tooling")
-        .current_dir(&workspace)
-        .output()
-        .expect("cargo-overseerd graph launches");
+    let binary = cargo_overseerd_binary();
+    let output = run_command(
+        "cargo-overseerd graph",
+        Command::new(binary)
+            .arg("graph")
+            .arg("--format")
+            .arg("json")
+            .arg("--manifest-path")
+            .arg(workspace.join("Cargo.toml"))
+            .arg("--package")
+            .arg("overseerd")
+            .arg("--bin")
+            .arg("tooling_probe_fixture")
+            .arg("--features")
+            .arg("cli,tooling")
+            .current_dir(&workspace),
+    );
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stderr.is_empty());
@@ -398,30 +408,26 @@ fn graph_preparation_failure_emits_incomplete_diagnostic_json_only_to_stdout() {
 fn document_export_file_matches_stdout_bytes() {
     let workspace = workspace_root();
     let stdout = run_homeledger(&workspace, ["export", "--format", "document"]);
-    let output_path = std::env::temp_dir().join(format!(
-        "cargo-overseerd-export-{}-{}.json",
-        std::process::id(),
-        std::thread::current().name().unwrap_or("test")
-    ));
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
-    let file = Command::new(binary)
-        .arg("export")
-        .arg("--format")
-        .arg("document")
-        .arg("--output")
-        .arg(&output_path)
-        .arg("--manifest-path")
-        .arg(workspace.join("examples/daemon/Cargo.toml"))
-        .arg("--package")
-        .arg("overseerd-example-daemon")
-        .arg("--bin")
-        .arg("overseerd-example-daemon")
-        .current_dir(&workspace)
-        .output()
-        .expect("file export launches");
+    let fixture = TempFixture::new("cargo-overseerd-export");
+    let output_path = fixture.child("export.json");
+    let binary = cargo_overseerd_binary();
+    let file = run_command(
+        "cargo-overseerd file export",
+        Command::new(binary)
+            .arg("export")
+            .arg("--format")
+            .arg("document")
+            .arg("--output")
+            .arg(&output_path)
+            .arg("--manifest-path")
+            .arg(workspace.join("examples/daemon/Cargo.toml"))
+            .arg("--package")
+            .arg("overseerd-example-daemon")
+            .arg("--bin")
+            .arg("overseerd-example-daemon")
+            .current_dir(&workspace),
+    );
     let file_bytes = std::fs::read(&output_path).expect("file export is readable");
-
-    std::fs::remove_file(&output_path).expect("file export is removable");
 
     assert!(stdout.status.success());
     assert!(file.status.success());
@@ -436,61 +442,63 @@ fn replacing_export_preserves_existing_file_permissions() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let workspace = workspace_root();
-    let output_path = std::env::temp_dir().join(format!(
-        "cargo-overseerd-private-export-{}.json",
-        std::process::id()
-    ));
+    let fixture = TempFixture::new("cargo-overseerd-private-export");
+    let output_path = fixture.write("export.json", b"previous");
 
-    std::fs::write(&output_path, b"previous").expect("previous export writes");
     std::fs::set_permissions(&output_path, std::fs::Permissions::from_mode(0o600))
         .expect("private permissions apply");
 
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
-    let output = Command::new(binary)
-        .arg("export")
-        .arg("--output")
-        .arg(&output_path)
-        .arg("--manifest-path")
-        .arg(workspace.join("examples/daemon/Cargo.toml"))
-        .arg("--package")
-        .arg("overseerd-example-daemon")
-        .arg("--bin")
-        .arg("overseerd-example-daemon")
-        .current_dir(&workspace)
-        .output()
-        .expect("private file export launches");
+    let binary = cargo_overseerd_binary();
+    let output = run_command(
+        "cargo-overseerd private file export",
+        Command::new(binary)
+            .arg("export")
+            .arg("--output")
+            .arg(&output_path)
+            .arg("--manifest-path")
+            .arg(workspace.join("examples/daemon/Cargo.toml"))
+            .arg("--package")
+            .arg("overseerd-example-daemon")
+            .arg("--bin")
+            .arg("overseerd-example-daemon")
+            .current_dir(&workspace),
+    );
     let mode = std::fs::metadata(&output_path)
         .expect("private export metadata reads")
         .permissions()
         .mode()
         & 0o777;
 
-    std::fs::remove_file(&output_path).expect("private export is removable");
-
     assert!(output.status.success());
     assert_eq!(mode, 0o600);
 }
 
 fn run_homeledger<const N: usize>(workspace: &Path, arguments: [&str; N]) -> std::process::Output {
-    let binary = env!("CARGO_BIN_EXE_cargo-overseerd");
+    let binary = cargo_overseerd_binary();
 
-    Command::new(binary)
-        .args(arguments)
-        .arg("--manifest-path")
-        .arg(workspace.join("examples/daemon/Cargo.toml"))
-        .arg("--package")
-        .arg("overseerd-example-daemon")
-        .arg("--bin")
-        .arg("overseerd-example-daemon")
-        .current_dir(workspace)
-        .output()
-        .expect("cargo-overseerd Homeledger command launches")
+    run_command(
+        "cargo-overseerd Homeledger command",
+        Command::new(binary)
+            .args(arguments)
+            .arg("--manifest-path")
+            .arg(workspace.join("examples/daemon/Cargo.toml"))
+            .arg("--package")
+            .arg("overseerd-example-daemon")
+            .arg("--bin")
+            .arg("overseerd-example-daemon")
+            .current_dir(workspace),
+    )
 }
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("cargo-overseerd belongs to the repository workspace")
-        .to_path_buf()
+fn run_command(name: &str, command: &mut Command) -> std::process::Output {
+    let _lock = cargo_build_lock();
+
+    overseerd_test_utils::run_command(name, command)
+}
+
+fn cargo_overseerd_binary() -> std::path::PathBuf {
+    std::env::var_os("NEXTEST_BIN_EXE_cargo-overseerd")
+        .or_else(|| std::env::var_os("NEXTEST_BIN_EXE_cargo_overseerd"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_BIN_EXE_cargo-overseerd")))
 }

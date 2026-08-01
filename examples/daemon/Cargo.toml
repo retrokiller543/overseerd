@@ -13,6 +13,9 @@ tokio = { workspace = true }
 serde = { workspace = true }
 tracing.workspace = true
 
+[dev-dependencies]
+overseerd-test-utils = { workspace = true }
+
 # Build-time dependency-graph validation: the build script fails `cargo build`
 # if the DI graph is unsatisfiable, so CI catches it before deployment.
 [build-dependencies]

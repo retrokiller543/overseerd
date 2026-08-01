@@ -1,5 +1,4 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
+use overseerd_test_utils::TempFixture;
 use overseerd_tooling_schema::{
     BinaryTargetIdentity, Diagnostic, DiagnosticSeverity, DocumentIdentity, PackageIdentity,
     ProbeEnvelope, ProbeFailure, SourceLocation,
@@ -12,8 +11,8 @@ use super::{
 
 #[test]
 fn response_is_published_as_valid_canonical_json() {
-    let directory = fixture_directory("publish");
-    let path = directory.join("response.json");
+    let fixture = TempFixture::new("overseerd-tooling-output-publish");
+    let path = fixture.child("response.json");
 
     emit_probe_envelope(&path, &envelope()).expect("response publishes");
 
@@ -22,17 +21,15 @@ fn response_is_published_as_valid_canonical_json() {
 
     assert!(!decoded.is_success());
     assert_eq!(
-        directory_entries(&directory),
+        directory_entries(fixture.path()),
         [String::from("response.json")]
     );
-
-    remove_fixture(directory);
 }
 
 #[test]
 fn invalid_envelope_is_rejected_before_target_inspection() {
-    let directory = fixture_directory("serialize-first");
-    let path = directory.join("response.json");
+    let fixture = TempFixture::new("overseerd-tooling-output-serialize-first");
+    let path = fixture.child("response.json");
     let mut envelope = envelope();
 
     std::fs::write(&path, "preserve-me").expect("existing fixture is written");
@@ -46,14 +43,12 @@ fn invalid_envelope_is_rejected_before_target_inspection() {
         std::fs::read_to_string(&path).expect("existing fixture remains readable"),
         "preserve-me"
     );
-
-    remove_fixture(directory);
 }
 
 #[test]
 fn existing_regular_target_is_never_intentionally_replaced() {
-    let directory = fixture_directory("existing-file");
-    let path = directory.join("response.json");
+    let fixture = TempFixture::new("overseerd-tooling-output-existing-file");
+    let path = fixture.child("response.json");
 
     std::fs::write(&path, "preserve-me").expect("existing fixture is written");
 
@@ -68,14 +63,12 @@ fn existing_regular_target_is_never_intentionally_replaced() {
         std::fs::read_to_string(&path).expect("existing fixture remains readable"),
         "preserve-me"
     );
-
-    remove_fixture(directory);
 }
 
 #[test]
 fn raced_target_atomically_rejects_publication_and_cleans_temporary_file() {
-    let directory = fixture_directory("publish-race-secret");
-    let path = directory.join("response.json");
+    let fixture = TempFixture::new("overseerd-tooling-output-publish-race-secret");
+    let path = fixture.child("response.json");
     let attacker_content = "attacker-content";
 
     let error = emit_probe_envelope_with_hook(&path, &envelope(), |final_path| {
@@ -93,18 +86,17 @@ fn raced_target_atomically_rejects_publication_and_cleans_temporary_file() {
         attacker_content
     );
     assert_eq!(
-        directory_entries(&directory),
+        directory_entries(fixture.path()),
         [String::from("response.json")]
     );
     assert!(!error.to_string().contains("publish-race-secret"));
     assert!(!format!("{error:?}").contains("publish-race-secret"));
-
-    remove_fixture(directory);
 }
 
 #[test]
 fn missing_parent_is_rejected_without_creating_directories() {
-    let directory = fixture_path("missing-parent");
+    let fixture = TempFixture::new("overseerd-tooling-output-missing-parent");
+    let directory = fixture.child("missing-parent");
     let path = directory.join("response.json");
 
     assert!(matches!(
@@ -122,8 +114,8 @@ fn missing_parent_is_rejected_without_creating_directories() {
 fn published_response_is_private_and_symlink_targets_are_rejected() {
     use std::os::unix::fs::{MetadataExt as _, symlink};
 
-    let directory = fixture_directory("private");
-    let path = directory.join("response.json");
+    let fixture = TempFixture::new("overseerd-tooling-output-private");
+    let path = fixture.child("response.json");
 
     emit_probe_envelope(&path, &envelope()).expect("response publishes");
 
@@ -135,7 +127,7 @@ fn published_response_is_private_and_symlink_targets_are_rejected() {
         0o600
     );
 
-    let symlink_path = directory.join("symlink.json");
+    let symlink_path = fixture.child("symlink.json");
 
     symlink(&path, &symlink_path).expect("response symlink is created");
     assert!(matches!(
@@ -145,8 +137,6 @@ fn published_response_is_private_and_symlink_targets_are_rejected() {
             ..
         })
     ));
-
-    remove_fixture(directory);
 }
 
 fn envelope() -> ProbeEnvelope {
@@ -180,25 +170,6 @@ fn envelope() -> ProbeEnvelope {
     )
 }
 
-fn fixture_directory(label: &str) -> std::path::PathBuf {
-    let path = fixture_path(label);
-
-    std::fs::create_dir(&path).expect("fixture directory is created");
-
-    path
-}
-
-fn fixture_path(label: &str) -> std::path::PathBuf {
-    static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
-
-    let ordinal = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-
-    std::env::temp_dir().join(format!(
-        "overseerd-tooling-output-{label}-{}-{ordinal}",
-        std::process::id()
-    ))
-}
-
 fn directory_entries(path: &std::path::Path) -> Vec<String> {
     let mut entries = std::fs::read_dir(path)
         .expect("fixture directory is readable")
@@ -214,8 +185,4 @@ fn directory_entries(path: &std::path::Path) -> Vec<String> {
     entries.sort();
 
     entries
-}
-
-fn remove_fixture(path: std::path::PathBuf) {
-    std::fs::remove_dir_all(path).expect("fixture directory is removed");
 }

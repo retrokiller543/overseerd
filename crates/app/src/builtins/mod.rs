@@ -19,7 +19,7 @@ pub use logging::{BoxedLayer, InitTracingError, init_tracing, init_tracing_with_
 
 #[cfg(test)]
 mod tests {
-    use overseerd_config::{ConfigManager, ConfigProperties, Toml};
+    use overseerd_config::{ConfigManager, ConfigProperties, ResolverChain, Toml};
 
     use super::config::{LogFormat, LoggingConfig, ServerConfig, SpanEvents};
 
@@ -31,7 +31,9 @@ mod tests {
             port = 8080
         "#;
 
-        let tree = ConfigManager::<Toml>::from_str(TOML).expect("parse config");
+        let tree = ConfigManager::<Toml>::from_str(TOML)
+            .expect("parse config")
+            .with_resolvers(ResolverChain::empty());
         let value: ServerConfig = tree.get("server").expect("bind server config");
 
         assert_eq!(
@@ -62,7 +64,9 @@ mod tests {
             current_span = false
         "#;
 
-        let tree = ConfigManager::<Toml>::from_str(TOML).expect("parse config");
+        let tree = ConfigManager::<Toml>::from_str(TOML)
+            .expect("parse config")
+            .with_resolvers(ResolverChain::empty());
         let value: LoggingConfig = tree.get("logging").expect("bind logging config");
 
         assert_eq!(

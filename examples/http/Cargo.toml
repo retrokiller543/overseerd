@@ -50,3 +50,6 @@ http-body-util = "0.1"
 serde_json = { workspace = true }
 # WebSocket client for the end-to-end ws test. No TLS feature, so openssl/rsa stay out of the tree.
 tokio-tungstenite = { workspace = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+overseerd-test-utils = { workspace = true, features = ["app"] }

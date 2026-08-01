@@ -1,6 +1,7 @@
-use std::path::{Path, PathBuf};
+mod common;
 
 use cargo_overseerd::{CancellationToken, DiscoveryRequest, FeatureSelection, run_probe};
+use common::{cargo_build_lock, workspace_root};
 use overseerd_tooling_schema::ProbeOutcome;
 
 #[test]
@@ -17,6 +18,7 @@ fn builds_and_consumes_a_structured_failure_probe() {
         },
         ..DiscoveryRequest::default()
     };
+    let _lock = cargo_build_lock();
 
     let result = run_probe(&request, &CancellationToken::default())
         .expect("failure envelope is a completed probe result");
@@ -53,6 +55,7 @@ fn discovers_and_probes_the_homeledger_application() {
         binary: Some(String::from("overseerd-example-daemon")),
         ..DiscoveryRequest::default()
     };
+    let _lock = cargo_build_lock();
 
     let result = run_probe(&request, &CancellationToken::default())
         .expect("Homeledger target builds and probes");
@@ -65,12 +68,4 @@ fn discovers_and_probes_the_homeledger_application() {
     assert_eq!(result.target.binary_name, "overseerd-example-daemon");
     assert!(result.probe.evidence.status.success);
     assert!(result.probe.evidence.stdout.is_empty());
-}
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("cargo-overseerd belongs to the repository workspace")
-        .to_path_buf()
 }

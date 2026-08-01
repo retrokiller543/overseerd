@@ -3,8 +3,12 @@
 //! completes, proving the builtin resolves through the request scope chain.
 #![cfg(feature = "daemon")]
 
+mod common;
+
 use overseerd::daemon::{App, Inject, Payload, handlers, service};
-use overseerd::{CallResult, MemoryClient, MemoryConnectionHandle, ShutdownHandle};
+use overseerd::{CallResult, ShutdownHandle};
+
+use common::{MemoryServer, deadline};
 
 /// A service whose handler injects the framework-seeded shutdown handle.
 #[service(id = "builtins_svc", version = "0.1")]
@@ -20,20 +24,14 @@ impl BuiltinsSvc {
     }
 }
 
-async fn start() -> MemoryConnectionHandle {
-    let (client, transport) = MemoryClient::pair();
-
+async fn start() -> MemoryServer {
     let daemon = App::builder("builtins-test")
         .auto_discover()
         .build()
         .await
         .expect("build daemon");
 
-    tokio::spawn(async move {
-        let _ = daemon.serve(transport).await;
-    });
-
-    client.connect().await.expect("connect")
+    MemoryServer::start(daemon)
 }
 
 fn enc<T: serde::Serialize>(value: &T) -> Vec<u8> {
@@ -46,12 +44,15 @@ fn dec<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
 
 #[tokio::test]
 async fn handler_can_inject_shutdown_handle() {
-    let conn = start().await;
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let result = conn
-        .call("BuiltinsSvc.ping", enc(&41u32))
-        .await
-        .expect("call succeeds");
+    let result = deadline(
+        "BuiltinsSvc.ping call",
+        conn.call("BuiltinsSvc.ping", enc(&41u32)),
+    )
+    .await
+    .expect("call succeeds");
 
     match result {
         CallResult::Ok(bytes) => {
@@ -62,4 +63,6 @@ async fn handler_can_inject_shutdown_handle() {
 
         other => panic!("expected an ok response, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }

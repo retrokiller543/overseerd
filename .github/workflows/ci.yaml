@@ -1,13 +1,12 @@
 name: CI
 
 # Checks for every pull request. Each job is a separately-named status check,
-# so branch protection on `master` can mark some as hard blockers and leave
+# so protection on the default and release branches can mark some as hard blockers and leave
 # others advisory ("this is broken, but you can still merge / cut a release").
 #
 # Release-plz PRs (branch prefix `release-plz-`) only bump versions and the
-# changelog, so the actual cargo work is skipped for them. The jobs still run
-# and report success, which keeps any required check satisfiable — otherwise a
-# skipped required check would make the release PR permanently unmergeable.
+# changelog, so the actual cargo work is skipped for them. Stable required checks
+# still report success; the `Test suite` aggregator accepts those deliberate skips.
 on:
   pull_request:
   workflow_dispatch:
@@ -33,6 +32,8 @@ jobs:
       - &checkout
         name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
       - &cache
         name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
@@ -101,14 +102,9 @@ jobs:
       - *cache
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
       - name: cargo check workspace
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
         run: cargo check --workspace --all-targets --all-features --locked
-      - name: cargo nextest run
-        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
-        run: cargo nextest run --workspace --all-features --locked
 
   # The axum client is intentionally transport-generic on wasm. Check both the backend-free SDK
   # surface and the default browser fetch backend so optional dependency and capability bounds do
@@ -139,20 +135,315 @@ jobs:
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
         run: cargo check -p overseerd-axum --target wasm32-unknown-unknown --no-default-features --features reqwest --locked
 
-  # Full workspace test suite via nextest. Note: nextest does not run doctests.
-  test:
-    name: Test suite
+  test_archive_linux:
+    name: Test archive (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
     steps:
       - *checkout
       - *cache
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-      - name: cargo nextest run
-        if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
-        run: cargo nextest run --workspace --all-features --locked
+      - name: Install nextest 0.9.140
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.140
+          fallback: none
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.42.4
+          fallback: none
+      - name: Build nextest archive
+        shell: bash
+        run: cargo nextest archive --workspace --all-features --locked --archive-file nextest-linux.tar.zst
+      - name: Upload nextest archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: nextest-linux.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+
+  test_archive_windows:
+    name: Test archive (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+    steps:
+      - *checkout
+      - *cache
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install nextest 0.9.140
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.140
+          fallback: none
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.42.4
+          fallback: none
+      - name: Build nextest archive
+        shell: bash
+        run: cargo nextest archive --workspace --all-features --locked --archive-file nextest-windows.tar.zst
+      - name: Upload nextest archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: nextest-windows.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+
+  critical_linux:
+    name: Critical tests (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: test_archive_linux
+    steps:
+      - *checkout
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install nextest 0.9.140
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.140
+          fallback: none
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.42.4
+          fallback: none
+      - name: Download nextest archive
+        uses: actions/download-artifact@v5
+        with:
+          name: nextest-archive-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: nextest-archive
+      - name: Run critical tests
+        shell: bash
+        run: |
+          [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
+          critical_filter="$(just --evaluate critical_filter)"
+          cargo nextest run --archive-file "${{ github.workspace }}/nextest-archive/nextest-linux.tar.zst" --workspace-remap "${{ github.workspace }}" --profile ci-critical --filterset "$critical_filter"
+      - name: Validate JUnit report
+        if: ${{ always() }}
+        run: python .github/scripts/validate-junit.py target/nextest/ci-critical/junit.xml nextest-critical
+      - name: Upload JUnit report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-critical-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/nextest/ci-critical/junit.xml
+          if-no-files-found: error
+
+  extended_linux:
+    name: Extended tests (Linux, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: test_archive_linux
+    steps:
+      - *checkout
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install nextest 0.9.140
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.140
+          fallback: none
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.42.4
+          fallback: none
+      - name: Download nextest archive
+        uses: actions/download-artifact@v5
+        with:
+          name: nextest-archive-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: nextest-archive
+      - name: Run extended tests
+        shell: bash
+        run: |
+          [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
+          critical_filter="$(just --evaluate critical_filter)"
+          cargo nextest run --archive-file "${{ github.workspace }}/nextest-archive/nextest-linux.tar.zst" --workspace-remap "${{ github.workspace }}" --profile ci-extended --filterset "all() - ($critical_filter)"
+      - name: Validate JUnit report
+        if: ${{ always() }}
+        run: python .github/scripts/validate-junit.py target/nextest/ci-extended/junit.xml nextest-extended
+      - name: Upload JUnit report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-extended-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/nextest/ci-extended/junit.xml
+          if-no-files-found: error
+
+  critical_windows:
+    name: Critical tests (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    needs: test_archive_windows
+    steps:
+      - *checkout
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install nextest 0.9.140
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.140
+          fallback: none
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.42.4
+          fallback: none
+      - name: Download nextest archive
+        uses: actions/download-artifact@v5
+        with:
+          name: nextest-archive-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: nextest-archive
+      - name: Run critical tests
+        shell: bash
+        run: |
+          [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
+          critical_filter="$(just --evaluate critical_filter)"
+          cargo nextest run --archive-file "${{ github.workspace }}/nextest-archive/nextest-windows.tar.zst" --workspace-remap "${{ github.workspace }}" --profile ci-critical --filterset "$critical_filter"
+      - name: Validate JUnit report
+        if: ${{ always() }}
+        run: python .github/scripts/validate-junit.py target/nextest/ci-critical/junit.xml nextest-critical
+      - name: Upload JUnit report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-critical-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/nextest/ci-critical/junit.xml
+          if-no-files-found: error
+
+  extended_windows:
+    name: Extended tests (Windows, advisory)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    needs: test_archive_windows
+    steps:
+      - *checkout
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install nextest 0.9.140
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.140
+          fallback: none
+      - name: Install just
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just@1.42.4
+          fallback: none
+      - name: Download nextest archive
+        uses: actions/download-artifact@v5
+        with:
+          name: nextest-archive-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: nextest-archive
+      - name: Run extended tests
+        shell: bash
+        run: |
+          [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
+          critical_filter="$(just --evaluate critical_filter)"
+          cargo nextest run --archive-file "${{ github.workspace }}/nextest-archive/nextest-windows.tar.zst" --workspace-remap "${{ github.workspace }}" --profile ci-extended --filterset "all() - ($critical_filter)"
+      - name: Validate JUnit report
+        if: ${{ always() }}
+        run: python .github/scripts/validate-junit.py target/nextest/ci-extended/junit.xml nextest-extended
+      - name: Upload JUnit report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-extended-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/nextest/ci-extended/junit.xml
+          if-no-files-found: error
+
+  test_results:
+    name: Publish test results
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - critical_linux
+      - extended_linux
+      - critical_windows
+      - extended_windows
+    if: ${{ always() && !cancelled() && !startsWith(github.head_ref, 'release-plz-') }}
+    permissions:
+      actions: read
+      contents: read
+      checks: write
+      pull-requests: write
+    steps:
+      - name: Download JUnit reports
+        uses: actions/download-artifact@v5
+        with:
+          pattern: junit-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
+        with:
+          files: test-results/**/*.xml
+          check_name: Test results
+          comment_mode: always
+          comment_title: Test results
+          check_run_annotations_branch: "*"
+          fail_on: test failures
+          action_fail: false
+          action_fail_on_inconclusive: true
+
+  rust_doctests:
+    name: Rust doctests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
+    steps:
+      - *checkout
+      - *cache
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run Rust doctests
+        run: cargo test --doc --workspace --all-features --locked
+
+  test:
+    name: Test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - test_archive_linux
+      - test_archive_windows
+      - critical_linux
+      - critical_windows
+      - rust_doctests
+    if: ${{ always() }}
+    steps:
+      - name: Verify blocking test jobs
+        env:
+          RELEASE_PLZ: ${{ startsWith(github.head_ref, 'release-plz-') }}
+          TEST_ARCHIVE_LINUX: ${{ needs.test_archive_linux.result }}
+          TEST_ARCHIVE_WINDOWS: ${{ needs.test_archive_windows.result }}
+          CRITICAL_LINUX: ${{ needs.critical_linux.result }}
+          CRITICAL_WINDOWS: ${{ needs.critical_windows.result }}
+          RUST_DOCTESTS: ${{ needs.rust_doctests.result }}
+        run: |
+          expected=success
+          if [[ "$RELEASE_PLZ" == "true" ]]; then
+            expected=skipped
+          fi
+
+          for result in \
+            "$TEST_ARCHIVE_LINUX" \
+            "$TEST_ARCHIVE_WINDOWS" \
+            "$CRITICAL_LINUX" \
+            "$CRITICAL_WINDOWS" \
+            "$RUST_DOCTESTS"; do
+            if [[ "$result" != "$expected" ]]; then
+              printf 'Expected blocking test jobs to be %s, got %s.\n' "$expected" "$result" >&2
+              exit 1
+            fi
+          done
 
   # Example crates must still compile.
   examples:

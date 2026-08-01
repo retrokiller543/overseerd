@@ -4,6 +4,8 @@ use overseerd::{
     App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, ExecutionMode, PreparedProtocol,
     ProtocolDefinition, ProtocolRuntime, app,
 };
+#[cfg(feature = "tooling")]
+use overseerd_test_utils::{TempFixture, path_ends_with_components};
 #[cfg(any(feature = "cli", feature = "tooling"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -587,7 +589,7 @@ async fn generated_tooling_entry_prepares_real_target_without_constructing_runti
             .identity
             .source
             .as_ref()
-            .is_some_and(|source| source_path_ends_with(
+            .is_some_and(|source| path_ends_with_components(
                 &source.file,
                 &["tests", "app_definition.rs"]
             ))
@@ -640,7 +642,8 @@ async fn tooling_response_file_is_pure_json_when_application_writes_stdout() {
     let envelope = ToolingApplication::tooling_probe(tooling_target("response-file-bin"))
         .await
         .expect("generated declaration identity validates");
-    let path = probe_output_path("stdout-purity");
+    let fixture = TempFixture::new("overseerd-probe-stdout-purity-");
+    let path = fixture.child("response.json");
 
     overseerd_app::tooling::emit_probe_envelope(&path, &envelope)
         .expect("response file is emitted");
@@ -649,7 +652,6 @@ async fn tooling_response_file_is_pure_json_when_application_writes_stdout() {
     let decoded = overseerd::tooling::ProbeEnvelope::from_json(json.trim_end())
         .expect("response contains only one valid envelope");
 
-    std::fs::remove_file(path).expect("response fixture is removed");
     assert!(decoded.is_success());
 }
 
@@ -681,21 +683,11 @@ async fn library_defined_application_uses_explicit_thin_binary_identity() {
             .identity
             .source
             .as_ref()
-            .is_some_and(|source| source_path_ends_with(
+            .is_some_and(|source| path_ends_with_components(
                 &source.file,
                 &["tests", "app_definition.rs"]
             ))
     );
-}
-
-#[cfg(feature = "tooling")]
-fn source_path_ends_with(source: &str, suffix: &[&str]) -> bool {
-    let components = std::path::Path::new(source)
-        .components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .collect::<Vec<_>>();
-
-    components.ends_with(suffix)
 }
 
 #[tokio::test]
@@ -735,18 +727,6 @@ fn tooling_target(binary: &str) -> overseerd::tooling::ProbeTargetIdentity {
         },
     )
     .expect("test target identity is valid")
-}
-
-#[cfg(feature = "tooling")]
-fn probe_output_path(label: &str) -> std::path::PathBuf {
-    static NEXT_PATH: AtomicUsize = AtomicUsize::new(0);
-
-    let ordinal = NEXT_PATH.fetch_add(1, Ordering::Relaxed);
-
-    std::env::temp_dir().join(format!(
-        "overseerd-probe-{label}-{}-{ordinal}.json",
-        std::process::id()
-    ))
 }
 
 #[test]

@@ -42,3 +42,6 @@ tracing-subscriber = { workspace = true, optional = true }
 thiserror = { workspace = true }
 clap = { workspace = true, optional = true }
 overseerd-tooling-schema = { workspace = true, optional = true }
+
+[dev-dependencies]
+overseerd-test-utils = { workspace = true }
