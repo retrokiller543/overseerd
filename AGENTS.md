@@ -19,8 +19,7 @@ When you need to commit anything use `mise exec -- git <command>` in order to lo
   doctests.
 - Use `just test-critical` and `just test-extended` to run a single nextest cohort.
 - Run doctests explicitly with `just test-doc`; nextest does not execute them.
-- Run `just test-config` after changing nextest configuration, resource groups, cohort filters, or
-  Cargo test targets.
+- Run `just test-config` after changing nextest profiles or resource groups.
 - Do not enable retries in repository test commands. Intermittent failures must remain visible.
 
 ## Test layout
