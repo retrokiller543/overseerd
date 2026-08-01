@@ -375,6 +375,7 @@ jobs:
       actions: read
       contents: read
       checks: write
+      pull-requests: write
     steps:
       - name: Download JUnit reports
         uses: actions/download-artifact@v5
@@ -386,7 +387,8 @@ jobs:
         with:
           files: test-results/**/*.xml
           check_name: Test results
-          comment_mode: off
+          comment_mode: always
+          comment_title: Test results
           check_run_annotations_branch: "*"
           fail_on: test failures
           action_fail: false
