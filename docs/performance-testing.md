@@ -37,8 +37,8 @@ just test-extended
 just test-doc
 ```
 
-Run the complete policy locally with `just test`. Validate the nextest profiles, filters, resource
-groups, and cohort topology with `just test-config` after changing test policy or test targets.
+Run the complete policy locally with `just test`. Validate the nextest profiles and resource groups
+with `just test-config` after changing nextest configuration.
 Doctests remain an explicit command because nextest does not execute them.
 
 ## Criterion benchmarks

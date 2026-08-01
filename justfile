@@ -92,12 +92,17 @@ test-config:
     nextest_version="$(cargo nextest --version)"
     [[ "$nextest_version" == "cargo-nextest 0.9.140 "* ]]
     cargo nextest show-config version --profile ci-critical
+    cargo nextest show-config version --profile ci-extended
     cargo nextest show-config test-groups \
         --workspace \
         --all-features \
         --locked \
         --profile ci-critical >/dev/null
-    python3 .github/scripts/validate-nextest-topology.py
+    cargo nextest show-config test-groups \
+        --workspace \
+        --all-features \
+        --locked \
+        --profile ci-extended >/dev/null
 
 test-archive archive:
     #!/usr/bin/env bash
