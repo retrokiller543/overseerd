@@ -3,6 +3,8 @@
 //! after the handler, a `Guard` short-circuiting an unauthorized call, and a
 //! global `ErrorHandler` remapping an outgoing error.
 
+mod common;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -14,7 +16,9 @@ use overseerd::daemon::{
     App, ErrorHandler, ErrorResponse, Guard, Payload, RpcAppBuilder, RpcCallContext, RpcOutcome,
     RpcRequest, handlers, service,
 };
-use overseerd::{CallResult, MemoryClient, MemoryConnectionHandle, PredefinedCode, StatusCode};
+use overseerd::{CallResult, PredefinedCode, StatusCode};
+
+use common::{MemoryServer, deadline};
 
 // ---------------------------------------------------------------------------
 // A trivial service: one infallible rpc and one always-failing rpc.
@@ -153,20 +157,14 @@ impl ErrorHandler for RemapHandler {
 
 /// Builds and serves a daemon configured by `configure`, returning a connected
 /// client handle.
-async fn start<F>(configure: F) -> MemoryConnectionHandle
+async fn start<F>(configure: F) -> MemoryServer
 where
     F: FnOnce(overseerd::daemon::AppBuilder) -> overseerd::daemon::AppBuilder,
 {
-    let (client, transport) = MemoryClient::pair();
-
     let builder = App::builder("test").auto_discover();
     let daemon = configure(builder).build().await.expect("build daemon");
 
-    tokio::spawn(async move {
-        let _ = daemon.serve(transport).await;
-    });
-
-    client.connect().await.expect("connect")
+    MemoryServer::start(daemon)
 }
 
 fn enc<T: serde::Serialize>(value: &T) -> Vec<u8> {
@@ -186,9 +184,12 @@ async fn middleware_wraps_call_before_and_after() {
     let calls = Arc::new(AtomicUsize::new(0));
     let observed = Arc::clone(&calls);
 
-    let conn = start(move |b| b.middleware(CountLayer { calls: observed })).await;
+    let server = start(move |b| b.middleware(CountLayer { calls: observed })).await;
+    let conn = server.connect().await;
 
-    let result = conn.call("MwSvc.echo", enc(&7u32)).await.unwrap();
+    let result = deadline("MwSvc.echo call", conn.call("MwSvc.echo", enc(&7u32)))
+        .await
+        .expect("echo call succeeds");
 
     match result {
         CallResult::Ok(body) => assert_eq!(dec::<u32>(&body), 7),
@@ -198,13 +199,21 @@ async fn middleware_wraps_call_before_and_after() {
 
     // One increment before the handler, one after — the middleware saw both ends.
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn guard_admits_even_and_rejects_odd() {
-    let conn = start(|b| b.guard(EvenGuard)).await;
+    let server = start(|b| b.guard(EvenGuard)).await;
+    let conn = server.connect().await;
 
-    let allowed = conn.call("MwSvc.echo", enc(&4u32)).await.unwrap();
+    let allowed = deadline(
+        "allowed MwSvc.echo call",
+        conn.call("MwSvc.echo", enc(&4u32)),
+    )
+    .await
+    .expect("allowed call succeeds");
 
     match allowed {
         CallResult::Ok(body) => assert_eq!(dec::<u32>(&body), 4),
@@ -212,7 +221,12 @@ async fn guard_admits_even_and_rejects_odd() {
         other => panic!("expected ok for even input, got {other:?}"),
     }
 
-    let rejected = conn.call("MwSvc.echo", enc(&5u32)).await.unwrap();
+    let rejected = deadline(
+        "rejected MwSvc.echo call",
+        conn.call("MwSvc.echo", enc(&5u32)),
+    )
+    .await
+    .expect("rejected call returns a response");
 
     match rejected {
         CallResult::Err { code, .. } => {
@@ -221,14 +235,19 @@ async fn guard_admits_even_and_rejects_odd() {
 
         other => panic!("expected unauthorized for odd input, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn error_handler_remaps_outgoing_error() {
-    let conn = start(|b| b.error_handler(RemapHandler)).await;
+    let server = start(|b| b.error_handler(RemapHandler)).await;
+    let conn = server.connect().await;
 
     // `boom` returns a framework BadInput error; the global handler remaps it.
-    let result = conn.call("MwSvc.boom", enc(&())).await.unwrap();
+    let result = deadline("MwSvc.boom call", conn.call("MwSvc.boom", enc(&())))
+        .await
+        .expect("boom call returns a response");
 
     match result {
         CallResult::Err { code, body } => {
@@ -238,4 +257,6 @@ async fn error_handler_remaps_outgoing_error() {
 
         other => panic!("expected a remapped error, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }

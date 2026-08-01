@@ -41,6 +41,7 @@ overseerd-axum = { path = "crates/axum", version = "0.20.0" }
 overseerd-axum-macros = { path = "crates/axum-macros", version = "0.20.0" }
 overseerd-axum-json-ws = { path = "crates/axum-json-ws", version = "0.20.0" }
 overseerd-axum-stomp = { path = "crates/axum-stomp", version = "0.20.0" }
+overseerd-test-utils = { path = "crates/test-utils", version = "0.20.0" }
 
 # Common dependencies
 arc-swap = "1.9.1"
@@ -84,6 +85,7 @@ uuid = "1"
 bytes = "1"
 notify = "6"
 thiserror = "2"
+tempfile = "3"
 toml = "1.1"
 serde_yaml_ng = "0.10"
 directories = "6"
@@ -284,8 +286,12 @@ postcard = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 # The facade's axum integration tests use `#[controller]`/`#[handlers]`/`#[dto]`, which emit
 # `::utoipa` references when the `openapi` feature is on (as under `--all-features`). Like the http
 # example, a crate using those macros with `openapi` needs `utoipa` as a direct dependency; a
 # dev-dependency covers the tests without affecting downstream users.
 utoipa = { workspace = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+overseerd-test-utils = { workspace = true }

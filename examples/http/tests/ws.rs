@@ -13,7 +13,7 @@ use overseerd::axum::prelude::*;
 use overseerd::client::ClientError;
 use overseerd::prelude::*;
 use overseerd::{component, methods};
-use tokio::net::TcpListener;
+use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
 use tokio_tungstenite::tungstenite::Message;
 
 /// A shared greeting backend (singleton), field-injected into the ws controller.
@@ -92,31 +92,37 @@ impl Sock {
 
 #[tokio::test]
 async fn ws_controller_dispatches_and_injects() {
+    let environment = TestEnvironment::new("overseerd-http-ws-");
     let app = app! {
         name: "ws-test",
         protocol: overseerd::axum::AxumPlugin,
     }
+    .config_source(environment.config())
+    .directories(environment.directories())
     .register_ws::<JsonWs>("/ws")
     .build()
     .await
     .expect("app builds");
 
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let shutdown = app.shutdown_handle();
-    let server = tokio::spawn(async move { app.serve(listener).await });
+    let server = TestServer::start_with_guard(app, environment).await;
+    let addr = server.address();
 
-    let (mut socket, _response) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
-        .await
-        .expect("ws connect");
+    let (mut socket, _response) = deadline(
+        "raw WebSocket connect",
+        tokio_tungstenite::connect_async(format!("ws://{addr}/ws")),
+    )
+    .await
+    .expect("ws connect");
 
     // Plain `#[message]` handler: payload in, JSON reply out, id echoed.
-    socket
-        .send(Message::Text(
+    deadline(
+        "send greet frame",
+        socket.send(Message::Text(
             r#"{"dest":"greet","id":1,"payload":{"who":"world"}}"#.into(),
-        ))
-        .await
-        .expect("send greet");
+        )),
+    )
+    .await
+    .expect("send greet");
 
     let reply = next_json(&mut socket).await;
     assert_eq!(reply["dest"], "greet");
@@ -125,12 +131,14 @@ async fn ws_controller_dispatches_and_injects() {
     assert_eq!(reply["ok"]["count"], 1);
 
     // DI handler: the injected request-scoped ticket is resolved per message.
-    socket
-        .send(Message::Text(
+    deadline(
+        "send ticket frame",
+        socket.send(Message::Text(
             r#"{"dest":"ticket","id":2,"payload":{"who":"di"}}"#.into(),
-        ))
-        .await
-        .expect("send ticket");
+        )),
+    )
+    .await
+    .expect("send ticket");
 
     let reply = next_json(&mut socket).await;
     assert_eq!(reply["dest"], "ticket");
@@ -139,42 +147,54 @@ async fn ws_controller_dispatches_and_injects() {
     assert_eq!(reply["ok"]["ticket"], 4242);
 
     // Unknown destination → an error frame correlating the id.
-    socket
-        .send(Message::Text(
+    deadline(
+        "send unknown destination frame",
+        socket.send(Message::Text(
             r#"{"dest":"nope","id":3,"payload":{}}"#.into(),
-        ))
-        .await
-        .expect("send nope");
+        )),
+    )
+    .await
+    .expect("send nope");
 
     let reply = next_json(&mut socket).await;
     assert_eq!(reply["dest"], "nope");
     assert_eq!(reply["id"], 3);
     assert_eq!(reply["error"], "no handler for destination");
 
-    let ws = TokioTungsteniteWs::<JsonWs>::connect(format!("ws://{addr}/ws"))
-        .await
-        .expect("typed ws connect");
+    let ws = deadline(
+        "typed WebSocket connect",
+        TokioTungsteniteWs::<JsonWs>::connect(format!("ws://{addr}/ws")),
+    )
+    .await
+    .expect("typed ws connect");
     let typed = SockClient::new(ws.clone());
 
-    let reply = typed
-        .greet(Who {
+    let reply = deadline(
+        "typed greet request",
+        typed.greet(Who {
             who: "typed".into(),
-        })
-        .await
-        .expect("typed greet");
+        }),
+    )
+    .await
+    .expect("typed greet");
     assert_eq!(reply.message, "Hello, typed!");
     assert_eq!(reply.count, 3);
 
-    let reply = typed
-        .ticket(Who { who: "ws".into() })
-        .await
-        .expect("typed ticket");
+    let reply = deadline(
+        "typed ticket request",
+        typed.ticket(Who { who: "ws".into() }),
+    )
+    .await
+    .expect("typed ticket");
     assert_eq!(reply.message, "Hello, ws!");
     assert_eq!(reply.ticket, 4242);
 
-    let error = WebsocketClient::<JsonWs, (), serde_json::Value>::websocket_call(&ws, "nope", ())
-        .await
-        .expect_err("unknown destination is remote error");
+    let error = deadline(
+        "typed unknown destination request",
+        WebsocketClient::<JsonWs, (), serde_json::Value>::websocket_call(&ws, "nope", ()),
+    )
+    .await
+    .expect_err("unknown destination is remote error");
     match error {
         ClientError::Remote(body) => {
             assert_eq!(body.code(), overseerd::axum::JsonWsStatus::Error);
@@ -187,8 +207,7 @@ async fn ws_controller_dispatches_and_injects() {
         other => panic!("expected remote ws error, got {other:?}"),
     }
 
-    shutdown.shutdown();
-    let _ = server.await;
+    server.shutdown().await;
 }
 
 /// Reads the next text frame off the socket and parses it as JSON.
@@ -196,11 +215,14 @@ async fn next_json<S>(socket: &mut S) -> serde_json::Value
 where
     S: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin,
 {
-    loop {
-        let message = socket.next().await.expect("a frame").expect("ok frame");
+    deadline("receive JSON WebSocket reply", async {
+        loop {
+            let message = socket.next().await.expect("a frame").expect("ok frame");
 
-        if let Message::Text(text) = message {
-            return serde_json::from_str(&text).expect("json reply");
+            if let Message::Text(text) = message {
+                return serde_json::from_str(&text).expect("json reply");
+            }
         }
-    }
+    })
+    .await
 }

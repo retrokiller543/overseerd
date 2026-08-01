@@ -13,10 +13,20 @@ When you need to commit anything use `mise exec -- git <command>` in order to lo
 - **Lint.** `cargo clippy --workspace --all-targets --all-features` must be warning-free (this is
   the CI invocation — reproduce failures with it, not a per-crate clippy).
 
+## Standard tests
+
+- Run `just test` for the complete repository test policy: critical tests, extended tests, then
+  doctests.
+- Use `just test-critical` and `just test-extended` to run a single nextest cohort.
+- Run doctests explicitly with `just test-doc`; nextest does not execute them.
+- Run `just test-config` after changing nextest configuration, resource groups, cohort filters, or
+  Cargo test targets.
+- Do not enable retries in repository test commands. Intermittent failures must remain visible.
+
 ## Test layout
 
 Test modules always live in their own file, never inline in an impl file. For a module `foo`
 (`foo.rs` or `foo/mod.rs`), declare `#[cfg(test)] mod tests;` in the module and put the tests in a
 sibling `foo/tests.rs` (a `foo.rs` file may keep its `foo/tests.rs` submodule without becoming
 `foo/mod.rs`). This keeps impl files clean and avoids the `clippy::items_after_test_module` lint.
-Most modules with tests therefore gain a `<module>/tests.rs` file. 
+Most modules with tests therefore gain a `<module>/tests.rs` file.

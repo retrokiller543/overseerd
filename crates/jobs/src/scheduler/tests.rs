@@ -4,10 +4,18 @@ use std::time::Duration;
 
 use overseerd_di::{Component, RootResolver};
 use overseerd_hooks::{HookKind, Startup};
+use tokio::sync::Semaphore;
+use tokio::sync::mpsc::error::TryRecvError;
 
 use super::{JobScheduler, scheduler_descriptor};
 use crate::registry::{JobState, JobTrigger};
 use crate::schedule::Schedule;
+
+async fn wait_for_idle(handle: &super::JobHandle) {
+    while handle.entry.active() != 0 {
+        tokio::task::yield_now().await;
+    }
+}
 
 #[test]
 fn descriptor_identity_matches_component() {
@@ -38,7 +46,7 @@ fn descriptor_carries_a_non_default_factory() {
 
 /// The scheduler needs no live container for dynamic jobs — the runner closure captures its
 /// own state — so an unattached `RootResolver` is enough to exercise the runtime path.
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn dynamic_job_runs_then_cancels() {
     let scheduler = JobScheduler::create(RootResolver::new()).await;
     let (run_tx, mut run_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -53,13 +61,14 @@ async fn dynamic_job_runs_then_cancels() {
         }
     });
 
-    // Wait for observed runs instead of assuming a loaded runner schedules two ticks within a
-    // narrow wall-clock window. The timeout is only a deadlock guard.
+    tokio::task::yield_now().await;
+
     for expected in 1..=2 {
-        tokio::time::timeout(Duration::from_secs(1), run_rx.recv())
+        tokio::time::advance(Duration::from_millis(10)).await;
+        run_rx
+            .recv()
             .await
-            .unwrap_or_else(|_| panic!("timed out waiting for run {expected}"))
-            .expect("job runner channel stays open");
+            .unwrap_or_else(|| panic!("job runner channel closed before run {expected}"));
     }
 
     scheduler
@@ -72,33 +81,34 @@ async fn dynamic_job_runs_then_cancels() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn dropping_scheduler_cancels_all_jobs() {
     let scheduler = JobScheduler::create(RootResolver::new()).await;
-    let runs = Arc::new(AtomicUsize::new(0));
+    let (run_tx, mut run_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let counter = Arc::clone(&runs);
-    let _handle = scheduler.schedule(Schedule::every(Duration::from_millis(10)), move || {
-        let counter = Arc::clone(&counter);
+    let handle = scheduler.schedule(Schedule::every(Duration::from_millis(10)), move || {
+        let run_tx = run_tx.clone();
 
         async move {
-            counter.fetch_add(1, Ordering::Relaxed);
+            run_tx.send(()).expect("test is still observing runs");
 
             Ok(())
         }
     });
 
-    tokio::time::sleep(Duration::from_millis(35)).await;
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(10)).await;
+    run_rx.recv().await.expect("job runner channel stays open");
+
     drop(scheduler);
+    handle.entry.wait_done().await;
 
-    let after_drop = runs.load(Ordering::Relaxed);
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(handle.is_cancelled());
 
-    assert_eq!(
-        runs.load(Ordering::Relaxed),
-        after_drop,
-        "ran after scheduler dropped"
-    );
+    tokio::time::advance(Duration::from_millis(50)).await;
+    tokio::task::yield_now().await;
+
+    assert_eq!(run_rx.try_recv(), Err(TryRecvError::Empty));
 }
 
 /// A counting dynamic job on a long interval, so only explicit triggers run it during a test.
@@ -121,13 +131,25 @@ fn counting_job(scheduler: &JobScheduler, name: &str, runs: Arc<AtomicUsize>) ->
 #[tokio::test]
 async fn run_now_triggers_a_manual_run() {
     let scheduler = JobScheduler::create(RootResolver::new()).await;
-    let runs = Arc::new(AtomicUsize::new(0));
-    let handle = counting_job(&scheduler, "Manual::job", Arc::clone(&runs));
+    let (run_tx, mut run_rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle = scheduler.schedule_named(
+        "Manual::job",
+        Schedule::every(Duration::from_secs(3600)),
+        move || {
+            let run_tx = run_tx.clone();
+
+            async move {
+                run_tx.send(()).expect("test is still observing runs");
+
+                Ok(())
+            }
+        },
+    );
 
     let run_id = scheduler.run_now(handle.id()).await.expect("job exists");
-    tokio::time::sleep(Duration::from_millis(40)).await;
 
-    assert_eq!(runs.load(Ordering::Relaxed), 1, "manual run did not fire");
+    run_rx.recv().await.expect("manual run did not fire");
+    assert_eq!(run_rx.try_recv(), Err(TryRecvError::Empty));
 
     let recent = scheduler.recent_runs(handle.id());
 
@@ -164,38 +186,41 @@ async fn list_jobs_and_job_reflect_registration() {
     assert_eq!(info.state, JobState::Scheduled);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn pause_prevents_scheduled_runs() {
     let scheduler = JobScheduler::create(RootResolver::new()).await;
-    let runs = Arc::new(AtomicUsize::new(0));
-    let handle =
-        scheduler.schedule_named("Paused::job", Schedule::every(Duration::from_millis(15)), {
-            let runs = Arc::clone(&runs);
+    let (run_tx, mut run_rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle = scheduler.schedule_named(
+        "Paused::job",
+        Schedule::every(Duration::from_millis(15)),
+        move || {
+            let run_tx = run_tx.clone();
 
-            move || {
-                let runs = Arc::clone(&runs);
+            async move {
+                run_tx.send(()).expect("test is still observing runs");
 
-                async move {
-                    runs.fetch_add(1, Ordering::Relaxed);
-
-                    Ok(())
-                }
+                Ok(())
             }
-        });
+        },
+    );
 
-    tokio::time::sleep(Duration::from_millis(40)).await;
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(15)).await;
+    run_rx.recv().await.expect("scheduled run did not fire");
+    wait_for_idle(&handle).await;
+
     scheduler.pause(handle.id()).expect("job exists");
+    tokio::time::advance(Duration::from_millis(60)).await;
+    tokio::task::yield_now().await;
 
-    let at_pause = runs.load(Ordering::Relaxed);
-    tokio::time::sleep(Duration::from_millis(60)).await;
-
-    assert_eq!(runs.load(Ordering::Relaxed), at_pause, "ran while paused");
+    assert_eq!(run_rx.try_recv(), Err(TryRecvError::Empty));
     assert_eq!(scheduler.job(handle.id()).unwrap().state, JobState::Paused);
 
     scheduler.resume(handle.id()).expect("job exists");
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(15)).await;
 
-    assert!(runs.load(Ordering::Relaxed) > at_pause, "did not resume");
+    run_rx.recv().await.expect("job did not resume");
 }
 
 #[tokio::test]
@@ -223,20 +248,18 @@ async fn reschedule_changes_the_reported_cadence() {
         .reschedule(handle.id(), Schedule::cron("@hourly").unwrap())
         .expect("job exists");
 
-    // The reschedule wakes the loop; give it a moment to store the new schedule.
-    tokio::time::sleep(Duration::from_millis(20)).await;
-
     let info = scheduler.job(handle.id()).expect("job exists");
 
     assert!(matches!(info.schedule, ScheduleInfo::Cron(_)));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn timeout_marks_a_run_timed_out() {
     use crate::registry::JobRunOutcome;
     use crate::schedule::JobOptions;
 
     let scheduler = JobScheduler::create(RootResolver::new()).await;
+    let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
     let options = JobOptions {
         timeout: Some(Duration::from_millis(20)),
         ..JobOptions::default()
@@ -245,15 +268,28 @@ async fn timeout_marks_a_run_timed_out() {
         crate::registry::JobMetadata::named("Slow::job".into()),
         Schedule::every(Duration::from_secs(3600)),
         options,
-        || async {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+        move || {
+            let started_tx = started_tx.clone();
 
-            Ok(())
+            async move {
+                started_tx.send(()).expect("test is still observing runs");
+                tokio::time::sleep(Duration::from_millis(500)).await;
+
+                Ok(())
+            }
         },
     );
 
     scheduler.run_now(handle.id()).await.expect("job exists");
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    started_rx.recv().await.expect("manual run did not start");
+    tokio::time::advance(Duration::from_millis(20)).await;
+
+    while scheduler
+        .job(handle.id())
+        .is_some_and(|info| info.failure_count == 0)
+    {
+        tokio::task::yield_now().await;
+    }
 
     let info = scheduler.job(handle.id()).expect("job exists");
 
@@ -261,27 +297,43 @@ async fn timeout_marks_a_run_timed_out() {
     assert_eq!(info.failure_count, 1);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn skip_overlap_defers_while_a_run_is_active() {
     let scheduler = JobScheduler::create(RootResolver::new()).await;
-    // Default overlap is Skip; a body far longer than the period forces overlap.
-    let handle = scheduler.schedule_named(
-        "Skippy::job",
-        Schedule::every(Duration::from_millis(15)),
-        || async {
-            tokio::time::sleep(Duration::from_millis(120)).await;
+    let gate = Arc::new(Semaphore::new(0));
+    let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+    let handle =
+        scheduler.schedule_named("Skippy::job", Schedule::every(Duration::from_millis(15)), {
+            let gate = Arc::clone(&gate);
 
-            Ok(())
-        },
-    );
+            move || {
+                let gate = Arc::clone(&gate);
+                let started_tx = started_tx.clone();
 
-    tokio::time::sleep(Duration::from_millis(90)).await;
+                async move {
+                    started_tx.send(()).expect("test is still observing runs");
+                    let _permit = gate.acquire().await.expect("semaphore stays open");
+
+                    Ok(())
+                }
+            }
+        });
+
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(15)).await;
+    started_rx
+        .recv()
+        .await
+        .expect("scheduled run did not start");
+    tokio::time::advance(Duration::from_millis(15)).await;
+    tokio::task::yield_now().await;
 
     let info = scheduler.job(handle.id()).expect("job exists");
 
     assert!(info.skipped_count > 0, "expected firings to be skipped");
 
-    handle.cancel();
+    gate.add_permits(1);
+    wait_for_idle(&handle).await;
 }
 
 #[tokio::test]
@@ -289,34 +341,53 @@ async fn queue_one_preserves_the_deferred_manual_run_identity() {
     use crate::schedule::{JobOptions, OverlapPolicy};
 
     let scheduler = JobScheduler::create(RootResolver::new()).await;
+    let gate = Arc::new(Semaphore::new(0));
+    let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
     let options = JobOptions {
         overlap: OverlapPolicy::QueueOne,
         ..JobOptions::default()
     };
-    // Long interval + slow body: manual triggers drive the runs, and the second overlaps the
-    // first so it is deferred under QueueOne.
     let handle = scheduler.schedule_with(
         crate::registry::JobMetadata::named("Queued::job".into()),
         Schedule::every(Duration::from_secs(3600)),
         options,
-        || async {
-            tokio::time::sleep(Duration::from_millis(80)).await;
+        {
+            let gate = Arc::clone(&gate);
 
-            Ok(())
+            move || {
+                let gate = Arc::clone(&gate);
+                let started_tx = started_tx.clone();
+
+                async move {
+                    started_tx.send(()).expect("test is still observing runs");
+                    let _permit = gate.acquire().await.expect("semaphore stays open");
+
+                    Ok(())
+                }
+            }
         },
     );
 
     let first = scheduler.run_now(handle.id()).await.expect("job exists");
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    let second = scheduler.run_now(handle.id()).await.expect("job exists");
+    started_rx
+        .recv()
+        .await
+        .expect("first manual run did not start");
 
-    // Let the first run finish and the deferred second run start and finish.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    let second = scheduler.run_now(handle.id()).await.expect("job exists");
+    tokio::task::yield_now().await;
+
+    assert_eq!(handle.entry.active(), 1);
+    assert_eq!(started_rx.try_recv(), Err(TryRecvError::Empty));
+
+    gate.add_permits(1);
+    started_rx
+        .recv()
+        .await
+        .expect("deferred manual run did not start");
 
     let recent = scheduler.recent_runs(handle.id());
 
-    // The deferred run keeps the id `run_now` returned and stays classified as manual — it is
-    // not restarted with a fresh id or reclassified as scheduled.
     let deferred = recent
         .iter()
         .find(|r| r.run_id == second)
@@ -324,13 +395,18 @@ async fn queue_one_preserves_the_deferred_manual_run_identity() {
 
     assert_eq!(deferred.trigger, JobTrigger::Manual);
     assert!(recent.iter().any(|r| r.run_id == first));
+
+    gate.add_permits(1);
+    wait_for_idle(&handle).await;
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn allow_overlap_permits_concurrent_runs() {
     use crate::schedule::{JobOptions, OverlapPolicy};
 
     let scheduler = JobScheduler::create(RootResolver::new()).await;
+    let gate = Arc::new(Semaphore::new(0));
+    let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
     let options = JobOptions {
         overlap: OverlapPolicy::Allow,
         ..JobOptions::default()
@@ -339,19 +415,34 @@ async fn allow_overlap_permits_concurrent_runs() {
         crate::registry::JobMetadata::named("Overlapping::job".into()),
         Schedule::every(Duration::from_millis(20)),
         options,
-        || async {
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        {
+            let gate = Arc::clone(&gate);
 
-            Ok(())
+            move || {
+                let gate = Arc::clone(&gate);
+                let started_tx = started_tx.clone();
+
+                async move {
+                    started_tx.send(()).expect("test is still observing runs");
+                    let _permit = gate.acquire().await.expect("semaphore stays open");
+
+                    Ok(())
+                }
+            }
         },
     );
 
-    tokio::time::sleep(Duration::from_millis(90)).await;
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(20)).await;
+    started_rx.recv().await.expect("first run did not start");
+    tokio::time::advance(Duration::from_millis(20)).await;
+    started_rx.recv().await.expect("second run did not start");
 
     assert!(
         scheduler.metrics().active_runs > 1,
         "expected overlapping runs under OverlapPolicy::Allow"
     );
 
-    handle.cancel();
+    gate.add_permits(2);
+    wait_for_idle(&handle).await;
 }

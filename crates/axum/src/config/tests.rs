@@ -1,12 +1,14 @@
 use std::net::{IpAddr, SocketAddr};
 
-use overseerd_config::{ConfigManager, Toml};
+use overseerd_config::{ConfigManager, ResolverChain, Toml};
 
 use super::{AXUM_CONFIG_PATH, AxumConfig};
 
 #[test]
 fn defaults_materialize_without_an_axum_subtree() {
-    let manager = ConfigManager::<Toml>::empty().with_config::<AxumConfig>(AXUM_CONFIG_PATH);
+    let manager = ConfigManager::<Toml>::empty()
+        .with_resolvers(ResolverChain::empty())
+        .with_config::<AxumConfig>(AXUM_CONFIG_PATH);
     let config = manager
         .get_config::<AxumConfig>(AXUM_CONFIG_PATH)
         .expect("default axum config");
@@ -38,6 +40,7 @@ fn configured_listener_overrides_the_defaults() {
         "#,
     )
     .expect("parse config")
+    .with_resolvers(ResolverChain::empty())
     .with_config::<AxumConfig>(AXUM_CONFIG_PATH);
 
     let config = manager
@@ -71,6 +74,7 @@ fn base_path_defaults_empty_and_is_configurable() {
         "#,
     )
     .expect("parse config")
+    .with_resolvers(ResolverChain::empty())
     .with_config::<AxumConfig>(AXUM_CONFIG_PATH);
     let config = manager
         .get_config::<AxumConfig>(AXUM_CONFIG_PATH)
@@ -84,8 +88,9 @@ fn base_path_defaults_empty_and_is_configurable() {
 fn openapi_config_defaults_disabled_json_only() {
     use super::{AXUM_OPENAPI_CONFIG_PATH, OpenApiConfig, OpenApiUi};
 
-    let manager =
-        ConfigManager::<Toml>::empty().with_config::<OpenApiConfig>(AXUM_OPENAPI_CONFIG_PATH);
+    let manager = ConfigManager::<Toml>::empty()
+        .with_resolvers(ResolverChain::empty())
+        .with_config::<OpenApiConfig>(AXUM_OPENAPI_CONFIG_PATH);
     let config = manager
         .get_config::<OpenApiConfig>(AXUM_OPENAPI_CONFIG_PATH)
         .expect("default openapi config");
@@ -109,6 +114,7 @@ fn openapi_config_selects_ui() {
         "#,
     )
     .expect("parse config")
+    .with_resolvers(ResolverChain::empty())
     .with_config::<OpenApiConfig>(AXUM_OPENAPI_CONFIG_PATH);
     let config = manager
         .get_config::<OpenApiConfig>(AXUM_OPENAPI_CONFIG_PATH)

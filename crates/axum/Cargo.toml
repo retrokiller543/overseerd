@@ -154,5 +154,8 @@ web-sys = { workspace = true, optional = true, features = ["Blob", "File"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+overseerd-test-utils = { workspace = true }
+
 [build-dependencies]
 overseerd-build = { workspace = true }

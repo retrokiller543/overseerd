@@ -4,7 +4,6 @@
 #![allow(dead_code)]
 
 use std::fs;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use overseerd::config::Toml;
@@ -13,7 +12,9 @@ use overseerd::dirs::{Config, DirectoriesManager};
 use overseerd::{
     Cfg, CfgNext, ConfigManager, ConfigReload, HookOutcome, component, config, methods,
 };
+use overseerd_config::ResolverChain;
 use serde::Deserialize;
+use tempfile::TempDir;
 
 #[config(path = "svc")]
 #[derive(Deserialize)]
@@ -112,26 +113,26 @@ impl RestartWatcher {
     }
 }
 
-fn temp_config_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("overseerd-hooks-{}", std::process::id()));
-
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("create temp config dir");
-
-    dir
+fn temp_config_dir() -> TempDir {
+    tempfile::Builder::new()
+        .prefix("overseerd-hooks-")
+        .tempdir()
+        .expect("create temp config dir")
 }
 
 #[tokio::test]
 async fn config_reload_hooks_fire_only_for_changed_configs() {
     let root = temp_config_dir();
-    let dirs = DirectoriesManager::from_path(root);
+    let dirs = DirectoriesManager::from_path(root.path().to_path_buf());
     let config_dir = dirs.dir::<Config>();
     let config_file = config_dir.path().join("application.toml");
 
     fs::create_dir_all(config_dir.path()).expect("create config subdir");
     fs::write(&config_file, "[svc]\nvalue = 1\n\n[other]\nvalue = 100\n").expect("write config");
 
-    let manager = ConfigManager::<Toml>::load_in(&config_dir, &[]).expect("load config");
+    let manager =
+        ConfigManager::<Toml>::load_in_with_resolvers(&config_dir, &[], ResolverChain::empty())
+            .expect("load config");
 
     let daemon = App::builder("hooks-test")
         .config_source(manager)
