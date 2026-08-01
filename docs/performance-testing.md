@@ -4,8 +4,9 @@ Overseerd separates deterministic resource contracts from statistical timing ben
 
 ## Pull-request CI
 
-The normal workspace test suite is the hard gate. Performance-sensitive code should have a
-deterministic regression test wherever possible:
+The critical nextest cohort and Rust doctests form the stable `Test suite` hard gate. The extended
+nextest cohort runs concurrently and remains visibly advisory. Performance-sensitive code should
+have a deterministic regression test wherever possible:
 
 - count allocations for operations expected to be allocation-free;
 - assert collection, task, channel, and semaphore counts return to their baseline;
@@ -13,7 +14,8 @@ deterministic regression test wherever possible:
 - use Tokio's paused clock for timeout and idle-task behavior;
 - exercise a large fixed workload and assert bounded state rather than elapsed time.
 
-These tests run on every pull request and do not depend on runner speed. Examples:
+These deterministic allocation and liveness contracts remain blocking even when they use a large
+fixed workload. They run on every pull request and do not depend on runner speed. Examples:
 
 - `crates/core/tests/resolver_set_performance.rs` proves that cloning a resolver context performs
   no allocations.
@@ -22,10 +24,32 @@ These tests run on every pull request and do not depend on runner speed. Example
   built DI graph's footprint is bounded per component and fully reclaimed on drop — at several
   sizes and scope depths.
 
+Nextest resource groups limit contention among timing-, filesystem-, and socket-sensitive tests.
+They are capacity controls, not a way to hide races or shared-state contamination: tests must still
+use isolated fixtures and checked cleanup. Retries are disabled in repository profiles and must not
+be enabled in standard local or CI commands; intermittent failures must remain observable.
+
+Use the repository recipes for the standard test policy:
+
+```console
+just test-critical
+just test-extended
+just test-doc
+```
+
+Run the complete policy locally with `just test`. Validate the nextest profiles and resource groups
+with `just test-config` after changing nextest configuration.
+Doctests remain an explicit command because nextest does not execute them.
+
+CI publishes the Linux and Windows JUnit reports as an updated `Test results` pull-request comment
+and check. They show unique test and cross-platform run counts, pass/fail/skip totals, duration,
+suite details, and failure annotations.
+
 ## Criterion benchmarks
 
 Criterion and its dependencies live in the excluded `benchmarks` workspace, so normal workspace
-builds, Clippy, and pull-request tests do not compile the heavier benchmark stack.
+builds, Clippy, and pull-request tests do not compile the heavier benchmark stack. Criterion timing
+results remain advisory.
 
 `.github/workflows/performance.yaml` runs the benches weekly and on demand, one CI job per bench
 (a matrix), so a slow or failing bench is isolated and each uploads its own HTML report artifact

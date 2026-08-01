@@ -254,6 +254,7 @@ dependencies = [
  "command-group",
  "fs2",
  "libc",
+ "overseerd-test-utils",
  "overseerd-tooling-schema",
  "semver",
  "serde",
@@ -681,6 +682,12 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "fastrand"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "filetime"
@@ -1312,6 +1319,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "linux-raw-sys"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
+
+[[package]]
 name = "litemap"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1532,11 +1545,13 @@ dependencies = [
  "overseerd-jobs",
  "overseerd-macros",
  "overseerd-rpc",
+ "overseerd-test-utils",
  "overseerd-tooling-schema",
  "overseerd-transport",
  "postcard",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "utoipa",
 ]
@@ -1553,6 +1568,7 @@ dependencies = [
  "overseerd-dirs",
  "overseerd-hooks",
  "overseerd-macros",
+ "overseerd-test-utils",
  "overseerd-tooling-schema",
  "serde",
  "serde_json",
@@ -1585,6 +1601,7 @@ dependencies = [
  "overseerd-core",
  "overseerd-di",
  "overseerd-hooks",
+ "overseerd-test-utils",
  "overseerd-transport",
  "reqwest",
  "serde",
@@ -1680,6 +1697,7 @@ dependencies = [
  "overseerd-hooks",
  "serde",
  "serde_yaml_ng",
+ "tempfile",
  "thiserror",
  "tokio",
  "toml",
@@ -1717,6 +1735,7 @@ dependencies = [
  "libc",
  "overseerd-core",
  "overseerd-di",
+ "tempfile",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -1727,6 +1746,7 @@ version = "0.20.0"
 dependencies = [
  "clap",
  "overseerd",
+ "overseerd-test-utils",
  "serde",
  "tokio",
  "tracing",
@@ -1741,6 +1761,7 @@ dependencies = [
  "futures",
  "http-body-util",
  "overseerd",
+ "overseerd-test-utils",
  "serde",
  "serde_json",
  "tokio",
@@ -1865,6 +1886,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "overseerd-test-utils"
+version = "0.20.0"
+dependencies = [
+ "command-group",
+ "libc",
+ "overseerd-app",
+ "overseerd-config",
+ "overseerd-dirs",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "overseerd-tooling-schema"
 version = "0.20.0"
 dependencies = [
@@ -1882,6 +1916,7 @@ dependencies = [
  "futures",
  "libc",
  "overseerd-di",
+ "overseerd-test-utils",
  "postcard",
  "serde",
  "thiserror",
@@ -2264,6 +2299,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustix"
+version = "1.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
+dependencies = [
+ "bitflags 2.13.1",
+ "errno",
+ "libc",
+ "linux-raw-sys",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "rustls"
 version = "0.23.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2619,6 +2667,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.3",
+ "once_cell",
+ "rustix",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

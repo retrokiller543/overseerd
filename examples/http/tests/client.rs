@@ -11,9 +11,9 @@ use overseerd::axum::client::{ClientInterceptor, HyperClient, ReqwestClient};
 use overseerd::axum::prelude::*;
 use overseerd::client::{ClientError, Unary};
 use overseerd::prelude::*;
+use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::net::TcpListener;
 
 app! {
     /// Generated host for HTTP client integration tests.
@@ -181,38 +181,40 @@ impl Api {
 
 #[tokio::test]
 async fn generated_client_round_trips_over_reqwest() {
+    let environment = TestEnvironment::new("overseerd-http-client-");
     let app = ClientTestApplication::builder()
         .expect("app builder")
+        .config_source(environment.config())
+        .directories(environment.directories())
         .build()
         .await
         .expect("app builds");
 
-    // Bind an ephemeral port, then serve on a background task so the test can issue requests
-    // and shut the server down deterministically.
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let shutdown = app.shutdown_handle();
-    let server = tokio::spawn(async move { app.serve(listener).await });
+    let server = TestServer::start_with_guard(app, environment).await;
+    let addr = server.address();
 
     // The generated client over the reqwest backend, pointed at the bound address.
     let client = ApiClient::new(ReqwestClient::new(format!("http://{addr}")));
 
     // Path-param route: `GET /api/echo/{msg}`. The response envelope derefs to the body.
-    let echoed = client.echo("hello".to_string()).await.expect("echo call");
+    let echoed = deadline("echo request", client.echo("hello".to_string()))
+        .await
+        .expect("echo call");
     assert_eq!(echoed.status().as_u16(), 200);
     assert_eq!(echoed.msg, "hello");
     assert_eq!(echoed.len, 5);
 
     let encoded = "hello/world ?#å".to_string();
-    let echoed = client
-        .echo(encoded.clone())
+    let echoed = deadline("encoded echo request", client.echo(encoded.clone()))
         .await
         .expect("encoded echo call");
     assert_eq!(echoed.msg, encoded);
 
     // JSON-body route: `POST /api/sum`. The client takes the raw `SumIn`, not `Json<SumIn>` —
     // the wrapping happens inside the generated request builder.
-    let summed = client.sum(SumIn { a: 2, b: 40 }).await.expect("sum call");
+    let summed = deadline("sum request", client.sum(SumIn { a: 2, b: 40 }))
+        .await
+        .expect("sum call");
     assert_eq!(*summed, 42);
 
     let backend = ReqwestClient::new(format!("http://{addr}"));
@@ -222,7 +224,13 @@ async fn generated_client_round_trips_over_reqwest() {
         .body(())
         .expect("request");
 
-    match Unary::unary::<(), EchoOut, overseerd::client::Raw>(&backend, "", request).await {
+    let missing = deadline(
+        "missing request",
+        Unary::unary::<(), EchoOut, overseerd::client::Raw>(&backend, "", request),
+    )
+    .await;
+
+    match missing {
         Err(ClientError::Remote(error)) => {
             // The HTTP client surfaces the genuine `http::StatusCode` — no folding into the RPC
             // packed status.
@@ -235,22 +243,26 @@ async fn generated_client_round_trips_over_reqwest() {
     }
 
     // Two path params surface as dedicated named args: `GET /api/pair/{a}/{b}`.
-    let product = client.pair(6, 7).await.expect("pair call");
+    let product = deadline("pair request", client.pair(6, 7))
+        .await
+        .expect("pair call");
     assert_eq!(*product, 42);
 
     // Pattern 1 — infallible items: the client mirrors `Stream<Item = u64>` (no per-item
     // `Result`); only the outer call is fallible. The NDJSON framing never appears in the type.
-    let items: Vec<u64> = client.ticks(4).await.expect("ticks call").collect().await;
+    let stream = deadline("ticks request", client.ticks(4))
+        .await
+        .expect("ticks call");
+    let items: Vec<u64> = deadline("ticks response stream", stream.collect()).await;
     assert_eq!(items, vec![0, 1, 2, 3]);
 
     // Pattern 2 — fallible items: the client mirrors `Stream<Item = Result<u64, ItemError>>`, so
     // a mid-stream domain error is an `Err` item and the stream keeps going.
-    let items: Vec<Result<u64, ItemError>> = client
-        .fallible()
+    let stream = deadline("fallible request", client.fallible())
         .await
-        .expect("fallible call")
-        .collect()
-        .await;
+        .expect("fallible call");
+    let items: Vec<Result<u64, ItemError>> =
+        deadline("fallible response stream", stream.collect()).await;
     assert_eq!(items.len(), 4);
     assert_eq!(items[0], Ok(1));
     assert_eq!(
@@ -264,47 +276,52 @@ async fn generated_client_round_trips_over_reqwest() {
     // Pattern 3 — outer `Result`: a pre-stream failure surfaces as the outer call's `Err`, while
     // the happy path streams infallible items.
     assert!(
-        client.maybe(0).await.is_err(),
+        deadline("maybe failure request", client.maybe(0))
+            .await
+            .is_err(),
         "pre-stream failure is the outer Err"
     );
 
-    let items: Vec<u64> = client
-        .maybe(3)
+    let stream = deadline("maybe stream request", client.maybe(3))
         .await
-        .expect("maybe(3) streams")
-        .collect()
-        .await;
+        .expect("maybe(3) streams");
+    let items: Vec<u64> = deadline("maybe response stream", stream.collect()).await;
     assert_eq!(items, vec![0, 1, 2]);
 
     // Pattern 4 — both: pre-stream `Err`, or a stream of fallible items.
     assert!(
-        client.both(0).await.is_err(),
+        deadline("both failure request", client.both(0))
+            .await
+            .is_err(),
         "pre-stream failure is the outer Err"
     );
 
-    let items: Vec<Result<u64, ItemError>> = client
-        .both(2)
+    let stream = deadline("both stream request", client.both(2))
         .await
-        .expect("both(2) streams")
-        .collect()
-        .await;
+        .expect("both(2) streams");
+    let items: Vec<Result<u64, ItemError>> =
+        deadline("both response stream", stream.collect()).await;
     assert_eq!(items.len(), 2);
     assert_eq!(items[0], Ok(1));
     assert!(items[1].is_err());
 
     // Client-streaming: the client sends a stream of `u64` as the request body; the server folds
     // them and returns one response.
-    let total = client
-        .collect(futures::stream::iter(vec![1u64, 2, 3, 4]))
-        .await
-        .expect("collect call");
+    let total = deadline(
+        "reqwest collect request",
+        client.collect(futures::stream::iter(vec![1u64, 2, 3, 4])),
+    )
+    .await
+    .expect("collect call");
     assert_eq!(*total, 10);
 
     let hyper = ApiClient::new(HyperClient::new(format!("http://{addr}")));
-    let total = hyper
-        .collect(futures::stream::iter(vec![10u64, 20, 30]))
-        .await
-        .expect("hyper collect call");
+    let total = deadline(
+        "hyper collect request",
+        hyper.collect(futures::stream::iter(vec![10u64, 20, 30])),
+    )
+    .await
+    .expect("hyper collect call");
     assert_eq!(*total, 60);
 
     // One concrete generic interceptor value is stored directly on either backend. It can mutate
@@ -313,8 +330,7 @@ async fn generated_client_round_trips_over_reqwest() {
     let reqwest_backend =
         ReqwestClient::new(format!("http://{addr}")).with_interceptor(reqwest_interceptor.clone());
     let hooked = ApiClient::new(reqwest_backend.clone());
-    let response = hooked
-        .interceptor()
+    let response = deadline("reqwest interceptor request", hooked.interceptor())
         .await
         .expect("reqwest interceptor call");
     assert_eq!(*response, "injected");
@@ -324,15 +340,20 @@ async fn generated_client_round_trips_over_reqwest() {
         .uri("/api/missing")
         .body(())
         .unwrap();
-    let _ =
-        Unary::unary::<(), EchoOut, overseerd::client::Raw>(&reqwest_backend, "", missing).await;
+    let _ = deadline(
+        "reqwest missing interceptor request",
+        Unary::unary::<(), EchoOut, overseerd::client::Raw>(&reqwest_backend, "", missing),
+    )
+    .await;
     assert_eq!(reqwest_interceptor.errors.load(Ordering::SeqCst), 1);
 
     let hyper_interceptor = TestInterceptor::default();
     let hyper_backend =
         HyperClient::new(format!("http://{addr}")).with_interceptor(hyper_interceptor.clone());
     let hooked = ApiClient::new(hyper_backend.clone());
-    let response = hooked.interceptor().await.expect("hyper interceptor call");
+    let response = deadline("hyper interceptor request", hooked.interceptor())
+        .await
+        .expect("hyper interceptor call");
     assert_eq!(*response, "injected");
     assert_eq!(response.headers()["x-response-interceptor"], "observed");
     let missing = http::Request::builder()
@@ -340,9 +361,12 @@ async fn generated_client_round_trips_over_reqwest() {
         .uri("/api/missing")
         .body(())
         .unwrap();
-    let _ = Unary::unary::<(), EchoOut, overseerd::client::Raw>(&hyper_backend, "", missing).await;
+    let _ = deadline(
+        "hyper missing interceptor request",
+        Unary::unary::<(), EchoOut, overseerd::client::Raw>(&hyper_backend, "", missing),
+    )
+    .await;
     assert_eq!(hyper_interceptor.errors.load(Ordering::SeqCst), 1);
 
-    shutdown.shutdown();
-    let _ = server.await;
+    server.shutdown().await;
 }

@@ -42,6 +42,7 @@ overseerd-axum-macros = { path = "crates/axum-macros", version = "0.20.0" }
 overseerd-axum-json-ws = { path = "crates/axum-json-ws", version = "0.20.0" }
 overseerd-axum-stomp = { path = "crates/axum-stomp", version = "0.20.0" }
 overseerd-tooling-schema = { path = "crates/tooling-schema", version = "0.20.0" }
+overseerd-test-utils = { path = "crates/test-utils", version = "0.20.0", default-features = false }
 
 # Common dependencies
 arc-swap = "1.9.1"
@@ -90,6 +91,7 @@ command-group = "5.0.1"
 fs2 = "0.4.3"
 notify = "6"
 thiserror = "2"
+tempfile = "3"
 toml = "1.1"
 serde_yaml_ng = "0.10"
 directories = "6"
@@ -125,7 +127,7 @@ tsify = "0.5"
 utoipa = { version = "5", features = ["macros"] }
 # OpenAPI UIs, each behind its own axum feature. Swagger-UI bundles a dist; Redoc/RapiDoc/Scalar
 # are lightweight HTML shells. `axum` feature on each gives an axum-mountable router/service.
-utoipa-swagger-ui = { version = "9", features = ["axum"] }
+utoipa-swagger-ui = { version = "9", features = ["axum", "debug-embed"] }
 utoipa-redoc = { version = "6", features = ["axum"] }
 utoipa-rapidoc = { version = "6", features = ["axum"] }
 utoipa-scalar = { version = "0.3", features = ["axum"] }
@@ -315,6 +317,7 @@ postcard = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tempfile = { workspace = true }
 # The facade's axum integration tests use `#[controller]`/`#[handlers]`/`#[dto]`, which emit
 # `::utoipa` references when the `openapi` feature is on (as under `--all-features`). Like the http
 # example, a crate using those macros with `openapi` needs `utoipa` as a direct dependency; a
@@ -327,3 +330,6 @@ path = "tests/tooling_probe_process/fixture.rs"
 test = false
 bench = false
 required-features = ["cli", "tooling"]
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+overseerd-test-utils = { workspace = true }

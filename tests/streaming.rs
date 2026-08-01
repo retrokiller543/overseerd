@@ -6,15 +6,19 @@
 //! a fresh connection and asserts on the server's events.
 #![cfg(feature = "daemon")]
 
+mod common;
+
 use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 
 use overseerd::daemon::{App, Cancel, Payload, ResponseStream, Streaming, handlers, service};
 use overseerd::{
-    CallResult, MemoryClient, MemoryConnectionHandle, ServerEvent, StreamDecode, StreamDecodeError,
-    StreamEncode, StreamEncodeError,
+    CallResult, MemoryConnectionHandle, ServerEvent, StreamDecode, StreamDecodeError, StreamEncode,
+    StreamEncodeError,
 };
+
+use common::{MemoryServer, deadline};
 
 // ---------------------------------------------------------------------------
 // One service exercising every kind plus the Responder return variants.
@@ -200,20 +204,17 @@ impl ErgoSvc {
 
 /// Builds the daemon, serves it on a memory transport in the background, and
 /// returns an open client connection.
-async fn start() -> MemoryConnectionHandle {
-    let (client, transport) = MemoryClient::pair();
-
+async fn start() -> (MemoryServer, MemoryConnectionHandle) {
     let daemon = App::builder("test")
         .auto_discover()
         .build()
         .await
         .expect("build daemon");
 
-    tokio::spawn(async move {
-        let _ = daemon.serve(transport).await;
-    });
+    let server = MemoryServer::start(daemon);
+    let connection = server.connect().await;
 
-    client.connect().await.expect("connect")
+    (server, connection)
 }
 
 fn enc<T: serde::Serialize>(value: &T) -> Vec<u8> {
@@ -230,7 +231,7 @@ async fn drain(call: &mut overseerd::MemoryCall) -> (Vec<u32>, bool) {
     let mut items = Vec::new();
 
     loop {
-        match call.recv().await {
+        match deadline("stream event receive", call.recv()).await {
             Some(ServerEvent::Item(bytes)) => items.push(dec::<u32>(&bytes)),
             Some(ServerEvent::End) => return (items, true),
             Some(ServerEvent::Error { .. }) => return (items, false),
@@ -283,26 +284,52 @@ async fn infers_operation_kinds() {
 
 #[tokio::test]
 async fn responder_shapes() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let bare = conn.call("StreamSvc.bare", enc(&())).await.unwrap();
+    let bare = deadline("StreamSvc.bare call", conn.call("StreamSvc.bare", enc(&())))
+        .await
+        .expect("bare call succeeds");
     assert!(matches!(bare, CallResult::Ok(ref b) if dec::<u32>(b) == 42));
 
     // `()` serializes to an empty postcard body.
-    let unit = conn.call("StreamSvc.unit", enc(&())).await.unwrap();
+    let unit = deadline("StreamSvc.unit call", conn.call("StreamSvc.unit", enc(&())))
+        .await
+        .expect("unit call succeeds");
     assert!(matches!(unit, CallResult::Ok(ref b) if b.is_empty()));
 
-    let some = conn.call("StreamSvc.maybe", enc(&true)).await.unwrap();
+    let some = deadline(
+        "StreamSvc.maybe present call",
+        conn.call("StreamSvc.maybe", enc(&true)),
+    )
+    .await
+    .expect("present maybe call succeeds");
     assert!(matches!(some, CallResult::Ok(ref b) if dec::<Option<u32>>(b) == Some(7)));
 
-    let none = conn.call("StreamSvc.maybe", enc(&false)).await.unwrap();
+    let none = deadline(
+        "StreamSvc.maybe absent call",
+        conn.call("StreamSvc.maybe", enc(&false)),
+    )
+    .await
+    .expect("absent maybe call succeeds");
     assert!(matches!(none, CallResult::Ok(ref b) if dec::<Option<u32>>(b).is_none()));
 
-    let ok = conn.call("StreamSvc.fallible_ok", enc(&())).await.unwrap();
+    let ok = deadline(
+        "StreamSvc.fallible_ok call",
+        conn.call("StreamSvc.fallible_ok", enc(&())),
+    )
+    .await
+    .expect("fallible ok call succeeds");
     assert!(matches!(ok, CallResult::Ok(ref b) if dec::<u32>(b) == 1));
 
-    let err = conn.call("StreamSvc.fallible_err", enc(&())).await.unwrap();
+    let err = deadline(
+        "StreamSvc.fallible_err call",
+        conn.call("StreamSvc.fallible_err", enc(&())),
+    )
+    .await
+    .expect("fallible error call returns a response");
     assert!(matches!(err, CallResult::Err { .. }));
+
+    server.shutdown([conn]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,80 +338,103 @@ async fn responder_shapes() {
 
 #[tokio::test]
 async fn server_stream_happy_path() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn
-        .open("StreamSvc.count", enc(&4u32), false)
-        .await
-        .unwrap();
+    let mut call = deadline(
+        "StreamSvc.count open",
+        conn.open("StreamSvc.count", enc(&4u32), false),
+    )
+    .await
+    .expect("open count stream");
     let (items, clean) = drain(&mut call).await;
 
     assert!(clean);
     assert_eq!(items, vec![0, 1, 2, 3]);
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn server_stream_mid_stream_error() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn
-        .open("StreamSvc.fail_at_two", enc(&()), false)
-        .await
-        .unwrap();
+    let mut call = deadline(
+        "StreamSvc.fail_at_two open",
+        conn.open("StreamSvc.fail_at_two", enc(&()), false),
+    )
+    .await
+    .expect("open failing stream");
     let (items, clean) = drain(&mut call).await;
 
     // Items before the error are delivered, then the stream terminates as error.
     assert_eq!(items, vec![0, 1]);
     assert!(!clean);
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn server_stream_client_cancellation() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn
-        .open("StreamSvc.forever", enc(&()), false)
-        .await
-        .unwrap();
+    let mut call = deadline(
+        "StreamSvc.forever open",
+        conn.open("StreamSvc.forever", enc(&()), false),
+    )
+    .await
+    .expect("open cancellable stream");
 
     // Receive a couple of items, then cancel the call.
-    assert!(matches!(call.recv().await, Some(ServerEvent::Item(_))));
-    assert!(matches!(call.recv().await, Some(ServerEvent::Item(_))));
+    assert!(matches!(
+        deadline("first forever item", call.recv()).await,
+        Some(ServerEvent::Item(_))
+    ));
+    assert!(matches!(
+        deadline("second forever item", call.recv()).await,
+        Some(ServerEvent::Item(_))
+    ));
 
     call.cancel();
 
     // After cancellation the stream must terminate (draining any in-flight items).
     let mut ended = false;
 
-    while let Some(event) = call.recv().await {
-        match event {
-            ServerEvent::Item(_) => continue,
-            ServerEvent::End | ServerEvent::Error { .. } => {
-                ended = true;
-                break;
+    deadline("cancelled stream termination", async {
+        while let Some(event) = call.recv().await {
+            match event {
+                ServerEvent::Item(_) => continue,
+                ServerEvent::End | ServerEvent::Error { .. } => {
+                    ended = true;
+                    break;
+                }
+                ServerEvent::Response(_) => panic!("unexpected unary response"),
             }
-            ServerEvent::Response(_) => panic!("unexpected unary response"),
         }
-    }
+    })
+    .await;
 
     assert!(ended, "cancelled stream should terminate");
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn server_stream_backpressure_preserves_order() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
     // Capacity-1 event buffer forces the producer to await between items
     // (the backpressure path); all items must still arrive in order.
-    let mut call = conn
-        .open_with_capacity("StreamSvc.count", enc(&8u32), false, 1)
-        .await
-        .unwrap();
+    let mut call = deadline(
+        "backpressured StreamSvc.count open",
+        conn.open_with_capacity("StreamSvc.count", enc(&8u32), false, 1),
+    )
+    .await
+    .expect("open backpressured stream");
 
     let mut items = Vec::new();
 
     loop {
-        match call.recv().await {
+        match deadline("backpressured stream receive", call.recv()).await {
             Some(ServerEvent::Item(bytes)) => {
                 items.push(dec::<u32>(&bytes));
                 tokio::time::sleep(Duration::from_millis(1)).await;
@@ -395,6 +445,8 @@ async fn server_stream_backpressure_preserves_order() {
     }
 
     assert_eq!(items, (0..8).collect::<Vec<_>>());
+
+    server.shutdown([conn]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -403,18 +455,29 @@ async fn server_stream_backpressure_preserves_order() {
 
 #[tokio::test]
 async fn client_stream_sums_inputs() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn.open("StreamSvc.sum", Vec::new(), true).await.unwrap();
+    let mut call = deadline(
+        "StreamSvc.sum open",
+        conn.open("StreamSvc.sum", Vec::new(), true),
+    )
+    .await
+    .expect("open sum stream");
 
     for i in [1u32, 2, 3, 4] {
-        call.send(enc(&i)).await.unwrap();
+        deadline("StreamSvc.sum send", call.send(enc(&i)))
+            .await
+            .expect("send sum item");
     }
 
     call.end_input();
 
-    let out = call.response().await.unwrap();
+    let out = deadline("StreamSvc.sum response", call.response())
+        .await
+        .expect("sum response succeeds");
     assert!(matches!(out, CallResult::Ok(ref b) if dec::<u32>(b) == 10));
+
+    server.shutdown([conn]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -423,18 +486,36 @@ async fn client_stream_sums_inputs() {
 
 #[tokio::test]
 async fn bidi_echoes_doubled() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn.open("StreamSvc.echo", Vec::new(), true).await.unwrap();
+    let mut call = deadline(
+        "StreamSvc.echo open",
+        conn.open("StreamSvc.echo", Vec::new(), true),
+    )
+    .await
+    .expect("open echo stream");
 
-    call.send(enc(&5u32)).await.unwrap();
-    assert!(matches!(call.recv().await, Some(ServerEvent::Item(ref b)) if dec::<u32>(b) == 10));
+    deadline("first StreamSvc.echo send", call.send(enc(&5u32)))
+        .await
+        .expect("send first echo item");
+    assert!(
+        matches!(deadline("first StreamSvc.echo receive", call.recv()).await, Some(ServerEvent::Item(ref b)) if dec::<u32>(b) == 10)
+    );
 
-    call.send(enc(&7u32)).await.unwrap();
-    assert!(matches!(call.recv().await, Some(ServerEvent::Item(ref b)) if dec::<u32>(b) == 14));
+    deadline("second StreamSvc.echo send", call.send(enc(&7u32)))
+        .await
+        .expect("send second echo item");
+    assert!(
+        matches!(deadline("second StreamSvc.echo receive", call.recv()).await, Some(ServerEvent::Item(ref b)) if dec::<u32>(b) == 14)
+    );
 
     call.end_input();
-    assert!(matches!(call.recv().await, Some(ServerEvent::End)));
+    assert!(matches!(
+        deadline("StreamSvc.echo end", call.recv()).await,
+        Some(ServerEvent::End)
+    ));
+
+    server.shutdown([conn]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -443,21 +524,27 @@ async fn bidi_echoes_doubled() {
 
 #[tokio::test]
 async fn concurrent_streams_on_one_connection() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut a = conn
-        .open("StreamSvc.count", enc(&3u32), false)
-        .await
-        .unwrap();
-    let mut b = conn
-        .open("StreamSvc.count", enc(&5u32), false)
-        .await
-        .unwrap();
+    let mut a = deadline(
+        "first concurrent stream open",
+        conn.open("StreamSvc.count", enc(&3u32), false),
+    )
+    .await
+    .expect("open first concurrent stream");
+    let mut b = deadline(
+        "second concurrent stream open",
+        conn.open("StreamSvc.count", enc(&5u32), false),
+    )
+    .await
+    .expect("open second concurrent stream");
 
     let (items_a, items_b) = tokio::join!(drain(&mut a), drain(&mut b));
 
     assert_eq!(items_a, (vec![0, 1, 2], true));
     assert_eq!(items_b, (vec![0, 1, 2, 3, 4], true));
+
+    server.shutdown([conn]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -499,88 +586,127 @@ async fn ergo_operation_kinds() {
 
 #[tokio::test]
 async fn impl_stream_server_stream() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn
-        .open("ErgoSvc.count_up", enc(&4u32), false)
-        .await
-        .unwrap();
+    let mut call = deadline(
+        "ErgoSvc.count_up open",
+        conn.open("ErgoSvc.count_up", enc(&4u32), false),
+    )
+    .await
+    .expect("open count_up stream");
     let (items, clean) = drain(&mut call).await;
 
     assert!(clean);
     assert_eq!(items, vec![0, 1, 2, 3]);
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn impl_stream_fallible_terminates() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn
-        .open("ErgoSvc.fail_after", enc(&2u32), false)
-        .await
-        .unwrap();
+    let mut call = deadline(
+        "ErgoSvc.fail_after open",
+        conn.open("ErgoSvc.fail_after", enc(&2u32), false),
+    )
+    .await
+    .expect("open fail_after stream");
     let (items, clean) = drain(&mut call).await;
 
     // Items before the custom error are delivered, then the stream errors out.
     assert_eq!(items, vec![0, 1]);
     assert!(!clean);
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn generic_stream_client_stream() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn
-        .open("ErgoSvc.sum_generic", Vec::new(), true)
-        .await
-        .unwrap();
+    let mut call = deadline(
+        "ErgoSvc.sum_generic open",
+        conn.open("ErgoSvc.sum_generic", Vec::new(), true),
+    )
+    .await
+    .expect("open generic sum stream");
 
     for i in [10u32, 20, 30] {
-        call.send(enc(&i)).await.unwrap();
+        deadline("ErgoSvc.sum_generic send", call.send(enc(&i)))
+            .await
+            .expect("send generic sum item");
     }
 
     call.end_input();
 
-    let out = call.response().await.unwrap();
+    let out = deadline("ErgoSvc.sum_generic response", call.response())
+        .await
+        .expect("generic sum response succeeds");
     assert!(matches!(out, CallResult::Ok(ref b) if dec::<u32>(b) == 60));
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn impl_stream_bidi_doubles() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn.open("ErgoSvc.double", Vec::new(), true).await.unwrap();
+    let mut call = deadline(
+        "ErgoSvc.double open",
+        conn.open("ErgoSvc.double", Vec::new(), true),
+    )
+    .await
+    .expect("open double stream");
 
-    call.send(enc(&5u32)).await.unwrap();
-    assert!(matches!(call.recv().await, Some(ServerEvent::Item(ref b)) if dec::<u32>(b) == 10));
+    deadline("ErgoSvc.double send", call.send(enc(&5u32)))
+        .await
+        .expect("send double item");
+    assert!(
+        matches!(deadline("ErgoSvc.double receive", call.recv()).await, Some(ServerEvent::Item(ref b)) if dec::<u32>(b) == 10)
+    );
 
     call.end_input();
-    assert!(matches!(call.recv().await, Some(ServerEvent::End)));
+    assert!(matches!(
+        deadline("ErgoSvc.double end", call.recv()).await,
+        Some(ServerEvent::End)
+    ));
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn flagged_concrete_server_stream() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn
-        .open("ErgoSvc.flagged", enc(&3u32), false)
-        .await
-        .unwrap();
+    let mut call = deadline(
+        "ErgoSvc.flagged open",
+        conn.open("ErgoSvc.flagged", enc(&3u32), false),
+    )
+    .await
+    .expect("open flagged stream");
     let (items, clean) = drain(&mut call).await;
 
     assert!(clean);
     assert_eq!(items, vec![0, 1, 2]);
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn custom_item_codec_round_trip() {
-    let conn = start().await;
+    let (server, conn) = start().await;
 
-    let mut call = conn.open("ErgoSvc.tags", enc(&3u8), false).await.unwrap();
+    let mut call = deadline(
+        "ErgoSvc.tags open",
+        conn.open("ErgoSvc.tags", enc(&3u8), false),
+    )
+    .await
+    .expect("open tags stream");
     let mut items = Vec::new();
 
     loop {
-        match call.recv().await {
+        match deadline("ErgoSvc.tags receive", call.recv()).await {
             // The hand-rolled codec frames each `Tag` as a single byte.
             Some(ServerEvent::Item(bytes)) => items.push(Tag::decode(&bytes).unwrap()),
             Some(ServerEvent::End) => break,
@@ -589,4 +715,6 @@ async fn custom_item_codec_round_trip() {
     }
 
     assert_eq!(items, vec![Tag(0), Tag(1), Tag(2)]);
+
+    server.shutdown([conn]).await;
 }

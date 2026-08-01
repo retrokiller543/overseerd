@@ -1,0 +1,32 @@
+[package]
+name = "overseerd-test-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+doctest = false
+
+[features]
+default = ["app"]
+app = ["dep:overseerd-app", "dep:overseerd-config", "dep:overseerd-dirs"]
+
+[dependencies]
+command-group = { workspace = true }
+overseerd-app = { workspace = true, optional = true }
+overseerd-config = { workspace = true, optional = true }
+overseerd-dirs = { workspace = true, optional = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[[test]]
+name = "process"
+path = "tests/process.rs"
+
+[[test]]
+name = "temp"
+path = "tests/temp.rs"

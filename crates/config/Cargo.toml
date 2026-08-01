@@ -33,3 +33,6 @@ futures = { workspace = true }
 toml = { workspace = true, optional = true }
 serde_yaml_ng = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

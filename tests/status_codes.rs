@@ -3,11 +3,12 @@
 //! user story / success criterion from `specs/003-response-status-codes/`.
 #![cfg(feature = "daemon")]
 
+mod common;
+
 use overseerd::daemon::{App, ErrorResponse, ResponseError, ResponseStream, handlers, service};
-use overseerd::{
-    CallResult, Flags, MemoryClient, MemoryConnectionHandle, PredefinedCode, ServerEvent,
-    StatusCode,
-};
+use overseerd::{CallResult, Flags, PredefinedCode, ServerEvent, StatusCode};
+
+use common::{MemoryServer, deadline};
 
 // ---------------------------------------------------------------------------
 // A service whose handlers return classified errors.
@@ -87,20 +88,14 @@ impl StatusSvc {
 // Harness
 // ---------------------------------------------------------------------------
 
-async fn start() -> MemoryConnectionHandle {
-    let (client, transport) = MemoryClient::pair();
-
+async fn start() -> MemoryServer {
     let daemon = App::builder("test")
         .auto_discover()
         .build()
         .await
         .expect("build daemon");
 
-    tokio::spawn(async move {
-        let _ = daemon.serve(transport).await;
-    });
-
-    client.connect().await.expect("connect")
+    MemoryServer::start(daemon)
 }
 
 fn enc<T: serde::Serialize>(value: &T) -> Vec<u8> {
@@ -119,9 +114,15 @@ fn dec<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
 async fn custom_error_carries_code_and_body() {
     // SC-001: the client reads the exact predefined code and deserializes the
     // exact structured body.
-    let conn = start().await;
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let result = conn.call("StatusSvc.custom_error", enc(&())).await.unwrap();
+    let result = deadline(
+        "StatusSvc.custom_error call",
+        conn.call("StatusSvc.custom_error", enc(&())),
+    )
+    .await
+    .expect("custom error call returns a response");
 
     match result {
         CallResult::Err { code, body } => {
@@ -140,18 +141,23 @@ async fn custom_error_carries_code_and_body() {
 
         other => panic!("expected an error response, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn framework_error_handler_maps_to_category() {
     // SC-003: an unchanged `Result<T, overseerd::daemon::Error>` handler still works and
     // maps to its predefined category (InvalidPayload -> BadInput).
-    let conn = start().await;
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let result = conn
-        .call("StatusSvc.framework_error", enc(&()))
-        .await
-        .unwrap();
+    let result = deadline(
+        "StatusSvc.framework_error call",
+        conn.call("StatusSvc.framework_error", enc(&())),
+    )
+    .await
+    .expect("framework error call returns a response");
 
     match result {
         CallResult::Err { code, .. } => {
@@ -160,6 +166,8 @@ async fn framework_error_handler_maps_to_category() {
 
         other => panic!("expected an error response, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,9 +178,15 @@ async fn framework_error_handler_maps_to_category() {
 async fn custom_subcode_round_trips_with_predefined() {
     // SC-005: both the predefined category and the custom subcode survive the
     // round-trip intact, in their own sections.
-    let conn = start().await;
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let result = conn.call("StatusSvc.custom_error", enc(&())).await.unwrap();
+    let result = deadline(
+        "StatusSvc.custom_error call",
+        conn.call("StatusSvc.custom_error", enc(&())),
+    )
+    .await
+    .expect("custom error call returns a response");
 
     match result {
         CallResult::Err { code, .. } => {
@@ -182,6 +196,8 @@ async fn custom_subcode_round_trips_with_predefined() {
 
         other => panic!("expected an error response, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,9 +208,15 @@ async fn custom_subcode_round_trips_with_predefined() {
 async fn retryable_flag_round_trips() {
     // SC-004: the client detects RETRYABLE from the code alone, without
     // deserializing the body.
-    let conn = start().await;
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let result = conn.call("StatusSvc.custom_error", enc(&())).await.unwrap();
+    let result = deadline(
+        "StatusSvc.custom_error call",
+        conn.call("StatusSvc.custom_error", enc(&())),
+    )
+    .await
+    .expect("custom error call returns a response");
 
     match result {
         CallResult::Err { code, .. } => {
@@ -203,6 +225,8 @@ async fn retryable_flag_round_trips() {
 
         other => panic!("expected an error response, got {other:?}"),
     }
+
+    server.shutdown([conn]).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,17 +235,20 @@ async fn retryable_flag_round_trips() {
 
 #[tokio::test]
 async fn streaming_error_has_same_shape_as_unary() {
-    let conn = start().await;
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let mut call = conn
-        .open("StatusSvc.stream_then_fail", enc(&()), false)
-        .await
-        .unwrap();
+    let mut call = deadline(
+        "StatusSvc.stream_then_fail open",
+        conn.open("StatusSvc.stream_then_fail", enc(&()), false),
+    )
+    .await
+    .expect("open failing stream");
 
     let mut items = Vec::new();
 
     loop {
-        match call.recv().await {
+        match deadline("StatusSvc.stream_then_fail receive", call.recv()).await {
             Some(ServerEvent::Item(bytes)) => items.push(dec::<u32>(&bytes)),
 
             Some(ServerEvent::Error { code, .. }) => {
@@ -231,10 +258,12 @@ async fn streaming_error_has_same_shape_as_unary() {
                 assert_eq!(items, vec![0, 1]);
                 assert_eq!(code.predefined(), PredefinedCode::BadInput);
 
-                return;
+                break;
             }
 
             other => panic!("expected items then an error, got {other:?}"),
         }
     }
+
+    server.shutdown([conn]).await;
 }

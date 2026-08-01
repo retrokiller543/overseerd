@@ -4,13 +4,14 @@
 //! and a snapshot taken before the reload stays pinned to the old value.
 
 use std::fs;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use overseerd::config::Toml;
 use overseerd::dirs::{Config, DirectoriesManager};
 use overseerd::{App, Cfg, ConfigManager, component, config};
+use overseerd_config::ResolverChain;
 use serde::Deserialize;
+use tempfile::TempDir;
 
 #[config(path = "svc")]
 #[derive(Deserialize)]
@@ -43,27 +44,26 @@ impl Consumer {
     }
 }
 
-/// A unique temp config directory for this test run, cleaned and recreated.
-fn temp_config_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("overseerd-config-reload-{}", std::process::id()));
-
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).expect("create temp config dir");
-
-    dir
+fn temp_config_dir() -> TempDir {
+    tempfile::Builder::new()
+        .prefix("overseerd-config-reload-")
+        .tempdir()
+        .expect("create temp config dir")
 }
 
 #[tokio::test]
 async fn reload_swaps_only_the_changed_binding() {
     let root = temp_config_dir();
-    let dirs = DirectoriesManager::from_path(root);
+    let dirs = DirectoriesManager::from_path(root.path().to_path_buf());
     let config_dir = dirs.dir::<Config>();
     let config_file = config_dir.path().join("application.toml");
 
     fs::create_dir_all(config_dir.path()).expect("create config subdir");
     fs::write(&config_file, "[svc]\nvalue = 1\n\n[other]\nvalue = 100\n").expect("write config");
 
-    let manager = ConfigManager::<Toml>::load_in(&config_dir, &[]).expect("load config");
+    let manager =
+        ConfigManager::<Toml>::load_in_with_resolvers(&config_dir, &[], ResolverChain::empty())
+            .expect("load config");
 
     let daemon = App::<()>::builder("config-reload-test")
         .config_source(manager)

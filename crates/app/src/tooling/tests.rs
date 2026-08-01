@@ -14,6 +14,7 @@ use overseerd_di::{
     ComponentFactoryDescriptor, Injectable, ProviderDescriptor, ProviderOrder,
     ProviderOrderDirection, Singleton,
 };
+use overseerd_test_utils::TempFixture;
 use overseerd_tooling_schema::{
     BinaryTargetIdentity, DocumentIdentity, PackageIdentity, ProbeEnvelope, RelationshipKind,
     SourceLocation,
@@ -520,7 +521,8 @@ fn actual_prepare_failure_classifies_sibling_trait_provider_as_scope_unreachable
 
 #[test]
 fn invalid_envelope_does_not_open_or_truncate_response_path() {
-    let path = probe_output_path("invalid-before-open");
+    let fixture = TempFixture::new("overseerd-app-invalid-before-open");
+    let path = fixture.child("response.json");
     let mut envelope = ProbeEnvelope::failure(
         probe_identity(),
         overseerd_tooling_schema::ProbeFailure {
@@ -543,8 +545,6 @@ fn invalid_envelope_does_not_open_or_truncate_response_path() {
         std::fs::read_to_string(&path).expect("fixture response remains readable"),
         "preserve-me"
     );
-
-    std::fs::remove_file(path).expect("response fixture is removed");
 }
 
 fn probe_identity() -> DocumentIdentity {
@@ -564,17 +564,6 @@ fn probe_identity() -> DocumentIdentity {
             column: None,
         }),
     }
-}
-
-fn probe_output_path(label: &str) -> std::path::PathBuf {
-    static NEXT_PATH: AtomicUsize = AtomicUsize::new(0);
-
-    let ordinal = NEXT_PATH.fetch_add(1, Ordering::Relaxed);
-
-    std::env::temp_dir().join(format!(
-        "overseerd-app-{label}-{}-{ordinal}.json",
-        std::process::id()
-    ))
 }
 
 /// Component proving tooling projection stays before runtime construction.

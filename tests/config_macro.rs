@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use overseerd::config::Toml;
 use overseerd::{ConfigManager, DirectoriesManager, config};
+use overseerd_config::ResolverChain;
 use serde::Deserialize;
 
 /// Resolves directory placeholders against a fixed root, so `${@runtime}` becomes
@@ -16,6 +17,7 @@ fn manager(text: &str) -> ConfigManager {
 
     ConfigManager::<Toml>::from_str(text)
         .expect("parse config")
+        .with_resolvers(ResolverChain::empty())
         .with_directories(&dirs)
         .into_dynamic()
 }
@@ -28,6 +30,7 @@ fn seeded_manager(text: &str) -> ConfigManager {
 
     ConfigManager::<Toml>::from_str(text)
         .expect("parse config")
+        .with_resolvers(ResolverChain::empty())
         .with_directories(&dirs)
         .auto_discover()
         .into_dynamic()
@@ -225,7 +228,9 @@ fn load_from_registers_the_directory_namespace() {
     // `load_from` reads the (absent) config dir and wires `${@kind}` in one step, so a
     // `${@runtime}` default resolves without a separate `with_directories` call.
     let dirs = DirectoriesManager::from_path(PathBuf::from("/base"));
-    let config = ConfigManager::<Toml>::load_from(&dirs, &[]).expect("load config");
+    let config =
+        ConfigManager::<Toml>::load_from_with_resolvers(&dirs, &[], ResolverChain::empty())
+            .expect("load config");
 
     let cfg: SockOnly = config.get_config::<SockOnly>("app").unwrap();
 

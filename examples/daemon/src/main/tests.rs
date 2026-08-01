@@ -1,6 +1,7 @@
 use super::*;
 use clap::{CommandFactory as _, Parser as _};
 use overseerd::{ColorChoice, LogFormat, Plugin, resolve_host_plugin_catalog};
+use overseerd_test_utils::{TempFixture, path_ends_with_components};
 
 static WORKSPACE_CWD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -120,7 +121,7 @@ async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() 
         Some("overseerd-example-daemon")
     );
     assert!(document.identity.source.as_ref().is_some_and(|source| {
-        source_path_ends_with(&source.file, &["examples", "daemon", "src", "main.rs"])
+        path_ends_with_components(&source.file, &["examples", "daemon", "src", "main.rs"])
     }));
     assert_eq!(crate::components::database_builds(), 0);
     assert_eq!(crate::protocol::protocol_builds(), 0);
@@ -206,15 +207,6 @@ async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() 
         resource.id.contains("homeledger/audit-policy-config")
             && resource.labels.get("decision").map(String::as_str) == Some("applied")
     }));
-}
-
-fn source_path_ends_with(source: &str, suffix: &[&str]) -> bool {
-    let components = std::path::Path::new(source)
-        .components()
-        .filter_map(|component| component.as_os_str().to_str())
-        .collect::<Vec<_>>();
-
-    components.ends_with(suffix)
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -412,7 +404,7 @@ impl Drop for TestEnvironment {
 
 /// Temporary base/profile configuration used to distinguish bootstrap precedence sources.
 struct TestConfig {
-    path: std::path::PathBuf,
+    fixture: TempFixture,
 }
 
 impl TestConfig {
@@ -423,11 +415,7 @@ impl TestConfig {
         format: Option<&str>,
         ansi: Option<bool>,
     ) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "overseerd-homeledger-{test}-{}",
-            std::process::id()
-        ));
-        let profile_path = path.join(format!("application-{profile}.toml"));
+        let fixture = TempFixture::new(&format!("overseerd-homeledger-{test}-"));
         let mut profile_config = String::from("[logging]\n");
 
         if let Some(level) = level {
@@ -442,26 +430,17 @@ impl TestConfig {
             profile_config.push_str(&format!("ansi = {ansi}\n"));
         }
 
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("create Homeledger test config directory");
-        std::fs::write(
-            path.join("application.toml"),
+        fixture.write(
+            "application.toml",
             "[logging]\nlevel = \"info\"\nansi = true\n",
-        )
-        .expect("write Homeledger test base config");
-        std::fs::write(profile_path, profile_config).expect("write Homeledger test profile config");
+        );
+        fixture.write(format!("application-{profile}.toml"), profile_config);
 
-        Self { path }
+        Self { fixture }
     }
 
     fn path(&self) -> &std::path::Path {
-        &self.path
-    }
-}
-
-impl Drop for TestConfig {
-    fn drop(&mut self) {
-        std::fs::remove_dir_all(&self.path).expect("remove Homeledger test config directory");
+        self.fixture.path()
     }
 }
 

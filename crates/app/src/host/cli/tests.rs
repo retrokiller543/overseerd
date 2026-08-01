@@ -3,16 +3,7 @@ use super::{
     bootstrap_application_with_env,
 };
 use crate::{BootstrapContext, ExecutionMode, LogFormat};
-
-fn temp_config_dir(test: &str) -> std::path::PathBuf {
-    let directory =
-        std::env::temp_dir().join(format!("overseerd-bootstrap-{test}-{}", std::process::id()));
-
-    let _ = std::fs::remove_dir_all(&directory);
-    std::fs::create_dir_all(&directory).expect("create config directory");
-
-    directory
-}
+use overseerd_test_utils::TempFixture;
 
 fn options(config: impl Into<std::path::PathBuf>) -> BootstrapOptions {
     BootstrapOptions::from_parts(
@@ -49,24 +40,17 @@ fn bootstrap(
 
 #[test]
 fn cli_values_override_environment_and_profile_config() {
-    let directory = temp_config_dir("precedence");
-    let config = directory.join("custom.toml");
-
-    std::fs::write(
-        &config,
+    let fixture = TempFixture::new("overseerd-bootstrap-precedence");
+    let config = fixture.write(
+        "custom.toml",
         "[logging]\nlevel = \"info\"\nformat = \"full\"\nansi = true\n",
-    )
-    .expect("write base config");
-    std::fs::write(
-        directory.join("custom-cli.toml"),
+    );
+
+    fixture.write(
+        "custom-cli.toml",
         "[logging]\nlevel = \"debug\"\nformat = \"compact\"\n",
-    )
-    .expect("write CLI profile");
-    std::fs::write(
-        directory.join("custom-env.toml"),
-        "[logging]\nlevel = \"error\"\n",
-    )
-    .expect("write environment profile");
+    );
+    fixture.write("custom-env.toml", "[logging]\nlevel = \"error\"\n");
 
     let options = BootstrapOptions::from_parts(
         Some(config.clone()),
@@ -98,21 +82,17 @@ fn cli_values_override_environment_and_profile_config() {
     assert!(state.logging().ansi);
     assert_eq!(state.color(), ColorChoice::Always);
     assert!(!state.tracing_installed());
-
-    std::fs::remove_dir_all(directory).expect("remove config directory");
 }
 
 #[test]
 fn environment_is_used_when_cli_values_are_absent() {
-    let directory = temp_config_dir("environment");
-    let config = directory.join("custom.toml");
+    let fixture = TempFixture::new("overseerd-bootstrap-environment");
+    let config = fixture.write("custom.toml", "");
 
-    std::fs::write(&config, "").expect("write base config");
-    std::fs::write(
-        directory.join("custom-env.toml"),
+    fixture.write(
+        "custom-env.toml",
         "[logging]\nlevel = \"debug\"\nformat = \"compact\"\n",
-    )
-    .expect("write environment profile");
+    );
 
     let environment = BootstrapEnvironment {
         config: Some(config.clone().into_os_string()),
@@ -136,20 +116,15 @@ fn environment_is_used_when_cli_values_are_absent() {
     assert_eq!(state.logging().format, LogFormat::Pretty);
     assert!(!state.logging().ansi);
     assert_eq!(state.color(), ColorChoice::Never);
-
-    std::fs::remove_dir_all(directory).expect("remove config directory");
 }
 
 #[test]
 fn parser_defaults_preserve_environment_and_config_precedence() {
-    let directory = temp_config_dir("parser-default-precedence");
-    let config = directory.join("application.toml");
-
-    std::fs::write(
-        &config,
+    let fixture = TempFixture::new("overseerd-bootstrap-parser-default-precedence");
+    let config = fixture.write(
+        "application.toml",
         "[logging]\nlevel = \"debug\"\nformat = \"compact\"\nansi = true\n",
-    )
-    .expect("write base config");
+    );
 
     let options = BootstrapOptions::from_parts(
         Some(std::path::PathBuf::from("unused.toml")),
@@ -177,16 +152,12 @@ fn parser_defaults_preserve_environment_and_config_precedence() {
     assert_eq!(state.logging().level, "debug");
     assert_eq!(state.logging().format, LogFormat::Compact);
     assert_eq!(state.color(), ColorChoice::Always);
-
-    std::fs::remove_dir_all(directory).expect("remove config directory");
 }
 
 #[test]
 fn parser_defaults_fill_absent_sources() {
-    let directory = temp_config_dir("parser-default-fallback");
-    let config = directory.join("application.toml");
-
-    std::fs::write(&config, "").expect("write empty base config");
+    let fixture = TempFixture::new("overseerd-bootstrap-parser-default-fallback");
+    let config = fixture.write("application.toml", "");
 
     let options = BootstrapOptions::from_parts(
         Some(config.clone()),
@@ -215,16 +186,12 @@ fn parser_defaults_fill_absent_sources() {
     assert_eq!(state.logging().level, "error");
     assert_eq!(state.logging().format, LogFormat::Json);
     assert_eq!(state.color(), ColorChoice::Never);
-
-    std::fs::remove_dir_all(directory).expect("remove config directory");
 }
 
 #[test]
 fn auto_color_follows_terminal_capability() {
-    let directory = temp_config_dir("terminal");
-    let config = directory.join("application.toml");
-
-    std::fs::write(&config, "").expect("write base config");
+    let fixture = TempFixture::new("overseerd-bootstrap-terminal");
+    let config = fixture.write("application.toml", "");
 
     for (terminal, ansi) in [(false, false), (true, true)] {
         let options = BootstrapOptions::from_parts(
@@ -262,19 +229,17 @@ fn auto_color_follows_terminal_capability() {
             ansi
         );
     }
-
-    std::fs::remove_dir_all(directory).expect("remove config directory");
 }
 
 #[test]
 fn existing_dotted_path_is_treated_as_directory() {
-    let directory = temp_config_dir("directory.d");
+    let fixture = TempFixture::new("overseerd-bootstrap-directory.d");
 
-    std::fs::write(directory.join("application.toml"), "").expect("write base config");
+    fixture.write("application.toml", "");
 
     let context = bootstrap(
         "bootstrap-dotted-directory-test",
-        options(directory.clone()),
+        options(fixture.path()),
         BootstrapPolicy::default(),
         BootstrapEnvironment::default(),
     );
@@ -284,18 +249,14 @@ fn existing_dotted_path_is_treated_as_directory() {
             .bootstrap()
             .expect("bootstrap state exists")
             .config_path(),
-        directory
+        fixture.path()
     );
-
-    std::fs::remove_dir_all(directory).expect("remove config directory");
 }
 
 #[test]
 fn missing_explicit_config_path_is_rejected() {
-    let path = std::env::temp_dir().join(format!(
-        "overseerd-bootstrap-missing-{}.toml",
-        std::process::id()
-    ));
+    let fixture = TempFixture::new("overseerd-bootstrap-missing");
+    let path = fixture.child("missing.toml");
     let result = bootstrap_application_with_env(
         "bootstrap-missing-path-test",
         ExecutionMode::Tooling,
@@ -315,10 +276,8 @@ fn missing_explicit_config_path_is_rejected() {
 
 #[test]
 fn declaration_owned_config_skips_generated_loading() {
-    let path = std::env::temp_dir().join(format!(
-        "overseerd-bootstrap-ignored-{}.toml",
-        std::process::id()
-    ));
+    let fixture = TempFixture::new("overseerd-bootstrap-ignored");
+    let path = fixture.child("ignored.toml");
     let options = BootstrapOptions::from_parts(
         Some(path.clone()),
         Vec::new(),

@@ -14,20 +14,17 @@ use overseerd::{
     Cfg, CfgNext, ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError, HookOutcome,
     component, config, methods,
 };
-use overseerd_config::Resolver;
+use overseerd_config::{Resolver, ResolverChain};
 use serde::{Deserialize, Deserializer};
+use tempfile::TempDir;
 
-static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
+fn temp_config(tag: &str, contents: &str) -> (TempDir, PathBuf) {
+    let root = tempfile::Builder::new()
+        .prefix(&format!("overseerd-reload-hardening-{tag}-"))
+        .tempdir()
+        .expect("create config directory");
+    let config = root.path().join("application.toml");
 
-fn temp_config(tag: &str, contents: &str) -> (PathBuf, PathBuf) {
-    let root = std::env::temp_dir().join(format!(
-        "overseerd-reload-hardening-{tag}-{}-{}",
-        std::process::id(),
-        NEXT_DIR.fetch_add(1, Ordering::Relaxed)
-    ));
-    let config = root.join("application.toml");
-
-    fs::create_dir_all(&root).expect("create config directory");
     fs::write(&config, contents).expect("write config");
 
     (root, config)
@@ -51,7 +48,9 @@ async fn cross_path_reference_changes_republish_the_dependent_binding() {
         "cross-path",
         "[defaults]\nhost = \"10.0.0.1\"\n[server]\nurl = \"${defaults.host}:8080\"\n",
     );
-    let manager = ConfigManager::<Toml>::load_in(&root, &[]).expect("load config");
+    let manager =
+        ConfigManager::<Toml>::load_in_with_resolvers(root.path(), &[], ResolverChain::empty())
+            .expect("load config");
     let app = App::builder("cross-path-reload")
         .config_source(manager)
         .config::<ReferencingConfig>("server")
@@ -76,8 +75,6 @@ async fn cross_path_reference_changes_republish_the_dependent_binding() {
     assert_eq!(report.changed.len(), 1);
     assert_eq!(report.changed[0].path, "server");
     assert_eq!(consumer.config.get().url, "10.0.0.2:8080");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 struct MutableResolver(Arc<RwLock<String>>);
@@ -104,9 +101,9 @@ struct ResolverConsumer {
 async fn resolver_changes_republish_a_binding_without_source_edits() {
     let (root, _) = temp_config("resolver", "[resolved]\nvalue = \"${mutable_value}\"\n");
     let value = Arc::new(RwLock::new("first".to_string()));
-    let manager = ConfigManager::<Toml>::load_in(&root, &[])
-        .expect("load config")
-        .with_resolver(Box::new(MutableResolver(Arc::clone(&value))));
+    let resolvers = ResolverChain(vec![Box::new(MutableResolver(Arc::clone(&value)))]);
+    let manager = ConfigManager::<Toml>::load_in_with_resolvers(root.path(), &[], resolvers)
+        .expect("load config");
     let app = App::builder("resolver-reload")
         .config_source(manager)
         .config::<ResolverConfig>("resolved")
@@ -126,8 +123,6 @@ async fn resolver_changes_republish_a_binding_without_source_edits() {
 
     assert_eq!(report.changed.len(), 1);
     assert_eq!(consumer.config.get().value, "second");
-
-    let _ = fs::remove_dir_all(root);
 }
 
 struct AdvancingResolver(Arc<AtomicUsize>);
@@ -152,9 +147,9 @@ impl Resolver for AdvancingResolver {
 async fn committed_snapshot_comes_from_the_same_resolver_pass_as_the_value() {
     let (root, _) = temp_config("exact-pass", "[resolved]\nvalue = \"${advancing_value}\"\n");
     let calls = Arc::new(AtomicUsize::new(0));
-    let manager = ConfigManager::<Toml>::load_in(&root, &[])
-        .expect("load config")
-        .with_resolver(Box::new(AdvancingResolver(Arc::clone(&calls))));
+    let resolvers = ResolverChain(vec![Box::new(AdvancingResolver(Arc::clone(&calls)))]);
+    let manager = ConfigManager::<Toml>::load_in_with_resolvers(root.path(), &[], resolvers)
+        .expect("load config");
     let app = App::builder("exact-pass-reload")
         .config_source(manager)
         .config::<ResolverConfig>("resolved")
@@ -182,8 +177,6 @@ async fn committed_snapshot_comes_from_the_same_resolver_pass_as_the_value() {
     );
     assert_eq!(consumer.config.get().value, "third");
     assert_eq!(calls.load(Ordering::SeqCst), 4);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 struct PanicConfig {
@@ -218,7 +211,9 @@ struct PanicConsumer {
 #[tokio::test]
 async fn panicking_deserializer_does_not_poison_future_reloads() {
     let (root, file) = temp_config("panic", "[panic]\nvalue = 1\n");
-    let manager = ConfigManager::<Toml>::load_in(&root, &[]).expect("load config");
+    let manager =
+        ConfigManager::<Toml>::load_in_with_resolvers(root.path(), &[], ResolverChain::empty())
+            .expect("load config");
     let app = App::builder("panic-reload")
         .config_source(manager)
         .config::<PanicConfig>("panic")
@@ -251,8 +246,6 @@ async fn panicking_deserializer_does_not_poison_future_reloads() {
 
     assert_eq!(report.changed.len(), 1);
     assert_eq!(consumer.config.get().value, 3);
-
-    let _ = fs::remove_dir_all(root);
 }
 
 #[config]
@@ -287,7 +280,9 @@ impl PanicOnceHook {
 #[tokio::test]
 async fn panicking_reload_hook_does_not_disable_later_reloads() {
     let (root, file) = temp_config("hook-panic", "[hooked]\nvalue = 1\n");
-    let manager = ConfigManager::<Toml>::load_in(&root, &[]).expect("load config");
+    let manager =
+        ConfigManager::<Toml>::load_in_with_resolvers(root.path(), &[], ResolverChain::empty())
+            .expect("load config");
     let app = App::builder("hook-panic-reload")
         .config_source(manager)
         .config::<HookPanicConfig>("hooked")
@@ -319,6 +314,4 @@ async fn panicking_reload_hook_does_not_disable_later_reloads() {
 
     assert_eq!(component.config.get().value, 3);
     assert_eq!(component.calls.load(Ordering::SeqCst), 2);
-
-    let _ = fs::remove_dir_all(root);
 }
