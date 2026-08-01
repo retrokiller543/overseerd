@@ -11,6 +11,7 @@ use overseerd::{
     CallResult, Connection, MemoryClient, MemoryConnection, MemoryTransport, PeerInfo,
     PredefinedCode, Respond, RespondStream, ResponseSink, StatusCode, Transport,
 };
+use overseerd_test_utils::AbortOnDropTask;
 use tokio::time::timeout;
 
 #[service(id = "hardening", version = "0.1")]
@@ -85,7 +86,7 @@ async fn start_memory(
     limits: RpcLimits,
 ) -> (
     overseerd::MemoryConnectionHandle,
-    tokio::task::JoinHandle<overseerd::daemon::Result<()>>,
+    AbortOnDropTask<overseerd::daemon::Result<()>>,
 ) {
     let (client, transport) = MemoryClient::pair();
     let app = App::builder("hardening-test")
@@ -95,14 +96,14 @@ async fn start_memory(
         .await
         .expect("build app");
     let connection = client.connect().await.expect("connect memory transport");
-    let server = tokio::spawn(app.serve(transport));
+    let server = AbortOnDropTask::spawn("memory server", app.serve(transport));
 
     (connection, server)
 }
 
 #[tokio::test]
 async fn handler_panic_returns_redacted_internal_error() {
-    let (connection, server) = start_memory(RpcLimits::default()).await;
+    let (connection, mut server) = start_memory(RpcLimits::default()).await;
 
     let result = timeout(
         Duration::from_secs(2),
@@ -123,10 +124,9 @@ async fn handler_panic_returns_redacted_internal_error() {
     }
 
     drop(connection);
-    timeout(Duration::from_secs(2), server)
+    server
+        .join_with_timeout(Duration::from_secs(2))
         .await
-        .expect("server shutdown deadline")
-        .expect("server task")
         .expect("clean server shutdown");
 }
 
@@ -140,7 +140,7 @@ async fn panicking_global_error_handler_falls_back_to_internal_response() {
         .await
         .expect("build app");
     let connection = client.connect().await.expect("connect memory transport");
-    let server = tokio::spawn(app.serve(transport));
+    let mut server = AbortOnDropTask::spawn("memory server", app.serve(transport));
 
     let result = timeout(
         Duration::from_secs(2),
@@ -161,10 +161,9 @@ async fn panicking_global_error_handler_falls_back_to_internal_response() {
 
     drop(connection);
     drop(client);
-    timeout(Duration::from_secs(2), server)
+    server
+        .join_with_timeout(Duration::from_secs(2))
         .await
-        .expect("server shutdown deadline")
-        .expect("server task")
         .expect("clean server shutdown");
 }
 
@@ -178,7 +177,7 @@ async fn synchronously_panicking_global_error_handler_falls_back_to_internal_res
         .await
         .expect("build app");
     let connection = client.connect().await.expect("connect memory transport");
-    let server = tokio::spawn(app.serve(transport));
+    let mut server = AbortOnDropTask::spawn("memory server", app.serve(transport));
 
     let result = timeout(
         Duration::from_secs(2),
@@ -199,17 +198,16 @@ async fn synchronously_panicking_global_error_handler_falls_back_to_internal_res
 
     drop(connection);
     drop(client);
-    timeout(Duration::from_secs(2), server)
+    server
+        .join_with_timeout(Duration::from_secs(2))
         .await
-        .expect("server shutdown deadline")
-        .expect("server task")
         .expect("clean server shutdown");
 }
 
 #[tokio::test]
 async fn completed_call_tasks_are_reaped_before_admission_check() {
     let limits = RpcLimits::new(1, 1);
-    let (connection, server) = start_memory(limits).await;
+    let (connection, mut server) = start_memory(limits).await;
 
     for value in 0..256_u32 {
         let result = connection
@@ -226,10 +224,9 @@ async fn completed_call_tasks_are_reaped_before_admission_check() {
     }
 
     drop(connection);
-    timeout(Duration::from_secs(2), server)
+    server
+        .join_with_timeout(Duration::from_secs(2))
         .await
-        .expect("server shutdown deadline")
-        .expect("server task")
         .expect("clean server shutdown");
 }
 
@@ -237,7 +234,7 @@ async fn completed_call_tasks_are_reaped_before_admission_check() {
 async fn per_connection_admission_closes_abusive_connection_and_drops_tasks() {
     ACTIVE_CALLS.store(0, Ordering::SeqCst);
     let limits = RpcLimits::new(1, 1);
-    let (connection, server) = start_memory(limits).await;
+    let (connection, mut server) = start_memory(limits).await;
     let mut first = connection
         .open("Hardening.waits", encode(&()), false)
         .await
@@ -270,10 +267,9 @@ async fn per_connection_admission_closes_abusive_connection_and_drops_tasks() {
     }
 
     drop(connection);
-    timeout(Duration::from_secs(2), server)
+    server
+        .join_with_timeout(Duration::from_secs(2))
         .await
-        .expect("server shutdown deadline")
-        .expect("server task")
         .expect("clean server shutdown");
 }
 
@@ -321,10 +317,13 @@ async fn transient_accept_error_retries_without_stopping_protocol() {
         .build()
         .await
         .expect("build app");
-    let server = tokio::spawn(app.serve(FlakyTransport {
-        inner: transport,
-        fail_next: true,
-    }));
+    let mut server = AbortOnDropTask::spawn(
+        "flaky memory server",
+        app.serve(FlakyTransport {
+            inner: transport,
+            fail_next: true,
+        }),
+    );
     let connection = client
         .connect()
         .await
@@ -344,10 +343,9 @@ async fn transient_accept_error_retries_without_stopping_protocol() {
 
     drop(connection);
     drop(client);
-    timeout(Duration::from_secs(2), server)
+    server
+        .join_with_timeout(Duration::from_secs(2))
         .await
-        .expect("server shutdown deadline")
-        .expect("server task")
         .expect("clean server shutdown");
 }
 
@@ -454,10 +452,13 @@ async fn connection_admission_is_bounded_and_shutdown_leaves_no_tasks() {
         .await
         .expect("build app");
     let shutdown = app.shutdown_handle();
-    let server = tokio::spawn(app.serve(UnlimitedTransport {
-        accepted: Arc::clone(&accepted),
-        live: Arc::clone(&live),
-    }));
+    let mut server = AbortOnDropTask::spawn(
+        "bounded memory server",
+        app.serve(UnlimitedTransport {
+            accepted: Arc::clone(&accepted),
+            live: Arc::clone(&live),
+        }),
+    );
 
     while accepted.load(Ordering::SeqCst) < 2 {
         tokio::task::yield_now().await;
@@ -470,10 +471,9 @@ async fn connection_admission_is_bounded_and_shutdown_leaves_no_tasks() {
     assert_eq!(live.load(Ordering::SeqCst), 2);
 
     shutdown.shutdown();
-    timeout(Duration::from_secs(2), server)
+    server
+        .join_with_timeout(Duration::from_secs(2))
         .await
-        .expect("bounded server shutdown deadline")
-        .expect("server task")
         .expect("clean server shutdown");
     assert_eq!(live.load(Ordering::SeqCst), 0);
 }

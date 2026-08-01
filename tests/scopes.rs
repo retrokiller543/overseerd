@@ -6,15 +6,17 @@
 //! fresh id per call, and a transient gets a fresh id per resolution. The tests
 //! assert exactly those relationships by reading the ids back through handlers.
 
+mod common;
+
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
 
 use overseerd::daemon::{App, Inject, handlers, service};
-use overseerd::{
-    CallResult, MemoryClient, MemoryConnectionHandle, PeerInfo, component, injectable,
-};
+use overseerd::{CallResult, MemoryConnectionHandle, PeerInfo, component, injectable};
+
+use common::{MemoryServer, deadline};
 
 static CONNECTION_IDS: AtomicU64 = AtomicU64::new(1);
 static REQUEST_IDS: AtomicU64 = AtomicU64::new(1);
@@ -126,20 +128,14 @@ impl ScopeSvc {
 
 /// Builds the daemon, serves it on a memory transport, and returns the client so
 /// the test can open several independent connections.
-async fn start() -> MemoryClient {
-    let (client, transport) = MemoryClient::pair();
-
+async fn start() -> MemoryServer {
     let daemon = App::builder("scopes-test")
         .auto_discover()
         .build()
         .await
         .expect("build daemon");
 
-    tokio::spawn(async move {
-        let _ = daemon.serve(transport).await;
-    });
-
-    client
+    MemoryServer::start(daemon)
 }
 
 fn enc<T: serde::Serialize>(value: &T) -> Vec<u8> {
@@ -151,7 +147,10 @@ fn dec<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
 }
 
 async fn ids(conn: &MemoryConnectionHandle) -> (u64, u64) {
-    match conn.call("ScopeSvc.ids", enc(&())).await.unwrap() {
+    match deadline("ScopeSvc.ids call", conn.call("ScopeSvc.ids", enc(&())))
+        .await
+        .expect("ids call returns a response")
+    {
         CallResult::Ok(body) => dec::<(u64, u64)>(&body),
         CallResult::Err { .. } => panic!("ids call errored"),
     }
@@ -159,22 +158,24 @@ async fn ids(conn: &MemoryConnectionHandle) -> (u64, u64) {
 
 #[tokio::test]
 async fn connection_scope_is_stable_within_a_connection() {
-    let client = start().await;
-    let conn = client.connect().await.expect("connect");
+    let server = start().await;
+    let conn = server.connect().await;
 
     let (c1, r1) = ids(&conn).await;
     let (c2, r2) = ids(&conn).await;
 
     assert_eq!(c1, c2, "connection-scoped id is stable across calls");
     assert_ne!(r1, r2, "request-scoped id is fresh per call");
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn connection_scope_differs_across_connections() {
-    let client = start().await;
+    let server = start().await;
 
-    let first = client.connect().await.expect("connect");
-    let second = client.connect().await.expect("connect");
+    let first = server.connect().await;
+    let second = server.connect().await;
 
     let (c1, _) = ids(&first).await;
     let (c2, _) = ids(&second).await;
@@ -183,33 +184,47 @@ async fn connection_scope_differs_across_connections() {
         c1, c2,
         "each connection gets its own connection-scoped instance"
     );
+
+    server.shutdown([first, second]).await;
 }
 
 #[tokio::test]
 async fn transient_is_fresh_per_resolution() {
-    let client = start().await;
-    let conn = client.connect().await.expect("connect");
+    let server = start().await;
+    let conn = server.connect().await;
 
-    let (a, b) = match conn.call("ScopeSvc.two_traces", enc(&())).await.unwrap() {
+    let result = deadline(
+        "ScopeSvc.two_traces call",
+        conn.call("ScopeSvc.two_traces", enc(&())),
+    )
+    .await
+    .expect("two_traces call returns a response");
+    let (a, b) = match result {
         CallResult::Ok(body) => dec::<(u64, u64)>(&body),
         CallResult::Err { .. } => panic!("two_traces call errored"),
     };
 
     assert_ne!(a, b, "two transient resolutions yield distinct instances");
+
+    server.shutdown([conn]).await;
 }
 
 #[tokio::test]
 async fn provider_order_is_global_across_visible_scopes() {
-    let client = start().await;
-    let conn = client.connect().await.expect("connect");
-    let names = match conn
-        .call("ScopeSvc.ordered_markers", enc(&()))
-        .await
-        .unwrap()
-    {
+    let server = start().await;
+    let conn = server.connect().await;
+    let result = deadline(
+        "ScopeSvc.ordered_markers call",
+        conn.call("ScopeSvc.ordered_markers", enc(&())),
+    )
+    .await
+    .expect("ordered_markers call returns a response");
+    let names = match result {
         CallResult::Ok(body) => dec::<Vec<String>>(&body),
         CallResult::Err { .. } => panic!("ordered_markers call errored"),
     };
 
     assert_eq!(names, ["request", "root"]);
+
+    server.shutdown([conn]).await;
 }

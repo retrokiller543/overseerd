@@ -11,6 +11,8 @@
 
 #![cfg(feature = "client")]
 
+mod common;
+
 use serde::{Deserialize, Serialize};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf};
 
@@ -21,6 +23,8 @@ use overseerd::daemon::{
     handlers, service,
 };
 use overseerd::transport::{PeerInfo, StreamConnection, Transport};
+
+use common::{AbortOnDropTask, deadline};
 
 // ---------------------------------------------------------------------------
 // A service covering every return shape the client codegen must handle.
@@ -116,6 +120,29 @@ impl Calc {
 type ServerConn = StreamConnection<ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
 type Client = CalcClient<StreamClientTransport<WriteHalf<DuplexStream>>>;
 
+/// Owns the generated client and its checked daemon task.
+struct TestClient {
+    client: Option<Client>,
+    shutdown: overseerd::ShutdownHandle,
+    task: AbortOnDropTask<overseerd::daemon::Result<()>>,
+}
+
+impl TestClient {
+    fn client(&self) -> &Client {
+        self.client.as_ref().expect("test client is present")
+    }
+
+    async fn shutdown(mut self) {
+        self.shutdown.shutdown();
+        drop(self.client.take());
+
+        self.task
+            .join()
+            .await
+            .expect("duplex daemon stops without error");
+    }
+}
+
 /// A transport that yields exactly one pre-built connection, then never again.
 struct OnceTransport {
     conn: Option<ServerConn>,
@@ -135,7 +162,7 @@ impl Transport for OnceTransport {
 
 /// Builds the daemon, serves it over one half of a duplex pipe, and wraps the
 /// other half in a generated client.
-async fn start() -> Client {
+async fn start() -> TestClient {
     let (server_io, client_io) = tokio::io::duplex(64 * 1024);
     let (server_read, server_write) = tokio::io::split(server_io);
     let (client_read, client_write) = tokio::io::split(client_io);
@@ -145,17 +172,21 @@ async fn start() -> Client {
         .build()
         .await
         .expect("build daemon");
+    let shutdown = daemon.shutdown_handle();
     let server_conn = StreamConnection::new(server_read, server_write, PeerInfo { addr: None });
+    let task = AbortOnDropTask::spawn(
+        "duplex daemon",
+        daemon.serve(OnceTransport {
+            conn: Some(server_conn),
+        }),
+    );
+    let client = CalcClient::new(StreamClientTransport::new(client_read, client_write));
 
-    tokio::spawn(async move {
-        let _ = daemon
-            .serve(OnceTransport {
-                conn: Some(server_conn),
-            })
-            .await;
-    });
-
-    CalcClient::new(StreamClientTransport::new(client_read, client_write))
+    TestClient {
+        client: Some(client),
+        shutdown,
+        task,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -164,29 +195,48 @@ async fn start() -> Client {
 
 #[tokio::test]
 async fn unary_bare_value() {
-    let client = start().await;
+    let server = start().await;
 
-    assert_eq!(client.ping().await.expect("ping"), 1);
+    assert_eq!(
+        deadline("Calc.ping call", server.client().ping())
+            .await
+            .expect("ping"),
+        1
+    );
+
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn unary_result_ok() {
-    let client = start().await;
+    let server = start().await;
 
-    let sum = client.add(AddRequest { a: 2, b: 3 }).await.expect("add");
+    let sum = deadline(
+        "Calc.add call",
+        server.client().add(AddRequest { a: 2, b: 3 }),
+    )
+    .await
+    .expect("add");
 
     assert_eq!(sum, 5);
+
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn unary_result_err_decodes_body_type() {
-    let client = start().await;
+    let server = start().await;
 
     // `add` returns `Result<i32, CalcError>`, but the wire body is a
     // `CalcErrorBody`; the generated client types the error as `E::Body`, so the
     // raw bytes decode to the structured body. (Decoding the error body is the
     // caller's job — the framework's client makes no serialization assumption.)
-    match client.add(AddRequest { a: -1, b: 3 }).await {
+    match deadline(
+        "failing Calc.add call",
+        server.client().add(AddRequest { a: -1, b: 3 }),
+    )
+    .await
+    {
         Err(ClientError::Remote(err)) => {
             let body: CalcErrorBody = postcard::from_bytes(err.raw()).expect("decode body");
 
@@ -200,14 +250,28 @@ async fn unary_result_err_decodes_body_type() {
 
         other => panic!("expected remote error, got {other:?}"),
     }
+
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn unary_option_is_not_peeled() {
-    let client = start().await;
+    let server = start().await;
 
-    assert_eq!(client.maybe(true).await.expect("maybe"), Some(7));
-    assert_eq!(client.maybe(false).await.expect("maybe"), None);
+    assert_eq!(
+        deadline("present Calc.maybe call", server.client().maybe(true))
+            .await
+            .expect("maybe"),
+        Some(7)
+    );
+    assert_eq!(
+        deadline("absent Calc.maybe call", server.client().maybe(false))
+            .await
+            .expect("maybe"),
+        None
+    );
+
+    server.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,25 +280,34 @@ async fn unary_option_is_not_peeled() {
 
 #[tokio::test]
 async fn server_stream_collects_items() {
-    let client = start().await;
+    let server = start().await;
 
-    let mut stream = client.count(4u32).await.expect("count");
+    let mut stream = deadline("Calc.count call", server.client().count(4u32))
+        .await
+        .expect("count");
     let mut items = Vec::new();
 
-    while let Some(item) = stream.next().await {
+    while let Some(item) = deadline("Calc.count receive", stream.next()).await {
         items.push(item.expect("item"));
     }
 
     assert_eq!(items, vec![0, 1, 2, 3]);
+
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn server_stream_pre_stream_error_preserves_remote_body() {
-    let client = start().await;
+    let server = start().await;
 
-    let mut stream = client.fail_before_stream().await.expect("stream handle");
+    let mut stream = deadline(
+        "Calc.fail_before_stream call",
+        server.client().fail_before_stream(),
+    )
+    .await
+    .expect("stream handle");
 
-    match stream.next().await {
+    match deadline("Calc.fail_before_stream receive", stream.next()).await {
         Some(Err(ClientError::Remote(err))) => {
             let body: CalcErrorBody = postcard::from_bytes(err.raw()).expect("decode body");
 
@@ -249,41 +322,67 @@ async fn server_stream_pre_stream_error_preserves_remote_body() {
         other => panic!("expected remote stream error, got {other:?}"),
     }
 
-    assert!(stream.next().await.is_none());
+    assert!(
+        deadline("Calc.fail_before_stream end", stream.next())
+            .await
+            .is_none()
+    );
+
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn client_stream_sums_inputs() {
-    let client = start().await;
+    let server = start().await;
 
     // Client-streaming: hand the input stream, the single response comes straight
     // back, mirroring the daemon's `(stream) -> value` shape.
-    let total = client
-        .sum(futures::stream::iter([1u32, 2, 3, 4]))
-        .await
-        .expect("sum");
+    let total = deadline(
+        "Calc.sum call",
+        server.client().sum(futures::stream::iter([1u32, 2, 3, 4])),
+    )
+    .await
+    .expect("sum");
 
     assert_eq!(total, 10);
+
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn bidi_echoes_doubled() {
-    let client = start().await;
+    let server = start().await;
 
     // Symmetric bidi: hand it the input stream, read the response stream back.
-    let mut replies = client
-        .echo(futures::stream::iter([5u32, 7]))
-        .await
-        .expect("echo");
+    let mut replies = deadline(
+        "Calc.echo call",
+        server.client().echo(futures::stream::iter([5u32, 7])),
+    )
+    .await
+    .expect("echo");
 
-    assert_eq!(replies.next().await.expect("item").expect("ok"), 10);
-    assert_eq!(replies.next().await.expect("item").expect("ok"), 14);
-    assert!(replies.next().await.is_none());
+    assert_eq!(
+        deadline("first Calc.echo receive", replies.next())
+            .await
+            .expect("item")
+            .expect("ok"),
+        10
+    );
+    assert_eq!(
+        deadline("second Calc.echo receive", replies.next())
+            .await
+            .expect("item")
+            .expect("ok"),
+        14
+    );
+    assert!(deadline("Calc.echo end", replies.next()).await.is_none());
+
+    server.shutdown().await;
 }
 
 #[tokio::test]
 async fn bidi_channel_input_is_concurrent() {
-    let client = start().await;
+    let server = start().await;
 
     // The input stream is a channel the caller pushes into — their "sink". Sending
     // and receiving are independent, so the caller can drive cause-and-effect
@@ -292,16 +391,40 @@ async fn bidi_channel_input_is_concurrent() {
     let input = futures::stream::unfold(rx, |mut rx| async move {
         rx.recv().await.map(|item| (item, rx))
     });
-    let mut replies = client.echo(input).await.expect("echo");
+    let mut replies = deadline("channel Calc.echo call", server.client().echo(input))
+        .await
+        .expect("echo");
 
-    tx.send(3).await.unwrap();
-    assert_eq!(replies.next().await.expect("item").expect("ok"), 6);
+    deadline("first channel input send", tx.send(3))
+        .await
+        .expect("send first input");
+    assert_eq!(
+        deadline("first channel Calc.echo receive", replies.next())
+            .await
+            .expect("item")
+            .expect("ok"),
+        6
+    );
 
-    tx.send(10).await.unwrap();
-    assert_eq!(replies.next().await.expect("item").expect("ok"), 20);
+    deadline("second channel input send", tx.send(10))
+        .await
+        .expect("send second input");
+    assert_eq!(
+        deadline("second channel Calc.echo receive", replies.next())
+            .await
+            .expect("item")
+            .expect("ok"),
+        20
+    );
 
     drop(tx);
-    assert!(replies.next().await.is_none());
+    assert!(
+        deadline("channel Calc.echo end", replies.next())
+            .await
+            .is_none()
+    );
+
+    server.shutdown().await;
 }
 
 // ---------------------------------------------------------------------------
@@ -310,13 +433,18 @@ async fn bidi_channel_input_is_concurrent() {
 
 #[tokio::test]
 async fn concurrent_calls_multiplex() {
-    let client = start().await;
+    let server = start().await;
 
-    let (a, b) = tokio::join!(
-        client.add(AddRequest { a: 1, b: 1 }),
-        client.add(AddRequest { a: 10, b: 10 }),
-    );
+    let (a, b) = deadline("concurrent Calc.add calls", async {
+        tokio::join!(
+            server.client().add(AddRequest { a: 1, b: 1 }),
+            server.client().add(AddRequest { a: 10, b: 10 }),
+        )
+    })
+    .await;
 
     assert_eq!(a.expect("a"), 2);
     assert_eq!(b.expect("b"), 20);
+
+    server.shutdown().await;
 }

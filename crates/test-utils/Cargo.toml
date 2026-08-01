@@ -1,0 +1,17 @@
+[package]
+name = "overseerd-test-utils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+overseerd-app = { workspace = true }
+overseerd-config = { workspace = true }
+overseerd-dirs = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }

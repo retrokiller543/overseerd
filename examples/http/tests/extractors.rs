@@ -14,7 +14,7 @@ use overseerd::axum::axum::http::request::Parts;
 use overseerd::axum::client::{Multipart as ClientMultipart, ReqwestClient};
 use overseerd::axum::prelude::*;
 use overseerd::prelude::*;
-use tokio::net::TcpListener;
+use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
 
 /// A custom `FromRequestParts` guard: the kind of auth/tenant extractor the client generator must
 /// treat as server-only context and drop, so a guarded route still gets a client method. It reads an
@@ -192,50 +192,59 @@ impl Extras {
 
 #[tokio::test]
 async fn generated_client_covers_every_extractor() {
+    let environment = TestEnvironment::new("overseerd-http-extractors-");
     let app = app! {
         name: "extractors-test",
         protocol: overseerd::axum::AxumPlugin,
     }
+    .config_source(environment.config())
+    .directories(environment.directories())
     .build()
     .await
     .expect("app builds");
 
-    let listener = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    let shutdown = app.shutdown_handle();
-    let server = tokio::spawn(async move { app.serve(listener).await });
+    let server = TestServer::start_with_guard(app, environment).await;
+    let addr = server.address();
 
     let client = ExtrasClient::new(ReqwestClient::new(format!("http://{addr}")));
 
     // Custom guard dropped: the clean method takes no arguments (the guard is server-only), and the
     // server resolves the (absent) key to its default.
-    let who = client.whoami().await.expect("whoami call");
+    let who = deadline("whoami request", client.whoami())
+        .await
+        .expect("whoami call");
     assert_eq!(*who, "anonymous");
 
     // Guard-consumed path param (#61): the client method exists and takes `id` (a `String`, derived
     // from the route template) even though the handler has no `Path` arg — the guard reads `{id}`
     // internally. Before the fix this method was silently absent from the client.
-    let info = client
-        .tenant_info("acme".to_string())
-        .await
-        .expect("tenant_info call");
+    let info = deadline(
+        "tenant info request",
+        client.tenant_info("acme".to_string()),
+    )
+    .await
+    .expect("tenant_info call");
     assert_eq!(*info, "acme");
 
     // Two guard-consumed holes: both `id` and `child` are `String` params on the client method.
-    let child = client
-        .tenant_child("acme".to_string(), "widget".to_string())
-        .await
-        .expect("tenant_child call");
+    let child = deadline(
+        "tenant child request",
+        client.tenant_child("acme".to_string(), "widget".to_string()),
+    )
+    .await
+    .expect("tenant_child call");
     assert_eq!(*child, "acme/widget");
 
     // Typed query: the client URL-encodes `Search`, the server decodes it, and it round-trips.
-    let echoed = client
-        .search(Search {
+    let echoed = deadline(
+        "search request",
+        client.search(Search {
             q: "rust wasm".to_string(),
             limit: 25,
-        })
-        .await
-        .expect("search call");
+        }),
+    )
+    .await
+    .expect("search call");
     assert_eq!(
         *echoed,
         Search {
@@ -245,27 +254,32 @@ async fn generated_client_covers_every_extractor() {
     );
 
     // Untyped query: an `Option<String>` appended verbatim.
-    let raw = client
-        .raw_search(Some("a=1&b=2".to_string()))
-        .await
-        .expect("raw_search call");
+    let raw = deadline(
+        "raw search request",
+        client.raw_search(Some("a=1&b=2".to_string())),
+    )
+    .await
+    .expect("raw_search call");
     assert_eq!(*raw, "a=1&b=2");
 
-    let empty = client.raw_search(None).await.expect("raw_search none");
+    let empty = deadline("empty raw search request", client.raw_search(None))
+        .await
+        .expect("raw_search none");
     assert_eq!(*empty, "");
 
     // Raw byte body: `Vec<u8>` sent as octet-stream; the server reports its length.
-    let len = client
-        .bytes_len(vec![1u8, 2, 3, 4, 5])
+    let len = deadline("bytes request", client.bytes_len(vec![1u8, 2, 3, 4, 5]))
         .await
         .expect("bytes call");
     assert_eq!(*len, 5);
 
     // Raw form body: `Vec<u8>` under the form content type; the server echoes it as text.
-    let form = client
-        .raw_form(b"name=ferris&lang=rust".to_vec())
-        .await
-        .expect("raw_form call");
+    let form = deadline(
+        "raw form request",
+        client.raw_form(b"name=ferris&lang=rust".to_vec()),
+    )
+    .await
+    .expect("raw_form call");
     assert_eq!(*form, "name=ferris&lang=rust");
 
     // Multipart: build a text field + a file and send the encoded body; the server parses it back.
@@ -277,21 +291,25 @@ async fn generated_client_covers_every_extractor() {
         "text/plain".to_string(),
         b"multipart body bytes".to_vec(),
     );
-    let summary = client.upload(upload).await.expect("upload call");
+    let summary = deadline("multipart upload request", client.upload(upload))
+        .await
+        .expect("upload call");
     assert_eq!(*summary, "greeting::5,doc:note.txt:20");
 
     // All four input kinds on one route: path + typed query + JSON body + dropped guard.
-    let combo = client
-        .combo(
+    let combo = deadline(
+        "combo request",
+        client.combo(
             7,
             Search {
                 q: "combined".to_string(),
                 limit: 1,
             },
             Pair { a: 40, b: 2 },
-        )
-        .await
-        .expect("combo call");
+        ),
+    )
+    .await
+    .expect("combo call");
     assert_eq!(
         *combo,
         Combo {
@@ -306,10 +324,12 @@ async fn generated_client_covers_every_extractor() {
     // an `x-api-key` and the guard reads it and echoes it back.
     let mut per_call = HeaderMap::new();
     per_call.insert("x-api-key", HeaderValue::from_static("per-call-secret"));
-    let who = client
-        .whoami_with_headers(Some(per_call))
-        .await
-        .expect("whoami with per-call header");
+    let who = deadline(
+        "whoami per-call header request",
+        client.whoami_with_headers(Some(per_call)),
+    )
+    .await
+    .expect("whoami with per-call header");
     assert_eq!(*who, "per-call-secret");
 
     // Transport header provider: install a callback that stamps `x-api-key` on every request; the
@@ -320,18 +340,21 @@ async fn generated_client_covers_every_extractor() {
 
         headers
     });
-    let who = client.whoami().await.expect("whoami via provider");
+    let who = deadline("whoami provider request", client.whoami())
+        .await
+        .expect("whoami via provider");
     assert_eq!(*who, "from-provider");
 
     // Per-call headers still win over the provider on the same request.
     let mut per_call = HeaderMap::new();
     per_call.insert("x-api-key", HeaderValue::from_static("override"));
-    let who = client
-        .whoami_with_headers(Some(per_call))
-        .await
-        .expect("per-call overrides provider");
+    let who = deadline(
+        "whoami header override request",
+        client.whoami_with_headers(Some(per_call)),
+    )
+    .await
+    .expect("per-call overrides provider");
     assert_eq!(*who, "override");
 
-    shutdown.shutdown();
-    let _ = server.await;
+    server.shutdown().await;
 }

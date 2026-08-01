@@ -2,6 +2,8 @@
 //! waiting and `Shutdown` once a graceful stop is triggered.
 #![allow(dead_code)]
 
+mod common;
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -12,6 +14,8 @@ use overseerd::{ConfigManager, Shutdown, Startup, component, methods};
 use overseerd_app::{
     AppRegistry, AppRuntime, Plugin, Protocol, ProtocolPlugin, Serve, ShutdownSignal,
 };
+
+use common::{AbortOnDropTask, deadline};
 
 /// Records that its startup and shutdown hooks ran.
 #[component]
@@ -185,9 +189,7 @@ async fn startup_and_shutdown_hooks_fire() {
 
     assert_eq!(component.started(), 0, "not started before run");
 
-    let task = tokio::spawn(async move {
-        daemon.run().await.expect("run completes");
-    });
+    let mut task = AbortOnDropTask::spawn("lifecycle daemon", daemon.run());
 
     // Startup runs at the top of `run`, before it waits for a shutdown signal.
     let mut started = false;
@@ -205,7 +207,9 @@ async fn startup_and_shutdown_hooks_fire() {
     assert_eq!(component.stopped(), 0, "not stopped while running");
 
     shutdown.shutdown();
-    task.await.expect("run task joins");
+    task.join()
+        .await
+        .expect("lifecycle daemon stops without error");
 
     assert_eq!(
         component.stopped(),
@@ -238,7 +242,7 @@ async fn startup_failure_stops_later_hooks_and_only_shuts_down_started_component
         .get::<NeverStartedComponent>()
         .expect("later component built");
 
-    let result = daemon.run().await;
+    let result = deadline("startup failure cleanup", daemon.run()).await;
 
     assert!(result.is_err(), "startup failure is returned");
     assert_eq!(started.started(), 1, "first registered component started");
@@ -266,7 +270,7 @@ async fn later_startup_failure_preserves_cleanup_for_an_already_started_componen
         .get::<PartiallyStartedComponent>()
         .expect("component built");
 
-    let result = app.run().await;
+    let result = deadline("partial startup cleanup", app.run()).await;
 
     assert!(result.is_err());
     assert_eq!(component.startups(), 2, "both startup hooks ran in order");
@@ -325,9 +329,11 @@ async fn protocol_panic_still_runs_shutdown_hooks() {
         .get::<LifecycleComponent>()
         .expect("component built");
 
-    let result = std::panic::AssertUnwindSafe(app.serve(()))
-        .catch_unwind()
-        .await;
+    let result = deadline(
+        "protocol panic cleanup",
+        std::panic::AssertUnwindSafe(app.serve(())).catch_unwind(),
+    )
+    .await;
 
     assert!(result.is_err(), "protocol panic is resumed after cleanup");
     assert_eq!(component.started(), 1);

@@ -166,7 +166,9 @@ pub mod dirs {
 /// `Yaml`.
 #[cfg(not(target_family = "wasm"))]
 pub mod config {
-    pub use overseerd_config::{Dynamic, Format, FormatId, Toml};
+    pub use overseerd_config::{
+        Dynamic, EnvResolver, Format, FormatId, MapResolver, Resolver, ResolverChain, Toml,
+    };
 
     #[cfg(feature = "yaml")]
     pub use overseerd_config::Yaml;

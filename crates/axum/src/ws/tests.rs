@@ -10,6 +10,8 @@ use futures::StreamExt;
 use overseerd_app::AppRuntime;
 use overseerd_core::TypeDescriptor;
 use overseerd_di::ScopeContainer;
+#[cfg(feature = "tungstenite")]
+use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
 
 #[cfg(feature = "tungstenite")]
 use super::WsConnectionMeta;
@@ -53,7 +55,10 @@ impl WebsocketProtocol for TestProtocol {
 async fn old_signature_custom_protocol_mounts_without_adapter_methods() {
     let builds_before = TEST_PROTOCOL_BUILDS.load(Ordering::Relaxed);
     let app = crate::App::builder("old-signature-ws-test")
-        .config_source(overseerd_config::ConfigManager::<overseerd_config::Toml>::empty())
+        .config_source(
+            overseerd_config::ConfigManager::<overseerd_config::Toml>::empty()
+                .with_resolvers(overseerd_config::ResolverChain::empty()),
+        )
         .register_ws::<TestProtocol>("/ws")
         .build()
         .await
@@ -130,7 +135,10 @@ fn duplicate_descriptor(id: &'static str) -> WsControllerDescriptor {
 #[tokio::test]
 async fn duplicate_destinations_fail_before_custom_protocol_build() {
     let app = crate::App::builder("duplicate-ws-route-test")
-        .config_source(overseerd_config::ConfigManager::<overseerd_config::Toml>::empty())
+        .config_source(
+            overseerd_config::ConfigManager::<overseerd_config::Toml>::empty()
+                .with_resolvers(overseerd_config::ResolverChain::empty()),
+        )
         .build()
         .await
         .expect("test runtime builds");
@@ -249,38 +257,39 @@ impl WebsocketProtocol for RequiredSubprotocol {
 #[cfg(feature = "tungstenite")]
 #[tokio::test]
 async fn required_subprotocol_is_negotiated_and_seeded() {
+    let environment = TestEnvironment::new("overseerd-axum-ws-");
     let app = crate::App::builder("ws-subprotocol-test")
-        .config_source(overseerd_config::ConfigManager::<overseerd_config::Toml>::empty())
+        .config_source(environment.config())
+        .directories(environment.directories())
         .register_ws::<RequiredSubprotocol>("/ws")
         .build()
         .await
         .expect("subprotocol app builds");
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .expect("bind test listener");
-    let address = listener.local_addr().expect("listener address");
-    let shutdown = app.shutdown_handle();
-    let server = tokio::spawn(async move { app.serve(listener).await });
+    let server = TestServer::start_with_guard(app, environment).await;
+    let address = server.address();
     let url = format!("ws://{address}/ws");
 
-    let mut socket = tokio_tungstenite_wasm::connect_with_protocols(&url, &["other", "test.v1"])
-        .await
-        .expect("accepted subprotocol connects");
-    let message = socket
-        .next()
+    let mut socket = deadline(
+        "accepted subprotocol connect",
+        tokio_tungstenite_wasm::connect_with_protocols(&url, &["other", "test.v1"]),
+    )
+    .await
+    .expect("accepted subprotocol connects");
+    let message = deadline("selected subprotocol receive", socket.next())
         .await
         .expect("selected protocol message")
         .expect("valid selected protocol message");
 
     assert_eq!(message.into_text().expect("text frame"), "test.v1");
     assert!(
-        tokio_tungstenite_wasm::connect(&url).await.is_err(),
+        deadline(
+            "missing subprotocol rejection",
+            tokio_tungstenite_wasm::connect(&url),
+        )
+        .await
+        .is_err(),
         "required protocol rejects a client that offers none"
     );
 
-    shutdown.shutdown();
-    server
-        .await
-        .expect("server task joins")
-        .expect("server stops");
+    server.shutdown().await;
 }
