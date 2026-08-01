@@ -41,6 +41,9 @@ Run the complete policy locally with `just test`. Validate the nextest profiles 
 with `just test-config` after changing nextest configuration.
 Doctests remain an explicit command because nextest does not execute them.
 
+CI publishes the Linux and Windows JUnit reports as one `Test results` check. It shows unique test
+and cross-platform run counts, pass/fail/skip totals, duration, suite details, and failure annotations.
+
 ## Criterion benchmarks
 
 Criterion and its dependencies live in the excluded `benchmarks` workspace, so normal workspace
