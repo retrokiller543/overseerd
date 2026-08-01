@@ -361,6 +361,37 @@ jobs:
           path: target/nextest/ci-extended/junit.xml
           if-no-files-found: error
 
+  test_results:
+    name: Publish test results
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - critical_linux
+      - extended_linux
+      - critical_windows
+      - extended_windows
+    if: ${{ always() && !cancelled() && !startsWith(github.head_ref, 'release-plz-') }}
+    permissions:
+      actions: read
+      contents: read
+      checks: write
+    steps:
+      - name: Download JUnit reports
+        uses: actions/download-artifact@v5
+        with:
+          pattern: junit-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
+        with:
+          files: test-results/**/*.xml
+          check_name: Test results
+          comment_mode: off
+          check_run_annotations_branch: "*"
+          fail_on: test failures
+          action_fail: false
+          action_fail_on_inconclusive: true
+
   rust_doctests:
     name: Rust doctests
     runs-on: ubuntu-latest
