@@ -9,7 +9,7 @@ use overseerd_tooling_schema::{
 use semver::Version;
 use serde_json::json;
 
-use super::{write_explanation, write_explanation_with_presentation};
+use super::write_explanation;
 use crate::cli::ExplainFormat;
 
 #[test]
@@ -41,52 +41,29 @@ fn text_explanation_includes_generic_details_resolutions_and_cli_ownership() {
 }
 
 #[test]
-fn renderer_details_extend_text_but_not_explanation_json() {
-    let explanation = fixture();
-    let resource = explanation.resource.id.clone();
-    let presentation = overseerd_tooling_schema::renderer::RendererPresentation {
-        resources: vec![overseerd_tooling_schema::renderer::ResourcePresentation {
-            resource,
-            label: Some(String::from("rendered explanation")),
-            summary: Some(String::from("owner summary")),
-            details: std::collections::BTreeMap::from([(
-                String::from("route"),
-                String::from("GET /health"),
-            )]),
-            ..Default::default()
-        }],
-    };
-    let mut text = Vec::new();
-    let mut json = Vec::new();
+fn declarative_display_extends_text_explanation() {
+    let mut explanation = fixture();
 
-    write_explanation_with_presentation(
-        &explanation,
-        ExplainFormat::Text,
-        Some(&presentation),
-        false,
-        &mut text,
-    )
-    .expect("text explanation writes");
-    write_explanation_with_presentation(
-        &explanation,
-        ExplainFormat::Json,
-        Some(&presentation),
-        false,
-        &mut json,
-    )
-    .expect("JSON explanation writes");
+    explanation.resource.display = Some(overseerd_tooling_schema::ResourceDisplay {
+        label: Some(String::from("rendered explanation")),
+        group: Some(String::from("HTTP routes")),
+        summary: Some(String::from("owner summary")),
+        details: std::collections::BTreeMap::from([(
+            String::from("route"),
+            String::from("GET /health"),
+        )]),
+    });
 
-    let text = String::from_utf8(text).expect("text is UTF-8");
+    let mut output = Vec::new();
 
-    assert!(text.contains("name: rendered explanation"));
-    assert!(text.contains("Renderer Details"));
-    assert!(text.contains("route: GET /health"));
-    assert_eq!(
-        String::from_utf8(json).expect("JSON is UTF-8").trim_end(),
-        explanation
-            .to_canonical_json()
-            .expect("explanation emits canonical JSON")
-    );
+    write_explanation(&explanation, ExplainFormat::Text, false, &mut output)
+        .expect("explanation writes");
+
+    let output = String::from_utf8(output).expect("explanation is UTF-8");
+
+    assert!(output.contains("name: rendered explanation"));
+    assert!(output.contains("Display"));
+    assert!(output.contains("route: GET /health"));
 }
 
 #[test]
@@ -148,6 +125,7 @@ fn fixture() -> ResourceExplanation {
             id: String::from("component:worker"),
             kind: ResourceKind::Component,
             name: String::from("Worker"),
+            display: None,
             provenance: Some(Provenance {
                 owner: Some(String::from("plugin:worker")),
                 origin: Some(String::from("plugin-contribution")),

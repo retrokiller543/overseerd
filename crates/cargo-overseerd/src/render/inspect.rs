@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
-use overseerd_tooling_schema::renderer::RendererPresentation;
 use overseerd_tooling_schema::{CliArgument, CliCommand, Resource, ResourceKind, ToolingDocument};
 
 use crate::cli::InspectFilters;
@@ -18,21 +17,9 @@ use super::name::{
 };
 use filter::selected_resources;
 
-#[cfg(test)]
-fn write_inspection(
+pub(crate) fn write_inspection(
     document: &ToolingDocument,
     filters: &InspectFilters,
-    color: bool,
-    output: &mut dyn io::Write,
-) -> io::Result<()> {
-    write_inspection_with_presentation(document, filters, None, color, output)
-}
-
-/// Writes one inspection with optional validated owner-specific presentation hints.
-pub(crate) fn write_inspection_with_presentation(
-    document: &ToolingDocument,
-    filters: &InspectFilters,
-    presentation: Option<&RendererPresentation>,
     color: bool,
     output: &mut dyn io::Write,
 ) -> io::Result<()> {
@@ -77,9 +64,10 @@ pub(crate) fn write_inspection_with_presentation(
     }
 
     for resource in resources {
-        let rendered = presentation.and_then(|presentation| presentation.resource(&resource.id));
-        let name = rendered
-            .and_then(|presentation| presentation.label.as_deref())
+        let name = resource
+            .display
+            .as_ref()
+            .and_then(|display| display.label.as_deref())
             .unwrap_or(&resource.name);
 
         writeln!(
@@ -93,8 +81,8 @@ pub(crate) fn write_inspection_with_presentation(
         write_labels(&resource.labels, output)?;
         write_facets(&resource.facets, output, "    ")?;
 
-        if let Some(rendered) = rendered {
-            write_presentation(rendered, output)?;
+        if let Some(display) = &resource.display {
+            write_display(display, output)?;
         }
     }
 
@@ -152,32 +140,22 @@ pub(crate) fn write_inspection_with_presentation(
     output.flush()
 }
 
-pub(crate) fn selected_resource_ids(
-    document: &ToolingDocument,
-    filters: &InspectFilters,
-) -> Vec<String> {
-    selected_resources(document, filters)
-        .into_iter()
-        .map(|resource| resource.id.clone())
-        .collect()
-}
-
-fn write_presentation(
-    presentation: &overseerd_tooling_schema::renderer::ResourcePresentation,
+fn write_display(
+    display: &overseerd_tooling_schema::ResourceDisplay,
     output: &mut dyn io::Write,
 ) -> io::Result<()> {
-    if let Some(group) = &presentation.group {
-        writeln!(output, "    renderer group: {}", terminal_text(group))?;
+    if let Some(group) = &display.group {
+        writeln!(output, "    group: {}", terminal_text(group))?;
     }
 
-    if let Some(summary) = &presentation.summary {
-        writeln!(output, "    renderer summary: {}", terminal_text(summary))?;
+    if let Some(summary) = &display.summary {
+        writeln!(output, "    summary: {}", terminal_text(summary))?;
     }
 
-    for (name, value) in &presentation.details {
+    for (name, value) in &display.details {
         writeln!(
             output,
-            "    renderer {}: {}",
+            "    {}: {}",
             terminal_text(name),
             terminal_text(value)
         )?;

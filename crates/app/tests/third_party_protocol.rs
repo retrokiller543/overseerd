@@ -51,6 +51,14 @@ impl PreparedProtocol for Prepared {
 
         Ok(Runtime(Cell::new(2)))
     }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
+        contributions.display(overseerd_app::ResourceDisplay {
+            label: Some(String::from("Direct app test protocol")),
+            ..Default::default()
+        });
+    }
 }
 
 impl ProtocolRuntime for Runtime {

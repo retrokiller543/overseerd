@@ -125,6 +125,30 @@ async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() 
     }));
     assert_eq!(crate::components::database_builds(), 0);
     assert_eq!(crate::protocol::protocol_builds(), 0);
+    let rpc = document
+        .resources
+        .iter()
+        .find(|resource| resource.id == "protocol:homeledger/rpc")
+        .expect("Homeledger RPC protocol resource exists");
+    let route = document
+        .resources
+        .iter()
+        .find(|resource| resource.labels.get("kind").map(String::as_str) == Some("rpc-route"))
+        .expect("Homeledger RPC route resource exists");
+
+    assert_eq!(
+        rpc.display
+            .as_ref()
+            .and_then(|display| display.label.as_deref()),
+        Some("RPC")
+    );
+    assert_eq!(
+        route
+            .display
+            .as_ref()
+            .and_then(|display| display.label.as_deref()),
+        Some("unary LedgerService.record_transaction")
+    );
 
     let cli = document
         .cli

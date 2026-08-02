@@ -88,6 +88,8 @@ struct PreparedWsRegistration {
 pub struct PreparedAxum {
     controllers: Vec<ControllerDescriptor>,
     middleware: Vec<MiddlewareApplier>,
+    #[cfg(feature = "tooling")]
+    base_prefix: String,
     #[cfg(feature = "ws")]
     ws_registrations: Vec<PreparedWsRegistration>,
 }
@@ -201,6 +203,8 @@ impl ProtocolDefinition for Axum {
         Ok(PreparedAxum {
             controllers: self.controllers,
             middleware: self.middleware,
+            #[cfg(feature = "tooling")]
+            base_prefix,
             #[cfg(feature = "ws")]
             ws_registrations,
         })
@@ -358,7 +362,25 @@ impl PreparedProtocol for PreparedAxum {
     fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
         use std::collections::BTreeMap;
 
-        use overseerd_app::{ToolingEndpoint, ToolingRelationshipKind};
+        use overseerd_app::{ResourceDisplay, ToolingEndpoint, ToolingRelationshipKind};
+
+        contributions.display(ResourceDisplay {
+            label: Some(String::from("Axum HTTP")),
+            group: Some(String::from("Protocols")),
+            summary: Some(format!(
+                "{} controllers, {} middleware layers",
+                self.controllers.len(),
+                self.middleware.len()
+            )),
+            details: BTreeMap::from([(
+                String::from("base-path"),
+                if self.base_prefix.is_empty() {
+                    String::from("/")
+                } else {
+                    self.base_prefix.clone()
+                },
+            )]),
+        });
 
         contributions.facet(
             "summary",
@@ -399,11 +421,60 @@ impl PreparedProtocol for PreparedAxum {
                     ),
                 ]),
             );
+            contributions.resource_display(
+                &id,
+                ResourceDisplay {
+                    label: Some(controller.name.to_string()),
+                    group: Some(String::from("HTTP controllers")),
+                    summary: Some(format!("mounted at {}", controller.base)),
+                    details: BTreeMap::from([
+                        (String::from("base-path"), controller.base.to_string()),
+                        (
+                            String::from("rust-type"),
+                            (controller.ty.type_name)().to_string(),
+                        ),
+                    ]),
+                },
+            );
             contributions.relationship(
                 ToolingRelationshipKind::Contains,
                 ToolingEndpoint::Owner,
                 ToolingEndpoint::Resource(&id),
             );
+
+            for route in (controller.routes)() {
+                let route_id = format!(
+                    "route/{}/{}/{}",
+                    controller.id,
+                    route.method.to_ascii_lowercase(),
+                    route.handler
+                );
+                let path = join_http_paths(&self.base_prefix, controller.base, route.path);
+
+                contributions.resource_with_labels(
+                    &route_id,
+                    route.handler,
+                    BTreeMap::from([(String::from("kind"), String::from("http-route"))]),
+                );
+                contributions.resource_display(
+                    &route_id,
+                    ResourceDisplay {
+                        label: Some(format!("{} {path}", route.method)),
+                        group: Some(format!("HTTP · {}", controller.name)),
+                        summary: Some(format!("handler {}", route.handler)),
+                        details: BTreeMap::from([
+                            (String::from("handler"), route.handler.to_string()),
+                            (String::from("method"), route.method.to_string()),
+                            (String::from("path"), path),
+                        ]),
+                    },
+                );
+                contributions.relationship(
+                    ToolingRelationshipKind::Contains,
+                    ToolingEndpoint::Resource(&id),
+                    ToolingEndpoint::Resource(&route_id),
+                );
+            }
         }
 
         #[cfg(feature = "ws")]
@@ -430,12 +501,42 @@ impl PreparedProtocol for PreparedAxum {
                     ),
                 ]),
             );
+            contributions.resource_display(
+                &id,
+                ResourceDisplay {
+                    label: Some(format!("WebSocket {}", endpoint.protocol_name)),
+                    group: Some(String::from("WebSocket endpoints")),
+                    summary: Some(format!("mounted at {}", endpoint.path)),
+                    details: BTreeMap::from([
+                        (String::from("path"), endpoint.path.clone()),
+                        (
+                            String::from("controllers"),
+                            endpoint.controllers.len().to_string(),
+                        ),
+                    ]),
+                },
+            );
             contributions.relationship(
                 ToolingRelationshipKind::Contains,
                 ToolingEndpoint::Owner,
                 ToolingEndpoint::Resource(&id),
             );
         }
+    }
+}
+
+#[cfg(feature = "tooling")]
+fn join_http_paths(global: &str, controller: &str, route: &str) -> String {
+    let segments = [global, controller, route]
+        .into_iter()
+        .flat_map(|path| path.split('/'))
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+
+    if segments.is_empty() {
+        String::from("/")
+    } else {
+        format!("/{}", segments.join("/"))
     }
 }
 

@@ -71,7 +71,9 @@ pub use openapi::{
 };
 
 #[cfg(not(target_family = "wasm"))]
-pub use controller::{CONTROLLERS, Controller, ControllerDescriptor, ControllerRoute};
+pub use controller::{
+    CONTROLLERS, Controller, ControllerDescriptor, ControllerRoute, HttpRouteDescriptor,
+};
 #[cfg(not(target_family = "wasm"))]
 pub use error::{Error, Result};
 /// The `utoipa` crate, re-exported so `#[dto]`/`#[handlers]` generated OpenAPI code names its

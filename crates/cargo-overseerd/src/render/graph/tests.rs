@@ -5,7 +5,7 @@ use overseerd_tooling_schema::{
 };
 use semver::Version;
 
-use super::{write_graph, write_graph_with_presentation};
+use super::write_graph;
 use crate::cli::GraphFormat;
 
 #[test]
@@ -35,46 +35,18 @@ fn every_graph_format_is_deterministic_and_machine_formats_have_no_ansi() {
 }
 
 #[test]
-fn renderer_labels_apply_only_to_text_graphs() {
-    let view = fixture();
-    let resource = view.nodes[0].id.clone();
-    let presentation = overseerd_tooling_schema::renderer::RendererPresentation {
-        resources: vec![overseerd_tooling_schema::renderer::ResourcePresentation {
-            resource: resource.clone(),
-            label: Some(String::from("rendered graph label")),
-            ..Default::default()
-        }],
-    };
-    let mut text = Vec::new();
-    let mut json = Vec::new();
+fn declarative_display_labels_text_graph_nodes() {
+    let mut view = fixture();
 
-    write_graph_with_presentation(
-        &view,
-        GraphFormat::Text,
-        Some(&presentation),
-        false,
-        &mut text,
-    )
-    .expect("text graph writes");
-    write_graph_with_presentation(
-        &view,
-        GraphFormat::Json,
-        Some(&presentation),
-        false,
-        &mut json,
-    )
-    .expect("JSON graph writes");
+    view.nodes[0].display = Some(overseerd_tooling_schema::ResourceDisplay {
+        label: Some(String::from("rendered graph label")),
+        ..Default::default()
+    });
 
-    assert!(
-        String::from_utf8(text)
-            .expect("text is UTF-8")
-            .contains("rendered graph label")
-    );
-    assert_eq!(
-        String::from_utf8(json).expect("JSON is UTF-8").trim_end(),
-        view.to_canonical_json()
-            .expect("graph emits canonical JSON")
-    );
+    let output = render(&view, GraphFormat::Text, false);
+
+    assert!(output.contains("rendered graph label"));
+    assert!(output.contains(&super::terminal_text(&view.nodes[0].id)));
 }
 
 #[test]

@@ -7,9 +7,48 @@ use super::{
     BinaryTargetIdentity, CliArgument, CliCardinality, CliCommand, CliMetadata, CliOwner,
     CliProvider, CliProviderKind, Diagnostic, DiagnosticSeverity, DocumentIdentity, Facet,
     PackageIdentity, ProbeEnvelope, ProbeFailure, ProbeOutcome, ProbeValidationError, Provenance,
-    Relationship, RelationshipKind, Resource, ResourceKind, SourceLocation, TOOLING_SCHEMA_VERSION,
-    ToolingDocument, ValidationError, ValidationResult,
+    Relationship, RelationshipKind, Resource, ResourceDisplay, ResourceKind, SourceLocation,
+    TOOLING_SCHEMA_VERSION, ToolingDocument, ValidationError, ValidationResult,
 };
+
+#[test]
+fn declarative_resource_display_round_trips_and_validates_text() {
+    let mut document = fixture();
+    let resource = document
+        .resources
+        .first_mut()
+        .expect("fixture has a resource");
+
+    resource.display = Some(ResourceDisplay {
+        label: Some(String::from("Human label")),
+        group: Some(String::from("Protocol resources")),
+        summary: Some(String::from("Human summary")),
+        details: BTreeMap::from([(String::from("method"), String::from("GET"))]),
+    });
+
+    let json = document
+        .to_canonical_json()
+        .expect("display document emits");
+    let decoded: ToolingDocument = serde_json::from_str(&json).expect("display document decodes");
+
+    decoded
+        .validate()
+        .expect("decoded display document validates");
+
+    document.canonicalize();
+
+    assert_eq!(decoded, document);
+
+    document.resources[0].display = Some(ResourceDisplay {
+        label: Some(String::from("  ")),
+        ..ResourceDisplay::default()
+    });
+
+    assert!(matches!(
+        document.validate(),
+        Err(ValidationError::BlankResourceDisplayText { .. })
+    ));
+}
 
 fn fixture() -> ToolingDocument {
     let mut document = ToolingDocument::new(

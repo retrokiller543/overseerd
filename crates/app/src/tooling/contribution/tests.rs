@@ -39,6 +39,10 @@ fn rejects_reserved_duplicate_and_unknown_owner_local_resources() {
 fn owner_qualification_is_automatic_for_all_generic_endpoints() {
     let mut contributions = ToolingContributions::new(String::from("protocol:third-party/test"));
 
+    contributions.display(ResourceDisplay {
+        label: Some(String::from("Third-party protocol")),
+        ..ResourceDisplay::default()
+    });
     contributions.resource("transport", "Transport");
     contributions.relationship(
         ToolingRelationshipKind::Contains,
@@ -59,6 +63,71 @@ fn owner_qualification_is_automatic_for_all_generic_endpoints() {
         contributions.relationships[0].to,
         "protocol:third-party/test/tooling/transport"
     );
+}
+
+#[test]
+fn protocol_display_is_required_and_resource_display_is_owner_local() {
+    let missing = ToolingContributions::new(String::from("protocol:third-party/missing"));
+
+    assert!(matches!(
+        missing.finish(),
+        Err(ToolingContributionError::MissingProtocolDisplay { .. })
+    ));
+
+    let mut contributions = ToolingContributions::new(String::from("protocol:third-party/test"));
+
+    contributions.display(ResourceDisplay {
+        label: Some(String::from("Third-party protocol")),
+        ..ResourceDisplay::default()
+    });
+    contributions.resource("transport", "Transport");
+    contributions.resource_display(
+        "transport",
+        ResourceDisplay {
+            label: Some(String::from("HTTP transport")),
+            summary: Some(String::from("Serves HTTP requests")),
+            ..ResourceDisplay::default()
+        },
+    );
+
+    let contributions = contributions.finish().expect("metadata validates");
+
+    assert_eq!(
+        contributions
+            .owner_display
+            .as_ref()
+            .and_then(|display| display.label.as_deref()),
+        Some("Third-party protocol")
+    );
+    assert_eq!(
+        contributions.resources[0]
+            .display
+            .as_ref()
+            .and_then(|display| display.label.as_deref()),
+        Some("HTTP transport")
+    );
+}
+
+#[test]
+fn plugins_may_omit_display_but_invalid_declarations_fail() {
+    ToolingContributions::new(String::from("plugin:third-party/test"))
+        .finish()
+        .expect("plugin display is optional");
+
+    let mut unknown = ToolingContributions::new(String::from("plugin:third-party/test"));
+
+    unknown.resource_display(
+        "missing",
+        ResourceDisplay {
+            label: Some(String::from("Missing")),
+            ..ResourceDisplay::default()
+        },
+    );
+
+    assert!(matches!(
+        unknown.finish(),
+        Err(ToolingContributionError::UnknownEndpoint { .. })
+    ));
 }
 
 #[test]

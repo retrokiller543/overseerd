@@ -125,7 +125,23 @@ impl PreparedProtocol for PreparedRpc {
     fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
         use std::collections::BTreeMap;
 
-        use overseerd_app::{ToolingEndpoint, ToolingRelationshipKind};
+        use overseerd_app::{ResourceDisplay, ToolingEndpoint, ToolingRelationshipKind};
+
+        let route_count = self
+            .resolved_services
+            .iter()
+            .map(|service| service.rpcs.len())
+            .sum::<usize>();
+
+        contributions.display(ResourceDisplay {
+            label: Some(String::from("RPC")),
+            group: Some(String::from("Protocols")),
+            summary: Some(format!(
+                "{} services, {route_count} operations",
+                self.resolved_services.len()
+            )),
+            details: BTreeMap::from([(String::from("middleware"), self.layers.len().to_string())]),
+        });
 
         contributions.facet(
             "summary",
@@ -162,6 +178,28 @@ impl PreparedProtocol for PreparedRpc {
                     (String::from("route-count"), service.rpcs.len().to_string()),
                 ]),
             );
+            contributions.resource_display(
+                &service_id,
+                ResourceDisplay {
+                    label: Some(service.descriptor.name.to_string()),
+                    group: Some(String::from("RPC services")),
+                    summary: Some(format!("{} operations", service.rpcs.len())),
+                    details: BTreeMap::from([
+                        (
+                            String::from("rust-type"),
+                            (service.descriptor.ty.type_name)().to_string(),
+                        ),
+                        (
+                            String::from("version"),
+                            service
+                                .descriptor
+                                .version
+                                .unwrap_or("unversioned")
+                                .to_string(),
+                        ),
+                    ]),
+                },
+            );
             contributions.relationship(
                 ToolingRelationshipKind::Contains,
                 ToolingEndpoint::Owner,
@@ -174,13 +212,48 @@ impl PreparedProtocol for PreparedRpc {
                 contributions.resource_with_labels(
                     &rpc_id,
                     rpc.name,
-                    BTreeMap::from([
-                        (String::from("kind"), String::from("rpc-route")),
-                        (
-                            String::from("operation"),
-                            operation_kind(rpc.operation).to_string(),
-                        ),
-                    ]),
+                    BTreeMap::from([(String::from("kind"), String::from("rpc-route"))]),
+                );
+                let operation = operation_kind(rpc.operation);
+                let parameters = rpc
+                    .parameters
+                    .iter()
+                    .map(|parameter| format!("{}: {}", parameter.name, (parameter.ty.type_name)()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let parameter_summary = if parameters.is_empty() {
+                    String::from("none")
+                } else {
+                    parameters.clone()
+                };
+
+                contributions.resource_display(
+                    &rpc_id,
+                    ResourceDisplay {
+                        label: Some(format!(
+                            "{operation} {}.{}",
+                            service.descriptor.name, rpc.name
+                        )),
+                        group: Some(format!("RPC · {}", service.descriptor.name)),
+                        summary: Some(format!(
+                            "{} → {}",
+                            parameter_summary,
+                            (rpc.output.type_name)()
+                        )),
+                        details: BTreeMap::from([
+                            (String::from("operation"), operation.to_string()),
+                            (
+                                String::from("parameters"),
+                                if parameters.is_empty() {
+                                    String::from("none")
+                                } else {
+                                    parameters
+                                },
+                            ),
+                            (String::from("output"), (rpc.output.type_name)().to_string()),
+                        ]),
+                    },
                 );
                 contributions.relationship(
                     ToolingRelationshipKind::Contains,

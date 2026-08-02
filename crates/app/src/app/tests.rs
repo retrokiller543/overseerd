@@ -159,6 +159,14 @@ impl PreparedProtocol for PreparedBoundaryProtocol {
 
         Ok(BoundaryRuntime)
     }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut crate::ToolingContributions) {
+        contributions.display(crate::ResourceDisplay {
+            label: Some(String::from("Boundary test protocol")),
+            ..Default::default()
+        });
+    }
 }
 
 #[tokio::test]

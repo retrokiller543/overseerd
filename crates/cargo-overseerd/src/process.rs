@@ -3,10 +3,9 @@ use std::process::{Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use command_group::CommandGroup as _;
-use thiserror::Error;
 
 const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const CAPTURE_DRAIN_IDLE_LIMIT: Duration = Duration::from_millis(100);
@@ -58,20 +57,14 @@ pub(crate) struct ProcessOutput {
     pub(crate) stdout_truncated: bool,
     pub(crate) stderr_truncated: bool,
     pub(crate) cancelled: bool,
-    pub(crate) timed_out: bool,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub(crate) enum ProcessExecutionError {
-    #[error("failed to spawn process")]
     Spawn(std::io::Error),
-    #[error("failed while waiting for process")]
     Wait(std::io::Error),
-    #[error("failed to terminate process group")]
     Kill(std::io::Error),
-    #[error("failed to capture process output")]
     Capture(std::io::Error),
-    #[error("process output capture thread panicked")]
     CapturePanic,
 }
 
@@ -97,79 +90,7 @@ pub(crate) fn execute_with_stderr(
         stdout_limit,
         stderr_limit,
         mirror_stderr.then_some(MirrorOutput::Stderr),
-        None,
     )
-}
-
-pub(crate) fn execute_silent_with_timeout(
-    command: &mut Command,
-    cancellation: &CancellationToken,
-    timeout: Duration,
-) -> Result<ProcessOutput, ProcessExecutionError> {
-    let mut cancelled = false;
-    let mut timed_out = false;
-
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-
-    if cancellation.is_cancelled() {
-        return Ok(ProcessOutput {
-            status: ProcessStatus {
-                success: false,
-                code: None,
-            },
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-            stdout_truncated: false,
-            stderr_truncated: false,
-            cancelled: true,
-            timed_out: false,
-        });
-    }
-
-    let started = Instant::now();
-    let mut child = command
-        .group_spawn()
-        .map_err(ProcessExecutionError::Spawn)?;
-    let status = loop {
-        if cancellation.is_cancelled() {
-            cancelled = true;
-
-            break terminate_and_wait(&mut child)?;
-        }
-
-        if started.elapsed() >= timeout {
-            timed_out = true;
-
-            break terminate_and_wait(&mut child)?;
-        }
-
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                terminate_group(&mut child);
-
-                break status;
-            }
-            Ok(None) => std::thread::sleep(PROCESS_POLL_INTERVAL),
-            Err(error) => {
-                terminate_group(&mut child);
-
-                return Err(ProcessExecutionError::Wait(error));
-            }
-        }
-    };
-
-    Ok(ProcessOutput {
-        status: status.into(),
-        stdout: Vec::new(),
-        stderr: Vec::new(),
-        stdout_truncated: false,
-        stderr_truncated: false,
-        cancelled,
-        timed_out,
-    })
 }
 
 #[cfg(all(test, unix))]
@@ -186,7 +107,6 @@ pub(crate) fn execute_with_mirror_writer(
         stdout_limit,
         stderr_limit,
         Some(MirrorOutput::Writer(writer)),
-        None,
     )
 }
 
@@ -196,11 +116,9 @@ fn execute_with_mirror(
     stdout_limit: usize,
     stderr_limit: usize,
     mirror_stderr: Option<MirrorOutput>,
-    timeout: Option<Duration>,
 ) -> Result<ProcessOutput, ProcessExecutionError> {
     let capture_complete = Arc::new(AtomicBool::new(false));
     let mut cancelled = false;
-    let mut timed_out = false;
 
     command
         .stdin(Stdio::null())
@@ -218,11 +136,9 @@ fn execute_with_mirror(
             stdout_truncated: false,
             stderr_truncated: false,
             cancelled: true,
-            timed_out: false,
         });
     }
 
-    let started = Instant::now();
     let mut child = command
         .group_spawn()
         .map_err(ProcessExecutionError::Spawn)?;
@@ -250,22 +166,6 @@ fn execute_with_mirror(
     let monitored = loop {
         if cancellation.is_cancelled() {
             cancelled = true;
-
-            match child.kill() {
-                Ok(()) => break child.wait().map_err(ProcessExecutionError::Wait),
-                Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
-                    break child.wait().map_err(ProcessExecutionError::Wait);
-                }
-                Err(error) => {
-                    terminate_group(&mut child);
-
-                    break Err(ProcessExecutionError::Kill(error));
-                }
-            }
-        }
-
-        if timeout.is_some_and(|timeout| started.elapsed() >= timeout) {
-            timed_out = true;
 
             match child.kill() {
                 Ok(()) => break child.wait().map_err(ProcessExecutionError::Wait),
@@ -313,7 +213,6 @@ fn execute_with_mirror(
         stdout_truncated: stdout.truncated,
         stderr_truncated: stderr.truncated,
         cancelled,
-        timed_out,
     })
 }
 
@@ -328,22 +227,6 @@ fn terminate_group(child: &mut command_group::GroupChild) {
     }
 
     let _ = child.wait();
-}
-
-fn terminate_and_wait(
-    child: &mut command_group::GroupChild,
-) -> Result<ExitStatus, ProcessExecutionError> {
-    match child.kill() {
-        Ok(()) => child.wait().map_err(ProcessExecutionError::Wait),
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
-            child.wait().map_err(ProcessExecutionError::Wait)
-        }
-        Err(error) => {
-            terminate_group(child);
-
-            Err(ProcessExecutionError::Kill(error))
-        }
-    }
 }
 
 struct CapturedOutput {

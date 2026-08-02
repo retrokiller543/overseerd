@@ -19,7 +19,23 @@ use overseerd_core::{OverseerdDescriptor, TypeDescriptor};
 /// the builder so it *can* be an `OverseerdDescriptor` and thus a `DescriptorFor<C, ControllerRoute<C>>`
 /// bucket element on the `inventory` backend. `Copy` is manual (a naive derive would wrongly demand
 /// `C: Copy`); the wrapped fn pointer is always `Copy`.
-pub struct ControllerRoute<C>(pub fn(Arc<C>, &AppRuntime) -> axum::Router);
+pub struct ControllerRoute<C> {
+    /// Builds this handlers block's router.
+    pub build: fn(Arc<C>, &AppRuntime) -> axum::Router,
+    /// Static routes retained without constructing runtime state.
+    pub routes: &'static [HttpRouteDescriptor],
+}
+
+/// Static HTTP method/path/handler metadata retained during preparation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HttpRouteDescriptor {
+    /// Rust handler method name.
+    pub handler: &'static str,
+    /// Uppercase HTTP method.
+    pub method: &'static str,
+    /// Controller-relative path.
+    pub path: &'static str,
+}
 
 impl<C> Clone for ControllerRoute<C> {
     fn clone(&self) -> Self {
@@ -53,6 +69,8 @@ pub struct ControllerDescriptor {
 
     /// Builds this controller's routes, with full paths already joined onto [`base`](Self::base).
     pub router: fn(&AppRuntime) -> axum::Router,
+    /// Returns every static HTTP route declaration for this controller.
+    pub routes: fn() -> Vec<HttpRouteDescriptor>,
 }
 
 /// The link-time slice every `#[controller]` registers into, mirroring the RPC `SERVICES`
@@ -72,4 +90,9 @@ pub trait Controller {
     /// Builds this controller's [`axum::Router`], resolving the controller singleton from
     /// the runtime and capturing it in the route handlers.
     fn router(runtime: &AppRuntime) -> axum::Router;
+
+    /// Returns static HTTP route groups without constructing runtime state.
+    fn routes() -> Vec<ControllerRoute<Self>>
+    where
+        Self: Sized;
 }

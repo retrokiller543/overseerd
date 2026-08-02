@@ -14,11 +14,8 @@ mod name;
 
 pub(crate) use detail::{terminal_text, write_diagnostics};
 pub(crate) use explain::write_explanation;
-pub(crate) use explain::write_explanation_with_presentation;
 pub(crate) use graph::write_graph;
-pub(crate) use graph::write_graph_with_presentation;
-pub(crate) use inspect::selected_resource_ids as selected_inspection_resource_ids;
-pub(crate) use inspect::write_inspection_with_presentation;
+pub(crate) use inspect::write_inspection;
 
 pub(crate) fn write_report(
     report: &CommandReport,

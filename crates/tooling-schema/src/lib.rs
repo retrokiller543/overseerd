@@ -10,8 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-pub mod renderer;
-
 /// JSON value used by opaque protocol and plugin facets.
 pub use serde_json::Value as JsonValue;
 
@@ -577,6 +575,33 @@ pub enum ResourceKind {
     PluginSlot,
 }
 
+/// Declarative owner-provided presentation for one resource.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResourceDisplay {
+    /// Optional compact human-facing label.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Optional owner-defined visual category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Optional one-line description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// Deterministically keyed human-facing facts.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub details: BTreeMap<String, String>,
+}
+
+impl ResourceDisplay {
+    /// Returns whether this declaration contains no presentation information.
+    pub fn is_empty(&self) -> bool {
+        self.label.is_none()
+            && self.group.is_none()
+            && self.summary.is_none()
+            && self.details.is_empty()
+    }
+}
+
 /// One protocol-neutral inspectable resource.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Resource {
@@ -586,6 +611,9 @@ pub struct Resource {
     pub kind: ResourceKind,
     /// Human-readable name.
     pub name: String,
+    /// Declarative human presentation supplied by the resource owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<ResourceDisplay>,
     /// Stable declaration provenance, when available.
     #[serde(default)]
     pub provenance: Option<Provenance>,
@@ -603,6 +631,7 @@ impl Default for Resource {
             id: String::new(),
             kind: ResourceKind::Application,
             name: String::new(),
+            display: None,
             provenance: None,
             labels: BTreeMap::new(),
             facets: BTreeMap::new(),
@@ -1076,6 +1105,7 @@ impl ToolingDocument {
             }
 
             resources.insert(resource.id.as_str(), resource);
+            validate_resource_display(resource)?;
             validate_resource_facets(resource)?;
         }
 
@@ -1341,6 +1371,24 @@ pub enum ValidationError {
         /// Resource identity.
         id: String,
     },
+    /// A declarative resource display contains no presentation information.
+    #[error("tooling resource '{id}' has an empty display declaration")]
+    EmptyResourceDisplay {
+        /// Resource identity.
+        id: String,
+    },
+    /// A declarative resource display contains blank text.
+    #[error("tooling resource '{id}' has blank display text")]
+    BlankResourceDisplayText {
+        /// Resource identity.
+        id: String,
+    },
+    /// A declarative resource display contains an oversized text value.
+    #[error("tooling resource '{id}' has display text exceeding 16384 bytes")]
+    ResourceDisplayTextTooLarge {
+        /// Resource identity.
+        id: String,
+    },
     /// Two resources use the same stable identity.
     #[error("tooling document contains duplicate resource '{id}'")]
     DuplicateResource {
@@ -1597,6 +1645,49 @@ fn validate_provenance(
 
     if owner == resource.id && !allowed_provenance_self_owner(&resource.kind) {
         return Err(ValidationError::SelfOwnedResource {
+            id: resource.id.clone(),
+        });
+    }
+
+    Ok(())
+}
+
+fn validate_resource_display(resource: &Resource) -> Result<(), ValidationError> {
+    const MAX_TEXT_BYTES: usize = 16 * 1024;
+
+    let Some(display) = &resource.display else {
+        return Ok(());
+    };
+
+    if display.is_empty() {
+        return Err(ValidationError::EmptyResourceDisplay {
+            id: resource.id.clone(),
+        });
+    }
+
+    let optional = display
+        .label
+        .iter()
+        .chain(&display.group)
+        .chain(&display.summary);
+
+    if optional.clone().any(|value| is_blank(value))
+        || display
+            .details
+            .iter()
+            .any(|(name, value)| is_blank(name) || is_blank(value))
+    {
+        return Err(ValidationError::BlankResourceDisplayText {
+            id: resource.id.clone(),
+        });
+    }
+
+    if optional
+        .chain(display.details.keys())
+        .chain(display.details.values())
+        .any(|value| value.len() > MAX_TEXT_BYTES)
+    {
+        return Err(ValidationError::ResourceDisplayTextTooLarge {
             id: resource.id.clone(),
         });
     }

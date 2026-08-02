@@ -315,6 +315,14 @@ impl PreparedProtocol for PreparedPanickingProtocol {
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
         Ok(PanickingRuntime)
     }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
+        contributions.display(overseerd_app::ResourceDisplay {
+            label: Some(String::from("Panicking test protocol")),
+            ..Default::default()
+        });
+    }
 }
 
 impl ProtocolRuntime for PanickingRuntime {

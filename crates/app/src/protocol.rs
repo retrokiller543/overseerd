@@ -66,7 +66,7 @@ pub trait PreparedProtocol: Send + 'static {
 
     /// Describes stable protocol-owned facts retained by this prepared state.
     #[cfg(feature = "tooling")]
-    fn tooling(&self, _contributions: &mut crate::ToolingContributions) {}
+    fn tooling(&self, contributions: &mut crate::ToolingContributions);
 }
 
 /// Mutable application state available for protocol contributions before validation.
@@ -207,6 +207,15 @@ impl PreparedProtocol for () {
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
         Ok(())
+    }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut crate::ToolingContributions) {
+        contributions.display(crate::ResourceDisplay {
+            label: Some(String::from("No protocol")),
+            summary: Some(String::from("Application has no serving protocol")),
+            ..crate::ResourceDisplay::default()
+        });
     }
 }
 

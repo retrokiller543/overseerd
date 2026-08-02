@@ -285,7 +285,7 @@ impl<T: ComponentExt> AxumRouter<T> {
                     let mut router = #axum::Router::new();
 
                     for group in #route_iter {
-                        router = router.merge((group.0)(::std::sync::Arc::clone(&svc), runtime));
+                        router = router.merge((group.build)(::std::sync::Arc::clone(&svc), runtime));
                     }
 
                     #(#middleware_tokens)*
@@ -295,6 +295,10 @@ impl<T: ComponentExt> AxumRouter<T> {
                     } else {
                         #axum::Router::new().nest(#base, router)
                     }
+                }
+
+                fn routes() -> ::std::vec::Vec<#controller_route<#ident>> {
+                    #route_iter.collect()
                 }
             }
 
@@ -306,6 +310,12 @@ impl<T: ComponentExt> AxumRouter<T> {
                         ty: #type_descriptor::of::<#ident>(#type_name),
                         base: #base,
                         router: <#ident as #controller_trait>::router,
+                        routes: || {
+                            <#ident as #controller_trait>::routes()
+                                .into_iter()
+                                .flat_map(|group| group.routes.iter().copied())
+                                .collect()
+                        },
                     };
 
                 impl #descriptor_trait<#controller_descriptor> for #ident {

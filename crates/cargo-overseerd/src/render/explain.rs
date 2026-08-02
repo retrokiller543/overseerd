@@ -1,7 +1,6 @@
 use std::io;
 
 use cargo_overseerd::ResourceExplanation;
-use overseerd_tooling_schema::renderer::RendererPresentation;
 
 use crate::cli::ExplainFormat;
 
@@ -17,19 +16,8 @@ pub(crate) fn write_explanation(
     color: bool,
     output: &mut dyn io::Write,
 ) -> io::Result<()> {
-    write_explanation_with_presentation(explanation, format, None, color, output)
-}
-
-/// Writes one explanation with optional validated owner-specific detail fields.
-pub(crate) fn write_explanation_with_presentation(
-    explanation: &ResourceExplanation,
-    format: ExplainFormat,
-    presentation: Option<&RendererPresentation>,
-    color: bool,
-    output: &mut dyn io::Write,
-) -> io::Result<()> {
     match format {
-        ExplainFormat::Text => write_text(explanation, presentation, color, output),
+        ExplainFormat::Text => write_text(explanation, color, output),
         ExplainFormat::Json => {
             let json = explanation.to_canonical_json().map_err(io::Error::other)?;
 
@@ -40,7 +28,6 @@ pub(crate) fn write_explanation_with_presentation(
 
 fn write_text(
     explanation: &ResourceExplanation,
-    presentation: Option<&RendererPresentation>,
     color: bool,
     output: &mut dyn io::Write,
 ) -> io::Result<()> {
@@ -49,9 +36,10 @@ fn write_text(
     write_heading(output, "Resource", color)?;
     writeln!(output, "  id: {}", terminal_text(&resource.id))?;
     writeln!(output, "  kind: {}", resource_kind_name(&resource.kind))?;
-    let rendered = presentation.and_then(|presentation| presentation.resource(&resource.id));
-    let name = rendered
-        .and_then(|presentation| presentation.label.as_deref())
+    let name = resource
+        .display
+        .as_ref()
+        .and_then(|display| display.label.as_deref())
         .unwrap_or(&resource.name);
 
     writeln!(output, "  name: {}", terminal_text(name))?;
@@ -116,29 +104,29 @@ fn write_text(
 
     write_cli(explanation, color, output)?;
 
-    if let Some(rendered) = rendered {
-        write_renderer_details(rendered, color, output)?;
+    if let Some(display) = &resource.display {
+        write_display(display, color, output)?;
     }
 
     output.flush()
 }
 
-fn write_renderer_details(
-    presentation: &overseerd_tooling_schema::renderer::ResourcePresentation,
+fn write_display(
+    display: &overseerd_tooling_schema::ResourceDisplay,
     color: bool,
     output: &mut dyn io::Write,
 ) -> io::Result<()> {
-    write_heading(output, "Renderer Details", color)?;
+    write_heading(output, "Display", color)?;
 
-    if let Some(group) = &presentation.group {
+    if let Some(group) = &display.group {
         writeln!(output, "  group: {}", terminal_text(group))?;
     }
 
-    if let Some(summary) = &presentation.summary {
+    if let Some(summary) = &display.summary {
         writeln!(output, "  summary: {}", terminal_text(summary))?;
     }
 
-    for (name, value) in &presentation.details {
+    for (name, value) in &display.details {
         writeln!(
             output,
             "  {}: {}",

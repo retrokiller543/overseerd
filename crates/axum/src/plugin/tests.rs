@@ -16,6 +16,20 @@ fn prepared_axum_projects_only_retained_controller_and_middleware_facts() {
 
     assert_eq!(summary["controller_count"], 0);
     assert_eq!(summary["middleware_count"], 0);
+    assert_eq!(
+        protocol
+            .display
+            .as_ref()
+            .and_then(|display| display.label.as_deref()),
+        Some("Axum HTTP")
+    );
+    assert_eq!(
+        protocol
+            .display
+            .as_ref()
+            .and_then(|display| display.summary.as_deref()),
+        Some("0 controllers, 0 middleware layers")
+    );
     assert!(
         document
             .relationships
@@ -30,6 +44,54 @@ fn prepared_axum_projects_only_retained_controller_and_middleware_facts() {
                 relationship.kind == overseerd_app::tooling_schema::RelationshipKind::Contains
             })
     );
+}
+
+#[cfg(feature = "tooling")]
+#[test]
+fn prepared_axum_projects_static_http_routes_without_building_runtime() {
+    struct ToolingController;
+
+    fn routes() -> Vec<crate::HttpRouteDescriptor> {
+        vec![crate::HttpRouteDescriptor {
+            handler: "health",
+            method: "GET",
+            path: "/health",
+        }]
+    }
+
+    let controller = crate::ControllerDescriptor {
+        id: "tooling-controller",
+        name: "ToolingController",
+        ty: overseerd_core::TypeDescriptor::of::<ToolingController>("ToolingController"),
+        base: "/api",
+        router: |_| panic!("tooling must not build controller router"),
+        routes,
+    };
+    use super::AxumAppBuilder as _;
+
+    let controller = Box::leak(Box::new(controller));
+
+    let document = overseerd_app::App::<super::Axum>::builder("axum-route-tooling")
+        .config_source(overseerd_config::ConfigManager::<overseerd_config::Dynamic>::empty())
+        .controller_descriptor(controller)
+        .prepare()
+        .expect("Axum prepares")
+        .tooling_document()
+        .expect("Axum tooling projects");
+    let route = document
+        .resources
+        .iter()
+        .find(|resource| resource.labels.get("kind").map(String::as_str) == Some("http-route"))
+        .expect("HTTP route resource exists");
+
+    assert_eq!(
+        route
+            .display
+            .as_ref()
+            .and_then(|display| display.label.as_deref()),
+        Some("GET /api/health")
+    );
+    assert_eq!(route.display.as_ref().unwrap().details["handler"], "health");
 }
 
 #[cfg(all(feature = "tooling", feature = "ws"))]
@@ -83,6 +145,13 @@ fn prepared_axum_projects_websocket_path_and_protocol_identity() {
         .expect("websocket endpoint resource exists");
 
     assert_eq!(endpoint.labels["path"], "/events");
+    assert!(
+        endpoint
+            .display
+            .as_ref()
+            .and_then(|display| display.label.as_deref())
+            .is_some_and(|label| label.ends_with("ToolingWsProtocol"))
+    );
     assert!(
         endpoint.labels["protocol-type"].ends_with("ToolingWsProtocol"),
         "prepared endpoint retains stable protocol type identity"

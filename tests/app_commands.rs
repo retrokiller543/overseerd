@@ -343,6 +343,14 @@ impl PreparedProtocol for PreparedTestProtocol {
 
         Ok(TestRuntime)
     }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
+        contributions.display(overseerd_app::ResourceDisplay {
+            label: Some(String::from("Command test protocol")),
+            ..Default::default()
+        });
+    }
 }
 
 impl ProtocolRuntime for TestRuntime {
