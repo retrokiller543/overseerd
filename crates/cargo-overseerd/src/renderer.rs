@@ -189,6 +189,13 @@ pub fn run_renderers(
     let mut run = RendererRun::default();
 
     for renderer in renderers {
+        if cancellation.is_cancelled() {
+            run.diagnostics
+                .push(InvocationError::Cancelled.diagnostic(renderer));
+
+            break;
+        }
+
         let request =
             match RendererRequest::new(&renderer.manifest, document, view, resources.clone()) {
                 Ok(request) => request,

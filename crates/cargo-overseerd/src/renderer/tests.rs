@@ -72,6 +72,42 @@ fn duplicate_ids_are_rejected_even_when_owner_sorting_separates_them() {
 }
 
 #[test]
+fn cancellation_stops_before_validating_or_invoking_any_renderer() {
+    let fixture = TempFixture::new("renderer-cancelled");
+    let executable = fixture.write("renderer", b"fixture");
+    let manifest_path = fixture.write(
+        "renderer.json",
+        manifest(
+            "acme-http",
+            "protocol:acme/http",
+            executable.to_str().expect("executable path is UTF-8"),
+        )
+        .as_bytes(),
+    );
+    let renderers = load_renderers([manifest_path]).expect("renderer loads");
+    let mut document = document();
+    let cancellation = CancellationToken::default();
+
+    document.resources.clear();
+    cancellation.cancel();
+
+    let run = run_renderers(
+        &renderers,
+        &document,
+        RendererView::Inspect,
+        Vec::new(),
+        fixture.path(),
+        &cancellation,
+    );
+
+    assert_eq!(run.diagnostics.len(), 1);
+    assert_eq!(
+        run.diagnostics[0].code,
+        super::RendererDiagnosticCode::Cancelled
+    );
+}
+
+#[test]
 #[cfg(unix)]
 fn subprocess_renderer_produces_validated_presentation_only() {
     let fixture = TempFixture::new("renderer-process");
