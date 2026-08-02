@@ -52,11 +52,18 @@ fn prepared_axum_projects_static_http_routes_without_building_runtime() {
     struct ToolingController;
 
     fn routes() -> Vec<crate::HttpRouteDescriptor> {
-        vec![crate::HttpRouteDescriptor {
-            handler: "health",
-            method: "GET",
-            path: "/health",
-        }]
+        vec![
+            crate::HttpRouteDescriptor {
+                handler: "health",
+                method: "GET",
+                path: "/health",
+            },
+            crate::HttpRouteDescriptor {
+                handler: "health",
+                method: "GET",
+                path: "/ready",
+            },
+        ]
     }
 
     let controller = crate::ControllerDescriptor {
@@ -78,12 +85,24 @@ fn prepared_axum_projects_static_http_routes_without_building_runtime() {
         .expect("Axum prepares")
         .tooling_document()
         .expect("Axum tooling projects");
-    let route = document
+    let routes = document
         .resources
         .iter()
-        .find(|resource| resource.labels.get("kind").map(String::as_str) == Some("http-route"))
-        .expect("HTTP route resource exists");
+        .filter(|resource| resource.labels.get("kind").map(String::as_str) == Some("http-route"))
+        .collect::<Vec<_>>();
+    let route = routes
+        .iter()
+        .find(|resource| {
+            resource
+                .display
+                .as_ref()
+                .and_then(|display| display.label.as_deref())
+                == Some("GET /api/health")
+        })
+        .expect("health route resource exists");
 
+    assert_eq!(routes.len(), 2);
+    assert_ne!(routes[0].id, routes[1].id);
     assert_eq!(
         route
             .display
