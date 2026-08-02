@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+pub mod renderer;
+
 /// JSON value used by opaque protocol and plugin facets.
 pub use serde_json::Value as JsonValue;
 

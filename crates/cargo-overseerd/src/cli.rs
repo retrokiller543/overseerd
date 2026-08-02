@@ -196,7 +196,7 @@ impl InspectFilters {
 }
 
 /// Terminal presentation policy for human-readable inspection.
-#[derive(Clone, Copy, Debug, Args)]
+#[derive(Clone, Debug, Args)]
 struct TerminalArgs {
     /// ANSI color policy.
     #[arg(long, value_enum, default_value_t = TerminalPolicy::Auto)]
@@ -204,6 +204,9 @@ struct TerminalArgs {
     /// Pager policy.
     #[arg(long, value_enum, default_value_t = TerminalPolicy::Auto)]
     pager: TerminalPolicy,
+    /// Explicit trusted local display-renderer manifest.
+    #[arg(long = "renderer", action = clap::ArgAction::Append)]
+    renderers: Vec<PathBuf>,
 }
 
 /// Parsed Cargo Overseerd command request.
@@ -222,6 +225,7 @@ pub(crate) enum CommandRequest {
         filters: InspectFilters,
         color: TerminalPolicy,
         pager: TerminalPolicy,
+        renderers: Vec<PathBuf>,
     },
     /// Canonical document or envelope export.
     Export {
@@ -236,6 +240,7 @@ pub(crate) enum CommandRequest {
         query: GraphQuery,
         color: TerminalPolicy,
         pager: TerminalPolicy,
+        renderers: Vec<PathBuf>,
     },
     /// One deterministic resource explanation.
     Explain {
@@ -244,6 +249,7 @@ pub(crate) enum CommandRequest {
         resource: String,
         color: TerminalPolicy,
         pager: TerminalPolicy,
+        renderers: Vec<PathBuf>,
     },
 }
 
@@ -275,6 +281,7 @@ impl Cli {
                 filters: arguments.filters,
                 color: arguments.terminal.color,
                 pager: arguments.terminal.pager,
+                renderers: arguments.terminal.renderers,
             },
             Command::Export(arguments) => CommandRequest::Export {
                 discovery: discovery_request(arguments.target),
@@ -293,6 +300,7 @@ impl Cli {
                 },
                 color: arguments.terminal.color,
                 pager: arguments.terminal.pager,
+                renderers: arguments.terminal.renderers,
             },
             Command::Explain(arguments) => CommandRequest::Explain {
                 discovery: discovery_request(arguments.target),
@@ -300,6 +308,7 @@ impl Cli {
                 resource: arguments.resource,
                 color: arguments.terminal.color,
                 pager: arguments.terminal.pager,
+                renderers: arguments.terminal.renderers,
             },
         }
     }
