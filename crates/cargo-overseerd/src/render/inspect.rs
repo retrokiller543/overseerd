@@ -152,6 +152,16 @@ pub(crate) fn write_inspection_with_presentation(
     output.flush()
 }
 
+pub(crate) fn selected_resource_ids(
+    document: &ToolingDocument,
+    filters: &InspectFilters,
+) -> Vec<String> {
+    selected_resources(document, filters)
+        .into_iter()
+        .map(|resource| resource.id.clone())
+        .collect()
+}
+
 fn write_presentation(
     presentation: &overseerd_tooling_schema::renderer::ResourcePresentation,
     output: &mut dyn io::Write,

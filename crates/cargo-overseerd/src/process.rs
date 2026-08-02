@@ -101,21 +101,75 @@ pub(crate) fn execute_with_stderr(
     )
 }
 
-pub(crate) fn execute_with_timeout(
+pub(crate) fn execute_silent_with_timeout(
     command: &mut Command,
     cancellation: &CancellationToken,
-    stdout_limit: usize,
-    stderr_limit: usize,
     timeout: Duration,
 ) -> Result<ProcessOutput, ProcessExecutionError> {
-    execute_with_mirror(
-        command,
-        cancellation,
-        stdout_limit,
-        stderr_limit,
-        None,
-        Some(timeout),
-    )
+    let mut cancelled = false;
+    let mut timed_out = false;
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    if cancellation.is_cancelled() {
+        return Ok(ProcessOutput {
+            status: ProcessStatus {
+                success: false,
+                code: None,
+            },
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            cancelled: true,
+            timed_out: false,
+        });
+    }
+
+    let started = Instant::now();
+    let mut child = command
+        .group_spawn()
+        .map_err(ProcessExecutionError::Spawn)?;
+    let status = loop {
+        if cancellation.is_cancelled() {
+            cancelled = true;
+
+            break terminate_and_wait(&mut child)?;
+        }
+
+        if started.elapsed() >= timeout {
+            timed_out = true;
+
+            break terminate_and_wait(&mut child)?;
+        }
+
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                terminate_group(&mut child);
+
+                break status;
+            }
+            Ok(None) => std::thread::sleep(PROCESS_POLL_INTERVAL),
+            Err(error) => {
+                terminate_group(&mut child);
+
+                return Err(ProcessExecutionError::Wait(error));
+            }
+        }
+    };
+
+    Ok(ProcessOutput {
+        status: status.into(),
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+        stdout_truncated: false,
+        stderr_truncated: false,
+        cancelled,
+        timed_out,
+    })
 }
 
 #[cfg(all(test, unix))]
@@ -274,6 +328,22 @@ fn terminate_group(child: &mut command_group::GroupChild) {
     }
 
     let _ = child.wait();
+}
+
+fn terminate_and_wait(
+    child: &mut command_group::GroupChild,
+) -> Result<ExitStatus, ProcessExecutionError> {
+    match child.kill() {
+        Ok(()) => child.wait().map_err(ProcessExecutionError::Wait),
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
+            child.wait().map_err(ProcessExecutionError::Wait)
+        }
+        Err(error) => {
+            terminate_group(child);
+
+            Err(ProcessExecutionError::Kill(error))
+        }
+    }
 }
 
 struct CapturedOutput {

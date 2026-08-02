@@ -340,6 +340,16 @@ impl RendererResponse {
                     resource: presentation.resource.clone(),
                 })?;
 
+            if !request
+                .resources
+                .iter()
+                .any(|selected| selected == &presentation.resource)
+            {
+                return Err(RendererValidationError::UnselectedResource {
+                    resource: presentation.resource.clone(),
+                });
+            }
+
             if !resource_is_owned(resource, &request.owner) {
                 return Err(RendererValidationError::ForeignResource {
                     owner: request.owner.clone(),
@@ -468,6 +478,12 @@ pub enum RendererValidationError {
         /// Unknown resource identity.
         resource: String,
     },
+    /// A response references a known resource outside the request selection.
+    #[error("renderer response references unselected resource '{resource}'")]
+    UnselectedResource {
+        /// Unselected resource identity.
+        resource: String,
+    },
     /// A request repeats a selected resource.
     #[error("renderer request repeats resource '{resource}'")]
     DuplicateResource {
@@ -494,6 +510,12 @@ pub enum RendererValidationError {
     /// A presentation entry contains no hint.
     #[error("renderer presentation for '{resource}' is empty")]
     EmptyPresentation {
+        /// Resource identity.
+        resource: String,
+    },
+    /// A supplied presentation field is blank and could suppress generic fallback text.
+    #[error("renderer presentation for '{resource}' contains blank text")]
+    BlankPresentationText {
         /// Resource identity.
         resource: String,
     },
@@ -563,13 +585,18 @@ fn validate_owner(owner: &str) -> Result<(), RendererValidationError> {
 }
 
 fn resource_is_owned(resource: &crate::Resource, owner: &str) -> bool {
-    resource.id == owner
-        || resource
-            .provenance
-            .as_ref()
-            .and_then(|provenance| provenance.owner.as_deref())
-            == Some(owner)
-        || resource.id.starts_with(&format!("{owner}/tooling/"))
+    if resource.id == owner {
+        return true;
+    }
+
+    match resource
+        .provenance
+        .as_ref()
+        .and_then(|provenance| provenance.owner.as_deref())
+    {
+        Some(provenance_owner) => provenance_owner == owner,
+        None => resource.id.starts_with(&format!("{owner}/tooling/")),
+    }
 }
 
 fn validate_presentation(
@@ -577,14 +604,28 @@ fn validate_presentation(
 ) -> Result<(), RendererValidationError> {
     const MAX_TEXT_BYTES: usize = 16 * 1024;
 
-    let values = presentation
+    let optional_values = presentation
         .label
         .iter()
         .chain(&presentation.group)
-        .chain(&presentation.summary)
+        .chain(&presentation.summary);
+
+    if optional_values.clone().any(|value| value.trim().is_empty())
+        || presentation
+            .details
+            .iter()
+            .any(|(name, value)| name.trim().is_empty() || value.trim().is_empty())
+    {
+        return Err(RendererValidationError::BlankPresentationText {
+            resource: presentation.resource.clone(),
+        });
+    }
+
+    let values = optional_values
         .chain(presentation.details.keys())
         .chain(presentation.details.values());
-    let has_value = values.clone().any(|value| !value.trim().is_empty());
+    let mut values = values.peekable();
+    let has_value = values.peek().is_some();
     let oversized = values
         .map(String::len)
         .any(|length| length > MAX_TEXT_BYTES);

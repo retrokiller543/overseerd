@@ -6,7 +6,7 @@ use overseerd_tooling_schema::{
 };
 use serde_json::json;
 
-use super::{write_inspection, write_inspection_with_presentation};
+use super::{selected_resource_ids, write_inspection, write_inspection_with_presentation};
 use crate::cli::{InspectFilters, InspectResourceKind};
 
 #[test]
@@ -58,6 +58,20 @@ fn renderer_presentation_improves_text_without_hiding_generic_identity() {
     assert!(output.contains(&format!("HTTP GET /health ({resource})")));
     assert!(output.contains("renderer summary: health endpoint"));
     assert!(output.contains("renderer method: GET"));
+}
+
+#[test]
+fn renderer_selection_matches_active_inspection_filters() {
+    let document = fixture();
+    let selected = selected_resource_ids(
+        &document,
+        &InspectFilters {
+            resources: vec![document.resources[0].id.clone()],
+            ..InspectFilters::default()
+        },
+    );
+
+    assert_eq!(selected, [document.resources[0].id.clone()]);
 }
 
 #[test]
