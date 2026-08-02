@@ -49,23 +49,41 @@ fn duplicate_owner_claims_are_rejected_without_selecting_a_winner() {
 }
 
 #[test]
-fn subprocess_renderer_produces_validated_presentation_only() {
-    let executable = std::env::var_os("CARGO_BIN_EXE_tooling_renderer_fixture")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            let current = std::env::current_exe().expect("test executable path is available");
-            let debug = current
-                .parent()
-                .and_then(std::path::Path::parent)
-                .expect("test executable is below target debug");
+fn duplicate_ids_are_rejected_even_when_owner_sorting_separates_them() {
+    let fixture = TempFixture::new("renderer-duplicate-ids");
+    fixture.write("renderer", b"fixture");
+    let first = fixture.write(
+        "first.json",
+        manifest("duplicate", "plugin:acme/a", "renderer").as_bytes(),
+    );
+    let middle = fixture.write(
+        "middle.json",
+        manifest("unique", "plugin:acme/b", "renderer").as_bytes(),
+    );
+    let last = fixture.write(
+        "last.json",
+        manifest("duplicate", "plugin:acme/c", "renderer").as_bytes(),
+    );
 
-            debug.join(if cfg!(windows) {
-                "tooling_renderer_fixture.exe"
-            } else {
-                "tooling_renderer_fixture"
-            })
-        });
+    assert!(matches!(
+        load_renderers([first, middle, last]),
+        Err(RendererManifestError::DuplicateId { .. })
+    ));
+}
+
+#[test]
+#[cfg(unix)]
+fn subprocess_renderer_produces_validated_presentation_only() {
     let fixture = TempFixture::new("renderer-process");
+    let executable = fixture.write("renderer.sh", "#!/bin/sh\nexit 1\n");
+
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+            .expect("renderer fixture is executable");
+    }
+
     let manifest_path = fixture.write(
         "renderer.json",
         manifest(
@@ -77,6 +95,47 @@ fn subprocess_renderer_produces_validated_presentation_only() {
     );
     let renderers = load_renderers([manifest_path]).expect("renderer loads");
     let document = document();
+    let request = overseerd_tooling_schema::renderer::RendererRequest::new(
+        &renderers[0].manifest,
+        &document,
+        RendererView::Inspect,
+        document
+            .resources
+            .iter()
+            .map(|resource| resource.id.clone()),
+    )
+    .expect("fixture request validates");
+    let response = overseerd_tooling_schema::renderer::RendererResponse {
+        schema: TOOLING_SCHEMA_VERSION,
+        renderer: request.renderer.clone(),
+        owner: request.owner.clone(),
+        presentation: overseerd_tooling_schema::renderer::RendererPresentation {
+            resources: vec![overseerd_tooling_schema::renderer::ResourcePresentation {
+                resource: String::from("protocol:acme/http"),
+                label: Some(String::from("rendered HTTP")),
+                ..Default::default()
+            }],
+        },
+    };
+    let response_json = response
+        .to_json(&request)
+        .expect("fixture response validates");
+    let response_path = fixture.write("expected-response.json", response_json);
+    let executable = fixture.write(
+        "renderer.sh",
+        format!(
+            "#!/bin/sh\ncp \"{}\" \"$OVERSEERD_TOOLING_RENDERER_RESPONSE\"\n",
+            response_path.display()
+        ),
+    );
+
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700))
+            .expect("renderer fixture is executable");
+    }
+
     let run = run_renderers(
         &renderers,
         &document,

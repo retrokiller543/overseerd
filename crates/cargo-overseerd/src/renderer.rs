@@ -14,11 +14,10 @@ use overseerd_tooling_schema::renderer::{
 use thiserror::Error;
 
 use crate::CancellationToken;
-use crate::process::{ProcessExecutionError, execute_with_timeout};
+use crate::process::{ProcessExecutionError, execute_silent_with_timeout};
 
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_EXCHANGE_BYTES: u64 = 16 * 1024 * 1024;
-const RENDERER_OUTPUT_LIMIT: usize = 256 * 1024;
 const RENDERER_TIMEOUT: Duration = Duration::from_secs(5);
 const RUN_DIRECTORY_ATTEMPTS: u16 = 128;
 const RESERVED_RENDERER_ENV_PREFIX: &str = "OVERSEERD_TOOLING_RENDERER_";
@@ -93,6 +92,8 @@ pub enum RendererDiagnosticCode {
     Process,
     /// Renderer exceeded its finite invocation deadline.
     Timeout,
+    /// Renderer invocation was cancelled by the caller.
+    Cancelled,
     /// Renderer returned unsuccessful process status.
     Failed,
     /// Renderer did not publish a response.
@@ -110,6 +111,7 @@ impl RendererDiagnosticCode {
             Self::Incompatible => "overseerd/renderer-incompatible",
             Self::Process => "overseerd/renderer-process",
             Self::Timeout => "overseerd/renderer-timeout",
+            Self::Cancelled => "overseerd/renderer-cancelled",
             Self::Failed => "overseerd/renderer-failed",
             Self::MissingResponse => "overseerd/renderer-missing-response",
             Self::ResponseTooLarge => "overseerd/renderer-response-too-large",
@@ -155,16 +157,19 @@ pub fn load_renderers(
         ))
     });
 
-    for pair in renderers.windows(2) {
-        if pair[0].manifest.id == pair[1].manifest.id {
+    let mut ids = std::collections::BTreeSet::new();
+    let mut owners = std::collections::BTreeSet::new();
+
+    for renderer in &renderers {
+        if !ids.insert(renderer.manifest.id.as_str()) {
             return Err(RendererManifestError::DuplicateId {
-                id: pair[0].manifest.id.clone(),
+                id: renderer.manifest.id.clone(),
             });
         }
 
-        if pair[0].manifest.owner == pair[1].manifest.owner {
+        if !owners.insert(renderer.manifest.owner.as_str()) {
             return Err(RendererManifestError::DuplicateOwner {
-                owner: pair[0].manifest.owner.clone(),
+                owner: renderer.manifest.owner.clone(),
             });
         }
     }
@@ -207,6 +212,12 @@ pub fn run_renderers(
                         error,
                     ));
                 }
+            }
+            Err(InvocationError::Cancelled) => {
+                run.diagnostics
+                    .push(InvocationError::Cancelled.diagnostic(renderer));
+
+                break;
             }
             Err(error) => run.diagnostics.push(error.diagnostic(renderer)),
         }
@@ -276,16 +287,14 @@ fn invoke(
         .env(TOOLING_RENDERER_RESPONSE_ENV, &response_path)
         .current_dir(&directory.path);
 
-    let output = execute_with_timeout(
-        &mut command,
-        cancellation,
-        RENDERER_OUTPUT_LIMIT,
-        RENDERER_OUTPUT_LIMIT,
-        RENDERER_TIMEOUT,
-    )
-    .map_err(InvocationError::Process)?;
+    let output = execute_silent_with_timeout(&mut command, cancellation, RENDERER_TIMEOUT)
+        .map_err(InvocationError::Process)?;
 
-    if output.cancelled || output.timed_out {
+    if output.cancelled {
+        return Err(InvocationError::Cancelled);
+    }
+
+    if output.timed_out {
         return Err(InvocationError::Timeout);
     }
 
@@ -326,6 +335,8 @@ enum InvocationError {
     Process(#[source] ProcessExecutionError),
     #[error("renderer exceeded its five-second deadline")]
     Timeout,
+    #[error("renderer invocation was cancelled")]
+    Cancelled,
     #[error("renderer exited unsuccessfully")]
     Failed,
     #[error("renderer response is absent or unreadable")]
@@ -346,6 +357,7 @@ impl InvocationError {
     fn diagnostic(self, renderer: &DisplayRenderer) -> RendererDiagnostic {
         let code = match self {
             Self::Timeout => RendererDiagnosticCode::Timeout,
+            Self::Cancelled => RendererDiagnosticCode::Cancelled,
             Self::Failed => RendererDiagnosticCode::Failed,
             Self::ReadResponse(ref source) if source.kind() == std::io::ErrorKind::NotFound => {
                 RendererDiagnosticCode::MissingResponse

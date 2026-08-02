@@ -99,6 +99,47 @@ fn renderer_requests_are_canonical_and_round_trip_only_generic_documents() {
     assert_eq!(decoded, request);
 }
 
+#[test]
+fn responses_cannot_escape_the_request_selection_or_use_blank_fallback_overrides() {
+    let document = document();
+    let manifest = manifest();
+    let request = RendererRequest::new(
+        &manifest,
+        &document,
+        RendererView::Explain,
+        [String::from("protocol:acme/http")],
+    )
+    .expect("request validates");
+    let mut response = RendererResponse {
+        schema: TOOLING_SCHEMA_VERSION,
+        renderer: manifest.id.clone(),
+        owner: manifest.owner.clone(),
+        presentation: super::RendererPresentation {
+            resources: vec![ResourcePresentation {
+                resource: String::from("protocol:acme/http/tooling/route/health"),
+                label: Some(String::from("GET /health")),
+                ..ResourcePresentation::default()
+            }],
+        },
+    };
+
+    assert!(matches!(
+        response.validate(&request),
+        Err(RendererValidationError::UnselectedResource { .. })
+    ));
+
+    response.presentation.resources[0] = ResourcePresentation {
+        resource: String::from("protocol:acme/http"),
+        label: Some(String::from("  ")),
+        ..ResourcePresentation::default()
+    };
+
+    assert!(matches!(
+        response.validate(&request),
+        Err(RendererValidationError::BlankPresentationText { .. })
+    ));
+}
+
 fn manifest() -> RendererManifest {
     RendererManifest {
         schema: TOOLING_SCHEMA_VERSION,

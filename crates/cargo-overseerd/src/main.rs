@@ -155,11 +155,7 @@ fn inspect(
     let exit_code = document_exit_code(&document);
     let result = match format {
         InspectFormat::Text => {
-            let resources = document
-                .resources
-                .iter()
-                .map(|resource| resource.id.clone())
-                .collect::<Vec<_>>();
+            let resources = render::selected_inspection_resource_ids(&document, &filters);
             let renderer_run = renderer_run(
                 renderers,
                 &document,
