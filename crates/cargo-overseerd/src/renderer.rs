@@ -270,7 +270,7 @@ fn invoke(
     let mut command = Command::new(&renderer.executable);
 
     command.arg(TOOLING_RENDERER_ARGUMENT);
-    scrub_reserved_environment(&mut command);
+    configure_renderer_environment(&mut command);
     command
         .env(TOOLING_RENDERER_REQUEST_ENV, &request_path)
         .env(TOOLING_RENDERER_RESPONSE_ENV, &response_path)
@@ -400,7 +400,7 @@ enum ReadError {
 }
 
 fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, ReadError> {
-    let mut file = std::fs::File::open(path).map_err(ReadError::Read)?;
+    let mut file = open_exchange_file(path).map_err(ReadError::Read)?;
     let metadata = file.metadata().map_err(ReadError::Metadata)?;
 
     if !metadata.is_file() {
@@ -423,12 +423,48 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, ReadError> {
     Ok(bytes)
 }
 
-fn scrub_reserved_environment(command: &mut Command) {
-    for (name, _) in std::env::vars_os() {
-        if starts_with_reserved_prefix(&name) {
-            command.env_remove(name);
+fn configure_renderer_environment(command: &mut Command) {
+    const ALLOWED_ENVIRONMENT: &[&str] = &["PATH", "SystemRoot", "WINDIR"];
+
+    let allowed = ALLOWED_ENVIRONMENT
+        .iter()
+        .filter_map(|name| std::env::var_os(name).map(|value| (*name, value)))
+        .collect::<Vec<_>>();
+
+    command.env_clear();
+
+    for (name, value) in allowed {
+        if !starts_with_reserved_prefix(OsStr::new(name)) {
+            command.env(name, value);
         }
     }
+}
+
+#[cfg(unix)]
+fn open_exchange_file(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+}
+
+#[cfg(windows)]
+fn open_exchange_file(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_exchange_file(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(path)
 }
 
 #[cfg(windows)]
@@ -459,7 +495,7 @@ impl RendererDirectory {
             let ordinal = NEXT_RUN_DIRECTORY.fetch_add(1, Ordering::Relaxed);
             let path = root.join(format!("{}-{ordinal}", std::process::id()));
 
-            match std::fs::create_dir(&path) {
+            match create_private_directory(&path) {
                 Ok(()) => {
                     return Ok(Self {
                         path,
@@ -480,6 +516,20 @@ impl RendererDirectory {
 
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    let mut builder = std::fs::DirBuilder::new();
+
+    builder.mode(0o700).create(path)
+}
+
+#[cfg(not(unix))]
+fn create_private_directory(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir(path)
 }
 
 impl Drop for RendererDirectory {
