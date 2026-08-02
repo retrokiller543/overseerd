@@ -444,9 +444,10 @@ impl PreparedProtocol for PreparedAxum {
 
             for route in (controller.routes)() {
                 let route_id = format!(
-                    "route/{}/{}/{}",
+                    "route/{}/{}/{}/{}",
                     controller.id,
                     route.method.to_ascii_lowercase(),
+                    route.path,
                     route.handler
                 );
                 let path = join_http_paths(&self.base_prefix, controller.base, route.path);
