@@ -70,6 +70,14 @@ impl PreparedProtocol for PreparedTestProtocol {
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
         Ok(TestRuntime)
     }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
+        contributions.display(overseerd_app::ResourceDisplay {
+            label: Some(String::from("Definition test protocol")),
+            ..Default::default()
+        });
+    }
 }
 
 impl ProtocolRuntime for TestRuntime {
@@ -316,6 +324,13 @@ impl PreparedProtocol for PreparedToolingProtocol {
         TOOLING_PROTOCOL_BUILDS.fetch_add(1, Ordering::SeqCst);
 
         Ok(ToolingRuntime)
+    }
+
+    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
+        contributions.display(overseerd_app::ResourceDisplay {
+            label: Some(String::from("Generated tooling protocol")),
+            ..Default::default()
+        });
     }
 }
 

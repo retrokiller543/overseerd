@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use overseerd_tooling_schema::{
-    Facet, Provenance, Relationship, RelationshipKind, Resource, ResourceKind,
+    Facet, Provenance, Relationship, RelationshipKind, Resource, ResourceDisplay, ResourceKind,
 };
 
 /// One endpoint in an owner-scoped tooling relationship.
@@ -48,6 +48,8 @@ pub struct ToolingContributions {
     resources: Vec<PendingResource>,
     relationships: Vec<PendingRelationship>,
     facets: Vec<PendingFacet>,
+    displays: Vec<PendingDisplay>,
+    owner_display: Option<ResourceDisplay>,
 }
 
 impl ToolingContributions {
@@ -57,7 +59,22 @@ impl ToolingContributions {
             resources: Vec::new(),
             relationships: Vec::new(),
             facets: Vec::new(),
+            displays: Vec::new(),
+            owner_display: None,
         }
+    }
+
+    /// Declares presentation for this protocol or plugin owner.
+    pub fn display(&mut self, display: ResourceDisplay) {
+        self.owner_display = Some(display);
+    }
+
+    /// Declares presentation for one owner-local resource.
+    pub fn resource_display(&mut self, resource: impl Into<String>, display: ResourceDisplay) {
+        self.displays.push(PendingDisplay {
+            resource: resource.into(),
+            display,
+        });
     }
 
     /// Declares an owner-local contribution resource without scalar labels.
@@ -146,6 +163,12 @@ impl ToolingContributions {
 
         validate_owner(&self.owner)?;
 
+        if self.owner.starts_with("protocol:") && self.owner_display.is_none() {
+            return Err(ToolingContributionError::MissingProtocolDisplay {
+                id: self.owner.clone(),
+            });
+        }
+
         for resource in self.resources {
             validate_local_id(&resource.id)?;
 
@@ -161,6 +184,7 @@ impl ToolingContributions {
                 id: qualify(&self.owner, &resource.id),
                 kind: ResourceKind::Contribution,
                 name: resource.name,
+                display: None,
                 provenance: Some(Provenance {
                     owner: Some(self.owner.clone()),
                     origin: Some(String::from("tooling-contribution")),
@@ -169,6 +193,30 @@ impl ToolingContributions {
                 labels: resource.labels,
                 facets: BTreeMap::new(),
             });
+        }
+
+        let mut display_identities = BTreeSet::new();
+
+        for display in self.displays {
+            validate_local_id(&display.resource)?;
+
+            if !identities.contains(&display.resource) {
+                return Err(ToolingContributionError::UnknownEndpoint {
+                    id: display.resource,
+                });
+            }
+
+            if !display_identities.insert(display.resource.clone()) {
+                return Err(ToolingContributionError::DuplicateDisplay {
+                    id: display.resource,
+                });
+            }
+
+            resources
+                .iter_mut()
+                .find(|resource| resource.id == qualify(&self.owner, &display.resource))
+                .expect("validated contributed resource exists")
+                .display = Some(display.display);
         }
 
         let mut relationship_identities = BTreeSet::new();
@@ -251,6 +299,7 @@ impl ToolingContributions {
             resources,
             relationships,
             owner_facets,
+            owner_display: self.owner_display,
         })
     }
 }
@@ -321,6 +370,18 @@ pub enum ToolingContributionError {
     /// A supported extension relationship uses endpoints incompatible with its semantics.
     #[error("tooling contribution relationship has invalid owner-local endpoints")]
     InvalidRelationshipEndpoints,
+    /// A protocol did not provide its required declarative presentation.
+    #[error("protocol '{id}' did not provide tooling display metadata")]
+    MissingProtocolDisplay {
+        /// Protocol resource identity.
+        id: String,
+    },
+    /// One collector declared presentation for the same owner-local resource more than once.
+    #[error("tooling resource '{id}' has more than one display declaration")]
+    DuplicateDisplay {
+        /// Duplicated owner-local identity.
+        id: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -330,6 +391,7 @@ pub(crate) struct ToolingContributionSet {
     pub(crate) resources: Vec<Resource>,
     pub(crate) relationships: Vec<Relationship>,
     pub(crate) owner_facets: BTreeMap<String, Facet>,
+    pub(crate) owner_display: Option<ResourceDisplay>,
 }
 
 #[derive(Debug)]
@@ -338,6 +400,12 @@ struct PendingResource {
     id: String,
     name: String,
     labels: BTreeMap<String, String>,
+}
+
+#[derive(Debug)]
+struct PendingDisplay {
+    resource: String,
+    display: ResourceDisplay,
 }
 
 #[derive(Debug)]

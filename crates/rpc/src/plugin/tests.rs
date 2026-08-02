@@ -141,6 +141,20 @@ fn prepared_rpc_projects_only_retained_service_and_route_facts() {
     assert_eq!(summary["service_count"], 0);
     assert_eq!(summary["route_count"], 0);
     assert_eq!(summary["middleware_count"], 0);
+    assert_eq!(
+        protocol
+            .display
+            .as_ref()
+            .and_then(|display| display.label.as_deref()),
+        Some("RPC")
+    );
+    assert_eq!(
+        protocol
+            .display
+            .as_ref()
+            .and_then(|display| display.summary.as_deref()),
+        Some("0 services, 0 operations")
+    );
     assert_eq!(peer.labels["construction"], "scope-seed");
     assert!(!peer.labels.contains_key("plan-ordinal"));
     assert!(

@@ -71,9 +71,9 @@ pub use scope::{
 };
 #[cfg(feature = "tooling")]
 pub use tooling::{
-    ToolingContributionError, ToolingContributions, ToolingEndpoint, ToolingProbeOutputError,
-    ToolingProbeOutputTargetError, ToolingProbeTargetError, ToolingProjectionError,
-    ToolingRelationshipKind,
+    ResourceDisplay, ToolingContributionError, ToolingContributions, ToolingEndpoint,
+    ToolingProbeOutputError, ToolingProbeOutputTargetError, ToolingProbeTargetError,
+    ToolingProjectionError, ToolingRelationshipKind,
 };
 
 #[cfg(feature = "tooling")]

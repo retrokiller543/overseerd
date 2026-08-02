@@ -39,6 +39,13 @@ impl PreparedProtocol for PreparedProbeProtocol {
     fn build(self, _runtime: &overseerd::AppRuntime) -> Result<Self::Runtime, Self::Error> {
         panic!("tooling process must not build protocol runtime");
     }
+
+    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
+        contributions.display(overseerd_app::ResourceDisplay {
+            label: Some(String::from("Probe process protocol")),
+            ..Default::default()
+        });
+    }
 }
 
 impl ProtocolRuntime for ProbeRuntime {

@@ -38,6 +38,7 @@ pub use output::{
     ToolingProbeOutputError, ToolingProbeOutputTargetError, emit_probe_envelope,
     emit_probe_envelope_from_env,
 };
+pub use overseerd_tooling_schema::ResourceDisplay;
 pub use panic::install_process_probe_panic_hook;
 pub(crate) use snapshot::ProjectionSnapshot;
 
@@ -665,6 +666,7 @@ impl<'a, D: ProtocolDefinition> Projection<'a, D> {
             id: id.to_string(),
             kind,
             name: name.to_string(),
+            display: None,
             provenance,
             labels,
             facets: BTreeMap::new(),

@@ -288,6 +288,15 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
             })?;
 
         owner.facets.extend(contributions.owner_facets);
+
+        if contributions.owner.starts_with("protocol:") && contributions.owner_display.is_none() {
+            return Err(ToolingContributionError::MissingProtocolDisplay {
+                id: contributions.owner,
+            }
+            .into());
+        }
+
+        owner.display = contributions.owner_display;
         self.document.resources.extend(contributions.resources);
         self.document
             .relationships

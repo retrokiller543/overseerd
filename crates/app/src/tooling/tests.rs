@@ -1710,7 +1710,19 @@ impl PreparedProtocol for PreparedThirdPartyProtocol {
 
     fn tooling(&self, contributions: &mut crate::ToolingContributions) {
         TOOLING_CALLS.fetch_add(1, Ordering::SeqCst);
+        contributions.display(crate::ResourceDisplay {
+            label: Some(String::from("Third-party protocol")),
+            summary: Some(String::from("Third-party tooling contract")),
+            ..crate::ResourceDisplay::default()
+        });
         contributions.resource("transport", "Third-party transport");
+        contributions.resource_display(
+            "transport",
+            crate::ResourceDisplay {
+                label: Some(String::from("Third-party transport")),
+                ..crate::ResourceDisplay::default()
+            },
+        );
         contributions.relationship(
             ToolingRelationshipKind::Contains,
             ToolingEndpoint::Owner,
@@ -1732,6 +1744,10 @@ impl PreparedProtocol for InvalidPreparedToolingProtocol {
     }
 
     fn tooling(&self, contributions: &mut crate::ToolingContributions) {
+        contributions.display(crate::ResourceDisplay {
+            label: Some(String::from("Invalid tooling protocol")),
+            ..crate::ResourceDisplay::default()
+        });
         contributions.resource("duplicate", "First");
         contributions.resource("duplicate", "Second");
     }

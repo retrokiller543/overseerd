@@ -85,6 +85,7 @@ struct HandlerContext {
 /// [`AxumMiddleware`](../overseerd_axum/trait.AxumMiddleware.html) list (first-listed
 /// outermost), and the handler closure.
 struct RouteSpec {
+    handler_name: Ident,
     verb: Ident,
     path: LitStr,
     middleware: Vec<Path>,
@@ -443,6 +444,7 @@ impl ToTokens for AxumHandlers {
         let inventory = paths.core("inventory");
         let descriptor_for = paths.core("DescriptorFor");
         let controller_route = paths.plugin("ControllerRoute");
+        let http_route_descriptor = paths.plugin("HttpRouteDescriptor");
         let controller_trait = paths.plugin("Controller");
         let routes_slice = self
             .routes_slice
@@ -506,7 +508,10 @@ impl ToTokens for AxumHandlers {
             quote! {
                 #inventory::submit! {
                     #descriptor_for::<#self_ty, #controller_route<#self_ty>>::new(
-                        #controller_route(__overseerd_axum_route_group)
+                        #controller_route {
+                            build: __overseerd_axum_route_group,
+                            routes: __OVERSEERD_AXUM_ROUTE_DESCRIPTORS,
+                        }
                     )
                 }
             },
@@ -514,9 +519,26 @@ impl ToTokens for AxumHandlers {
                 #[#distributed_slice(#routes_slice)]
                 #[linkme(crate = #linkme_crate)]
                 static __OVERSEERD_AXUM_ROUTE_GROUP: #controller_route<#self_ty> =
-                    #controller_route(__overseerd_axum_route_group);
+                    #controller_route {
+                        build: __overseerd_axum_route_group,
+                        routes: __OVERSEERD_AXUM_ROUTE_DESCRIPTORS,
+                    };
             },
         );
+
+        let route_descriptors = self.routes.iter().map(|route| {
+            let handler = route.handler_name.to_string();
+            let method = route.verb.to_string().to_ascii_uppercase();
+            let path = &route.path;
+
+            quote! {
+                #http_route_descriptor {
+                    handler: #handler,
+                    method: #method,
+                    path: #path,
+                }
+            }
+        });
 
         out.extend(quote! {
             const _: () = {
@@ -525,6 +547,10 @@ impl ToTokens for AxumHandlers {
                 // missing route slice.
                 fn __overseerd_assert_controller<T: #controller_trait>() {}
                 let _ = __overseerd_assert_controller::<#self_ty>;
+
+                static __OVERSEERD_AXUM_ROUTE_DESCRIPTORS: &[#http_route_descriptor] = &[
+                    #(#route_descriptors),*
+                ];
 
                 fn __overseerd_axum_route_group(
                     svc: ::std::sync::Arc<#self_ty>,
@@ -758,6 +784,7 @@ fn build_route(
     };
 
     Ok(RouteSpec {
+        handler_name: method.sig.ident.clone(),
         verb: route_attr.verb.clone(),
         path: route_attr.path.clone(),
         middleware: route_attr.middleware.clone(),

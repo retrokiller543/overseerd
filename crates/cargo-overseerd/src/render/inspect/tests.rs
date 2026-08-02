@@ -6,7 +6,7 @@ use overseerd_tooling_schema::{
 };
 use serde_json::json;
 
-use super::{selected_resource_ids, write_inspection, write_inspection_with_presentation};
+use super::write_inspection;
 use crate::cli::{InspectFilters, InspectResourceKind};
 
 #[test]
@@ -27,51 +27,32 @@ fn generic_inspection_renders_unknown_facets_and_provenance() {
 }
 
 #[test]
-fn renderer_presentation_improves_text_without_hiding_generic_identity() {
-    let document = fixture();
-    let resource = document.resources[0].id.clone();
-    let presentation = overseerd_tooling_schema::renderer::RendererPresentation {
-        resources: vec![overseerd_tooling_schema::renderer::ResourcePresentation {
-            resource: resource.clone(),
-            label: Some(String::from("HTTP GET /health")),
-            summary: Some(String::from("health endpoint")),
-            details: std::collections::BTreeMap::from([(
-                String::from("method"),
-                String::from("GET"),
-            )]),
-            ..Default::default()
-        }],
-    };
+fn declarative_display_improves_text_without_hiding_generic_identity() {
+    let mut document = fixture();
+    let resource = document
+        .resources
+        .first_mut()
+        .expect("fixture has a resource");
+    let id = resource.id.clone();
+
+    resource.display = Some(overseerd_tooling_schema::ResourceDisplay {
+        label: Some(String::from("HTTP GET /health")),
+        group: Some(String::from("HTTP routes")),
+        summary: Some(String::from("health endpoint")),
+        details: std::collections::BTreeMap::from([(String::from("method"), String::from("GET"))]),
+    });
+
     let mut output = Vec::new();
 
-    write_inspection_with_presentation(
-        &document,
-        &InspectFilters::default(),
-        Some(&presentation),
-        false,
-        &mut output,
-    )
-    .expect("inspection writes");
+    write_inspection(&document, &InspectFilters::default(), false, &mut output)
+        .expect("inspection writes");
 
     let output = String::from_utf8(output).expect("inspection is UTF-8");
 
-    assert!(output.contains(&format!("HTTP GET /health ({resource})")));
-    assert!(output.contains("renderer summary: health endpoint"));
-    assert!(output.contains("renderer method: GET"));
-}
-
-#[test]
-fn renderer_selection_matches_active_inspection_filters() {
-    let document = fixture();
-    let selected = selected_resource_ids(
-        &document,
-        &InspectFilters {
-            resources: vec![document.resources[0].id.clone()],
-            ..InspectFilters::default()
-        },
-    );
-
-    assert_eq!(selected, [document.resources[0].id.clone()]);
+    assert!(output.contains(&format!("HTTP GET /health ({id})")));
+    assert!(output.contains("group: HTTP routes"));
+    assert!(output.contains("summary: health endpoint"));
+    assert!(output.contains("method: GET"));
 }
 
 #[test]
@@ -213,6 +194,7 @@ fn fixture() -> ToolingDocument {
             id: String::from("component:worker"),
             kind: ResourceKind::Component,
             name: String::from("Worker"),
+            display: None,
             provenance: Some(Provenance {
                 owner: Some(String::from("plugin:test/worker")),
                 origin: Some(String::from("application-plugin")),
