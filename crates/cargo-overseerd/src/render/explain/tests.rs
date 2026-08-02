@@ -9,7 +9,7 @@ use overseerd_tooling_schema::{
 use semver::Version;
 use serde_json::json;
 
-use super::write_explanation;
+use super::{write_explanation, write_explanation_with_presentation};
 use crate::cli::ExplainFormat;
 
 #[test]
@@ -38,6 +38,55 @@ fn text_explanation_includes_generic_details_resolutions_and_cli_ownership() {
             "missing {expected:?} in {output}"
         );
     }
+}
+
+#[test]
+fn renderer_details_extend_text_but_not_explanation_json() {
+    let explanation = fixture();
+    let resource = explanation.resource.id.clone();
+    let presentation = overseerd_tooling_schema::renderer::RendererPresentation {
+        resources: vec![overseerd_tooling_schema::renderer::ResourcePresentation {
+            resource,
+            label: Some(String::from("rendered explanation")),
+            summary: Some(String::from("owner summary")),
+            details: std::collections::BTreeMap::from([(
+                String::from("route"),
+                String::from("GET /health"),
+            )]),
+            ..Default::default()
+        }],
+    };
+    let mut text = Vec::new();
+    let mut json = Vec::new();
+
+    write_explanation_with_presentation(
+        &explanation,
+        ExplainFormat::Text,
+        Some(&presentation),
+        false,
+        &mut text,
+    )
+    .expect("text explanation writes");
+    write_explanation_with_presentation(
+        &explanation,
+        ExplainFormat::Json,
+        Some(&presentation),
+        false,
+        &mut json,
+    )
+    .expect("JSON explanation writes");
+
+    let text = String::from_utf8(text).expect("text is UTF-8");
+
+    assert!(text.contains("name: rendered explanation"));
+    assert!(text.contains("Renderer Details"));
+    assert!(text.contains("route: GET /health"));
+    assert_eq!(
+        String::from_utf8(json).expect("JSON is UTF-8").trim_end(),
+        explanation
+            .to_canonical_json()
+            .expect("explanation emits canonical JSON")
+    );
 }
 
 #[test]

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use cargo_overseerd::GraphView;
+use overseerd_tooling_schema::renderer::RendererPresentation;
 use overseerd_tooling_schema::{Relationship, Resource};
 
 use crate::cli::GraphFormat;
@@ -16,8 +17,19 @@ pub(crate) fn write_graph(
     color: bool,
     output: &mut dyn io::Write,
 ) -> io::Result<()> {
+    write_graph_with_presentation(view, format, None, color, output)
+}
+
+/// Writes one graph with optional validated text-only node labels.
+pub(crate) fn write_graph_with_presentation(
+    view: &GraphView,
+    format: GraphFormat,
+    presentation: Option<&RendererPresentation>,
+    color: bool,
+    output: &mut dyn io::Write,
+) -> io::Result<()> {
     match format {
-        GraphFormat::Text => write_text(view, color, output),
+        GraphFormat::Text => write_text(view, presentation, color, output),
         GraphFormat::Mermaid => write_mermaid(view, output),
         GraphFormat::Dot => write_dot(view, output),
         GraphFormat::Json => {
@@ -28,7 +40,12 @@ pub(crate) fn write_graph(
     }
 }
 
-fn write_text(view: &GraphView, color: bool, output: &mut dyn io::Write) -> io::Result<()> {
+fn write_text(
+    view: &GraphView,
+    presentation: Option<&RendererPresentation>,
+    color: bool,
+    output: &mut dyn io::Write,
+) -> io::Result<()> {
     let diagnostics = diagnostic_resources(view);
     let nodes = sorted_nodes(view);
     let edges = sorted_edges(view);
@@ -70,11 +87,16 @@ fn write_text(view: &GraphView, color: bool, output: &mut dyn io::Write) -> io::
             " "
         };
 
+        let name = presentation
+            .and_then(|presentation| presentation.resource(&node.id))
+            .and_then(|presentation| presentation.label.as_deref())
+            .unwrap_or(&node.name);
+
         writeln!(
             output,
             "  {marker} {:<14} {} ({})",
             resource_kind_name(&node.kind),
-            terminal_text(&node.name),
+            terminal_text(name),
             terminal_text(&node.id)
         )?;
     }

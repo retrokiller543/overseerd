@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
+use overseerd_tooling_schema::renderer::RendererPresentation;
 use overseerd_tooling_schema::{CliArgument, CliCommand, Resource, ResourceKind, ToolingDocument};
 
 use crate::cli::InspectFilters;
@@ -17,10 +18,21 @@ use super::name::{
 };
 use filter::selected_resources;
 
-/// Writes one protocol-neutral human-readable inspection.
-pub(crate) fn write_inspection(
+#[cfg(test)]
+fn write_inspection(
     document: &ToolingDocument,
     filters: &InspectFilters,
+    color: bool,
+    output: &mut dyn io::Write,
+) -> io::Result<()> {
+    write_inspection_with_presentation(document, filters, None, color, output)
+}
+
+/// Writes one inspection with optional validated owner-specific presentation hints.
+pub(crate) fn write_inspection_with_presentation(
+    document: &ToolingDocument,
+    filters: &InspectFilters,
+    presentation: Option<&RendererPresentation>,
     color: bool,
     output: &mut dyn io::Write,
 ) -> io::Result<()> {
@@ -65,16 +77,25 @@ pub(crate) fn write_inspection(
     }
 
     for resource in resources {
+        let rendered = presentation.and_then(|presentation| presentation.resource(&resource.id));
+        let name = rendered
+            .and_then(|presentation| presentation.label.as_deref())
+            .unwrap_or(&resource.name);
+
         writeln!(
             output,
             "  {} {} ({})",
             resource_kind_name(&resource.kind),
-            terminal_text(&resource.name),
+            terminal_text(name),
             terminal_text(&resource.id)
         )?;
         write_provenance(resource.provenance.as_ref(), output)?;
         write_labels(&resource.labels, output)?;
         write_facets(&resource.facets, output, "    ")?;
+
+        if let Some(rendered) = rendered {
+            write_presentation(rendered, output)?;
+        }
     }
 
     write_heading(output, "Relationships", color)?;
@@ -129,6 +150,30 @@ pub(crate) fn write_inspection(
     }
 
     output.flush()
+}
+
+fn write_presentation(
+    presentation: &overseerd_tooling_schema::renderer::ResourcePresentation,
+    output: &mut dyn io::Write,
+) -> io::Result<()> {
+    if let Some(group) = &presentation.group {
+        writeln!(output, "    renderer group: {}", terminal_text(group))?;
+    }
+
+    if let Some(summary) = &presentation.summary {
+        writeln!(output, "    renderer summary: {}", terminal_text(summary))?;
+    }
+
+    for (name, value) in &presentation.details {
+        writeln!(
+            output,
+            "    renderer {}: {}",
+            terminal_text(name),
+            terminal_text(value)
+        )?;
+    }
+
+    Ok(())
 }
 
 fn write_cli(

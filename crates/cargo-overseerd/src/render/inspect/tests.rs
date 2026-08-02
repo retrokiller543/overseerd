@@ -6,7 +6,7 @@ use overseerd_tooling_schema::{
 };
 use serde_json::json;
 
-use super::write_inspection;
+use super::{write_inspection, write_inspection_with_presentation};
 use crate::cli::{InspectFilters, InspectResourceKind};
 
 #[test]
@@ -24,6 +24,40 @@ fn generic_inspection_renders_unknown_facets_and_provenance() {
     assert!(output.contains("owner: plugin:test/worker"));
     assert!(output.contains("facet third-party/routes@2"));
     assert!(output.contains("component:worker --depends-on--> scope:test/request"));
+}
+
+#[test]
+fn renderer_presentation_improves_text_without_hiding_generic_identity() {
+    let document = fixture();
+    let resource = document.resources[0].id.clone();
+    let presentation = overseerd_tooling_schema::renderer::RendererPresentation {
+        resources: vec![overseerd_tooling_schema::renderer::ResourcePresentation {
+            resource: resource.clone(),
+            label: Some(String::from("HTTP GET /health")),
+            summary: Some(String::from("health endpoint")),
+            details: std::collections::BTreeMap::from([(
+                String::from("method"),
+                String::from("GET"),
+            )]),
+            ..Default::default()
+        }],
+    };
+    let mut output = Vec::new();
+
+    write_inspection_with_presentation(
+        &document,
+        &InspectFilters::default(),
+        Some(&presentation),
+        false,
+        &mut output,
+    )
+    .expect("inspection writes");
+
+    let output = String::from_utf8(output).expect("inspection is UTF-8");
+
+    assert!(output.contains(&format!("HTTP GET /health ({resource})")));
+    assert!(output.contains("renderer summary: health endpoint"));
+    assert!(output.contains("renderer method: GET"));
 }
 
 #[test]

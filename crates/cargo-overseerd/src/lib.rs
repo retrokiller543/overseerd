@@ -9,6 +9,7 @@ mod discovery;
 pub mod graph;
 mod probe;
 mod process;
+mod renderer;
 mod selection;
 
 use std::fs::OpenOptions;
@@ -30,6 +31,10 @@ pub use overseerd_tooling_schema::TOOLING_SCHEMA_VERSION;
 use probe::execute_probe;
 pub use probe::{ProbeError, ProbeEvidence, ProbeResult};
 pub use process::{CancellationToken, ProcessStatus};
+pub use renderer::{
+    DisplayRenderer, RendererDiagnostic, RendererDiagnosticCode, RendererManifestError,
+    RendererRun, load_renderers, run_renderers,
+};
 pub use selection::{
     BinaryCandidate, FeatureSelection, PackageCandidate, SelectedTarget, SelectionError,
     WorkspaceCatalog,
