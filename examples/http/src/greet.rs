@@ -104,7 +104,10 @@ impl GreetController {
 
         Json(message)
     }
+}
 
+#[handlers]
+impl GreetController {
     /// `POST /greet` — greets a JSON string body.
     #[post("/")]
     async fn greet_body(&self, Json(who): Json<String>) -> Json<GreetResponse> {

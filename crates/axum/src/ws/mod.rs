@@ -150,7 +150,35 @@ type ErasedWsHandler = Box<dyn Any + Send + Sync>;
 #[derive(Clone)]
 pub struct WsRouteDescriptor {
     destination: &'static str,
+    message: Option<WsMessageDescriptor>,
     handler: Arc<dyn Fn(&AppRuntime) -> ErasedWsHandler + Send + Sync>,
+}
+
+/// Resolved behavior of one WebSocket message handler.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum WsMessageMode {
+    /// Fire-and-forget message send.
+    Send,
+    /// Request expecting one encoded reply.
+    Request,
+}
+
+/// Static semantic metadata for one WebSocket message handler.
+#[derive(Clone, Copy, Debug)]
+pub struct WsMessageDescriptor {
+    /// Rust handler method name.
+    pub handler: &'static str,
+    /// Protocol destination.
+    pub destination: &'static str,
+    /// Decoded message payload type, absent for payload-less handlers.
+    pub payload: Option<TypeDescriptor>,
+    /// Resolved send/request behavior.
+    pub mode: WsMessageMode,
+    /// Encoded reply value type for request handlers.
+    pub reply: Option<TypeDescriptor>,
+    /// Codec used symmetrically for payload and reply bodies.
+    pub codec: TypeDescriptor,
 }
 
 impl WsRouteDescriptor {
@@ -161,6 +189,19 @@ impl WsRouteDescriptor {
     ) -> Self {
         Self {
             destination,
+            message: None,
+            handler: Arc::new(move |runtime| Box::new(handler(runtime))),
+        }
+    }
+
+    /// Creates a route declaration with retained semantic message metadata.
+    pub fn new_described<P: WebsocketProtocol>(
+        message: WsMessageDescriptor,
+        handler: fn(&AppRuntime) -> WsHandlerFn<P>,
+    ) -> Self {
+        Self {
+            destination: message.destination,
+            message: Some(message),
             handler: Arc::new(move |runtime| Box::new(handler(runtime))),
         }
     }
@@ -168,6 +209,11 @@ impl WsRouteDescriptor {
     /// The destination claimed by this route.
     pub fn destination(&self) -> &'static str {
         self.destination
+    }
+
+    /// Returns semantic message metadata when supplied by the route author or macro.
+    pub fn message(&self) -> Option<&WsMessageDescriptor> {
+        self.message.as_ref()
     }
 
     fn to_route<P: WebsocketProtocol>(&self, runtime: &AppRuntime) -> WsRoute<P> {

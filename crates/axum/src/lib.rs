@@ -72,7 +72,9 @@ pub use openapi::{
 
 #[cfg(not(target_family = "wasm"))]
 pub use controller::{
-    CONTROLLERS, Controller, ControllerDescriptor, ControllerRoute, HttpRouteDescriptor,
+    CONTROLLERS, Controller, ControllerDescriptor, ControllerRoute, HttpInputDescriptor,
+    HttpInputSource, HttpOutputDescriptor, HttpOutputShape, HttpPathParameterDescriptor,
+    HttpResponseDescriptor, HttpRouteDescriptor,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use error::{Error, Result};
@@ -89,7 +91,7 @@ pub use ws::{
     ControllerWsRoute, SOCKET_SEND_TIMEOUT, WS_CONTROLLERS, WebsocketController, WebsocketHandler,
     WebsocketProtocol, WebsocketUpgradeMeta, WsConnectionMeta, WsConnectionSettings,
     WsControllerDescriptor, WsControllerRegistration, WsDispatchError, WsFuture, WsHandlerFn,
-    WsIdle, WsRespond, WsRoute, WsRouteDescriptor, WsShutdown,
+    WsIdle, WsMessageDescriptor, WsMessageMode, WsRespond, WsRoute, WsRouteDescriptor, WsShutdown,
 };
 
 /// The `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements so

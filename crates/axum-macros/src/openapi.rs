@@ -144,7 +144,11 @@ pub(crate) fn operation_tokens(
     let responses = if extra.as_ref().is_some_and(declares_responses) {
         quote!()
     } else {
-        let responses = responses_arg(&method.sig.output);
+        let responses = responses_arg(
+            &method.sig.output,
+            route.returns.as_ref(),
+            &crate::http_analysis::responses(method, route),
+        );
 
         quote!(, #responses)
     };
@@ -228,14 +232,30 @@ fn request_body_arg(arg_types: &[&Type]) -> TokenStream {
 /// type is one of the [`Dto`](../overseerd_axum/trait.Dto.html) escape hatches that is not a
 /// `utoipa::ToSchema` ([`undocumented_body`]), in which case the `200` is bodyless. This parallels
 /// how those same shapes yield an uncallable typed client method: they carry no schema.
-fn responses_arg(output: &ReturnType) -> TokenStream {
-    let response = client::response_type(output);
-
-    if undocumented_body(&response) {
-        quote!(responses((status = 200)))
+fn responses_arg(
+    output: &ReturnType,
+    returns: Option<&Type>,
+    cases: &[crate::route::ResponseCase],
+) -> TokenStream {
+    let response = returns
+        .cloned()
+        .unwrap_or_else(|| client::response_type(output));
+    let success = if undocumented_body(&response) {
+        quote!((status = 200))
     } else {
-        quote!(responses((status = 200, body = #response)))
-    }
+        quote!((status = 200, body = #response))
+    };
+    let alternatives = cases.iter().map(|response| {
+        let status = response.status;
+
+        if let Some(body) = &response.body {
+            quote!((status = #status, body = #body))
+        } else {
+            quote!((status = #status))
+        }
+    });
+
+    quote!(responses(#success, #(#alternatives),*))
 }
 
 /// Whether a response type has no documentable schema and must yield a bodyless response: the unit

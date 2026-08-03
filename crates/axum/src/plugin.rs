@@ -457,17 +457,89 @@ impl PreparedProtocol for PreparedAxum {
                     route.handler,
                     BTreeMap::from([(String::from("kind"), String::from("http-route"))]),
                 );
+                let mut details = BTreeMap::from([
+                    (String::from("handler"), route.handler.to_string()),
+                    (String::from("method"), route.method.to_string()),
+                    (
+                        String::from("output"),
+                        route
+                            .output
+                            .ty
+                            .map(|output| (output.type_name)().to_string())
+                            .unwrap_or_else(|| route.output.declared.to_string()),
+                    ),
+                    (
+                        String::from("output-shape"),
+                        format!("{:?}", route.output.shape),
+                    ),
+                    (String::from("path"), path.clone()),
+                ]);
+                let responses = route
+                    .output
+                    .responses
+                    .iter()
+                    .map(|response| {
+                        let mut value = response.status.to_string();
+
+                        if let Some(redirect) = response.redirect {
+                            value.push_str(" redirect ");
+                            value.push_str(redirect);
+                        }
+
+                        if let Some(body) = response.body {
+                            value.push_str(" body ");
+                            value.push_str((body.type_name)());
+                        }
+
+                        value
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let inputs = route
+                    .inputs
+                    .iter()
+                    .map(|input| {
+                        format!(
+                            "{} ({:?}): {}",
+                            input.name,
+                            input.source,
+                            (input.ty.type_name)()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let path_parameters = route
+                    .path_parameters
+                    .iter()
+                    .map(|parameter| {
+                        if parameter.catch_all {
+                            format!("*{}", parameter.name)
+                        } else {
+                            parameter.name.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                if !inputs.is_empty() {
+                    details.insert(String::from("inputs"), inputs);
+                }
+
+                if !path_parameters.is_empty() {
+                    details.insert(String::from("path-parameters"), path_parameters);
+                }
+
+                if !responses.is_empty() {
+                    details.insert(String::from("responses"), responses);
+                }
+
                 contributions.resource_display(
                     &route_id,
                     ResourceDisplay {
                         label: Some(format!("{} {path}", route.method)),
                         group: Some(format!("HTTP · {}", controller.name)),
                         summary: Some(format!("handler {}", route.handler)),
-                        details: BTreeMap::from([
-                            (String::from("handler"), route.handler.to_string()),
-                            (String::from("method"), route.method.to_string()),
-                            (String::from("path"), path),
-                        ]),
+                        details,
                     },
                 );
                 contributions.relationship(
@@ -522,6 +594,97 @@ impl PreparedProtocol for PreparedAxum {
                 ToolingEndpoint::Owner,
                 ToolingEndpoint::Resource(&id),
             );
+
+            for controller in &endpoint.controllers {
+                let controller_id = format!("websocket/{ordinal}/controller/{}", controller.id);
+
+                contributions.resource_with_labels(
+                    &controller_id,
+                    controller.name,
+                    BTreeMap::from([(String::from("kind"), String::from("websocket-controller"))]),
+                );
+                contributions.resource_display(
+                    &controller_id,
+                    ResourceDisplay {
+                        label: Some(controller.name.to_string()),
+                        group: Some(format!("WebSocket · {}", endpoint.protocol_name)),
+                        summary: Some(format!("{} message handlers", controller.routes().len())),
+                        details: BTreeMap::from([(
+                            String::from("rust-type"),
+                            (controller.ty.type_name)().to_string(),
+                        )]),
+                    },
+                );
+                contributions.relationship(
+                    ToolingRelationshipKind::Contains,
+                    ToolingEndpoint::Resource(&id),
+                    ToolingEndpoint::Resource(&controller_id),
+                );
+
+                for route in controller.routes() {
+                    let message_id = format!(
+                        "websocket/{ordinal}/controller/{}/message/{}",
+                        controller.id,
+                        route.destination()
+                    );
+                    let message = route.message();
+
+                    contributions.resource_with_labels(
+                        &message_id,
+                        route.destination(),
+                        BTreeMap::from([(String::from("kind"), String::from("websocket-message"))]),
+                    );
+                    contributions.resource_display(
+                        &message_id,
+                        ResourceDisplay {
+                            label: Some(format!("message {}", route.destination())),
+                            group: Some(format!("WebSocket · {}", controller.name)),
+                            summary: Some(
+                                message
+                                    .map(|message| {
+                                        format!(
+                                            "{:?} via {}",
+                                            message.mode,
+                                            (message.codec.type_name)()
+                                        )
+                                    })
+                                    .unwrap_or_else(|| String::from("custom message handler")),
+                            ),
+                            details: message
+                                .map(|message| {
+                                    BTreeMap::from([
+                                        (String::from("handler"), message.handler.to_string()),
+                                        (String::from("mode"), format!("{:?}", message.mode)),
+                                        (
+                                            String::from("payload"),
+                                            message
+                                                .payload
+                                                .map(|payload| (payload.type_name)().to_string())
+                                                .unwrap_or_else(|| String::from("none")),
+                                        ),
+                                        (
+                                            String::from("reply"),
+                                            message
+                                                .reply
+                                                .map(|reply| (reply.type_name)().to_string())
+                                                .unwrap_or_else(|| String::from("none")),
+                                        ),
+                                        (
+                                            String::from("codec"),
+                                            (message.codec.type_name)().to_string(),
+                                        ),
+                                    ])
+                                })
+                                .unwrap_or_default(),
+                        },
+                    );
+                    contributions.relationship(
+                        ToolingRelationshipKind::Contains,
+                        ToolingEndpoint::Resource(&controller_id),
+                        ToolingEndpoint::Resource(&message_id),
+                    );
+                }
+            }
         }
     }
 }

@@ -119,6 +119,13 @@ impl Extras {
         Json(key.0)
     }
 
+    /// Axum request extensions are available from the Overseer prelude and remain server context,
+    /// so this route still generates a zero-argument client method.
+    #[get("/extension")]
+    async fn extension(&self, Extension(value): Extension<String>) -> Json<String> {
+        Json(value)
+    }
+
     /// Guard-consumed path param: the `{id}` hole is resolved *inside* the `Tenant` guard, so the
     /// handler lists no `Path` arg. The client method must still exist, deriving `id` from the route
     /// template (#61). Round-trips the id the guard read back out.
@@ -363,4 +370,27 @@ async fn generated_client_covers_every_extractor() {
     assert_eq!(*who, "override");
 
     server.shutdown().await;
+}
+
+#[tokio::test]
+async fn extension_extractor_is_public_and_client_treats_it_as_server_context() {
+    let environment = TestEnvironment::new("overseerd-http-extension-");
+    let app = ExtractorsTestApplication::builder()
+        .expect("app builder")
+        .config_source(environment.config())
+        .directories(environment.directories())
+        .layer(overseerd::axum::axum::Extension(String::from(
+            "from-extension",
+        )))
+        .build()
+        .await
+        .expect("app builds");
+    let server = TestServer::start_with_guard(app, environment).await;
+    let client = ExtrasClient::new(ReqwestClient::new(format!("http://{}", server.address())));
+
+    let value = deadline("extension request", client.extension())
+        .await
+        .expect("extension call");
+
+    assert_eq!(*value, "from-extension");
 }

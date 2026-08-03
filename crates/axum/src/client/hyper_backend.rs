@@ -227,6 +227,14 @@ where
             .to_vec();
 
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                return Err(self.fail(super::redirect_error(
+                    parts.status,
+                    &parts.headers,
+                    body_bytes,
+                )));
+            }
+
             return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 
@@ -265,6 +273,17 @@ where
         // A non-success status is a pre-stream failure; surface it as the outer `Err` rather than
         // streaming an error body as items.
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                let body = body
+                    .collect()
+                    .await
+                    .map_err(|error| self.fail(net_err(error)))?
+                    .to_bytes()
+                    .to_vec();
+
+                return Err(self.fail(super::redirect_error(parts.status, &parts.headers, body)));
+            }
+
             let body = body
                 .collect()
                 .await
@@ -320,6 +339,14 @@ where
             .to_vec();
 
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                return Err(self.fail(super::redirect_error(
+                    parts.status,
+                    &parts.headers,
+                    body_bytes,
+                )));
+            }
+
             return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 

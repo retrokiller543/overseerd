@@ -6,6 +6,7 @@
 use futures::{Stream, StreamExt};
 use overseerd::axum::Ndjson;
 use overseerd::axum::axum::extract::Path;
+use overseerd::axum::axum::response::Redirect;
 use overseerd::axum::axum::{Json, http};
 use overseerd::axum::client::{ClientInterceptor, HyperClient, ReqwestClient};
 use overseerd::axum::prelude::*;
@@ -102,6 +103,11 @@ impl Api {
                 .unwrap_or_default()
                 .to_owned(),
         )
+    }
+
+    #[get("/redirect")]
+    async fn redirect(&self) -> Redirect {
+        Redirect::to("/api/missing")
     }
 
     /// Two path params: the client exposes them as dedicated named args (`a`, `b`).
@@ -240,6 +246,17 @@ async fn generated_client_round_trips_over_reqwest() {
 
         Ok(_) => panic!("expected remote 404, got success"),
         Err(other) => panic!("expected remote 404, got {other:?}"),
+    }
+
+    match deadline("redirect request", client.redirect()).await {
+        Err(ClientError::Redirect {
+            status, location, ..
+        }) => {
+            assert_eq!(status, http::StatusCode::SEE_OTHER);
+            assert_eq!(location.as_deref(), Some("/api/missing"));
+        }
+        Ok(_) => panic!("expected redirect, got success"),
+        Err(other) => panic!("expected redirect, got {other:?}"),
     }
 
     // Two path params surface as dedicated named args: `GET /api/pair/{a}/{b}`.

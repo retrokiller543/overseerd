@@ -18,6 +18,7 @@ extern crate proc_macro;
 mod client;
 mod dto;
 mod handlers;
+mod http_analysis;
 mod openapi;
 mod route;
 mod router;

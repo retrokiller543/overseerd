@@ -168,6 +168,7 @@ fn error_kind<E>(error: &ClientError<StatusCode, E>) -> &'static str {
         ClientError::Encode(_) => "encode",
         ClientError::Decode(_) => "decode",
         ClientError::Remote(_) => "remote",
+        ClientError::Redirect { .. } => "redirect",
         ClientError::ConnectionClosed => "connectionClosed",
         ClientError::Timeout => "timeout",
     }
@@ -177,6 +178,7 @@ fn error_kind<E>(error: &ClientError<StatusCode, E>) -> &'static str {
 fn remote_status<E>(error: &ClientError<StatusCode, E>) -> Option<u16> {
     match error {
         ClientError::Remote(error) => Some(error.code().as_u16()),
+        ClientError::Redirect { status, .. } => Some(status.as_u16()),
         _ => None,
     }
 }

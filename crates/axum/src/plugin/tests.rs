@@ -57,11 +57,27 @@ fn prepared_axum_projects_static_http_routes_without_building_runtime() {
                 handler: "health",
                 method: "GET",
                 path: "/health",
+                path_parameters: &[],
+                inputs: &[],
+                output: crate::HttpOutputDescriptor {
+                    ty: Some(overseerd_core::TypeDescriptor::of::<()>("()")),
+                    declared: "()",
+                    shape: crate::HttpOutputShape::Unary,
+                    responses: &[],
+                },
             },
             crate::HttpRouteDescriptor {
                 handler: "health",
                 method: "GET",
                 path: "/ready",
+                path_parameters: &[],
+                inputs: &[],
+                output: crate::HttpOutputDescriptor {
+                    ty: Some(overseerd_core::TypeDescriptor::of::<()>("()")),
+                    declared: "()",
+                    shape: crate::HttpOutputShape::Unary,
+                    responses: &[],
+                },
             },
         ]
     }

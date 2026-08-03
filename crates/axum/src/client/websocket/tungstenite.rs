@@ -264,6 +264,15 @@ fn clone_client_error<S: Copy>(error: &ClientError<S>) -> ClientError<S> {
         ClientError::Remote(body) => {
             ClientError::Remote(ErrorBody::new(body.code(), body.raw().to_vec()))
         }
+        ClientError::Redirect {
+            status,
+            location,
+            body,
+        } => ClientError::Redirect {
+            status: *status,
+            location: location.clone(),
+            body: body.clone(),
+        },
         ClientError::ConnectionClosed => ClientError::ConnectionClosed,
         ClientError::Timeout => ClientError::Timeout,
     }

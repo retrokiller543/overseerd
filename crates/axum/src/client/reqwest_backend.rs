@@ -59,7 +59,7 @@ impl ReqwestClient<(), DefaultClientInterceptor> {
     /// A client against `base_url` (e.g. `"http://localhost:3000"`) with a default reqwest client.
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: default_client(),
             base_url: base_url.into(),
             header_provider: ProviderSlot::default(),
             interceptor: DefaultClientInterceptor::default(),
@@ -267,6 +267,14 @@ where
             .to_vec();
 
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                return Err(self.fail(super::redirect_error(
+                    parts.status,
+                    &parts.headers,
+                    body_bytes,
+                )));
+            }
+
             return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 
@@ -280,6 +288,19 @@ where
             decoded,
         ))
     }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn default_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("default reqwest client configuration is valid")
+}
+
+#[cfg(target_family = "wasm")]
+fn default_client() -> reqwest::Client {
+    reqwest::Client::new()
 }
 
 // Keep the default browser transport wired into the target-relaxed client capabilities. This is a
@@ -326,6 +347,16 @@ where
         // A non-success status is a pre-stream failure (the handler errored before streaming);
         // surface it as the outer `Err` rather than streaming an error body as items.
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                let body = response
+                    .bytes()
+                    .await
+                    .map_err(|error| self.fail(net_err(error)))?
+                    .to_vec();
+
+                return Err(self.fail(super::redirect_error(parts.status, &parts.headers, body)));
+            }
+
             let body = response
                 .bytes()
                 .await
@@ -379,6 +410,14 @@ where
             .to_vec();
 
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                return Err(self.fail(super::redirect_error(
+                    parts.status,
+                    &parts.headers,
+                    body_bytes,
+                )));
+            }
+
             return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 

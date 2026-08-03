@@ -81,6 +81,8 @@ pub(crate) fn classify(arg_types: &[&Type]) -> Option<Inputs> {
     };
 
     for ty in arg_types {
+        let ty = peel_request_combinator(ty);
+
         if let Some(inner) = first_type_arg(ty, "Path") {
             if path_ty.is_some() {
                 return None;
@@ -101,7 +103,9 @@ pub(crate) fn classify(arg_types: &[&Type]) -> Option<Inputs> {
             continue;
         }
 
-        if let Some(inner) = first_type_arg(ty, "Json") {
+        if let Some(inner) =
+            first_type_arg(ty, "Json").or_else(|| first_type_arg(ty, "JsonDeserializer"))
+        {
             set_body(&mut body, BodyKind::Json, Some(inner))?;
 
             continue;
@@ -131,8 +135,13 @@ pub(crate) fn classify(arg_types: &[&Type]) -> Option<Inputs> {
             // rather than emit a method that silently drops it.
             Some(name) if UNSUPPORTED_WIRE.contains(&name) => return None,
 
+            Some(name) if SERVER_CONTEXT.contains(&name) => {}
+
             // Anything else — DI/state or a custom `FromRequestParts` guard — is server-only request
             // context. It never crosses the wire, so drop it from the client signature.
+            // Custom request-parts extractors are server context by convention. Known axum-extra
+            // wrappers with unsupported wire semantics are listed above so they cannot be dropped
+            // accidentally; truly custom extractors retain the established guard behavior.
             _ => {}
         }
     }
@@ -141,6 +150,38 @@ pub(crate) fn classify(arg_types: &[&Type]) -> Option<Inputs> {
         path_ty,
         query,
         body,
+    })
+}
+
+fn peel_request_combinator(ty: &Type) -> &Type {
+    let mut current = ty;
+
+    loop {
+        let name = type_name(current).map(Ident::to_string);
+        let next = match name.as_deref() {
+            Some("Cached" | "WithRejection") => first_type_arg_ref(current),
+            _ => None,
+        };
+
+        match next {
+            Some(inner) => current = inner,
+            None => return current,
+        }
+    }
+}
+
+fn first_type_arg_ref(ty: &Type) -> Option<&Type> {
+    let Type::Path(path) = ty else {
+        return None;
+    };
+    let segment = path.path.segments.last()?;
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+
+    arguments.args.iter().find_map(|argument| match argument {
+        GenericArgument::Type(ty) => Some(ty),
+        _ => None,
     })
 }
 
@@ -1100,7 +1141,41 @@ fn stream_item_binding(impl_trait: &syn::TypeImplTrait) -> Option<Type> {
 /// (`Path`/`Query`/`Json`/`Form`/`Bytes`/`RawForm`/`Multipart`) are handled in [`classify`]; server-only
 /// context (`Inject`/`State`/… and custom `FromRequestParts` guards) carries nothing over the wire and
 /// is dropped, leaving the method intact.
-const UNSUPPORTED_WIRE: &[&str] = &["Request", "RawRequest"];
+const UNSUPPORTED_WIRE: &[&str] = &[
+    "Request",
+    "RawRequest",
+    "Either",
+    "Either3",
+    "Either4",
+    "Either5",
+    "Either6",
+    "Either7",
+    "Either8",
+    "JsonLines",
+    "OptionalPath",
+    "OptionalQuery",
+    "Protobuf",
+];
+
+const SERVER_CONTEXT: &[&str] = &[
+    "ConnectInfo",
+    "Cached",
+    "CookieJar",
+    "Extension",
+    "Host",
+    "HeaderMap",
+    "Inject",
+    "Method",
+    "OriginalUri",
+    "PrivateCookieJar",
+    "Scheme",
+    "SignedCookieJar",
+    "State",
+    "TypedHeader",
+    "WithRejection",
+    "Uri",
+    "Version",
+];
 
 /// Above this many path holes, the params collapse into a single tuple argument rather than one
 /// named argument each — keeping a long route's client signature compact.
@@ -1263,7 +1338,10 @@ fn assemble(
     // The decoded response body: peel a `Json<T>` return to `T`, else the bare return type. An opaque
     // return (`impl IntoResponse`, a raw `Response`) has no typed decode, so the client reads it as a
     // raw `Bytes` body — the caller gets the response bytes and interprets them itself.
-    let response = response_type(output);
+    let response = route
+        .returns
+        .clone()
+        .unwrap_or_else(|| response_type(output));
     let response = if is_opaque_response(&response) {
         let octet_stream = paths.plugin("client::OctetStream");
 
@@ -1271,6 +1349,17 @@ fn assemble(
     } else {
         response
     };
+    let error_types = route
+        .responses
+        .iter()
+        .filter(|response| response.status >= 400)
+        .filter_map(|response| response.body.as_ref())
+        .collect::<Vec<_>>();
+    let error_ty = (error_types.len() == 1).then(|| {
+        let error = error_types[0];
+
+        quote!(#error)
+    });
 
     // The body: the raw `T` (or `Vec<u8>` / `Multipart`) is the param, but the wire body is its
     // `HttpBody` wrapper — which drives the `Encodes<B>` bound, the envelope, and the content type.
@@ -1332,7 +1421,7 @@ fn assemble(
         req_item: None,
         resp_item: None,
         response: response.clone(),
-        error_ty: None,
+        error_ty: error_ty.clone(),
         extra_args: extra_args.clone(),
         request_envelope: request_envelope.clone(),
         request_builder: Some(header_builder),
@@ -1360,7 +1449,7 @@ fn assemble(
         req_item: None,
         resp_item: None,
         response,
-        error_ty: None,
+        error_ty,
         extra_args,
         request_envelope,
         request_builder: None,
@@ -1381,15 +1470,32 @@ fn assemble(
 /// The decoded response body type: the `T` of a `Json<T>` return (the common case), or the bare
 /// return type, or `()` for no return.
 pub(crate) fn response_type(output: &ReturnType) -> Type {
-    match output {
-        ReturnType::Type(_, ty) => {
-            let inner = first_type_arg(ty, "Result").unwrap_or_else(|| (**ty).clone());
+    let declared = match output {
+        ReturnType::Type(_, ty) => (**ty).clone(),
+        ReturnType::Default => return syn::parse_quote!(()),
+    };
 
-            first_type_arg(&inner, "Json").unwrap_or(inner)
-        }
+    response_body_type(&declared).unwrap_or(declared)
+}
 
-        ReturnType::Default => syn::parse_quote!(()),
+fn response_body_type(ty: &Type) -> Option<Type> {
+    let inner = first_type_arg(ty, "Result").unwrap_or_else(|| ty.clone());
+
+    if let Type::Tuple(tuple) = &inner {
+        return match tuple.elems.last() {
+            Some(body) => response_body_type(body),
+            None => Some(inner),
+        };
     }
+
+    first_type_arg(&inner, "Json").or_else(|| {
+        (!is_opaque_response(&inner)
+            && !matches!(
+                type_name(&inner).map(Ident::to_string).as_deref(),
+                Some("Html" | "Redirect")
+            ))
+        .then_some(inner)
+    })
 }
 
 /// Whether a (peeled) response type is **opaque** — one the macro cannot turn into a schema or decode
@@ -1404,11 +1510,12 @@ pub(crate) fn is_opaque_response(ty: &Type) -> bool {
     match ty {
         Type::ImplTrait(_) => true,
 
-        Type::Path(path) => path
-            .path
-            .segments
-            .last()
-            .is_some_and(|segment| segment.ident == "Response"),
+        Type::Path(path) => path.path.segments.last().is_some_and(|segment| {
+            matches!(
+                segment.ident.to_string().as_str(),
+                "Response" | "Html" | "Redirect"
+            )
+        }),
 
         _ => false,
     }

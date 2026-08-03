@@ -27,7 +27,7 @@ pub struct ControllerRoute<C> {
 }
 
 /// Static HTTP method/path/handler metadata retained during preparation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct HttpRouteDescriptor {
     /// Rust handler method name.
     pub handler: &'static str,
@@ -35,6 +35,84 @@ pub struct HttpRouteDescriptor {
     pub method: &'static str,
     /// Controller-relative path.
     pub path: &'static str,
+    /// Named placeholders parsed from the route template.
+    pub path_parameters: &'static [HttpPathParameterDescriptor],
+    /// Ordered semantic handler inputs.
+    pub inputs: &'static [HttpInputDescriptor],
+    /// Semantic response payload and transport shape.
+    pub output: HttpOutputDescriptor,
+}
+
+/// One named placeholder in an HTTP route template.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HttpPathParameterDescriptor {
+    /// Placeholder name without the catch-all marker.
+    pub name: &'static str,
+    /// Whether this placeholder captures the remaining path.
+    pub catch_all: bool,
+}
+
+/// The transport or server-side source of one HTTP handler input.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum HttpInputSource {
+    Path,
+    Query,
+    Header,
+    JsonBody,
+    FormBody,
+    BytesBody,
+    RawFormBody,
+    MultipartBody,
+    Injected,
+    Stream,
+    Context,
+}
+
+/// One ordered semantic HTTP handler input.
+#[derive(Clone, Copy, Debug)]
+pub struct HttpInputDescriptor {
+    /// Handler parameter name where one is available.
+    pub name: &'static str,
+    /// Semantic input source.
+    pub source: HttpInputSource,
+    /// Extracted value type rather than the outer extractor wrapper.
+    pub ty: TypeDescriptor,
+}
+
+/// The response transport shape of one HTTP handler.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum HttpOutputShape {
+    Unary,
+    NdjsonStream,
+    RawStream,
+    CustomStream,
+    Opaque,
+}
+
+/// Semantic output metadata for one HTTP handler.
+#[derive(Clone, Copy, Debug)]
+pub struct HttpOutputDescriptor {
+    /// Decoded payload or stream-item type when statically knowable.
+    pub ty: Option<TypeDescriptor>,
+    /// Original declared return type for opaque/custom diagnostics.
+    pub declared: &'static str,
+    /// Response transport shape.
+    pub shape: HttpOutputShape,
+    /// Known status-specific response alternatives.
+    pub responses: &'static [HttpResponseDescriptor],
+}
+
+/// One known status-specific response alternative.
+#[derive(Clone, Copy, Debug)]
+pub struct HttpResponseDescriptor {
+    /// Concrete HTTP status.
+    pub status: u16,
+    /// Decoded body type when declared or cheaply inferred.
+    pub body: Option<TypeDescriptor>,
+    /// Literal redirect target when cheaply inferred or explicitly declared.
+    pub redirect: Option<&'static str>,
 }
 
 impl<C> Clone for ControllerRoute<C> {
