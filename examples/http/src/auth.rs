@@ -12,10 +12,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use overseerd::axum::axum::Json;
+use overseerd::axum::axum::body::Body;
 use overseerd::axum::axum::extract::Request;
 use overseerd::axum::axum::http::{StatusCode, header};
 use overseerd::axum::axum::middleware::Next;
-use overseerd::axum::axum::response::{IntoResponse, Response};
+use overseerd::axum::axum::response::{IntoResponse, Redirect, Response};
+use overseerd::axum::client::HttpBody;
 use overseerd::axum::prelude::*;
 use overseerd::axum::{AxumMiddleware, HttpRequest, RequestMeta};
 use overseerd::{component, methods};
@@ -100,9 +102,9 @@ impl AuthenticatedUser {
 /// The `/me` response: the authenticated user's name, and whether both `Inject`ions below
 /// resolved the same cached instance.
 #[dto]
-struct WhoAmI {
-    name: Option<String>,
-    same_instance: bool,
+pub struct WhoAmI {
+    pub name: Option<String>,
+    pub same_instance: bool,
 }
 
 /// A controller with no middleware of its own — [`RequireAuth`] and [`AuthenticatedUser`] are
@@ -131,5 +133,30 @@ impl MeController {
             name: user.name.clone(),
             same_instance: Arc::ptr_eq(&user, &same_user),
         })
+    }
+
+    #[get("/login")]
+    async fn login() -> Response {
+        Redirect::to("/me/login/callback").into_response()
+    }
+
+    #[get(
+        "/login/callback",
+        responses = [(status = 403, body = WhoAmI)]
+    )]
+    async fn login_callback() -> Response {
+        let body = Json(WhoAmI {
+            name: None,
+            same_instance: true,
+        });
+
+        let bytes = body.encode().expect("failed to encode body");
+        let json_str = String::from_utf8(bytes).expect("valid utf8");
+
+        Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::new(json_str))
+            .expect("failed to build response")
     }
 }

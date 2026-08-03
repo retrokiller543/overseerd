@@ -81,6 +81,14 @@ struct HandlerContext {
     capture: Vec<Ident>,
 }
 
+struct HttpRouteContext<'a> {
+    stream_param: Option<&'a (usize, Type)>,
+    server_wrap: Option<&'a client::ServerWrap>,
+    stream_item: Option<&'a Type>,
+    is_streaming: bool,
+    in_result: bool,
+}
+
 /// One route claimed from a method: its verb, its relative path, its own
 /// [`AxumMiddleware`](../overseerd_axum/trait.AxumMiddleware.html) list (first-listed
 /// outermost), and the handler closure.
@@ -90,6 +98,9 @@ struct RouteSpec {
     path: LitStr,
     middleware: Vec<Path>,
     handler: TokenStream,
+    inputs: Vec<HttpInputSpec>,
+    path_parameters: Vec<(String, bool)>,
+    output: HttpOutputSpec,
 }
 
 /// One ws message route claimed from a `#[message("dest")]` method: its destination and the
@@ -97,7 +108,15 @@ struct RouteSpec {
 struct WsRouteSpec {
     destination: LitStr,
     builder: TokenStream,
+    handler_name: Ident,
+    payload: Option<Type>,
+    is_request: bool,
+    reply: Option<Type>,
+    codec: TokenStream,
 }
+
+type HttpInputSpec = crate::http_analysis::Input;
+type HttpOutputSpec = crate::http_analysis::Output;
 
 /// One route within a same-path group: its verb, its own middleware list, and its handler.
 type RouteEntry<'a> = (&'a Ident, &'a [Path], &'a TokenStream);
@@ -337,9 +356,16 @@ impl ParseMethod for AxumHandlers {
         // bodies/returns are framed, not single `Dto` payloads). No-op without the `client` feature.
         if stream_param.is_none() && stream_return.is_none() {
             client::collect_wire_types(&arg_types, &method.sig.output, &mut self.wire_types);
+
+            if let Some(returns) = &route_attr.returns {
+                self.wire_types.push(returns.clone());
+            }
         }
 
         let server_wrap = stream_return.as_ref().and_then(|s| s.server_wrap.as_ref());
+        let stream_item = stream_return
+            .as_ref()
+            .and_then(|stream| stream.client.as_ref().map(|(_, item)| item));
         let in_result = stream_return.as_ref().is_some_and(|s| s.in_result);
         // OpenAPI: document the route unless it streams (a streamed body/return is not a single
         // `Dto` payload, so it has no straightforward schema). Built from the same classified inputs
@@ -363,9 +389,13 @@ impl ParseMethod for AxumHandlers {
             &cx.self_ty,
             method,
             &route_attr,
-            stream_param.as_ref(),
-            server_wrap,
-            in_result,
+            HttpRouteContext {
+                stream_param: stream_param.as_ref(),
+                server_wrap,
+                stream_item,
+                is_streaming: stream_return.is_some(),
+                in_result,
+            },
             &cx.paths,
         )?;
         self.routes.push(spec);
@@ -445,6 +475,13 @@ impl ToTokens for AxumHandlers {
         let descriptor_for = paths.core("DescriptorFor");
         let controller_route = paths.plugin("ControllerRoute");
         let http_route_descriptor = paths.plugin("HttpRouteDescriptor");
+        let http_path_parameter_descriptor = paths.plugin("HttpPathParameterDescriptor");
+        let http_input_descriptor = paths.plugin("HttpInputDescriptor");
+        let http_input_source = paths.plugin("HttpInputSource");
+        let http_output_descriptor = paths.plugin("HttpOutputDescriptor");
+        let http_output_shape = paths.plugin("HttpOutputShape");
+        let http_response_descriptor = paths.plugin("HttpResponseDescriptor");
+        let type_descriptor = paths.core("TypeDescriptor");
         let controller_trait = paths.plugin("Controller");
         let routes_slice = self
             .routes_slice
@@ -530,12 +567,78 @@ impl ToTokens for AxumHandlers {
             let handler = route.handler_name.to_string();
             let method = route.verb.to_string().to_ascii_uppercase();
             let path = &route.path;
+            let input_descriptors = route.inputs.iter().map(|input| {
+                let name = &input.name;
+                let source = format_ident!("{}", input.source);
+                let ty = &input.ty;
+                let ty_name = ty.to_token_stream().to_string();
+
+                quote! {
+                    #http_input_descriptor {
+                        name: #name,
+                        source: #http_input_source::#source,
+                        ty: #type_descriptor::of::<#ty>(#ty_name),
+                    }
+                }
+            });
+            let path_parameters = route.path_parameters.iter().map(|(name, catch_all)| {
+                quote! {
+                    #http_path_parameter_descriptor {
+                        name: #name,
+                        catch_all: #catch_all,
+                    }
+                }
+            });
+            let output_shape = format_ident!("{}", route.output.shape);
+            let declared = &route.output.declared;
+            let declared_name = declared.to_token_stream().to_string();
+            let output_ty = route
+                .output
+                .ty
+                .as_ref()
+                .map(|ty| {
+                    let name = ty.to_token_stream().to_string();
+                    quote!(::core::option::Option::Some(#type_descriptor::of::<#ty>(#name)))
+                })
+                .unwrap_or_else(|| quote!(::core::option::Option::None));
+            let responses = route.output.responses.iter().map(|response| {
+                let status = response.status;
+                let body = response
+                    .body
+                    .as_ref()
+                    .map(|ty| {
+                        let name = ty.to_token_stream().to_string();
+                        quote!(::core::option::Option::Some(#type_descriptor::of::<#ty>(#name)))
+                    })
+                    .unwrap_or_else(|| quote!(::core::option::Option::None));
+                let redirect = response
+                    .redirect
+                    .as_ref()
+                    .map(|target| quote!(::core::option::Option::Some(#target)))
+                    .unwrap_or_else(|| quote!(::core::option::Option::None));
+
+                quote! {
+                    #http_response_descriptor {
+                        status: #status,
+                        body: #body,
+                        redirect: #redirect,
+                    }
+                }
+            });
 
             quote! {
                 #http_route_descriptor {
                     handler: #handler,
                     method: #method,
                     path: #path,
+                    path_parameters: &[#(#path_parameters),*],
+                    inputs: &[#(#input_descriptors),*],
+                    output: #http_output_descriptor {
+                        ty: #output_ty,
+                        declared: #declared_name,
+                        shape: #http_output_shape::#output_shape,
+                        responses: &[#(#responses),*],
+                    },
                 }
             }
         });
@@ -591,6 +694,9 @@ impl AxumHandlers {
         let ws_controller_trait = paths.plugin("WebsocketController");
         let ws_route = paths.plugin("WsRoute");
         let ws_route_descriptor = paths.plugin("WsRouteDescriptor");
+        let ws_message_descriptor = paths.plugin("WsMessageDescriptor");
+        let ws_message_mode = paths.plugin("WsMessageMode");
+        let type_descriptor = paths.core("TypeDescriptor");
         let ws_routes_slice = self
             .routes_slice
             .clone()
@@ -605,10 +711,41 @@ impl AxumHandlers {
         let descriptors = self.ws_routes.iter().map(|spec| {
             let destination = &spec.destination;
             let builder = &spec.builder;
+            let handler = spec.handler_name.to_string();
+            let payload = spec
+                .payload
+                .as_ref()
+                .map(|ty| {
+                    let name = ty.to_token_stream().to_string();
+                    quote!(::core::option::Option::Some(#type_descriptor::of::<#ty>(#name)))
+                })
+                .unwrap_or_else(|| quote!(::core::option::Option::None));
+            let mode = if spec.is_request {
+                quote!(#ws_message_mode::Request)
+            } else {
+                quote!(#ws_message_mode::Send)
+            };
+            let reply = spec
+                .reply
+                .as_ref()
+                .map(|ty| {
+                    let name = ty.to_token_stream().to_string();
+                    quote!(::core::option::Option::Some(#type_descriptor::of::<#ty>(#name)))
+                })
+                .unwrap_or_else(|| quote!(::core::option::Option::None));
+            let codec = &spec.codec;
+            let codec_name = codec.to_string();
 
             quote! {
-                #ws_route_descriptor::new::<#protocol>(
-                    #destination,
+                #ws_route_descriptor::new_described::<#protocol>(
+                    #ws_message_descriptor {
+                        handler: #handler,
+                        destination: #destination,
+                        payload: #payload,
+                        mode: #mode,
+                        reply: #reply,
+                        codec: #type_descriptor::of::<#codec>(#codec_name),
+                    },
                     |runtime| {
                         let svc = runtime
                             .root()
@@ -668,9 +805,7 @@ fn build_route(
     self_ty: &Type,
     method: &ImplItemFn,
     route_attr: &RouteAttr,
-    stream_param: Option<&(usize, Type)>,
-    server_wrap: Option<&client::ServerWrap>,
-    in_result: bool,
+    route_context: HttpRouteContext<'_>,
     paths: &Paths,
 ) -> syn::Result<RouteSpec> {
     let takes_self = match method.sig.inputs.first() {
@@ -711,7 +846,7 @@ fn build_route(
         .iter()
         .zip(&arg_idents)
         .enumerate()
-        .map(|(i, (ty, ident))| match stream_param {
+        .map(|(i, (ty, ident))| match route_context.stream_param {
             Some((index, item)) if *index == i => quote!(#ident: #stream_body<#item>),
 
             _ => quote!(#ident: #ty),
@@ -720,7 +855,7 @@ fn build_route(
     let call_args: Vec<TokenStream> = arg_idents
         .iter()
         .enumerate()
-        .map(|(i, ident)| match stream_param {
+        .map(|(i, ident)| match route_context.stream_param {
             Some((index, _)) if *index == i => quote!(#ident.into_stream()),
 
             _ => quote!(#ident),
@@ -739,7 +874,7 @@ fn build_route(
     // failure), the wrap maps over the `Result` instead. An explicit wrapper / unary body passes
     // through untouched.
     let wrap = |call: TokenStream| {
-        let wrapper = match server_wrap {
+        let wrapper = match route_context.server_wrap {
             Some(client::ServerWrap::Ndjson) => {
                 let ndjson = paths.plugin("Ndjson");
 
@@ -756,7 +891,7 @@ fn build_route(
             None => return call,
         };
 
-        if in_result {
+        if route_context.in_result {
             quote!(#call.map(#wrapper))
         } else {
             quote!((#wrapper)(#call))
@@ -783,12 +918,62 @@ fn build_route(
         }
     };
 
+    let inputs = method
+        .sig
+        .inputs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, argument)| {
+            let FnArg::Typed(typed) = argument else {
+                return None;
+            };
+            let name = match typed.pat.as_ref() {
+                syn::Pat::Ident(ident) => ident.ident.to_string(),
+                _ => format!("arg{index}"),
+            };
+            let ty = typed.ty.as_ref();
+            let (source, semantic_ty) = if let Some((stream_index, item)) =
+                route_context.stream_param
+                && *stream_index == index.saturating_sub(usize::from(takes_self))
+            {
+                ("Stream", item.clone())
+            } else {
+                crate::http_analysis::input(ty)
+            };
+
+            Some(HttpInputSpec {
+                name,
+                source,
+                ty: semantic_ty,
+            })
+        })
+        .collect();
+    let (_, holes) = client::parse_template(&route_attr.path.value());
+    let path_parameters = holes
+        .into_iter()
+        .map(|name| {
+            let catch_all = name.starts_with('*');
+            (name.trim_start_matches('*').to_string(), catch_all)
+        })
+        .collect();
+    let output = crate::http_analysis::output(
+        method,
+        route_attr,
+        route_context.server_wrap,
+        route_context.stream_item,
+        route_context.is_streaming,
+        route_attr.streamed,
+    );
+
     Ok(RouteSpec {
         handler_name: method.sig.ident.clone(),
         verb: route_attr.verb.clone(),
         path: route_attr.path.clone(),
         middleware: route_attr.middleware.clone(),
         handler,
+        inputs,
+        path_parameters,
+        output,
     })
 }
 
@@ -947,6 +1132,11 @@ fn build_ws_route(
     Ok(WsRouteSpec {
         destination: destination.clone(),
         builder,
+        handler_name: method.sig.ident.clone(),
+        payload: ws_payload_type(method)?,
+        is_request,
+        reply: is_request.then(|| client::response_type(&method.sig.output)),
+        codec: codec.clone(),
     })
 }
 

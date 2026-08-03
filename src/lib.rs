@@ -369,7 +369,7 @@ pub mod axum {
         };
 
         #[cfg(not(target_family = "wasm"))]
-        pub use super::axum::extract::{Json, Path, Query, State};
+        pub use super::axum::extract::{Extension, Json, Path, Query, State};
         #[cfg(not(target_family = "wasm"))]
         pub use super::axum::response::IntoResponse;
         #[cfg(not(target_family = "wasm"))]

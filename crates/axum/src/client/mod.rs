@@ -110,6 +110,22 @@ pub(crate) fn remote_error(
     overseerd_client::ClientError::Remote(overseerd_client::ErrorBody::new(status, body))
 }
 
+#[cfg(any(feature = "reqwest", feature = "hyper"))]
+pub(crate) fn redirect_error<E>(
+    status: http::StatusCode,
+    headers: &http::HeaderMap,
+    body: Vec<u8>,
+) -> overseerd_client::ClientError<http::StatusCode, E> {
+    overseerd_client::ClientError::Redirect {
+        status,
+        location: headers
+            .get(http::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+        body,
+    }
+}
+
 #[cfg(all(feature = "hyper", not(target_family = "wasm")))]
 pub use hyper_backend::HyperClient;
 #[cfg(feature = "reqwest")]

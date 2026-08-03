@@ -41,6 +41,22 @@ fn greet_controller_routes_are_documented() {
 }
 
 #[test]
+fn inferred_redirect_and_declared_error_responses_are_documented() {
+    let doc = doc();
+    let login = doc.paths.paths["/me/login"]
+        .get
+        .as_ref()
+        .expect("GET /me/login");
+    let callback = doc.paths.paths["/me/login/callback"]
+        .get
+        .as_ref()
+        .expect("GET /me/login/callback");
+
+    assert!(login.responses.responses.contains_key("303"));
+    assert!(callback.responses.responses.contains_key("403"));
+}
+
+#[test]
 fn path_parameter_is_typed_and_present() {
     let doc = doc();
     let op = doc.paths.paths["/greet/{who}"]
