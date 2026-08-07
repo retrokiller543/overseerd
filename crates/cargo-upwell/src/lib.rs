@@ -7,6 +7,7 @@ mod build;
 mod command;
 mod discovery;
 pub mod graph;
+mod init;
 mod probe;
 mod process;
 mod selection;
@@ -25,6 +26,10 @@ pub use graph::{
     CliArgumentOwnership, CliCommandOwnership, CliOwnershipSummary, GraphDirection, GraphEmitError,
     GraphQuery, GraphQueryError, GraphRelationFamily, GraphSelectorKind, GraphSource, GraphView,
     ResourceExplanation, explain_resource, query_failure_graph, query_graph,
+};
+pub use init::{
+    Catalog, CatalogError, InitError, InitRequest, InitResult, TemplateSelection, ToolEntry,
+    default_catalog_path, init_project,
 };
 use probe::execute_probe;
 pub use probe::{ProbeError, ProbeEvidence, ProbeResult};

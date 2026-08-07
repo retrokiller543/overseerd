@@ -46,6 +46,7 @@ upwell-test-utils = { path = "crates/test-utils", version = "0.20.0", default-fe
 
 # Common dependencies
 arc-swap = "1.9.1"
+anyhow = "1"
 bitflags = "2"
 clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context", "suggestions", "color"] }
 # The axum HTTP protocol. No TLS feature is enabled, keeping `openssl`/`rsa` out of the

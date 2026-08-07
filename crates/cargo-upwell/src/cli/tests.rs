@@ -9,6 +9,81 @@ use super::{
 use cargo_upwell::{CommandKind, GraphDirection, GraphRelationFamily};
 
 #[test]
+fn init_parses_catalog_and_template_values() {
+    let cli = Cli::try_parse_from([
+        "cargo-upwell",
+        "init",
+        "projects/service",
+        "--name",
+        "service-api",
+        "--template",
+        "team/application",
+        "--catalog",
+        "upwell-catalog.toml",
+        "--no-vcs",
+        "--define",
+        "database=postgres",
+        "--upwell-path",
+        "../upwell",
+    ])
+    .expect("init arguments parse");
+    let CommandRequest::Init(request) = cli.into_request() else {
+        panic!("init produces an init request");
+    };
+
+    assert_eq!(
+        request.destination,
+        std::path::Path::new("projects/service")
+    );
+    assert_eq!(request.name.as_deref(), Some("service-api"));
+    assert_eq!(
+        request.template,
+        cargo_upwell::TemplateSelection::Catalog {
+            template: Some(String::from("team/application")),
+            catalog_path: Some(std::path::PathBuf::from("upwell-catalog.toml")),
+        }
+    );
+    assert!(request.no_vcs);
+    assert_eq!(request.define, ["database=postgres"]);
+    assert_eq!(
+        request.upwell_path.as_deref(),
+        Some(std::path::Path::new("../upwell"))
+    );
+}
+
+#[test]
+fn init_rejects_catalog_template_and_direct_path_together() {
+    let error = Cli::try_parse_from([
+        "cargo-upwell",
+        "init",
+        "service",
+        "--template",
+        "team/application",
+        "--template-path",
+        "templates/app",
+    ])
+    .expect_err("template selectors conflict");
+
+    assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+}
+
+#[test]
+fn init_rejects_catalog_file_and_direct_path_together() {
+    let error = Cli::try_parse_from([
+        "cargo-upwell",
+        "init",
+        "service",
+        "--catalog",
+        "catalog.toml",
+        "--template-path",
+        "templates/app",
+    ])
+    .expect_err("catalog and direct path conflict");
+
+    assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+}
+
+#[test]
 fn cargo_external_subcommand_name_is_removed_before_parsing() {
     let arguments = normalized_arguments([
         OsString::from("cargo-upwell"),
