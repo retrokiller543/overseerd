@@ -20,7 +20,7 @@ jobs:
   release-plz-release:
     name: Release-plz release
     runs-on: ubuntu-latest
-    if: ${{ github.repository_owner == 'retrokiller543' }}
+    if: ${{ github.repository_owner == 'upwell-rs' }}
     permissions:
       contents: write
       pull-requests: read

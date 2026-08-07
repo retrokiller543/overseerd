@@ -14,8 +14,8 @@ version = "0.20.0"
 edition = "2024"
 license = "MIT"
 authors = ["Emil Schütt <emil.schutt@gmail.com>"]
-repository = "https://github.com/retrokiller543/overseerd"
-homepage = "https://github.com/retrokiller543/overseerd"
+repository = "https://github.com/upwell-rs/upwell"
+homepage = "https://github.com/upwell-rs/upwell"
 keywords = ["daemon", "rpc", "framework", "async", "ioc"]
 categories = ["network-programming", "asynchronous"]
 
