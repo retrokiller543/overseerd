@@ -486,9 +486,13 @@ impl PreparedProtocol for PreparedAxum {
                             value.push_str(redirect);
                         }
 
-                        if let Some(body) = response.body {
-                            value.push_str(" body ");
-                            value.push_str((body.type_name)());
+                        match response.body {
+                            crate::HttpResponseBodyDescriptor::Empty => value.push_str(" empty"),
+                            crate::HttpResponseBodyDescriptor::Typed(body) => {
+                                value.push_str(" body ");
+                                value.push_str((body.type_name)());
+                            }
+                            crate::HttpResponseBodyDescriptor::Opaque => value.push_str(" opaque"),
                         }
 
                         value

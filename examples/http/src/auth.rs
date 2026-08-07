@@ -140,10 +140,7 @@ impl MeController {
         Redirect::to("/me/login/callback").into_response()
     }
 
-    #[get(
-        "/login/callback",
-        responses = [(status = 403, body = WhoAmI)]
-    )]
+    #[get("/login/callback")]
     async fn login_callback() -> Response {
         let body = Json(WhoAmI {
             name: None,
@@ -158,5 +155,29 @@ impl MeController {
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::new(json_str))
             .expect("failed to build response")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use overseerd::axum::client::{HttpResponse, ReqwestClient};
+
+    use super::{MeControllerClient, WhoAmI};
+
+    fn assert_login_callback_type(
+        client: &MeControllerClient<ReqwestClient>,
+    ) -> impl Future<
+        Output = Result<
+            HttpResponse<WhoAmI>,
+            overseerd::client::ClientError<overseerd::axum::http::StatusCode>,
+        >,
+    > + '_ {
+        client.login_callback()
+    }
+
+    #[test]
+    fn generated_callback_client_uses_the_only_known_body_type() {
+        let client = MeControllerClient::new(ReqwestClient::new("http://localhost"));
+        let _future = assert_login_callback_type(&client);
     }
 }

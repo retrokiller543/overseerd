@@ -22,6 +22,7 @@
 #![cfg_attr(target_family = "wasm", allow(dead_code))]
 
 pub mod greet;
+pub mod responses;
 
 // The STOMP chat: its controllers' server halves are gated out on wasm by the macros, so the module
 // compiles on both targets — a wasm client gets the generated `ChatTopicClient` (subscribe) and

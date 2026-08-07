@@ -248,16 +248,12 @@ async fn generated_client_round_trips_over_reqwest() {
         Err(other) => panic!("expected remote 404, got {other:?}"),
     }
 
-    match deadline("redirect request", client.redirect()).await {
-        Err(ClientError::Redirect {
-            status, location, ..
-        }) => {
-            assert_eq!(status, http::StatusCode::SEE_OTHER);
-            assert_eq!(location.as_deref(), Some("/api/missing"));
-        }
-        Ok(_) => panic!("expected redirect, got success"),
-        Err(other) => panic!("expected redirect, got {other:?}"),
-    }
+    let redirect = deadline("redirect request", client.redirect())
+        .await
+        .expect("declared redirect response");
+    assert_eq!(redirect.status(), http::StatusCode::SEE_OTHER);
+    assert_eq!(redirect.body().status, 303);
+    assert_eq!(redirect.body().location.as_deref(), Some("/api/missing"));
 
     // Two path params surface as dedicated named args: `GET /api/pair/{a}/{b}`.
     let product = deadline("pair request", client.pair(6, 7))

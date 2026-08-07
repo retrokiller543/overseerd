@@ -290,6 +290,55 @@ where
     }
 }
 
+impl<W, I> super::HttpExchange for ReqwestClient<W, I>
+where
+    W: MaybeSend + MaybeSync,
+    I: ClientInterceptor + MaybeSend + MaybeSync,
+{
+    async fn exchange<B>(
+        &self,
+        request: Request<B>,
+    ) -> Result<HttpResponse<Vec<u8>>, ClientError<http::StatusCode>>
+    where
+        Self: Encodes<B>,
+        B: MaybeSend,
+    {
+        let (parts, body) = request.into_parts();
+        let bytes = self
+            .encode(body)
+            .map_err(|error| self.fail(ClientError::Encode(error.to_string())))?;
+        let parts = self.prepare_request(parts)?;
+        let response = self
+            .client
+            .request(parts.method, parts.uri.to_string())
+            .headers(parts.headers)
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|error| self.fail(net_err(error)))?;
+        let mut parts = self.response_parts(response.status(), response.headers().clone());
+        let body = response
+            .bytes()
+            .await
+            .map_err(|error| self.fail(net_err(error)))?
+            .to_vec();
+
+        Ok(HttpResponse::new(
+            parts.status,
+            std::mem::take(&mut parts.headers),
+            body,
+        ))
+    }
+
+    fn decode_response<T>(&self, body: Vec<u8>) -> Result<T, ClientError<http::StatusCode>>
+    where
+        Self: Decodes<T>,
+    {
+        self.decode(body)
+            .map_err(|error| self.fail(ClientError::Decode(error.to_string())))
+    }
+}
+
 #[cfg(not(target_family = "wasm"))]
 fn default_client() -> reqwest::Client {
     reqwest::Client::builder()

@@ -2,10 +2,9 @@ use overseerd_macros_core::paths::Paths;
 use quote::quote;
 use syn::{ImplItemFn, ReturnType, parse_quote};
 
-use super::{
-    AxumHandlers, HandlerContext, build_message_request_method, build_message_send_method,
-    build_ws_route, message_success_value, resolve_message_reply,
-};
+use super::ws::{build_ws_route, message_success_value, resolve_message_reply};
+use super::ws_client::{build_message_request_method, build_message_send_method};
+use super::{AxumHandlers, HandlerContext};
 use crate::route::MessageMode;
 
 fn paths() -> Paths {
@@ -179,7 +178,7 @@ fn explicit_unit_request_has_unit_client_response() {
     let output: ReturnType = parse_quote!(-> Result<(), Failure>);
 
     assert!(resolve_message_reply(MessageMode::Request, &output));
-    let response = super::client::response_type(&output);
+    let response = crate::client::response_type(&output);
 
     assert_eq!(quote!(#response).to_string(), "()");
 }
