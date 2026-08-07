@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.20.0](https://github.com/upwell-rs/upwell/compare/upwell-jobs-v0.19.1...upwell-jobs-v0.20.0) - 2026-07-22
+## 0.20.0 - 2026-07-22
 
 ### Added
 
@@ -17,13 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(hooks)* non_exhaustive HookDescriptor + constructor; doc factory_slice merge
 
-## [0.17.2](https://github.com/upwell-rs/upwell/compare/upwell-jobs-v0.17.1...upwell-jobs-v0.17.2) - 2026-07-18
+## 0.17.2 - 2026-07-18
 
 ### Other
 
 - *(jobs)* wait for observed scheduler runs
 
-## [0.12.0](https://github.com/upwell-rs/upwell/compare/upwell-jobs-v0.11.2...upwell-jobs-v0.12.0) - 2026-07-08
+## 0.12.0 - 2026-07-08
 
 ### Added
 

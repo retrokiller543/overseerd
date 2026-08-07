@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.20.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.19.1...upwell-v0.20.0) - 2026-07-22
+## 0.20.0 - 2026-07-22
 
 ### Added
 
 - *(di)* dual linkme/inventory registration backend for factories & hooks
 
-## [0.19.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.18.0...upwell-v0.19.0) - 2026-07-21
+## 0.19.0 - 2026-07-21
 
 ### Added
 
@@ -29,51 +29,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(di)* resolve review findings in provider primitives
 - *(di)* hydrate deferred dependencies after build
 
-## [0.18.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.17.2...upwell-v0.18.0) - 2026-07-19
+## 0.18.0 - 2026-07-19
 
 ### Added
 
 - *(axum)* make WebSocket protocols portable ([#105](https://github.com/upwell-rs/upwell/pull/105))
 
-## [0.17.2](https://github.com/upwell-rs/upwell/compare/upwell-v0.17.1...upwell-v0.17.2) - 2026-07-18
+## 0.17.2 - 2026-07-18
 
 ### Removed
 
 - removed locked ci flag
 
-## [0.17.1](https://github.com/upwell-rs/upwell/compare/upwell-v0.17.0...upwell-v0.17.1) - 2026-07-17
+## 0.17.1 - 2026-07-17
 
 ### Other
 
 - *(benchmarks)* report retained footprint and pure-DI (empty) graphs
 - *(benchmarks)* expand suite across DI, config, RPC, serde, and WS
 
-## [0.17.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.16.0...upwell-v0.17.0) - 2026-07-17
+## 0.17.0 - 2026-07-17
 
 ### Fixed
 
 - *(rpc)* close cancellation and write-failure gaps
 - harden RPC transport resource handling
 
-## [0.16.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.15.0...upwell-v0.16.0) - 2026-07-17
+## 0.16.0 - 2026-07-17
 
 ### Fixed
 
 - *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/upwell-rs/upwell/pull/85))
 
-## [0.14.2](https://github.com/upwell-rs/upwell/compare/upwell-v0.14.1...upwell-v0.14.2) - 2026-07-17
+## 0.14.2 - 2026-07-17
 
 ### Other
 
 - *(di)* harden hot paths and add controlled benchmarks
 
-## [0.14.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.13.0...upwell-v0.14.0) - 2026-07-17
+## 0.14.0 - 2026-07-17
 
 ### Added
 
 - *(axum)* [**breaking**] DI-native STOMP auth + protocol-generic WS topics with per-message request/response ([#76](https://github.com/upwell-rs/upwell/pull/76))
 
-## [0.13.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.12.1...upwell-v0.13.0) - 2026-07-12
+## 0.13.0 - 2026-07-12
 
 ### Added
 
@@ -83,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(axum)* restore wasm client feature builds
 
-## [0.12.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.11.2...upwell-v0.12.0) - 2026-07-08
+## 0.12.0 - 2026-07-08
 
 ### Added
 
@@ -94,19 +94,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(jobs)* expand the jobs example for the new capabilities
 
-## [0.11.1](https://github.com/upwell-rs/upwell/compare/upwell-v0.11.0...upwell-v0.11.1) - 2026-07-07
+## 0.11.1 - 2026-07-07
 
 ### Added
 
 - *(axum)* enhance multipart upload support with JS File/Blob integration
 
-## [0.11.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.10.0...upwell-v0.11.0) - 2026-07-07
+## 0.11.0 - 2026-07-07
 
 ### Added
 
 - *(axum)* drop custom guards from client codegen; add query/raw/multipart bodies + per-call & transport headers
 
-## [0.10.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.9.1...upwell-v0.10.0) - 2026-07-03
+## 0.10.0 - 2026-07-03
 
 ### Added
 
@@ -118,19 +118,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - bring the README up to date
 - address PR #55 review — daemon default-feature doc + Dto intent
 
-## [0.9.1](https://github.com/upwell-rs/upwell/compare/upwell-v0.9.0...upwell-v0.9.1) - 2026-07-02
+## 0.9.1 - 2026-07-02
 
 ### Other
 
 - added a way for rest handlers to publish stomp topics
 
-## [0.9.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.8.0...upwell-v0.9.0) - 2026-07-02
+## 0.9.0 - 2026-07-02
 
 ### Added
 
 - *(axum)* DI-backed middleware registration + RequestMeta request-scope seed
 
-## [0.8.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.7.0...upwell-v0.8.0) - 2026-07-02
+## 0.8.0 - 2026-07-02
 
 ### Added
 
@@ -150,49 +150,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(deps)* add arc-swap dependency to Cargo.lock
 - add bug/security/performance hunter workflow
 
-## [0.7.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.6.0...upwell-v0.7.0) - 2026-06-30
+## 0.7.0 - 2026-06-30
 
 ### Other
 
 - Feature/protocol agnostic ([#20](https://github.com/upwell-rs/upwell/pull/20))
 
-## [0.6.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.5.0...upwell-v0.6.0) - 2026-06-26
+## 0.6.0 - 2026-06-26
 
 ### Other
 
 - Config hot-reloading: Live/Dep, mutable Cfg, two-phase reload, hooks, and triggers ([#14](https://github.com/upwell-rs/upwell/pull/14))
 
-## [0.5.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.4.0...upwell-v0.5.0) - 2026-06-25
+## 0.5.0 - 2026-06-25
 
 ### Other
 
 - manager owns the config registry and seeds all defaults (fixes cross-path default references) ([#12](https://github.com/upwell-rs/upwell/pull/12))
 
-## [0.4.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.3.0...upwell-v0.4.0) - 2026-06-25
+## 0.4.0 - 2026-06-25
 
 ### Other
 
 - directory-namespace ergonomics + tagged-enum defaults ([#10](https://github.com/upwell-rs/upwell/pull/10))
 
-## [0.3.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.2.0...upwell-v0.3.0) - 2026-06-25
+## 0.3.0 - 2026-06-25
 
 ### Added
 
 - *(config)* select a default enum variant with #[default] ([#8](https://github.com/upwell-rs/upwell/pull/8))
 
-## [0.2.0](https://github.com/upwell-rs/upwell/compare/upwell-v0.1.1...upwell-v0.2.0) - 2026-06-25
+## 0.2.0 - 2026-06-25
 
 ### Other
 
 - directory namespace, templated field defaults, enum support, app errors & unified logging ([#6](https://github.com/upwell-rs/upwell/pull/6))
 
-## [0.1.1](https://github.com/upwell-rs/upwell/compare/upwell-v0.1.0...upwell-v0.1.1) - 2026-06-24
+## 0.1.1 - 2026-06-24
 
 ### Other
 
 - release v0.1.0
 
-## [0.1.0](https://github.com/upwell-rs/upwell/releases/tag/upwell-v0.1.0) - 2026-06-24
+## 0.1.0 - 2026-06-24
 
 ### Added
 
