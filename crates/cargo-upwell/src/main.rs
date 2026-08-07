@@ -7,9 +7,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use cargo_upwell::{
-    CancellationToken, CommandExitCode, GraphQuery, GraphQueryError, InitError, ProbeOptions,
-    ProbeRequestError, ResourceExplanation, ToolingProbe, init_project, probe_request_exit_code,
-    run_command_with_options, run_probe_with_options,
+    CancellationToken, Catalog, CommandExitCode, GraphQuery, GraphQueryError, InitError,
+    ProbeOptions, ProbeRequestError, ResourceExplanation, TemplateSelection, TemplateSource,
+    ToolingProbe, init_project, probe_request_exit_code, run_command_with_options,
+    run_probe_with_options,
 };
 use upwell_tooling_schema::{Diagnostic, ProbeEnvelope, ProbeOutcome, ToolingDocument};
 
@@ -28,14 +29,42 @@ fn execute(request: CommandRequest) -> ExitCode {
     let interactive = io::stderr().is_terminal();
 
     match request {
-        CommandRequest::Init(request) => match init_project(request) {
-            Ok(result) => {
-                println!("Created {} from {}", result.path.display(), result.template);
-
-                ExitCode::SUCCESS
+        CommandRequest::Init(mut request) => {
+            if let TemplateSelection::Catalog {
+                template: None,
+                catalog_path,
+            } = &request.template
+            {
+                match select_template(catalog_path.as_deref()) {
+                    Ok(template) => {
+                        request.template = TemplateSelection::Catalog {
+                            template: Some(template),
+                            catalog_path: catalog_path.clone(),
+                        };
+                    }
+                    Err(error) => return init_error(error),
+                }
             }
-            Err(error) => init_error(error),
-        },
+
+            match init_project(request) {
+                Ok(result) => {
+                    println!("Created {} from {}", result.path.display(), result.template);
+
+                    ExitCode::SUCCESS
+                }
+                Err(error) => init_error(error),
+            }
+        }
+        CommandRequest::Templates { catalog_path } => {
+            match Catalog::load(catalog_path.as_deref()) {
+                Ok(catalog) => {
+                    print_templates(&catalog);
+
+                    ExitCode::SUCCESS
+                }
+                Err(error) => init_error(InitError::Catalog(error)),
+            }
+        }
         CommandRequest::Report {
             command,
             discovery,
@@ -131,11 +160,78 @@ fn init_error(error: InitError) -> ExitCode {
         | InitError::ReservedValue(_)
         | InitError::InvalidTemplatePath(_)
         | InitError::DestinationExists(_)
-        | InitError::CatalogWithoutTemplate => ExitCode::from(CommandExitCode::Misuse.code()),
+        | InitError::MissingTemplate => ExitCode::from(CommandExitCode::Misuse.code()),
         InitError::Catalog(cargo_upwell::CatalogError::Read { .. }) => operational_failure(),
         InitError::Catalog(_) => ExitCode::from(CommandExitCode::Misuse.code()),
         _ => operational_failure(),
     }
+}
+
+fn select_template(path: Option<&Path>) -> Result<String, InitError> {
+    let catalog = Catalog::load(path)?;
+    let templates = catalog.templates().collect::<Vec<_>>();
+
+    if !io::stderr().is_terminal() {
+        eprintln!("Template selection requires an interactive terminal.");
+        write_templates(&catalog, &mut io::stderr().lock()).map_err(|source| {
+            InitError::Generate {
+                template: String::from("catalog"),
+                source: anyhow::Error::new(source),
+            }
+        })?;
+        eprintln!("Pass --template <ID>, or use --template-path <PATH>.");
+
+        return Err(InitError::MissingTemplate);
+    }
+
+    let labels = templates
+        .iter()
+        .map(|template| format!("{}  {}", template.id(), template.description()))
+        .collect::<Vec<_>>();
+    let selection = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("Choose an Upwell project template")
+        .items(&labels)
+        .default(0)
+        .max_length(12)
+        .interact_opt()
+        .map_err(|source| InitError::Generate {
+            template: String::from("selector"),
+            source: anyhow::Error::new(source),
+        })?
+        .ok_or(InitError::MissingTemplate)?;
+
+    Ok(templates[selection].id().to_owned())
+}
+
+fn print_templates(catalog: &Catalog) {
+    if let Err(error) = write_templates(catalog, &mut io::stdout().lock()) {
+        eprintln!("cargo upwell could not write the template catalog: {error}");
+    }
+}
+
+fn write_templates(catalog: &Catalog, output: &mut dyn io::Write) -> io::Result<()> {
+    for template in catalog.templates() {
+        let source = match template.source() {
+            TemplateSource::Local(path) => format!("path {}", path.display()),
+            TemplateSource::Git {
+                repository,
+                reference,
+            } => reference.as_ref().map_or_else(
+                || format!("git {repository}"),
+                |reference| format!("git {repository} ({reference})"),
+            ),
+        };
+
+        writeln!(
+            output,
+            "{:<24} {:<54} {}",
+            template.id(),
+            template.description(),
+            source
+        )?;
+    }
+
+    Ok(())
 }
 
 fn inspect(

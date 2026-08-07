@@ -374,6 +374,7 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "command-group",
+ "dialoguer",
  "directories",
  "fs2",
  "libc",

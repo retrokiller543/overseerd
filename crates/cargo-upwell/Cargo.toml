@@ -17,6 +17,7 @@ cargo-generate = { workspace = true }
 clap = { workspace = true }
 command-group = { workspace = true }
 directories = { workspace = true }
+dialoguer = { workspace = true }
 fs2 = { workspace = true }
 upwell-tooling-schema = { workspace = true }
 semver = { workspace = true, features = ["serde"] }

@@ -84,6 +84,37 @@ fn init_rejects_catalog_file_and_direct_path_together() {
 }
 
 #[test]
+fn init_without_a_template_defers_to_interactive_selection() {
+    let cli = Cli::try_parse_from(["cargo-upwell", "init", "service"])
+        .expect("interactive init arguments parse");
+    let CommandRequest::Init(request) = cli.into_request() else {
+        panic!("init produces an init request");
+    };
+
+    assert_eq!(
+        request.template,
+        cargo_upwell::TemplateSelection::Catalog {
+            template: None,
+            catalog_path: None,
+        }
+    );
+}
+
+#[test]
+fn templates_parses_an_explicit_catalog() {
+    let cli = Cli::try_parse_from(["cargo-upwell", "templates", "--catalog", "catalog.toml"])
+        .expect("template listing arguments parse");
+    let CommandRequest::Templates { catalog_path } = cli.into_request() else {
+        panic!("templates produces a catalog request");
+    };
+
+    assert_eq!(
+        catalog_path.as_deref(),
+        Some(std::path::Path::new("catalog.toml"))
+    );
+}
+
+#[test]
 fn cargo_external_subcommand_name_is_removed_before_parsing() {
     let arguments = normalized_arguments([
         OsString::from("cargo-upwell"),

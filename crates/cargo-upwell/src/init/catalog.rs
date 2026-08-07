@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
@@ -6,18 +7,66 @@ use serde::Deserialize;
 use thiserror::Error;
 
 const CATALOG_SCHEMA: &str = "1";
+const TEMPLATE_TAG: &str = "v0.20.3";
 
-/// Kind of project produced by one template.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TemplateKind {
-    /// Standalone application crate.
-    Application,
-    /// Application workspace with a thin application member.
-    ApplicationWorkspace,
-    /// Protocol-neutral plugin library crate.
-    Plugin,
-    /// First-class protocol library crate.
-    Protocol,
+/// Source of one cargo-generate template.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TemplateSource {
+    /// A Git repository and optional immutable branch, tag, or revision selector.
+    Git {
+        /// Clone URL accepted by cargo-generate.
+        repository: String,
+        /// Optional Git reference.
+        reference: Option<GitReference>,
+    },
+    /// A local template directory.
+    Local(PathBuf),
+}
+
+/// Git selector applied to a remote template repository.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum GitReference {
+    /// Branch name.
+    Branch(String),
+    /// Tag name.
+    Tag(String),
+    /// Exact commit or revision.
+    Revision(String),
+}
+
+impl fmt::Display for GitReference {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Branch(branch) => write!(formatter, "branch {branch}"),
+            Self::Tag(tag) => write!(formatter, "tag {tag}"),
+            Self::Revision(revision) => write!(formatter, "revision {revision}"),
+        }
+    }
+}
+
+/// One effective template definition.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TemplateEntry {
+    id: String,
+    description: String,
+    source: TemplateSource,
+}
+
+impl TemplateEntry {
+    /// Stable namespaced catalog identity.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Human-readable template summary.
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    /// Git or local cargo-generate source.
+    pub fn source(&self) -> &TemplateSource {
+        &self.source
+    }
 }
 
 /// One future external developer-tool definition retained in the shared catalog.
@@ -60,29 +109,27 @@ impl ToolEntry {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
 enum CatalogEntry {
-    /// Locally referenced cargo-generate template.
     Template {
-        /// Stable catalog identity.
         id: String,
-        /// Local template directory, relative to the catalog file when not absolute.
-        path: PathBuf,
-        /// Human-readable template summary.
-        #[serde(default)]
         description: String,
+        #[serde(default)]
+        git: Option<String>,
+        #[serde(default)]
+        path: Option<PathBuf>,
+        #[serde(default)]
+        branch: Option<String>,
+        #[serde(default)]
+        tag: Option<String>,
+        #[serde(default, alias = "rev")]
+        revision: Option<String>,
     },
-    /// Separately installed developer tool. Installation is intentionally not performed by init.
     Tool {
-        /// Stable catalog identity.
         id: String,
-        /// Exact executable name.
         command: String,
-        /// Human-readable tool summary.
         #[serde(default)]
         description: String,
-        /// Optional Cargo package for a future managed installer.
         #[serde(default)]
         package: Option<String>,
-        /// Supported protocol identities.
         #[serde(default)]
         protocols: Vec<String>,
     },
@@ -101,23 +148,6 @@ struct CatalogDocument {
 pub struct Catalog {
     templates: BTreeMap<String, TemplateEntry>,
     tools: BTreeMap<String, ToolEntry>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct TemplateEntry {
-    kind: TemplateKind,
-    path: Option<PathBuf>,
-    description: String,
-}
-
-impl TemplateEntry {
-    pub(crate) const fn kind(&self) -> TemplateKind {
-        self.kind
-    }
-
-    pub(crate) fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
-    }
 }
 
 impl Catalog {
@@ -160,23 +190,24 @@ impl Catalog {
             match entry {
                 CatalogEntry::Template {
                     id,
-                    path,
                     description,
+                    git,
+                    path: template_path,
+                    branch,
+                    tag,
+                    revision,
                 } => {
                     validate_id(&id)?;
                     insert_unique(&mut seen, &id, "template")?;
-                    let path = if path.is_absolute() {
-                        path
-                    } else {
-                        base.join(path)
-                    };
+                    let source =
+                        resolve_source(base, &id, git, template_path, branch, tag, revision)?;
 
                     catalog.templates.insert(
-                        id,
+                        id.clone(),
                         TemplateEntry {
-                            kind: TemplateKind::Application,
-                            path: Some(path),
+                            id,
                             description,
+                            source,
                         },
                     );
                 }
@@ -206,62 +237,36 @@ impl Catalog {
         Ok(catalog)
     }
 
-    /// Returns all effective template IDs in deterministic order.
-    pub fn template_ids(&self) -> impl Iterator<Item = &str> {
-        self.templates.keys().map(String::as_str)
-    }
-
-    /// Returns all configured developer tools in deterministic ID order.
-    pub fn tools(&self) -> impl Iterator<Item = &ToolEntry> {
-        self.tools.values()
-    }
-
-    /// Returns the selected template's human-readable summary.
-    pub fn template_description(&self, id: &str) -> Result<&str, CatalogError> {
-        Ok(&self.template(id)?.description)
-    }
-
-    pub(crate) fn template(&self, id: &str) -> Result<&TemplateEntry, CatalogError> {
-        self.templates
-            .get(id)
-            .ok_or_else(|| CatalogError::UnknownTemplate {
-                id: id.to_owned(),
-                available: self.templates.keys().cloned().collect(),
-            })
-    }
-
     /// Returns the catalog compiled into this cargo-upwell release.
     pub fn builtins() -> Self {
         let templates = [
             (
                 "upwell/application",
-                TemplateKind::Application,
-                "Named Upwell application crate",
-            ),
-            (
-                "upwell/application-workspace",
-                TemplateKind::ApplicationWorkspace,
-                "Workspace containing a named Upwell application",
+                "Application or multi-crate workspace",
+                "https://github.com/upwell-rs/upwell-template-application.git",
             ),
             (
                 "upwell/plugin",
-                TemplateKind::Plugin,
-                "Protocol-neutral Upwell plugin crate",
+                "Reusable protocol-neutral plugin",
+                "https://github.com/upwell-rs/upwell-template-plugin.git",
             ),
             (
                 "upwell/protocol",
-                TemplateKind::Protocol,
-                "First-class Upwell protocol crate",
+                "First-class protocol with an optional macro crate",
+                "https://github.com/upwell-rs/upwell-template-protocol.git",
             ),
         ]
         .into_iter()
-        .map(|(id, kind, description)| {
+        .map(|(id, description, repository)| {
             (
                 id.to_owned(),
                 TemplateEntry {
-                    kind,
-                    path: None,
+                    id: id.to_owned(),
                     description: description.to_owned(),
+                    source: TemplateSource::Git {
+                        repository: repository.to_owned(),
+                        reference: Some(GitReference::Tag(TEMPLATE_TAG.to_owned())),
+                    },
                 },
             )
         })
@@ -271,6 +276,25 @@ impl Catalog {
             templates,
             tools: BTreeMap::new(),
         }
+    }
+
+    /// Returns all effective templates in deterministic ID order.
+    pub fn templates(&self) -> impl Iterator<Item = &TemplateEntry> {
+        self.templates.values()
+    }
+
+    /// Returns all configured developer tools in deterministic ID order.
+    pub fn tools(&self) -> impl Iterator<Item = &ToolEntry> {
+        self.tools.values()
+    }
+
+    pub(crate) fn template(&self, id: &str) -> Result<&TemplateEntry, CatalogError> {
+        self.templates
+            .get(id)
+            .ok_or_else(|| CatalogError::UnknownTemplate {
+                id: id.to_owned(),
+                available: self.templates.keys().cloned().collect(),
+            })
     }
 }
 
@@ -284,53 +308,74 @@ pub fn default_catalog_path() -> Option<PathBuf> {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum CatalogError {
-    /// Catalog file could not be read.
     #[error("failed to read Upwell catalog `{path}`")]
     Read {
-        /// Catalog path.
         path: PathBuf,
-        /// Filesystem failure.
         #[source]
         source: std::io::Error,
     },
-    /// Catalog TOML is invalid.
     #[error("failed to parse Upwell catalog `{path}`")]
     Parse {
-        /// Catalog path.
         path: PathBuf,
-        /// TOML failure.
         #[source]
         source: toml::de::Error,
     },
-    /// Catalog schema is unsupported.
     #[error("unsupported Upwell catalog schema `{found}`; expected `{CATALOG_SCHEMA}`")]
-    Schema {
-        /// Unsupported schema value.
-        found: String,
-    },
-    /// An entry ID is malformed.
-    #[error("catalog entry ID `{0}` must be a non-empty namespaced ID")]
+    Schema { found: String },
+    #[error("catalog entry ID `{0}` must be a valid namespaced ID")]
     InvalidId(String),
-    /// One user catalog defines the same ID more than once.
     #[error("catalog entry `{id}` is declared more than once")]
-    DuplicateId {
-        /// Duplicated entry ID.
-        id: String,
-    },
-    /// Requested template does not exist.
+    DuplicateId { id: String },
+    #[error("template `{id}` specifies more than one Git branch, tag, or revision")]
+    ConflictingGitReferences { id: String },
+    #[error("template `{id}` must specify exactly one of `git` or `path`")]
+    InvalidTemplateSource { id: String },
     #[error("unknown template `{id}`; available templates: {available}", available = available.join(", "))]
-    UnknownTemplate {
-        /// Requested ID.
-        id: String,
-        /// Deterministically ordered effective IDs.
-        available: Vec<String>,
-    },
+    UnknownTemplate { id: String, available: Vec<String> },
+}
+
+fn resolve_source(
+    base: &Path,
+    id: &str,
+    git: Option<String>,
+    path: Option<PathBuf>,
+    branch: Option<String>,
+    tag: Option<String>,
+    revision: Option<String>,
+) -> Result<TemplateSource, CatalogError> {
+    match (git, path) {
+        (None, Some(path)) if branch.is_none() && tag.is_none() && revision.is_none() => {
+            Ok(TemplateSource::Local(if path.is_absolute() {
+                path
+            } else {
+                base.join(path)
+            }))
+        }
+        (Some(repository), None) => {
+            let references = [branch.is_some(), tag.is_some(), revision.is_some()]
+                .into_iter()
+                .filter(|present| *present)
+                .count();
+            if references > 1 {
+                return Err(CatalogError::ConflictingGitReferences { id: id.to_owned() });
+            }
+
+            Ok(TemplateSource::Git {
+                repository,
+                reference: branch
+                    .map(GitReference::Branch)
+                    .or_else(|| tag.map(GitReference::Tag))
+                    .or_else(|| revision.map(GitReference::Revision)),
+            })
+        }
+        _ => Err(CatalogError::InvalidTemplateSource { id: id.to_owned() }),
+    }
 }
 
 fn validate_id(id: &str) -> Result<(), CatalogError> {
-    let mut separators = 0;
+    let mut segments = 0;
     let valid = id.split('/').all(|segment| {
-        separators += 1;
+        segments += 1;
         segment
             .as_bytes()
             .first()
@@ -340,7 +385,7 @@ fn validate_id(id: &str) -> Result<(), CatalogError> {
             })
     });
 
-    if valid && separators > 1 {
+    if valid && segments > 1 {
         Ok(())
     } else {
         Err(CatalogError::InvalidId(id.to_owned()))
