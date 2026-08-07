@@ -212,6 +212,10 @@ fn configure_nested_cargo(command: &mut Command) {
 }
 
 fn dependencies_available(project: &Path) -> bool {
+    if std::env::var_os("UPWELL_SKIP_GENERATED_PROJECT_BUILDS").is_some() {
+        return false;
+    }
+
     cargo(project, ["generate-lockfile"]).status.success()
 }
 

@@ -159,6 +159,8 @@ jobs:
       - name: Build nextest archive
         shell: bash
         run: cargo nextest archive --workspace --all-features --locked --archive-file nextest-linux.tar.zst
+      - name: Validate generated projects
+        run: cargo test -p cargo-upwell --test init --locked
       - name: Upload nextest archive
         uses: actions/upload-artifact@v4
         with:
@@ -222,6 +224,8 @@ jobs:
           name: nextest-archive-linux-${{ github.run_id }}-${{ github.run_attempt }}
           path: nextest-archive
       - name: Run critical tests
+        env:
+          UPWELL_SKIP_GENERATED_PROJECT_BUILDS: "1"
         shell: bash
         run: |
           [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
@@ -263,6 +267,8 @@ jobs:
           name: nextest-archive-linux-${{ github.run_id }}-${{ github.run_attempt }}
           path: nextest-archive
       - name: Run extended tests
+        env:
+          UPWELL_SKIP_GENERATED_PROJECT_BUILDS: "1"
         shell: bash
         run: |
           [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
@@ -304,6 +310,8 @@ jobs:
           name: nextest-archive-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: nextest-archive
       - name: Run critical tests
+        env:
+          UPWELL_SKIP_GENERATED_PROJECT_BUILDS: "1"
         shell: bash
         run: |
           [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
@@ -345,6 +353,8 @@ jobs:
           name: nextest-archive-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: nextest-archive
       - name: Run extended tests
+        env:
+          UPWELL_SKIP_GENERATED_PROJECT_BUILDS: "1"
         shell: bash
         run: |
           [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
