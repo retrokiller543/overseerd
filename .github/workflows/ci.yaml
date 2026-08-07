@@ -84,6 +84,7 @@ jobs:
           - upwell-rpc-macros
           - upwell-axum
           - upwell-axum-macros
+          - cargo-upwell
     steps:
       - *checkout
       - *cache

@@ -1,7 +1,10 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use cargo_upwell::{CargoExecutable, CommandKind, DiscoveryRequest, FeatureSelection, GraphQuery};
+use cargo_upwell::{
+    CargoExecutable, CommandKind, DiscoveryRequest, FeatureSelection, GraphQuery, InitRequest,
+    TemplateSelection,
+};
 use clap::builder::styling::{AnsiColor, Effects, Styles};
 use clap::{Args, ColorChoice, CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
 
@@ -37,6 +40,8 @@ pub(crate) struct Cli {
 /// Available Cargo Upwell commands.
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Generates an Upwell application, plugin, or protocol project.
+    Init(InitArgs),
     /// Builds and validates one selected application without serving it.
     Check(ReportArgs),
     /// Diagnoses Cargo selection, build, probe, and application preparation.
@@ -49,6 +54,37 @@ enum Command {
     Graph(GraphArgs),
     /// Explains one exact resource identity or unique name.
     Explain(ExplainArgs),
+}
+
+/// Arguments for catalog-backed cargo-generate scaffolding.
+#[derive(Clone, Debug, Args)]
+struct InitArgs {
+    /// Exact project directory to populate.
+    path: PathBuf,
+    /// Cargo package/project name. Defaults to the destination directory name.
+    #[arg(long)]
+    name: Option<String>,
+    /// Catalog template ID.
+    #[arg(long, conflicts_with = "template_path")]
+    template: Option<String>,
+    /// Direct local cargo-generate template directory.
+    #[arg(long, conflicts_with_all = ["template", "catalog"])]
+    template_path: Option<PathBuf>,
+    /// Explicit Upwell catalog file.
+    #[arg(long)]
+    catalog: Option<PathBuf>,
+    /// Add the generated crate to an immediate parent Cargo workspace.
+    #[arg(long)]
+    workspace: bool,
+    /// Skip creation of a Git repository.
+    #[arg(long)]
+    no_vcs: bool,
+    /// Supply a cargo-generate template value as key=value.
+    #[arg(short = 'd', long = "define", action = clap::ArgAction::Append)]
+    define: Vec<String>,
+    /// Use a local Upwell repository dependency in built-in templates.
+    #[arg(long)]
+    upwell_path: Option<PathBuf>,
 }
 
 /// Cargo target selection shared by application commands.
@@ -207,6 +243,8 @@ struct TerminalArgs {
 /// Parsed Cargo Upwell command request.
 #[derive(Debug)]
 pub(crate) enum CommandRequest {
+    /// Generate a project from a catalog or direct local template.
+    Init(InitRequest),
     /// Check or doctor report.
     Report {
         command: CommandKind,
@@ -257,6 +295,25 @@ impl Cli {
 
     pub(crate) fn into_request(self) -> CommandRequest {
         match self.command {
+            Command::Init(arguments) => {
+                let template = arguments.template_path.map_or_else(
+                    || TemplateSelection::Catalog {
+                        template: arguments.template,
+                        catalog_path: arguments.catalog,
+                    },
+                    TemplateSelection::Local,
+                );
+
+                CommandRequest::Init(InitRequest {
+                    destination: arguments.path,
+                    name: arguments.name,
+                    template,
+                    workspace: arguments.workspace,
+                    no_vcs: arguments.no_vcs,
+                    define: arguments.define,
+                    upwell_path: arguments.upwell_path,
+                })
+            }
             Command::Check(arguments) => CommandRequest::Report {
                 command: CommandKind::Check,
                 discovery: discovery_request(arguments.target),

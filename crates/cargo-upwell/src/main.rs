@@ -7,8 +7,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use cargo_upwell::{
-    CancellationToken, CommandExitCode, GraphQuery, GraphQueryError, ProbeOptions,
-    ProbeRequestError, ResourceExplanation, ToolingProbe, probe_request_exit_code,
+    CancellationToken, CommandExitCode, GraphQuery, GraphQueryError, InitError, ProbeOptions,
+    ProbeRequestError, ResourceExplanation, ToolingProbe, init_project, probe_request_exit_code,
     run_command_with_options, run_probe_with_options,
 };
 use upwell_tooling_schema::{Diagnostic, ProbeEnvelope, ProbeOutcome, ToolingDocument};
@@ -28,6 +28,14 @@ fn execute(request: CommandRequest) -> ExitCode {
     let interactive = io::stderr().is_terminal();
 
     match request {
+        CommandRequest::Init(request) => match init_project(request) {
+            Ok(result) => {
+                println!("Created {} from {}", result.path.display(), result.template);
+
+                ExitCode::SUCCESS
+            }
+            Err(error) => init_error(error),
+        },
         CommandRequest::Report {
             command,
             discovery,
@@ -112,6 +120,21 @@ fn execute(request: CommandRequest) -> ExitCode {
             Ok(probe) => explain(probe, format, &resource, color, pager),
             Err(error) => probe_error(error),
         },
+    }
+}
+
+fn init_error(error: InitError) -> ExitCode {
+    eprintln!("cargo upwell could not initialize the project: {error}");
+
+    match error {
+        InitError::MissingName
+        | InitError::ReservedValue(_)
+        | InitError::InvalidTemplatePath(_)
+        | InitError::DestinationExists(_)
+        | InitError::CatalogWithoutTemplate => ExitCode::from(CommandExitCode::Misuse.code()),
+        InitError::Catalog(cargo_upwell::CatalogError::Read { .. }) => operational_failure(),
+        InitError::Catalog(_) => ExitCode::from(CommandExitCode::Misuse.code()),
+        _ => operational_failure(),
     }
 }
 
