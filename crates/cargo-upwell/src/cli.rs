@@ -42,6 +42,8 @@ pub(crate) struct Cli {
 enum Command {
     /// Generates an Upwell application, plugin, or protocol project.
     Init(InitArgs),
+    /// Lists built-in and user-configured project templates.
+    Templates(TemplatesArgs),
     /// Builds and validates one selected application without serving it.
     Check(ReportArgs),
     /// Diagnoses Cargo selection, build, probe, and application preparation.
@@ -54,6 +56,14 @@ enum Command {
     Graph(GraphArgs),
     /// Explains one exact resource identity or unique name.
     Explain(ExplainArgs),
+}
+
+/// Arguments for effective catalog template listing.
+#[derive(Clone, Debug, Args)]
+struct TemplatesArgs {
+    /// Explicit Upwell catalog file.
+    #[arg(long)]
+    catalog: Option<PathBuf>,
 }
 
 /// Arguments for catalog-backed cargo-generate scaffolding.
@@ -245,6 +255,11 @@ struct TerminalArgs {
 pub(crate) enum CommandRequest {
     /// Generate a project from a catalog or direct local template.
     Init(InitRequest),
+    /// List effective project templates.
+    Templates {
+        /// Explicit catalog file.
+        catalog_path: Option<PathBuf>,
+    },
     /// Check or doctor report.
     Report {
         command: CommandKind,
@@ -314,6 +329,9 @@ impl Cli {
                     upwell_path: arguments.upwell_path,
                 })
             }
+            Command::Templates(arguments) => CommandRequest::Templates {
+                catalog_path: arguments.catalog,
+            },
             Command::Check(arguments) => CommandRequest::Report {
                 command: CommandKind::Check,
                 discovery: discovery_request(arguments.target),

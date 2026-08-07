@@ -28,8 +28,8 @@ pub use graph::{
     ResourceExplanation, explain_resource, query_failure_graph, query_graph,
 };
 pub use init::{
-    Catalog, CatalogError, InitError, InitRequest, InitResult, TemplateSelection, ToolEntry,
-    default_catalog_path, init_project,
+    Catalog, CatalogError, GitReference, InitError, InitRequest, InitResult, TemplateEntry,
+    TemplateSelection, TemplateSource, ToolEntry, default_catalog_path, init_project,
 };
 use probe::execute_probe;
 pub use probe::{ProbeError, ProbeEvidence, ProbeResult};

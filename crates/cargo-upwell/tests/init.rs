@@ -9,9 +9,12 @@ static GENERATED_PROJECTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn built_in_application_is_immediately_usable_by_all_tooling_surfaces() {
+    if skip_remote_template_tests() {
+        return;
+    }
     let _serial = GENERATED_PROJECTS
         .lock()
-        .expect("generated project tests are serialized");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _guard = common::cargo_build_lock();
     let fixture = TempFixture::new("cargo-upwell-init-application");
     let project = fixture.child("sample-app");
@@ -23,6 +26,10 @@ fn built_in_application_is_immediately_usable_by_all_tooling_surfaces() {
             project.to_str().expect("fixture path is UTF-8"),
             "--name",
             "sample-app",
+            "--template",
+            "upwell/application",
+            "--define",
+            "workspace=false",
             "--upwell-path",
             workspace_root().to_str().expect("workspace path is UTF-8"),
             "--no-vcs",
@@ -42,7 +49,7 @@ fn built_in_application_is_immediately_usable_by_all_tooling_surfaces() {
         "generated application tests",
     );
     assert_success(
-        &cargo(&project, ["run", "--", "about"]),
+        &cargo(&project, ["run", "--", "greet", "Upwell"]),
         "generated application CLI",
     );
 
@@ -66,17 +73,20 @@ fn built_in_application_is_immediately_usable_by_all_tooling_surfaces() {
 
 #[test]
 fn built_in_workspace_plugin_and_protocol_templates_compile() {
+    if skip_remote_template_tests() {
+        return;
+    }
     let _serial = GENERATED_PROJECTS
         .lock()
-        .expect("generated project tests are serialized");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _guard = common::cargo_build_lock();
     let fixture = TempFixture::new("cargo-upwell-init-builtins");
     let root = workspace_root();
 
-    for (id, name) in [
-        ("upwell/application-workspace", "sample-workspace"),
-        ("upwell/plugin", "sample-plugin"),
-        ("upwell/protocol", "sample-protocol"),
+    for (id, name, definition) in [
+        ("upwell/application", "sample-workspace", "workspace=true"),
+        ("upwell/plugin", "sample-plugin", "macro_crate=true"),
+        ("upwell/protocol", "sample-protocol", "macro_crate=true"),
     ] {
         let project = fixture.child(name);
         let output = cargo_upwell(
@@ -91,21 +101,26 @@ fn built_in_workspace_plugin_and_protocol_templates_compile() {
                 "--upwell-path",
                 root.to_str().expect("workspace path is UTF-8"),
                 "--no-vcs",
+                "--define",
+                definition,
             ],
         );
 
         assert_success(&output, id);
         if dependencies_available(&project) {
-            assert_success(&cargo(&project, ["test"]), id);
+            assert_success(&cargo(&project, ["test", "--workspace"]), id);
         }
     }
 }
 
 #[test]
 fn workspace_registration_adds_the_committed_project_once() {
+    if skip_remote_template_tests() {
+        return;
+    }
     let _serial = GENERATED_PROJECTS
         .lock()
-        .expect("generated project tests are serialized");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _guard = common::cargo_build_lock();
     let fixture = TempFixture::new("cargo-upwell-init-workspace-member");
     let project = fixture.child("sample-member");
@@ -128,6 +143,8 @@ fn workspace_registration_adds_the_committed_project_once() {
             workspace_root().to_str().expect("workspace path is UTF-8"),
             "--workspace",
             "--no-vcs",
+            "--define",
+            "macro_crate=false",
         ],
     );
 
@@ -146,9 +163,12 @@ fn workspace_registration_adds_the_committed_project_once() {
 
 #[test]
 fn failed_workspace_registration_removes_the_generated_project() {
+    if skip_remote_template_tests() {
+        return;
+    }
     let _serial = GENERATED_PROJECTS
         .lock()
-        .expect("generated project tests are serialized");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _guard = common::cargo_build_lock();
     let fixture = TempFixture::new("cargo-upwell-init-missing-workspace");
     let project = fixture.child("sample-member");
@@ -166,6 +186,8 @@ fn failed_workspace_registration_removes_the_generated_project() {
             workspace_root().to_str().expect("workspace path is UTF-8"),
             "--workspace",
             "--no-vcs",
+            "--define",
+            "macro_crate=false",
         ],
     );
 
@@ -212,11 +234,11 @@ fn configure_nested_cargo(command: &mut Command) {
 }
 
 fn dependencies_available(project: &Path) -> bool {
-    if std::env::var_os("UPWELL_SKIP_GENERATED_PROJECT_BUILDS").is_some() {
-        return false;
-    }
-
     cargo(project, ["generate-lockfile"]).status.success()
+}
+
+fn skip_remote_template_tests() -> bool {
+    std::env::var_os("UPWELL_SKIP_GENERATED_PROJECT_BUILDS").is_some()
 }
 
 fn assert_success(output: &Output, context: &str) {

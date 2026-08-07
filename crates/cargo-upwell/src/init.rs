@@ -1,7 +1,6 @@
 //! Catalog-backed project generation through cargo-generate.
 
 mod catalog;
-mod template;
 
 use std::path::{Path, PathBuf};
 
@@ -9,15 +8,16 @@ use cargo_generate::{GenerateArgs, TemplatePath, Vcs};
 use tempfile::TempDir;
 use thiserror::Error;
 
-use catalog::TemplateKind;
-pub use catalog::{Catalog, CatalogError, ToolEntry, default_catalog_path};
-use template::materialize_builtin;
+pub use catalog::{
+    Catalog, CatalogError, GitReference, TemplateEntry, TemplateSource, ToolEntry,
+    default_catalog_path,
+};
 
 /// Template source selected for one initialization.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum TemplateSelection {
-    /// A built-in or user catalog template. `None` selects the trusted built-in application.
+    /// A built-in or user catalog template. `None` is resolved by the CLI selector.
     Catalog {
         /// Exact catalog template ID.
         template: Option<String>,
@@ -72,9 +72,9 @@ pub enum InitError {
     /// The exact destination already exists.
     #[error("destination `{0}` already exists")]
     DestinationExists(PathBuf),
-    /// An explicit catalog was supplied without a template ID.
-    #[error("an explicit catalog requires an explicit template ID")]
-    CatalogWithoutTemplate,
+    /// No catalog template was selected.
+    #[error("a template ID is required")]
+    MissingTemplate,
     /// The exact destination could not be created.
     #[error("failed to create destination `{path}`")]
     CreateDestination {
@@ -125,7 +125,7 @@ pub fn init_project(request: InitRequest) -> Result<InitResult, InitError> {
         .clone()
         .or_else(|| destination_name(&request.destination))
         .ok_or(InitError::MissingName)?;
-    let (template_id, template_path, _built_in) = resolve_template(&request.template)?;
+    let (template_id, template_path) = resolve_template(&request.template)?;
 
     let config = empty_generator_config().map_err(|source| InitError::BuiltinTemplate {
         template: template_id.clone(),
@@ -145,12 +145,27 @@ pub fn init_project(request: InitRequest) -> Result<InitResult, InitError> {
 
     define.push(format!("upwell_dependency={upwell_dependency}"));
     define.push(format!("upwell_app_dependency={upwell_app_dependency}"));
+    define.push(format!(
+        "upwell_base_dependency={}",
+        upwell_base_dependency(request.upwell_path.as_deref()).map_err(|source| {
+            InitError::BuiltinTemplate {
+                template: template_id.clone(),
+                source,
+            }
+        })?
+    ));
+    define.push(format!(
+        "upwell_macros_core_dependency={}",
+        upwell_macros_core_dependency(request.upwell_path.as_deref()).map_err(|source| {
+            InitError::BuiltinTemplate {
+                template: template_id.clone(),
+                source,
+            }
+        })?
+    ));
 
     let arguments = GenerateArgs {
-        template_path: TemplatePath {
-            path: Some(template_path.to_string_lossy().into_owned()),
-            ..TemplatePath::default()
-        },
+        template_path,
         name: Some(name),
         force: true,
         config: Some(config.path().join("config.toml")),
@@ -192,57 +207,56 @@ pub fn init_project(request: InitRequest) -> Result<InitResult, InitError> {
     })
 }
 
-fn resolve_template(
-    selection: &TemplateSelection,
-) -> Result<(String, PathBuf, Option<TempDir>), InitError> {
+fn resolve_template(selection: &TemplateSelection) -> Result<(String, TemplatePath), InitError> {
     match selection {
         TemplateSelection::Local(path) => {
             validate_template_path(path)?;
 
-            Ok((String::from("local"), path.clone(), None))
+            Ok((
+                String::from("local"),
+                TemplatePath {
+                    path: Some(path.to_string_lossy().into_owned()),
+                    ..TemplatePath::default()
+                },
+            ))
         }
         TemplateSelection::Catalog {
             template,
             catalog_path,
         } => {
-            if template.is_none() && catalog_path.is_some() {
-                return Err(InitError::CatalogWithoutTemplate);
-            }
-
-            let id = template.as_deref().unwrap_or("upwell/application");
-            let catalog = if template.is_some() {
-                Catalog::load(catalog_path.as_deref())?
-            } else {
-                Catalog::builtins()
-            };
+            let id = template.as_deref().ok_or(InitError::MissingTemplate)?;
+            let catalog = Catalog::load(catalog_path.as_deref())?;
             let template = catalog.template(id)?;
 
-            match template.path() {
-                Some(path) => {
+            match template.source() {
+                TemplateSource::Local(path) => {
                     validate_template_path(path)?;
-                    Ok((id.to_owned(), path.to_path_buf(), None))
-                }
-                None => {
-                    let directory = tempfile::Builder::new()
-                        .prefix("cargo-upwell-template-")
-                        .tempdir()
-                        .map_err(|source| InitError::BuiltinTemplate {
-                            template: id.to_owned(),
-                            source,
-                        })?;
-
-                    materialize_builtin(template.kind(), directory.path()).map_err(|source| {
-                        InitError::BuiltinTemplate {
-                            template: id.to_owned(),
-                            source,
-                        }
-                    })?;
-
                     Ok((
                         id.to_owned(),
-                        directory.path().to_path_buf(),
-                        Some(directory),
+                        TemplatePath {
+                            path: Some(path.to_string_lossy().into_owned()),
+                            ..TemplatePath::default()
+                        },
                     ))
+                }
+                TemplateSource::Git {
+                    repository,
+                    reference,
+                } => {
+                    let mut path = TemplatePath {
+                        git: Some(repository.clone()),
+                        ..TemplatePath::default()
+                    };
+                    match reference {
+                        Some(GitReference::Branch(branch)) => path.branch = Some(branch.clone()),
+                        Some(GitReference::Tag(tag)) => path.tag = Some(tag.clone()),
+                        Some(GitReference::Revision(revision)) => {
+                            path.revision = Some(revision.clone());
+                        }
+                        None => {}
+                    }
+
+                    Ok((id.to_owned(), path))
                 }
             }
         }
@@ -308,7 +322,11 @@ fn reject_reserved_values(values: &[String]) -> Result<(), InitError> {
 
         if matches!(
             name,
-            "upwell_version" | "upwell_dependency" | "upwell_app_dependency"
+            "upwell_version"
+                | "upwell_dependency"
+                | "upwell_app_dependency"
+                | "upwell_base_dependency"
+                | "upwell_macros_core_dependency"
         ) {
             return Err(InitError::ReservedValue(name.to_owned()));
         }
@@ -359,6 +377,36 @@ fn upwell_dependencies(path: Option<&Path>) -> Result<(String, String), std::io:
                 "{{ version = \"={}\", default-features = false }}",
                 env!("CARGO_PKG_VERSION")
             ),
+        )),
+    }
+}
+
+fn upwell_macros_core_dependency(path: Option<&Path>) -> Result<String, std::io::Error> {
+    match path {
+        Some(path) => {
+            let path = absolute_path(path)?.join("crates/macros-core");
+            let path = toml::Value::String(path.to_string_lossy().into_owned()).to_string();
+
+            Ok(format!("{{ path = {path}, default-features = false }}"))
+        }
+        None => Ok(format!(
+            "{{ version = \"={}\", default-features = false }}",
+            env!("CARGO_PKG_VERSION")
+        )),
+    }
+}
+
+fn upwell_base_dependency(path: Option<&Path>) -> Result<String, std::io::Error> {
+    match path {
+        Some(path) => {
+            let path = absolute_path(path)?;
+            let path = toml::Value::String(path.to_string_lossy().into_owned()).to_string();
+
+            Ok(format!("{{ path = {path}, default-features = false }}"))
+        }
+        None => Ok(format!(
+            "{{ version = \"={}\", default-features = false }}",
+            env!("CARGO_PKG_VERSION")
         )),
     }
 }

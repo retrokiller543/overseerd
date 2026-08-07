@@ -3,11 +3,12 @@ use std::path::Path;
 use upwell_test_utils::TempFixture;
 
 use super::{
-    Catalog, CatalogError, InitError, InitRequest, TemplateKind, TemplateSelection, init_project,
+    Catalog, CatalogError, GitReference, InitError, InitRequest, TemplateSelection, TemplateSource,
+    init_project,
 };
 
 #[test]
-fn builtins_cover_each_supported_project_kind() {
+fn builtins_reference_tagged_canonical_repositories() {
     let error = Catalog::load(Some(Path::new("missing-catalog.toml")))
         .expect_err("explicit missing catalog is rejected");
 
@@ -16,14 +17,19 @@ fn builtins_cover_each_supported_project_kind() {
     let catalog = Catalog::builtins();
 
     assert_eq!(
-        catalog.template_ids().collect::<Vec<_>>(),
-        [
-            "upwell/application",
-            "upwell/application-workspace",
-            "upwell/plugin",
-            "upwell/protocol",
-        ]
+        catalog
+            .templates()
+            .map(|template| template.id())
+            .collect::<Vec<_>>(),
+        ["upwell/application", "upwell/plugin", "upwell/protocol"]
     );
+    assert!(catalog.templates().all(|template| matches!(
+        template.source(),
+        TemplateSource::Git {
+            reference: Some(GitReference::Tag(tag)),
+            ..
+        } if tag == "v0.20.3"
+    )));
 }
 
 #[test]
@@ -58,8 +64,7 @@ protocols = ["upwell/axum"]
         .expect("override is selected");
     let tool = catalog.tools().next().expect("typed tool is retained");
 
-    assert_eq!(selected.kind(), TemplateKind::Application);
-    assert_eq!(selected.path(), Some(template.as_path()));
+    assert_eq!(selected.source(), &TemplateSource::Local(template));
     assert_eq!(tool.id(), "team/axum");
     assert_eq!(tool.command(), "cargo-upwell-axum");
     assert_eq!(tool.package(), Some("cargo-upwell-axum"));
@@ -119,6 +124,7 @@ fn duplicate_user_ids_are_rejected_across_entry_kinds() {
 [[entries]]
 type = "template"
 id = "team/shared"
+description = "Shared template"
 path = "plugin"
 
 [[entries]]
@@ -132,6 +138,60 @@ command = "cargo-team"
         Catalog::load(Some(&fixture.child("catalog.toml"))).expect_err("duplicate IDs are invalid");
 
     assert!(matches!(error, CatalogError::DuplicateId { id } if id == "team/shared"));
+}
+
+#[test]
+fn git_templates_retain_one_explicit_reference() {
+    let fixture = TempFixture::new("cargo-upwell-git-catalog");
+    fixture.write(
+        "catalog.toml",
+        r#"schema = "1"
+
+[[entries]]
+type = "template"
+id = "team/application"
+description = "Team application"
+git = "https://example.invalid/team/application.git"
+revision = "0123456789abcdef"
+"#,
+    );
+
+    let catalog =
+        Catalog::load(Some(&fixture.child("catalog.toml"))).expect("Git catalog entry loads");
+    let template = catalog
+        .template("team/application")
+        .expect("Git template is selected");
+
+    assert_eq!(
+        template.source(),
+        &TemplateSource::Git {
+            repository: String::from("https://example.invalid/team/application.git"),
+            reference: Some(GitReference::Revision(String::from("0123456789abcdef"))),
+        }
+    );
+}
+
+#[test]
+fn git_templates_reject_conflicting_references() {
+    let fixture = TempFixture::new("cargo-upwell-git-reference-conflict");
+    fixture.write(
+        "catalog.toml",
+        r#"schema = "1"
+
+[[entries]]
+type = "template"
+id = "team/application"
+description = "Team application"
+git = "https://example.invalid/team/application.git"
+branch = "main"
+tag = "v1"
+"#,
+    );
+
+    assert!(matches!(
+        Catalog::load(Some(&fixture.child("catalog.toml"))),
+        Err(CatalogError::ConflictingGitReferences { id }) if id == "team/application"
+    ));
 }
 
 #[test]
@@ -178,13 +238,13 @@ prompt = "Flavor"
 #[test]
 fn reserved_generator_values_cannot_be_overridden() {
     let fixture = TempFixture::new("cargo-upwell-reserved-value");
+    let template = fixture.child("template");
+    std::fs::create_dir_all(&template).expect("template directory exists");
+    std::fs::write(template.join("file.txt"), "template").expect("template file is written");
     let error = init_project(InitRequest {
         destination: fixture.child("generated"),
         name: Some(String::from("sample-app")),
-        template: TemplateSelection::Catalog {
-            template: None,
-            catalog_path: None,
-        },
+        template: TemplateSelection::Local(template),
         workspace: false,
         no_vcs: true,
         define: vec![String::from("upwell_version=9.9.9")],
