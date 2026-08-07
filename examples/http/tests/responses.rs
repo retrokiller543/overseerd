@@ -1,15 +1,15 @@
-use overseerd::app;
-use overseerd::axum::axum::Json;
-use overseerd::axum::axum::http::StatusCode;
-use overseerd::axum::axum::response::{IntoResponse, Response};
-use overseerd::axum::client::{HyperClient, ReqwestClient};
-use overseerd::axum::prelude::*;
-use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
+use upwell::app;
+use upwell::axum::axum::Json;
+use upwell::axum::axum::http::StatusCode;
+use upwell::axum::axum::response::{IntoResponse, Response};
+use upwell::axum::client::{HyperClient, ReqwestClient};
+use upwell::axum::prelude::*;
+use upwell_test_utils::{TestEnvironment, TestServer, deadline};
 
 app! {
     app ResponseTestApplication {
         name: "response-contract-test",
-        protocol: overseerd::axum::Axum,
+        protocol: upwell::axum::Axum,
     }
 }
 
@@ -103,7 +103,7 @@ impl Responses {
     )]
     async fn empty_or_redirect(&self, Path(redirect): Path<bool>) -> Response {
         if redirect {
-            overseerd::axum::axum::response::Redirect::to("/responses/empty").into_response()
+            upwell::axum::axum::response::Redirect::to("/responses/empty").into_response()
         } else {
             StatusCode::NO_CONTENT.into_response()
         }
@@ -112,7 +112,7 @@ impl Responses {
 
 #[tokio::test]
 async fn generated_clients_decode_every_status_contract() {
-    let environment = TestEnvironment::new("overseerd-http-responses-");
+    let environment = TestEnvironment::new("upwell-http-responses-");
     let app = ResponseTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())

@@ -1,7 +1,7 @@
 use super::*;
 use clap::{CommandFactory as _, Parser as _};
-use overseerd::{ColorChoice, LogFormat, Plugin, resolve_host_plugin_catalog};
-use overseerd_test_utils::{TempFixture, path_ends_with_components};
+use upwell::{ColorChoice, LogFormat, Plugin, resolve_host_plugin_catalog};
+use upwell_test_utils::{TempFixture, path_ends_with_components};
 
 static WORKSPACE_CWD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -9,7 +9,7 @@ static WORKSPACE_CWD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 fn generated_help_matches_normalized_snapshot() {
     let mut plugins = resolve_host_plugin_catalog::<DaemonApplication>()
         .expect("Homeledger plugin catalog resolves");
-    let mut command = DaemonApplication::__overseerd_compose_cli(&mut plugins)
+    let mut command = DaemonApplication::__upwell_compose_cli(&mut plugins)
         .expect("Homeledger CLI composes")
         .term_width(100);
     let actual = normalize_help(command.render_long_help().to_string());
@@ -71,10 +71,10 @@ fn named_host_resolves_static_install_replacement_and_suppression() {
 async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() {
     let _cwd = workspace_cwd();
     let _environment = TestEnvironment::set(&[
-        ("OVERSEERD_CONFIG", None),
-        ("OVERSEERD_PROFILES", None),
+        ("UPWELL_CONFIG", None),
+        ("UPWELL_PROFILES", None),
         ("RUST_LOG", None),
-        ("OVERSEERD_LOG_FORMAT", None),
+        ("UPWELL_LOG_FORMAT", None),
         ("NO_COLOR", None),
         ("CLICOLOR_FORCE", None),
     ]);
@@ -82,21 +82,21 @@ async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() 
     crate::components::reset_database_builds();
     crate::protocol::reset_protocol_builds();
 
-    let target = overseerd::tooling::ProbeTargetIdentity::new(
-        overseerd::tooling::PackageIdentity {
+    let target = upwell::tooling::ProbeTargetIdentity::new(
+        upwell::tooling::PackageIdentity {
             name: String::from(env!("CARGO_PKG_NAME")),
             version: Some(String::from(env!("CARGO_PKG_VERSION"))),
             manifest_path: Some(format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"))),
         },
-        overseerd::tooling::BinaryTargetIdentity {
-            name: String::from("overseerd-example-daemon"),
+        upwell::tooling::BinaryTargetIdentity {
+            name: String::from("upwell-example-daemon"),
         },
     )
     .expect("explicit Homeledger tooling target is valid");
     let envelope = DaemonApplication::tooling_probe(target)
         .await
         .expect("generated Homeledger declaration identity validates");
-    let overseerd::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
+    let upwell::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
         panic!(
             "Homeledger tooling probe unexpectedly failed: {:#?}",
             envelope.outcome
@@ -110,7 +110,7 @@ async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() 
             .package
             .as_ref()
             .map(|package| package.name.as_str()),
-        Some("overseerd-example-daemon")
+        Some("upwell-example-daemon")
     );
     assert_eq!(
         document
@@ -118,7 +118,7 @@ async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() 
             .binary
             .as_ref()
             .map(|binary| binary.name.as_str()),
-        Some("overseerd-example-daemon")
+        Some("upwell-example-daemon")
     );
     assert!(document.identity.source.as_ref().is_some_and(|source| {
         path_ends_with_components(&source.file, &["examples", "daemon", "src", "main.rs"])
@@ -203,17 +203,17 @@ async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() 
     );
     assert!(matches!(
         review_ticket.owner,
-        overseerd::tooling::CliOwner::Plugin { provider: ref owner } if owner == &provider.id
+        upwell::tooling::CliOwner::Plugin { provider: ref owner } if owner == &provider.id
     ));
 
     assert!(document.relationships.iter().any(|relationship| {
-        relationship.kind == overseerd::tooling::RelationshipKind::Replaces
+        relationship.kind == upwell::tooling::RelationshipKind::Replaces
             && relationship.from == "plugin:homeledger/audit-policy-compliance"
             && relationship.to == "plugin:homeledger/audit-policy-household"
             && relationship.labels["slot"] == "homeledger/audit-policy"
     }));
     assert!(document.relationships.iter().any(|relationship| {
-        relationship.kind == overseerd::tooling::RelationshipKind::Suppresses
+        relationship.kind == upwell::tooling::RelationshipKind::Suppresses
             && relationship.from == "suppression:homeledger/audit-export"
             && relationship.to == "plugin:homeledger/audit-export"
     }));
@@ -237,10 +237,10 @@ async fn tooling_probe_projects_real_homeledger_plan_without_building_runtime() 
 async fn generated_host_resolves_parser_defaults_and_loaded_config() {
     let _cwd = workspace_cwd();
     let _environment = TestEnvironment::set(&[
-        ("OVERSEERD_CONFIG", None),
-        ("OVERSEERD_PROFILES", None),
+        ("UPWELL_CONFIG", None),
+        ("UPWELL_PROFILES", None),
         ("RUST_LOG", None),
-        ("OVERSEERD_LOG_FORMAT", None),
+        ("UPWELL_LOG_FORMAT", None),
         ("NO_COLOR", None),
         ("CLICOLOR_FORCE", None),
     ]);
@@ -253,7 +253,7 @@ async fn generated_host_resolves_parser_defaults_and_loaded_config() {
 
     assert_eq!(state.config_path, "examples/daemon/config");
     assert_eq!(state.profiles, ["development"]);
-    assert_eq!(state.log, "debug,homeledger=trace,overseerd=debug");
+    assert_eq!(state.log, "debug,homeledger=trace,upwell=debug");
     assert_eq!(state.log_format, LogFormat::Compact);
     assert_eq!(state.color, ColorChoice::Never);
 }
@@ -263,10 +263,10 @@ async fn generated_host_cli_values_override_environment_config_and_defaults() {
     let _cwd = workspace_cwd();
     let config = TestConfig::new("cli", "cli", Some("debug"), Some("compact"), Some(false));
     let _environment = TestEnvironment::set(&[
-        ("OVERSEERD_CONFIG", Some("environment-should-not-win")),
-        ("OVERSEERD_PROFILES", Some("environment")),
+        ("UPWELL_CONFIG", Some("environment-should-not-win")),
+        ("UPWELL_PROFILES", Some("environment")),
         ("RUST_LOG", Some("error,homeledger=warn")),
-        ("OVERSEERD_LOG_FORMAT", Some("pretty")),
+        ("UPWELL_LOG_FORMAT", Some("pretty")),
         ("NO_COLOR", None),
         ("CLICOLOR_FORCE", None),
     ]);
@@ -307,10 +307,10 @@ async fn generated_host_environment_overrides_config_and_parser_defaults() {
     );
     let config_path = config.path().display().to_string();
     let _environment = TestEnvironment::set(&[
-        ("OVERSEERD_CONFIG", Some(&config_path)),
-        ("OVERSEERD_PROFILES", Some("environment")),
+        ("UPWELL_CONFIG", Some(&config_path)),
+        ("UPWELL_PROFILES", Some("environment")),
         ("RUST_LOG", Some("error,homeledger=warn")),
-        ("OVERSEERD_LOG_FORMAT", Some("pretty")),
+        ("UPWELL_LOG_FORMAT", Some("pretty")),
         ("NO_COLOR", None),
         ("CLICOLOR_FORCE", Some("1")),
     ]);
@@ -334,10 +334,10 @@ async fn generated_host_parser_defaults_fill_absent_config_sources() {
     let config = TestConfig::new("fallback", "development", None, None, None);
     let config_path = config.path().display().to_string();
     let _environment = TestEnvironment::set(&[
-        ("OVERSEERD_CONFIG", Some(&config_path)),
-        ("OVERSEERD_PROFILES", None),
+        ("UPWELL_CONFIG", Some(&config_path)),
+        ("UPWELL_PROFILES", None),
         ("RUST_LOG", None),
-        ("OVERSEERD_LOG_FORMAT", None),
+        ("UPWELL_LOG_FORMAT", None),
         ("NO_COLOR", None),
         ("CLICOLOR_FORCE", None),
     ]);
@@ -439,7 +439,7 @@ impl TestConfig {
         format: Option<&str>,
         ansi: Option<bool>,
     ) -> Self {
-        let fixture = TempFixture::new(&format!("overseerd-homeledger-{test}-"));
+        let fixture = TempFixture::new(&format!("upwell-homeledger-{test}-"));
         let mut profile_config = String::from("[logging]\n");
 
         if let Some(level) = level {

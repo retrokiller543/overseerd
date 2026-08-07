@@ -6,11 +6,11 @@ use axum::extract::ws::Message;
 use axum::extract::ws::WebSocket;
 #[cfg(feature = "tungstenite")]
 use futures::StreamExt;
-use overseerd_app::AppRuntime;
-use overseerd_core::TypeDescriptor;
-use overseerd_di::ScopeContainer;
+use upwell_app::AppRuntime;
+use upwell_core::TypeDescriptor;
+use upwell_di::ScopeContainer;
 #[cfg(feature = "tungstenite")]
-use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
+use upwell_test_utils::{TestEnvironment, TestServer, deadline};
 
 use super::{
     WebsocketProtocol, WsAdmission, WsControllerDescriptor, WsControllerRegistration, WsFuture,
@@ -80,7 +80,7 @@ impl WebsocketProtocol for MultiEndpointProtocol {
         let _ = (self, socket, connection, shutdown);
     }
 
-    fn register(_registry: &mut overseerd_app::AppRegistry) {
+    fn register(_registry: &mut upwell_app::AppRegistry) {
         MULTI_ENDPOINT_REGISTRATIONS.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -125,8 +125,8 @@ async fn old_signature_custom_protocol_mounts_without_adapter_methods() {
     let builds_before = TEST_PROTOCOL_BUILDS.load(Ordering::Relaxed);
     let app = crate::App::builder("old-signature-ws-test")
         .config_source(
-            overseerd_config::ConfigManager::<overseerd_config::Toml>::empty()
-                .with_resolvers(overseerd_config::ResolverChain::empty()),
+            upwell_config::ConfigManager::<upwell_config::Toml>::empty()
+                .with_resolvers(upwell_config::ResolverChain::empty()),
         )
         .register_ws::<TestProtocol>("/ws")
         .build()
@@ -143,7 +143,7 @@ async fn old_signature_custom_protocol_mounts_without_adapter_methods() {
 
 #[test]
 fn websocket_limits_fail_during_prepare_before_protocol_build() {
-    let config = overseerd_config::ConfigManager::<overseerd_config::Toml>::from_str(
+    let config = upwell_config::ConfigManager::<upwell_config::Toml>::from_str(
         r#"
             [axum]
             max_websocket_message_bytes = 0
@@ -361,7 +361,7 @@ impl WebsocketProtocol for RequiredSubprotocol {
 #[cfg(feature = "tungstenite")]
 #[tokio::test]
 async fn required_subprotocol_is_negotiated_and_seeded() {
-    let environment = TestEnvironment::new("overseerd-axum-ws-");
+    let environment = TestEnvironment::new("upwell-axum-ws-");
     let app = crate::App::builder("ws-subprotocol-test")
         .config_source(environment.config())
         .directories(environment.directories())

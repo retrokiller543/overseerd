@@ -1,10 +1,8 @@
 use std::any::TypeId;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use overseerd_core::{DependencyDescriptor, ScopeId, Singleton, StaticScope};
-use overseerd_di::{
-    BoxedComponent, ComponentDescriptor, ProviderSelectionModel, SelectedDependency,
-};
+use upwell_core::{DependencyDescriptor, ScopeId, Singleton, StaticScope};
+use upwell_di::{BoxedComponent, ComponentDescriptor, ProviderSelectionModel, SelectedDependency};
 
 use crate::scope::{PreparedScopeTopology, SeedDestination};
 
@@ -24,7 +22,7 @@ impl ProjectionSnapshot {
         scope_orders: &HashMap<ScopeId, Vec<ComponentDescriptor>>,
         instances: &[BoxedComponent],
         seed_destinations: &HashMap<TypeId, SeedDestination>,
-    ) -> overseerd_di::Result<Self> {
+    ) -> upwell_di::Result<Self> {
         let seeded: HashSet<_> = instances
             .iter()
             .map(|instance| instance.ty.type_id)
@@ -40,7 +38,7 @@ impl ProjectionSnapshot {
                     seed_destinations,
                 )
             })
-            .collect::<overseerd_di::Result<_>>()?;
+            .collect::<upwell_di::Result<_>>()?;
         let root_ids: BTreeSet<_> = root_order
             .iter()
             .map(|component| component.ty.type_id)
@@ -115,7 +113,7 @@ impl ComponentSnapshot {
         descriptor: ComponentDescriptor,
         seeded: &HashSet<TypeId>,
         seed_destinations: &HashMap<TypeId, SeedDestination>,
-    ) -> overseerd_di::Result<Self> {
+    ) -> upwell_di::Result<Self> {
         let factories = (descriptor.factories)();
         let factory_explicit_count = factories.iter().filter(|factory| !factory.default).count();
         let factory = descriptor
@@ -134,14 +132,14 @@ impl ComponentSnapshot {
                     .map(|dependency| {
                         DependencySnapshot::capture(selection, topology, descriptor, dependency)
                     })
-                    .collect::<overseerd_di::Result<_>>()
+                    .collect::<upwell_di::Result<_>>()
             },
         )?;
         let mut hooks: Vec<_> = (descriptor.hooks)()
             .iter()
             .copied()
             .map(|hook| HookSnapshot::capture(selection, topology, descriptor, hook))
-            .collect::<overseerd_di::Result<_>>()?;
+            .collect::<upwell_di::Result<_>>()?;
 
         hooks.sort_by(|left, right| {
             left.kind
@@ -196,7 +194,7 @@ impl DependencySnapshot {
         topology: &PreparedScopeTopology,
         consumer: ComponentDescriptor,
         descriptor: DependencyDescriptor,
-    ) -> overseerd_di::Result<Self> {
+    ) -> upwell_di::Result<Self> {
         let selected = selection.selected_dependencies_with_scope_reachability(
             &consumer,
             &descriptor,
@@ -223,8 +221,8 @@ impl HookSnapshot {
         selection: &ProviderSelectionModel,
         topology: &PreparedScopeTopology,
         consumer: ComponentDescriptor,
-        descriptor: overseerd_hooks::HookDescriptor,
-    ) -> overseerd_di::Result<Self> {
+        descriptor: upwell_hooks::HookDescriptor,
+    ) -> upwell_di::Result<Self> {
         Ok(Self {
             ordinal: descriptor.ordinal,
             kind: descriptor.kind,
@@ -233,7 +231,7 @@ impl HookSnapshot {
                 .map(|dependency| {
                     DependencySnapshot::capture(selection, topology, consumer, dependency)
                 })
-                .collect::<overseerd_di::Result<_>>()?,
+                .collect::<upwell_di::Result<_>>()?,
         })
     }
 }

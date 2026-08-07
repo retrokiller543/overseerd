@@ -8,7 +8,7 @@ use tempfile::{Builder, TempDir};
 
 fn temp_config_dir() -> TempDir {
     Builder::new()
-        .prefix("overseerd-config-source-")
+        .prefix("upwell-config-source-")
         .tempdir()
         .expect("create isolated config directory")
 }
@@ -16,7 +16,7 @@ fn temp_config_dir() -> TempDir {
 fn ambient_sentinels() -> ResolverChain {
     let values = HashMap::from([
         ("AXUM_PORT".to_string(), "49152".to_string()),
-        ("OVERSEERD_PROFILES".to_string(), "ambient".to_string()),
+        ("UPWELL_PROFILES".to_string(), "ambient".to_string()),
     ]);
 
     ResolverChain(vec![Box::new(MapResolver(values))])

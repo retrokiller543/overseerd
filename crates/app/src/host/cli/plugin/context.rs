@@ -61,7 +61,7 @@ pub struct PluginPreBuildState {
 #[doc(hidden)]
 pub struct PluginBuiltState {
     name: String,
-    container: std::sync::Arc<overseerd_di::ScopeContainer>,
+    container: std::sync::Arc<upwell_di::ScopeContainer>,
     plugin_plan: EffectivePluginPlan,
     _owner: Box<dyn Send>,
 }
@@ -124,9 +124,9 @@ impl PluginCommandContext<Built> {
     }
 
     /// Resolves an `Injectable` from the built plugin command's root DI container.
-    pub fn resolve<T>(&self) -> impl Future<Output = Result<T, overseerd_di::Error>> + Send + use<T>
+    pub fn resolve<T>(&self) -> impl Future<Output = Result<T, upwell_di::Error>> + Send + use<T>
     where
-        T: overseerd_di::Injectable,
+        T: upwell_di::Injectable,
     {
         let container = std::sync::Arc::clone(&self.state.container);
 
@@ -134,7 +134,7 @@ impl PluginCommandContext<Built> {
             container
                 .resolve::<T>()
                 .await?
-                .ok_or_else(|| overseerd_di::Error::MissingDependency {
+                .ok_or_else(|| upwell_di::Error::MissingDependency {
                     component: String::from("plugin CLI command"),
                     component_id: String::from("plugin-cli-command"),
                     dependency: std::any::type_name::<T>().to_string(),

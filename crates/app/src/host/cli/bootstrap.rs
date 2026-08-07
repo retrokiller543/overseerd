@@ -1,7 +1,7 @@
 use std::io::IsTerminal as _;
 
-use overseerd_config::{ConfigManager, Dynamic};
-use overseerd_dirs::DirectoriesManager;
+use upwell_config::{ConfigManager, Dynamic};
+use upwell_dirs::DirectoriesManager;
 
 use super::{BootstrapError, BootstrapOptions, BootstrapPolicy, BootstrapState, ColorChoice};
 use crate::{
@@ -29,10 +29,10 @@ struct LoggingSourcePresence {
 impl BootstrapEnvironment {
     fn capture() -> Self {
         Self {
-            config: std::env::var_os("OVERSEERD_CONFIG"),
-            profiles: std::env::var("OVERSEERD_PROFILES").ok(),
+            config: std::env::var_os("UPWELL_CONFIG"),
+            profiles: std::env::var("UPWELL_PROFILES").ok(),
             rust_log: std::env::var("RUST_LOG").ok(),
-            log_format: std::env::var("OVERSEERD_LOG_FORMAT").ok(),
+            log_format: std::env::var("UPWELL_LOG_FORMAT").ok(),
             no_color: std::env::var_os("NO_COLOR").is_some(),
             color_force: std::env::var("CLICOLOR_FORCE").ok(),
             stdout_terminal: std::io::stdout().is_terminal(),

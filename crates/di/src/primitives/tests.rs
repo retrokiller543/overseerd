@@ -1,6 +1,6 @@
 use std::{any::TypeId, collections::HashMap, future::Future, pin::Pin, sync::Arc};
 
-use overseerd_core::{ResolverSet, ScopeId, StaticScope, Transient, TypeDescriptor};
+use upwell_core::{ResolverSet, ScopeId, StaticScope, Transient, TypeDescriptor};
 
 use super::*;
 use crate::{
@@ -8,8 +8,8 @@ use crate::{
     descriptors::component::from_boxed,
 };
 
-const VISIBLE_SCOPE_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/fresh-visible");
-const SIBLING_SCOPE_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/fresh-sibling");
+const VISIBLE_SCOPE_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/fresh-visible");
+const SIBLING_SCOPE_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/fresh-sibling");
 
 /// The branch from which fresh providers are resolved.
 struct VisibleScope;
@@ -150,7 +150,7 @@ fn visible_descriptor() -> ComponentDescriptor {
         ty: TypeDescriptor::of::<VisibleProvider>("VisibleProvider"),
         scope: &VisibleScope,
         factories: visible_factories,
-        hooks: overseerd_hooks::no_hooks,
+        hooks: upwell_hooks::no_hooks,
     }
 }
 
@@ -161,7 +161,7 @@ fn sibling_descriptor() -> ComponentDescriptor {
         ty: TypeDescriptor::of::<SiblingPrimaryProvider>("SiblingPrimaryProvider"),
         scope: &SiblingScope,
         factories: sibling_factories,
-        hooks: overseerd_hooks::no_hooks,
+        hooks: upwell_hooks::no_hooks,
     }
 }
 
@@ -172,7 +172,7 @@ fn transient_descriptor() -> ComponentDescriptor {
         ty: TypeDescriptor::of::<TransientProvider>("TransientProvider"),
         scope: &Transient,
         factories: transient_factories,
-        hooks: overseerd_hooks::no_hooks,
+        hooks: upwell_hooks::no_hooks,
     }
 }
 

@@ -1,8 +1,8 @@
-use overseerd_macros_core::client::{Capability, ClientMethod};
-use overseerd_macros_core::paths::Paths;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, Type};
+use upwell_macros_core::client::{Capability, ClientMethod};
+use upwell_macros_core::paths::Paths;
 
 use super::inputs::dto_assertions;
 use super::path::tuple_elems;
@@ -215,7 +215,7 @@ pub(crate) fn extra_client_tokens(
     let with_headers = if cfg!(feature = "client") && !header_methods.is_empty() {
         let fns = header_methods
             .iter()
-            .map(|method| overseerd_macros_core::client::client_method_tokens(method, paths));
+            .map(|method| upwell_macros_core::client::client_method_tokens(method, paths));
         quote! {
             impl<C> #client_ident<C> {
                 #(#fns)*

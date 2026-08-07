@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use overseerd_tooling_schema::{
+use upwell_tooling_schema::{
     Facet, Provenance, Relationship, RelationshipKind, Resource, ResourceDisplay, ResourceKind,
 };
 
@@ -127,7 +127,7 @@ impl ToolingContributions {
         &mut self,
         id: impl Into<String>,
         schema_version: u16,
-        value: overseerd_tooling_schema::JsonValue,
+        value: upwell_tooling_schema::JsonValue,
     ) {
         self.facets.push(PendingFacet {
             resource: None,
@@ -145,7 +145,7 @@ impl ToolingContributions {
         resource: impl Into<String>,
         id: impl Into<String>,
         schema_version: u16,
-        value: overseerd_tooling_schema::JsonValue,
+        value: upwell_tooling_schema::JsonValue,
     ) {
         self.facets.push(PendingFacet {
             resource: Some(resource.into()),

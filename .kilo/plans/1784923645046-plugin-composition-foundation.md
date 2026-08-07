@@ -29,19 +29,19 @@ Perform these steps before source edits:
 
 ### Stable IDs
 
-Add category-safe newtypes in `overseerd-app`:
+Add category-safe newtypes in `upwell-app`:
 
 - `ProtocolId`: selected protocol definition identity.
 - `PluginId`: exact plugin implementation identity.
 - `PluginSlotId`: a replaceable capability/default slot, distinct from its implementation.
 - `ContributionId`: contributor-local contribution identity; full identity is `(Contributor, ContributionId)`.
 
-All IDs use a validated lowercase ASCII namespaced path such as `overseerd/rpc` or `acme/radix-router`:
+All IDs use a validated lowercase ASCII namespaced path such as `upwell/rpc` or `acme/radix-router`:
 
 - at least two non-empty `/`-separated segments;
 - each segment starts with `[a-z0-9]` and continues with `[a-z0-9._-]`;
 - comparison and ordering use canonical bytes;
-- `overseerd/...` is reserved for framework-owned definitions;
+- `upwell/...` is reserved for framework-owned definitions;
 - IDs are explicit and never inferred from `TypeId`, `type_name`, crate names, dependency aliases, display names, or discovery order.
 
 Provide one validated construction path shared by runtime and const/static declaration use. Do not expose an unchecked public constructor. Each newtype provides `as_str`, `Display`, and `Copy + Clone + Debug + Eq + Ord + Hash`.
@@ -135,7 +135,7 @@ crates/app/src/composition/
 └── tests.rs        # sibling test module required by repository convention
 ```
 
-Expose from `overseerd-app` and the non-Wasm facade root, but not the prelude:
+Expose from `upwell-app` and the non-Wasm facade root, but not the prelude:
 
 - stable ID types and invalid-ID error;
 - contributor, phase, origin, and provenance types;
@@ -149,7 +149,7 @@ Mark externally extensible public records/enums `#[non_exhaustive]` where approp
 
 Name the Slice 1 result `EarlyPluginPlan` / `PluginResolutionPlan`, not `CompositionPlan`. Reserve `CompositionPlan` for Slice 4's real freeze artifact containing attributed contribution metadata and private executable payload ownership.
 
-Do not re-export these contracts from protocol-specific RPC/Axum crates yet. They are available through direct `overseerd-app` use and the main `overseerd` facade.
+Do not re-export these contracts from protocol-specific RPC/Axum crates yet. They are available through direct `upwell-app` use and the main `upwell` facade.
 
 ## Resolution And Diagnostics
 
@@ -224,11 +224,11 @@ Run the repository gates:
 
 ```text
 cargo fmt --all -- --check
-cargo nextest run -p overseerd-app
+cargo nextest run -p upwell-app
 cargo nextest run --workspace --all-features
 cargo clippy --workspace --all-targets --all-features
 cargo check --workspace --no-default-features
-cargo check -p overseerd-app --no-default-features
+cargo check -p upwell-app --no-default-features
 ```
 
 No dependency is added, so prohibited dependency paths should remain unchanged. If the manifest changes unexpectedly, also verify `cargo tree --workspace --all-features -i openssl` and `-i rsa` remain empty.

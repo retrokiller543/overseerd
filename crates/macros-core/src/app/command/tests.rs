@@ -310,11 +310,10 @@ fn generates_one_parser_subcommand_field_and_nested_delegation() {
     assert!(output.contains("plugins . augment_cli"));
     assert!(output.contains("plugins . parse_cli_command"));
     assert!(output.contains("impl ExampleApiUsersCommand"));
-    assert!(output.contains("dispatch_cli_command :: < Example < :: overseerd :: Initial >"));
+    assert!(output.contains("dispatch_cli_command :: < Example < :: upwell :: Initial >"));
     assert!(
-        !output.contains(
-            "CliCommand < Example < :: overseerd :: Initial > > for ExampleApiUsersCommand"
-        )
+        !output
+            .contains("CliCommand < Example < :: upwell :: Initial > > for ExampleApiUsersCommand")
     );
     assert!(!output.contains("derive (Clone"));
 }

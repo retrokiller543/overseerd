@@ -1,10 +1,10 @@
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 
-use overseerd_app::{
+use tokio::net::TcpListener;
+use upwell_app::{
     App, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve, ShutdownHandle,
 };
-use tokio::net::TcpListener;
 
 use crate::LoopbackTask;
 
@@ -22,7 +22,7 @@ impl<D> TestServer<D>
 where
     D: ProtocolDefinition,
     Runtime<D>: Serve<TcpListener>,
-    ProtocolError<D>: From<overseerd_app::Error>,
+    ProtocolError<D>: From<upwell_app::Error>,
 {
     /// Starts an application while retaining an associated fixture guard.
     pub async fn start_with_guard<G>(app: App<D>, guard: G) -> Self

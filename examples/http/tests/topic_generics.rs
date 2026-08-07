@@ -11,8 +11,8 @@
 
 use std::borrow::Cow;
 
-use overseerd::axum::StompClientTransport;
-use overseerd::axum::*;
+use upwell::axum::StompClientTransport;
+use upwell::axum::*;
 
 #[dto]
 #[derive(Clone, PartialEq, Debug)]

@@ -29,9 +29,9 @@ leak-timeout = { period = "500ms", result = "fail" }
 
 [[profile.default.overrides]]
 filter = '''
-  binary_id(=cargo-overseerd::command)
-  | binary_id(=cargo-overseerd::probe)
-  | binary_id(=overseerd::tooling_probe_process)
+  binary_id(=cargo-upwell::command)
+  | binary_id(=cargo-upwell::probe)
+  | binary_id(=upwell::tooling_probe_process)
 '''
 test-group = "cargo-integration"
 slow-timeout = { period = "300s", terminate-after = 2, grace-period = "10s", on-timeout = "fail" }
@@ -39,15 +39,15 @@ slow-timeout = { period = "300s", terminate-after = 2, grace-period = "10s", on-
 [[profile.default.overrides]]
 filter = '''
   (
-    binary_id(=overseerd::config_triggers)
+    binary_id(=upwell::config_triggers)
     & test(=watching_a_source_file_triggers_a_reload)
   )
   | (
-    binary_id(=overseerd-jobs)
+    binary_id(=upwell-jobs)
     & test(/^scheduler::tests::(dynamic_job_runs_then_cancels|dropping_scheduler_cancels_all_jobs|run_now_triggers_a_manual_run|pause_prevents_scheduled_runs|reschedule_changes_the_reported_cadence|timeout_marks_a_run_timed_out|skip_overlap_defers_while_a_run_is_active|queue_one_preserves_the_deferred_manual_run_identity|allow_overlap_permits_concurrent_runs)$/)
   )
   | (
-    binary_id(=overseerd-transport)
+    binary_id(=upwell-transport)
     & test(/^protocol::codec::tests::(retains_partial_frame_across_cancellation|allocates_only_for_payload_bytes_received|times_out_when_a_frame_stops_making_progress|idle_connection_has_no_deadline_before_frame_starts)$/)
   )
 '''
@@ -55,14 +55,14 @@ test-group = "timing-sensitive"
 
 [[profile.default.overrides]]
 filter = '''
-  binary_id(=overseerd::config_reload)
-  | binary_id(=overseerd::config_reload_hardening)
-  | binary_id(=overseerd::config_triggers)
-  | binary_id(=overseerd::hooks)
-  | binary_id(=overseerd::hook_abort)
-  | binary_id(=overseerd-dirs)
+  binary_id(=upwell::config_reload)
+  | binary_id(=upwell::config_reload_hardening)
+  | binary_id(=upwell::config_triggers)
+  | binary_id(=upwell::hooks)
+  | binary_id(=upwell::hook_abort)
+  | binary_id(=upwell-dirs)
   | (
-    binary_id(=overseerd-transport)
+    binary_id(=upwell-transport)
     & test(/^transports::unix::tests::/)
   )
 '''
@@ -70,13 +70,13 @@ test-group = "filesystem-sensitive"
 
 [[profile.default.overrides]]
 filter = '''
-  binary_id(=overseerd-example-http)
-  | binary_id(=overseerd-example-http::client)
-  | binary_id(=overseerd-example-http::extractors)
-  | binary_id(=overseerd-example-http::stomp)
-  | binary_id(=overseerd-example-http::ws)
+  binary_id(=upwell-example-http)
+  | binary_id(=upwell-example-http::client)
+  | binary_id(=upwell-example-http::extractors)
+  | binary_id(=upwell-example-http::stomp)
+  | binary_id(=upwell-example-http::ws)
   | (
-    binary_id(=overseerd-axum)
+    binary_id(=upwell-axum)
     & test(=ws::tests::required_subprotocol_is_negotiated_and_seeded)
   )
 '''
@@ -84,14 +84,14 @@ test-group = "socket-integration"
 
 [[profile.default.overrides]]
 filter = '''
-  binary_id(=overseerd-di::memory_contracts)
-  | binary_id(=overseerd-core::resolver_set_performance)
+  binary_id(=upwell-di::memory_contracts)
+  | binary_id(=upwell-core::resolver_set_performance)
   | (
-    binary_id(=overseerd-config::substitution)
+    binary_id(=upwell-config::substitution)
     & test(/^(exponential_fan_out_stops_at_a_deterministic_resource_budget|rendered_output_budget_is_aggregate_across_one_typed_binding)$/)
   )
   | (
-    binary_id(=overseerd-transport)
+    binary_id(=upwell-transport)
     & test(/^protocol::codec::tests::(allocates_only_for_payload_bytes_received|releases_large_payload_capacity_after_decode)$/)
   )
 '''
@@ -99,18 +99,18 @@ threads-required = 2
 
 [[profile.default.overrides]]
 filter = '''
-  binary_id(=overseerd-di::memory_contracts)
-  | binary_id(=overseerd-core::resolver_set_performance)
+  binary_id(=upwell-di::memory_contracts)
+  | binary_id(=upwell-core::resolver_set_performance)
   | (
-    binary_id(=overseerd-config::substitution)
+    binary_id(=upwell-config::substitution)
     & test(/^(exponential_fan_out_stops_at_a_deterministic_resource_budget|rendered_output_budget_is_aggregate_across_one_typed_binding|long_linear_chain_fails_with_depth_error_not_overflow)$/)
   )
   | (
-    binary_id(=overseerd-transport)
+    binary_id(=upwell-transport)
     & test(/^protocol::codec::tests::(allocates_only_for_payload_bytes_received|releases_large_payload_capacity_after_decode)$/)
   )
   | (
-    binary_id(=overseerd::config_triggers)
+    binary_id(=upwell::config_triggers)
     & test(=watching_a_source_file_triggers_a_reload)
   )
 '''
@@ -118,37 +118,37 @@ priority = -50
 
 [[profile.default.overrides]]
 filter = '''
-  binary_id(=overseerd-rpc)
-  | binary_id(=overseerd-transport)
-  | binary_id(=overseerd-di)
-  | binary_id(=overseerd::rpc_hardening)
-  | binary_id(=overseerd::dependency_injection)
-  | binary_id(=overseerd::provider_primitives)
-  | binary_id(=overseerd::providers)
-  | binary_id(=overseerd::scope_local_providers)
-  | binary_id(=overseerd::scopes)
-  | binary_id(=overseerd::status_codes)
-  | binary_id(=overseerd::config_reload)
-  | binary_id(=overseerd::config_reload_hardening)
-  | binary_id(=overseerd::hook_lifecycle)
-  | binary_id(=overseerd::hook_abort)
+  binary_id(=upwell-rpc)
+  | binary_id(=upwell-transport)
+  | binary_id(=upwell-di)
+  | binary_id(=upwell::rpc_hardening)
+  | binary_id(=upwell::dependency_injection)
+  | binary_id(=upwell::provider_primitives)
+  | binary_id(=upwell::providers)
+  | binary_id(=upwell::scope_local_providers)
+  | binary_id(=upwell::scopes)
+  | binary_id(=upwell::status_codes)
+  | binary_id(=upwell::config_reload)
+  | binary_id(=upwell::config_reload_hardening)
+  | binary_id(=upwell::hook_lifecycle)
+  | binary_id(=upwell::hook_abort)
 '''
 priority = 100
 
 [[profile.default.overrides]]
 filter = '''
-  binary_id(=overseerd-axum)
-  | binary_id(=overseerd-axum-json-ws)
-  | binary_id(=overseerd-axum-macros)
-  | binary_id(=overseerd-axum-stomp)
-  | binary_id(=overseerd-jobs)
-  | binary_id(=overseerd-example-http)
-  | binary_id(=overseerd-example-http::client)
-  | binary_id(=overseerd-example-http::extractors)
-  | binary_id(=overseerd-example-http::openapi)
-  | binary_id(=overseerd-example-http::routes)
-  | binary_id(=overseerd-example-http::stomp)
-  | binary_id(=overseerd-example-http::ws)
+  binary_id(=upwell-axum)
+  | binary_id(=upwell-axum-json-ws)
+  | binary_id(=upwell-axum-macros)
+  | binary_id(=upwell-axum-stomp)
+  | binary_id(=upwell-jobs)
+  | binary_id(=upwell-example-http)
+  | binary_id(=upwell-example-http::client)
+  | binary_id(=upwell-example-http::extractors)
+  | binary_id(=upwell-example-http::openapi)
+  | binary_id(=upwell-example-http::routes)
+  | binary_id(=upwell-example-http::stomp)
+  | binary_id(=upwell-example-http::ws)
 '''
 priority = 50
 

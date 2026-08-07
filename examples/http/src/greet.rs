@@ -8,10 +8,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use overseerd::axum::dto;
-use overseerd::axum::prelude::*;
-use overseerd::prelude::*;
 use serde::{Deserialize, Serialize};
+use upwell::axum::dto;
+use upwell::axum::prelude::*;
+use upwell::prelude::*;
 
 /// Example configuration bound from `application.toml`'s `example` table (server-side).
 #[config(path = "example")]

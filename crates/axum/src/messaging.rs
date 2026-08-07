@@ -11,7 +11,7 @@
 
 use std::borrow::Cow;
 
-use overseerd_transport::CodecError;
+use upwell_transport::CodecError;
 
 /// A pub/sub WebSocket protocol's messaging wire vocabulary: the frame body a topic value encodes
 /// to, and the codec used when a topic set names none. A protocol "has topics/messages" by
@@ -36,7 +36,7 @@ pub trait MessagingProtocol: 'static {
 /// ([`TopicSubscribe`](crate::client::TopicSubscribe)) and point-to-point messages
 /// ([`MessageSend`](crate::client::MessageSend) / `MessageRequest`).
 pub trait MessagingClientProtocol: MessagingProtocol {
-    /// The status carried by a client [`ClientError`](overseerd_client::ClientError) for this
+    /// The status carried by a client [`ClientError`](upwell_client::ClientError) for this
     /// protocol (STOMP uses [`StompStatus`](crate::client::StompStatus)).
     type Status: std::fmt::Debug + Clone + Send + 'static;
 }

@@ -1,4 +1,4 @@
-//! Shared support for the Overseerd benchmark suite.
+//! Shared support for the Upwell benchmark suite.
 //!
 //! Three concerns the individual benches reuse:
 //!
@@ -8,7 +8,7 @@
 //! - [`measure`] — a custom Criterion measurement that reports allocated **bytes** instead of
 //!   wall-clock time, turning "how much memory does this cost" into a first-class, trended metric.
 //! - [`di`] — builders that stand up small/moderate/large DI graphs layered across several scopes,
-//!   using only the public `overseerd-di` API.
+//!   using only the public `upwell-di` API.
 
 pub mod alloc;
 pub mod di;

@@ -1,6 +1,6 @@
 //! The `JobsPlugin`: registers the scheduler so a daemon runs its `#[job]`s.
 
-use overseerd_app::{Plugin, PluginContributions, PluginId};
+use upwell_app::{Plugin, PluginContributions, PluginId};
 
 use crate::JobScheduler;
 
@@ -18,10 +18,10 @@ use crate::JobScheduler;
 pub struct JobsPlugin;
 
 impl Plugin for JobsPlugin {
-    const ID: PluginId = overseerd_app::namespaced_id!(PluginId, "jobs/scheduler");
+    const ID: PluginId = upwell_app::namespaced_id!(PluginId, "jobs/scheduler");
 
     fn contribute(self, contributions: &mut PluginContributions) {
-        overseerd_app::contribute! {
+        upwell_app::contribute! {
             to contributions,
             components: [
                 "jobs/scheduler-component" => type JobScheduler,

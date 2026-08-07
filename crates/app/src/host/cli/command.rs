@@ -117,7 +117,7 @@ where
 /// attempts to access configured or built application state:
 ///
 /// ```compile_fail
-/// # use overseerd_app::{AppHost, CommandContext, Setup};
+/// # use upwell_app::{AppHost, CommandContext, Setup};
 /// # fn invalid<H: AppHost>(context: CommandContext<H, Setup>) {
 /// let _ = context.prepared();
 /// # }
@@ -126,7 +126,7 @@ where
 /// Likewise, dependency resolution is available only to commands declaring [`Built`]:
 ///
 /// ```compile_fail
-/// # use overseerd_app::{AppHost, CommandContext, PreBuild};
+/// # use upwell_app::{AppHost, CommandContext, PreBuild};
 /// # fn invalid<H: AppHost>(context: CommandContext<H, PreBuild>) {
 /// let _ = context.resolve::<String>();
 /// # }
@@ -204,11 +204,9 @@ impl<H: AppHost> CommandContext<H, Built> {
     }
 
     /// Resolves an `Injectable` from the built application's root DI container.
-    pub fn resolve<T>(
-        &self,
-    ) -> impl Future<Output = Result<T, overseerd_di::Error>> + Send + use<H, T>
+    pub fn resolve<T>(&self) -> impl Future<Output = Result<T, upwell_di::Error>> + Send + use<H, T>
     where
-        T: overseerd_di::Injectable,
+        T: upwell_di::Injectable,
     {
         let container = std::sync::Arc::clone(self.state.container());
 
@@ -216,7 +214,7 @@ impl<H: AppHost> CommandContext<H, Built> {
             container
                 .resolve::<T>()
                 .await?
-                .ok_or_else(|| overseerd_di::Error::MissingDependency {
+                .ok_or_else(|| upwell_di::Error::MissingDependency {
                     component: std::any::type_name::<H>().to_string(),
                     component_id: std::any::type_name::<H>().to_string(),
                     dependency: std::any::type_name::<T>().to_string(),

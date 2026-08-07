@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use overseerd::{component, config, methods};
 use serde::Deserialize;
+use upwell::{component, config, methods};
 
 #[allow(dead_code)]
 #[config(path = "homeledger.server")]
@@ -120,7 +120,7 @@ impl Database {
 }
 
 /// A request-scoped database connection used by ledger RPC handlers.
-#[component(scope = overseerd::daemon::Request)]
+#[component(scope = upwell::daemon::Request)]
 pub struct DatabaseConnection {
     #[default]
     id: usize,

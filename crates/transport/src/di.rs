@@ -8,7 +8,7 @@ use crate::PeerInfo;
 
 /// The remote peer is a by-value connection-scoped injectable: a connection/request
 /// component can depend on it directly as `peer: PeerInfo` — no `Arc`. Cheap to clone.
-impl overseerd_di::Injectable for PeerInfo {
+impl upwell_di::Injectable for PeerInfo {
     type Target = PeerInfo;
     type Stored = Self;
 
@@ -24,4 +24,4 @@ impl overseerd_di::Injectable for PeerInfo {
 /// Under `di-check`, `PeerInfo` is framework-seeded into every connection scope, so the
 /// compile-time checker treats it as always provided.
 #[cfg(feature = "di-check")]
-impl overseerd_di::Provide<PeerInfo> for overseerd_di::Wiring {}
+impl upwell_di::Provide<PeerInfo> for upwell_di::Wiring {}

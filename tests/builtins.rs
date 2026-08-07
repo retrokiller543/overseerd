@@ -5,8 +5,8 @@
 
 mod common;
 
-use overseerd::daemon::{App, Inject, Payload, handlers, service};
-use overseerd::{CallResult, ShutdownHandle};
+use upwell::daemon::{App, Inject, Payload, handlers, service};
+use upwell::{CallResult, ShutdownHandle};
 
 use common::{MemoryServer, deadline};
 

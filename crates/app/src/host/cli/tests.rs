@@ -3,7 +3,7 @@ use super::{
     bootstrap_application_with_env,
 };
 use crate::{BootstrapContext, ExecutionMode, LogFormat};
-use overseerd_test_utils::TempFixture;
+use upwell_test_utils::TempFixture;
 
 fn options(config: impl Into<std::path::PathBuf>) -> BootstrapOptions {
     BootstrapOptions::from_parts(
@@ -40,7 +40,7 @@ fn bootstrap(
 
 #[test]
 fn cli_values_override_environment_and_profile_config() {
-    let fixture = TempFixture::new("overseerd-bootstrap-precedence");
+    let fixture = TempFixture::new("upwell-bootstrap-precedence");
     let config = fixture.write(
         "custom.toml",
         "[logging]\nlevel = \"info\"\nformat = \"full\"\nansi = true\n",
@@ -55,7 +55,7 @@ fn cli_values_override_environment_and_profile_config() {
     let options = BootstrapOptions::from_parts(
         Some(config.clone()),
         vec![String::from("cli")],
-        Some(String::from("trace,overseerd=debug")),
+        Some(String::from("trace,upwell=debug")),
         Some(LogFormat::Json),
         Some(ColorChoice::Always),
         [Some(clap::parser::ValueSource::CommandLine); 5],
@@ -77,7 +77,7 @@ fn cli_values_override_environment_and_profile_config() {
 
     assert_eq!(state.config_path(), config);
     assert_eq!(state.profiles(), ["cli"]);
-    assert_eq!(state.logging().level, "trace,overseerd=debug");
+    assert_eq!(state.logging().level, "trace,upwell=debug");
     assert_eq!(state.logging().format, LogFormat::Json);
     assert!(state.logging().ansi);
     assert_eq!(state.color(), ColorChoice::Always);
@@ -86,7 +86,7 @@ fn cli_values_override_environment_and_profile_config() {
 
 #[test]
 fn environment_is_used_when_cli_values_are_absent() {
-    let fixture = TempFixture::new("overseerd-bootstrap-environment");
+    let fixture = TempFixture::new("upwell-bootstrap-environment");
     let config = fixture.write("custom.toml", "");
 
     fixture.write(
@@ -97,7 +97,7 @@ fn environment_is_used_when_cli_values_are_absent() {
     let environment = BootstrapEnvironment {
         config: Some(config.clone().into_os_string()),
         profiles: Some(String::from("env")),
-        rust_log: Some(String::from("warn,overseerd=trace")),
+        rust_log: Some(String::from("warn,upwell=trace")),
         log_format: Some(String::from("pretty")),
         no_color: true,
         color_force: Some(String::from("1")),
@@ -112,7 +112,7 @@ fn environment_is_used_when_cli_values_are_absent() {
     let state = context.bootstrap().expect("bootstrap state exists");
 
     assert_eq!(state.profiles(), ["env"]);
-    assert_eq!(state.logging().level, "warn,overseerd=trace");
+    assert_eq!(state.logging().level, "warn,upwell=trace");
     assert_eq!(state.logging().format, LogFormat::Pretty);
     assert!(!state.logging().ansi);
     assert_eq!(state.color(), ColorChoice::Never);
@@ -120,7 +120,7 @@ fn environment_is_used_when_cli_values_are_absent() {
 
 #[test]
 fn parser_defaults_preserve_environment_and_config_precedence() {
-    let fixture = TempFixture::new("overseerd-bootstrap-parser-default-precedence");
+    let fixture = TempFixture::new("upwell-bootstrap-parser-default-precedence");
     let config = fixture.write(
         "application.toml",
         "[logging]\nlevel = \"debug\"\nformat = \"compact\"\nansi = true\n",
@@ -156,7 +156,7 @@ fn parser_defaults_preserve_environment_and_config_precedence() {
 
 #[test]
 fn parser_defaults_fill_absent_sources() {
-    let fixture = TempFixture::new("overseerd-bootstrap-parser-default-fallback");
+    let fixture = TempFixture::new("upwell-bootstrap-parser-default-fallback");
     let config = fixture.write("application.toml", "");
 
     let options = BootstrapOptions::from_parts(
@@ -190,7 +190,7 @@ fn parser_defaults_fill_absent_sources() {
 
 #[test]
 fn auto_color_follows_terminal_capability() {
-    let fixture = TempFixture::new("overseerd-bootstrap-terminal");
+    let fixture = TempFixture::new("upwell-bootstrap-terminal");
     let config = fixture.write("application.toml", "");
 
     for (terminal, ansi) in [(false, false), (true, true)] {
@@ -233,7 +233,7 @@ fn auto_color_follows_terminal_capability() {
 
 #[test]
 fn existing_dotted_path_is_treated_as_directory() {
-    let fixture = TempFixture::new("overseerd-bootstrap-directory.d");
+    let fixture = TempFixture::new("upwell-bootstrap-directory.d");
 
     fixture.write("application.toml", "");
 
@@ -255,7 +255,7 @@ fn existing_dotted_path_is_treated_as_directory() {
 
 #[test]
 fn missing_explicit_config_path_is_rejected() {
-    let fixture = TempFixture::new("overseerd-bootstrap-missing");
+    let fixture = TempFixture::new("upwell-bootstrap-missing");
     let path = fixture.child("missing.toml");
     let result = bootstrap_application_with_env(
         "bootstrap-missing-path-test",
@@ -276,7 +276,7 @@ fn missing_explicit_config_path_is_rejected() {
 
 #[test]
 fn declaration_owned_config_skips_generated_loading() {
-    let fixture = TempFixture::new("overseerd-bootstrap-ignored");
+    let fixture = TempFixture::new("upwell-bootstrap-ignored");
     let path = fixture.child("ignored.toml");
     let options = BootstrapOptions::from_parts(
         Some(path.clone()),

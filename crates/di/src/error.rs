@@ -2,7 +2,7 @@ use std::fmt;
 
 use thiserror::Error;
 
-use overseerd_core::ScopeId;
+use upwell_core::ScopeId;
 
 /// Stable identities describing a provider whose concrete component is absent.
 #[derive(Debug)]

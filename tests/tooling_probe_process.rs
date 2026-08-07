@@ -1,15 +1,15 @@
 use std::process::Command;
 
-use overseerd::tooling::{
+use upwell::tooling::{
     ProbeEnvelope, ProbeOutcome, TOOLING_PROBE_ARGUMENT, TOOLING_PROBE_BINARY_NAME_ENV,
     TOOLING_PROBE_MANIFEST_PATH_ENV, TOOLING_PROBE_OUTPUT_ENV, TOOLING_PROBE_PACKAGE_NAME_ENV,
     TOOLING_PROBE_PACKAGE_VERSION_ENV,
 };
-use overseerd_test_utils::{TempFixture, run_command};
+use upwell_test_utils::{TempFixture, run_command};
 
 #[test]
 fn process_probe_suppresses_secret_panic_payload_everywhere() {
-    let fixture = TempFixture::new("overseerd-probe-process-");
+    let fixture = TempFixture::new("upwell-probe-process-");
     let response = fixture.child("response.json");
     let manifest = workspace_manifest();
     let output = run_command(
@@ -35,7 +35,7 @@ fn process_probe_suppresses_secret_panic_payload_everywhere() {
     assert_eq!(stdout, "application stdout remains independent\n");
     assert!(!stdout.contains("{\"schema\""));
     assert!(stderr.contains("panic payload suppressed"));
-    assert_eq!(diagnostic.code, "overseerd/tooling-panic");
+    assert_eq!(diagnostic.code, "upwell/tooling-panic");
     assert_eq!(
         diagnostic.message,
         "The tooling probe panicked while preparing the application."
@@ -66,7 +66,7 @@ fn process_probe_rejects_empty_and_invalid_invoker_identity() {
             std::ffi::OsStr::new("relative/Cargo.toml"),
         ),
     ] {
-        let fixture = TempFixture::new("overseerd-probe-process-");
+        let fixture = TempFixture::new("upwell-probe-process-");
         let response = fixture.child("response.json");
         let output = run_command(
             "probe fixture process",

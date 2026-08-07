@@ -7,7 +7,7 @@
 
 use stomp_parser::server::MessageFrameBuilder;
 
-use overseerd_axum::SubscriptionRegistry;
+use upwell_axum::SubscriptionRegistry;
 
 use crate::StompBody;
 

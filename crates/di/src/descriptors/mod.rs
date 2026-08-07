@@ -9,9 +9,9 @@ pub use component::{
     Registration, ServiceComponent, Wired, Wiring,
 };
 
-pub use overseerd_core::{
-    Cardinality, DependencyDescriptor, DescriptorFor, OverseerdDescriptor, RegistryFor,
-    ResolutionMode, Scope, ScopeId, Singleton, StaticScope, Transient, TypeDescriptor,
+pub use upwell_core::{
+    Cardinality, DependencyDescriptor, DescriptorFor, RegistryFor, ResolutionMode, Scope, ScopeId,
+    Singleton, StaticScope, Transient, TypeDescriptor, UpwellDescriptor,
 };
 
 /// Link-time registry of every discovered [`ComponentDescriptor`].

@@ -177,7 +177,7 @@ impl AppAssembly {
         let mut guards = Vec::new();
         let mut error_handler = None;
         let mut plugins = Vec::new();
-        let mut overseerd = None;
+        let mut upwell = None;
         let mut phases = AppPhases::default();
         let mut cli_policy = super::policy::CliPolicy::default();
         let mut cli = CliDeclarations::default();
@@ -219,7 +219,7 @@ impl AppAssembly {
                 "guards" => guards = bracketed_list(input)?,
                 "error_handler" => error_handler = Some(input.parse()?),
                 "plugins" => plugins = parse_plugins(input)?,
-                "overseerd" => overseerd = Some(input.parse()?),
+                "upwell" => upwell = Some(input.parse()?),
                 "cli" => cli_policy = super::policy::parse(input)?,
                 "args" => cli.args = command::parse_args(input)?,
                 "commands" => cli.commands = command::parse_commands(input)?,
@@ -230,7 +230,7 @@ impl AppAssembly {
                             "unknown `app!` key `{other}`, expected `name`, `protocol`, \
                              `services`, `components`, `configs`, `managers`, `middleware`, \
                              `guards`, `error_handler`, `plugins`, `cli`, `args`, `commands`, \
-                             `overseerd`, `setup`, `configure`, `before_build`, `after_build`, or `serve`"
+                             `upwell`, `setup`, `configure`, `before_build`, `after_build`, or `serve`"
                         ),
                     ));
                 }
@@ -261,7 +261,7 @@ impl AppAssembly {
             guards,
             error_handler,
             plugins,
-            overseerd,
+            upwell,
             phases,
             cli_policy,
             cli,

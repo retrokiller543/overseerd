@@ -2,8 +2,8 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use overseerd_config::{ConfigProperties, DefaultSpec};
 use serde::Deserialize;
+use upwell_config::{ConfigProperties, DefaultSpec};
 
 /// Validates a configured static Axum mount path before router construction.
 pub(crate) fn validate_mount_path(label: &str, path: &str) -> crate::Result<()> {

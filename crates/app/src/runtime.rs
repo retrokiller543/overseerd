@@ -11,9 +11,9 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseerd_core::{Scope, ScopeId};
-use overseerd_di::{BoxedComponent, ComponentDescriptor, ScopeContainer, ScopeRegistry};
-use overseerd_hooks::HookManager;
+use upwell_core::{Scope, ScopeId};
+use upwell_di::{BoxedComponent, ComponentDescriptor, ScopeContainer, ScopeRegistry};
+use upwell_hooks::HookManager;
 
 use crate::scope::{PreparedScopeTopology, ScopeParent, SeedDestination};
 

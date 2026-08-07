@@ -1,8 +1,8 @@
-use overseerd_macros_core::attr::{first_type_arg, type_name};
-use overseerd_macros_core::paths::Paths;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{GenericArgument, Ident, PathArguments, ReturnType, Type};
+use upwell_macros_core::attr::{first_type_arg, type_name};
+use upwell_macros_core::paths::Paths;
 
 use super::response::{is_opaque_response, response_type};
 
@@ -187,13 +187,13 @@ pub(super) fn dto_assertions(mut wire_types: Vec<Type>, paths: &Paths) -> TokenS
     let dto = paths.plugin("Dto");
     let asserts = wire_types
         .iter()
-        .map(|ty| quote!(__overseerd_assert_dto::<#ty>();));
+        .map(|ty| quote!(__upwell_assert_dto::<#ty>();));
 
     quote! {
         const _: () = {
-            fn __overseerd_assert_dto<T: #dto>() {}
+            fn __upwell_assert_dto<T: #dto>() {}
 
-            fn __overseerd_assert_wire_types() {
+            fn __upwell_assert_wire_types() {
                 #(#asserts)*
             }
         };

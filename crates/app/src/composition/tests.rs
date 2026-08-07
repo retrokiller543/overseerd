@@ -1,6 +1,6 @@
 use super::*;
 
-const PROTOCOL: ProtocolId = overseerd_core::namespaced_id!(ProtocolId, "test/protocol");
+const PROTOCOL: ProtocolId = upwell_core::namespaced_id!(ProtocolId, "test/protocol");
 
 fn plugin_id(value: &'static str) -> PluginId {
     PluginId::new(value).expect("valid test plugin id")
@@ -101,7 +101,7 @@ fn stable_ids_validate_namespaced_ascii_paths() {
 
 #[test]
 fn application_declarations_cannot_claim_framework_namespace() {
-    let diagnostics = resolve_early_plugins(PROTOCOL, [install("overseerd/router", early(0))])
+    let diagnostics = resolve_early_plugins(PROTOCOL, [install("upwell/router", early(0))])
         .expect_err("framework namespace is reserved");
 
     assert!(matches!(
@@ -131,7 +131,7 @@ fn protocol_provenance_must_match_the_selected_protocol() {
 fn protocol_plugins_cannot_claim_framework_namespace() {
     let provenance =
         InstallationProvenance::new(InstallationOrigin::ProtocolMandatory(PROTOCOL), 0);
-    let diagnostics = resolve_early_plugins(PROTOCOL, [install("overseerd/forged", provenance)])
+    let diagnostics = resolve_early_plugins(PROTOCOL, [install("upwell/forged", provenance)])
         .expect_err("protocol plugin cannot forge framework ownership");
 
     assert!(matches!(
@@ -142,7 +142,7 @@ fn protocol_plugins_cannot_claim_framework_namespace() {
 
 #[test]
 fn public_declarations_cannot_claim_framework_slots() {
-    let slot = slot_id("overseerd/forged-slot");
+    let slot = slot_id("upwell/forged-slot");
     let directive = CompositionDirective::install(
         PluginDeclaration::new(plugin_id("test/plugin"), early(0))
             .provides(slot, SlotPolicy::Replaceable),
@@ -158,7 +158,7 @@ fn public_declarations_cannot_claim_framework_slots() {
 
 #[test]
 fn public_directives_cannot_target_framework_slots() {
-    let slot = slot_id("overseerd/forged-slot");
+    let slot = slot_id("upwell/forged-slot");
     let replacement = CompositionDirective::replace(
         slot,
         PluginDeclaration::new(plugin_id("test/replacement"), early(0)),

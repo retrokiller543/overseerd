@@ -110,7 +110,7 @@ pub struct App<D: ProtocolDefinition> {
 
 `PreparedApp::protocol()` exposes the prepared state. `App::protocol()` exposes the runtime state so
 existing runtime inspection call patterns remain useful. Associated-type projections stay inside
-`overseerd-app`; generated signatures remain `AppBuilder<D>`, `PreparedApp<D>`, `App<D>`, and
+`upwell-app`; generated signatures remain `AppBuilder<D>`, `PreparedApp<D>`, `App<D>`, and
 `AppStage<D>`.
 
 No `Sync` bound is added to definitions, prepared states, or runtime states. Host and command paths
@@ -175,7 +175,7 @@ The common startup, reload, Ctrl-C, panic cleanup, and shutdown envelope remains
 
 ## Public API Proof
 
-`overseerd-app` and the main facade export all three contracts and the scope topology vocabulary a
+`upwell-app` and the main facade export all three contracts and the scope topology vocabulary a
 third-party definition needs. A fixture importing only facade APIs implements:
 
 - a definition with a non-empty topology;
@@ -210,7 +210,7 @@ public compatibility adapters must not survive the branch.
 - `cargo clippy --workspace --all-targets --all-features`
 - `cargo nextest run --workspace --all-features`
 - `cargo check --workspace --no-default-features`
-- direct `overseerd-app`, RPC, and Axum feature combinations
+- direct `upwell-app`, RPC, and Axum feature combinations
 - Axum WebSocket and OpenAPI combinations
 - relevant wasm client combinations
 - generated `Rpc` and `Axum` application compile coverage

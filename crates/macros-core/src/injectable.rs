@@ -15,13 +15,13 @@ use crate::paths::Paths;
 /// Path overrides accepted by `#[injectable]`.
 #[derive(Default)]
 pub struct InjectableArgs {
-    overseerd: Option<syn::Path>,
+    upwell: Option<syn::Path>,
     krate: Option<syn::Path>,
 }
 
 impl InjectableArgs {
     pub(crate) fn paths(&self, default: Paths) -> Paths {
-        default.resolve(self.overseerd.clone(), self.krate.clone())
+        default.resolve(self.upwell.clone(), self.krate.clone())
     }
 }
 
@@ -33,12 +33,12 @@ impl Parse for InjectableArgs {
             let key = syn::Ident::parse_any(input)?;
 
             match key.to_string().as_str() {
-                "overseerd" => args.overseerd = Some(crate::attr::parse_path_override(input)?),
+                "upwell" => args.upwell = Some(crate::attr::parse_path_override(input)?),
                 "crate" => args.krate = Some(crate::attr::parse_path_override(input)?),
                 _ => {
                     return Err(syn::Error::new_spanned(
                         key,
-                        "unknown argument; expected one of: `overseerd`, `crate`",
+                        "unknown argument; expected one of: `upwell`, `crate`",
                     ));
                 }
             }

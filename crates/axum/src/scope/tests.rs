@@ -1,4 +1,4 @@
-use overseerd_core::{Scope, StaticScope};
+use upwell_core::{Scope, StaticScope};
 
 use super::{HttpRequest, SCOPE_TOPOLOGY};
 

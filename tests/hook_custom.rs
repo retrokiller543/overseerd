@@ -6,8 +6,8 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd::config::Toml;
-use overseerd::{App, AppError, ConfigManager, HookKind, component, methods};
+use upwell::config::Toml;
+use upwell::{App, AppError, ConfigManager, HookKind, component, methods};
 
 /// A user-defined lifecycle kind — no inputs, no output.
 struct Startup;

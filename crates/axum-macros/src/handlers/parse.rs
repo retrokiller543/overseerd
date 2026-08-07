@@ -1,9 +1,9 @@
 use proc_macro2::TokenStream;
 use syn::{FnArg, Ident, ImplItemFn, Type};
 
-use overseerd_macros_core::client::ClientMethod;
-use overseerd_macros_core::extend::ParseMethod;
-use overseerd_macros_core::paths::Paths;
+use upwell_macros_core::client::ClientMethod;
+use upwell_macros_core::extend::ParseMethod;
+use upwell_macros_core::paths::Paths;
 
 use super::AxumHandlers;
 use super::args::{add_use_capture, take_stream_param};

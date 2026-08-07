@@ -1,7 +1,7 @@
 use crate::DaemonApplication;
 use crate::commands::OutputArgs;
 use crate::lifecycle::StartupProvenance;
-use overseerd::{CliCommand, CommandContext, CommandContextError, PreBuild};
+use upwell::{CliCommand, CommandContext, CommandContextError, PreBuild};
 
 /// Prints the validated Homeledger plan without constructing components or the RPC protocol.
 #[derive(clap::Args)]

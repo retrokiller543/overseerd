@@ -6,9 +6,9 @@
 
 # Homeledger's base config is merged with `application-development.toml` by the
 # declaration's generated parser default environment. Explicit `--environment` and
-# `OVERSEERD_PROFILES` replace that default; later repeated profiles win in order.
+# `UPWELL_PROFILES` replace that default; later repeated profiles win in order.
 [logging]
-level = "info,homeledger=debug,overseerd=info"
+level = "info,homeledger=debug,upwell=info"
 ansi = false
 
 [homeledger.ledger]

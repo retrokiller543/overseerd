@@ -4,8 +4,8 @@ use syn::{
     FnArg, GenericArgument, Ident, ImplItemFn, LitStr, PathArguments, ReturnType, Type, parse_quote,
 };
 
-use overseerd_macros_core::attr::first_type_arg;
-use overseerd_macros_core::paths::Paths;
+use upwell_macros_core::attr::first_type_arg;
+use upwell_macros_core::paths::Paths;
 
 use crate::{client, route};
 

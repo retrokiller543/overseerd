@@ -1,6 +1,6 @@
 use std::net::{IpAddr, SocketAddr};
 
-use overseerd_config::{ConfigManager, ResolverChain, Toml};
+use upwell_config::{ConfigManager, ResolverChain, Toml};
 
 use super::{AXUM_CONFIG_PATH, AxumConfig};
 

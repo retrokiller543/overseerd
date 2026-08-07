@@ -8,24 +8,24 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use overseerd::ScopeContainer;
-use overseerd::axum::client::ReqwestClient;
-use overseerd::axum::prelude::*;
-use overseerd::axum::{
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use upwell::ScopeContainer;
+use upwell::axum::client::ReqwestClient;
+use upwell::axum::prelude::*;
+use upwell::axum::{
     CodecError, Injected, StompAuthFuture, StompAuthenticationError, StompAuthenticator, StompBody,
     StompClientTransport, StompCodec, StompConfig, StompConnect, StompConnectOptions,
     StompPrincipal, TopicCodec,
 };
-use overseerd::prelude::*;
-use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use upwell::prelude::*;
+use upwell_test_utils::{TestEnvironment, TestServer, deadline};
 
 app! {
     /// Generated host shared by the STOMP integration tests.
     app StompTestApplication {
         name: "stomp-test",
-        protocol: overseerd::axum::Axum,
+        protocol: upwell::axum::Axum,
     }
 }
 
@@ -93,7 +93,7 @@ impl RestEvents {
 
 #[tokio::test]
 async fn stomp_send_is_broadcast_to_typed_subscribers() {
-    let environment = TestEnvironment::new("overseerd-http-stomp-");
+    let environment = TestEnvironment::new("upwell-http-stomp-");
     let app = StompTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())
@@ -146,7 +146,7 @@ async fn stomp_send_is_broadcast_to_typed_subscribers() {
 
 #[tokio::test]
 async fn stomp_connect_authentication_and_explicit_disconnect_share_lifecycle() {
-    let environment = TestEnvironment::new("overseerd-http-stomp-auth-");
+    let environment = TestEnvironment::new("upwell-http-stomp-auth-");
     let config = StompConfig::default().with_authenticator(|connect: StompConnect| async move {
         if connect.login() == Some("alice")
             && connect.passcode() == Some("secret")
@@ -259,7 +259,7 @@ impl StompAuthenticator for TokenAuth {
 /// (`alice` / `secret`) are accepted while others are rejected — the shared body of the two
 /// DI-native authenticator tests.
 async fn assert_credentials_are_enforced(config: StompConfig) {
-    let environment = TestEnvironment::new("overseerd-http-stomp-credentials-");
+    let environment = TestEnvironment::new("upwell-http-stomp-credentials-");
     let app = StompTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())
@@ -329,7 +329,7 @@ async fn stomp_authenticator_resolves_a_di_component() {
 
 #[tokio::test]
 async fn http_handler_can_publish_to_typed_stomp_subscribers() {
-    let environment = TestEnvironment::new("overseerd-http-stomp-rest-");
+    let environment = TestEnvironment::new("upwell-http-stomp-rest-");
     let app = StompTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())
@@ -448,7 +448,7 @@ impl Marked {
 
 #[tokio::test]
 async fn a_custom_codec_is_honored_on_both_ends_of_the_send_path() {
-    let environment = TestEnvironment::new("overseerd-http-stomp-codec-");
+    let environment = TestEnvironment::new("upwell-http-stomp-codec-");
     let app = StompTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())

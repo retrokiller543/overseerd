@@ -1,4 +1,4 @@
-use overseerd::{
+use upwell::{
     AppRegistry, BootstrapContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, app,
 };
 
@@ -10,17 +10,16 @@ struct ProbeProtocol;
 
 impl ProtocolDefinition for ProbeProtocol {
     type Prepared = PreparedProbeProtocol;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
-    const ID: overseerd::ProtocolId =
-        overseerd::namespaced_id!(overseerd::ProtocolId, "test/probe-process");
-    const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
+    const ID: upwell::ProtocolId = upwell::namespaced_id!(upwell::ProtocolId, "test/probe-process");
+    const SCOPE_TOPOLOGY: upwell::ScopeTopology = upwell::ScopeTopology::empty();
 
     fn register(&self, _registry: &mut AppRegistry) {}
 
     fn prepare(
         self,
-        _context: &overseerd::ValidationContext<'_>,
+        _context: &upwell::ValidationContext<'_>,
     ) -> Result<Self::Prepared, Self::Error> {
         Ok(PreparedProbeProtocol)
     }
@@ -34,14 +33,14 @@ struct ProbeRuntime;
 
 impl PreparedProtocol for PreparedProbeProtocol {
     type Runtime = ProbeRuntime;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
-    fn build(self, _runtime: &overseerd::AppRuntime) -> Result<Self::Runtime, Self::Error> {
+    fn build(self, _runtime: &upwell::AppRuntime) -> Result<Self::Runtime, Self::Error> {
         panic!("tooling process must not build protocol runtime");
     }
 
-    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
-        contributions.display(overseerd_app::ResourceDisplay {
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
+        contributions.display(upwell_app::ResourceDisplay {
             label: Some(String::from("Probe process protocol")),
             ..Default::default()
         });
@@ -49,7 +48,7 @@ impl PreparedProtocol for PreparedProbeProtocol {
 }
 
 impl ProtocolRuntime for ProbeRuntime {
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 }
 
 async fn panic_during_setup(_context: BootstrapContext) -> std::io::Result<BootstrapContext> {
@@ -69,7 +68,7 @@ app! {
 #[tokio::main]
 async fn main() {
     if let Err(error) = ProbeProcessApplication::run().await {
-        eprintln!("overseerd tooling probe process failed: {error}");
+        eprintln!("upwell tooling probe process failed: {error}");
         std::process::exit(2);
     }
 }

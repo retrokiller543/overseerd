@@ -30,12 +30,12 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
-use overseerd_transport::CodecError;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use upwell_transport::CodecError;
 
 #[cfg(not(target_family = "wasm"))]
-use overseerd_config::ContainerConfigExt;
+use upwell_config::ContainerConfigExt;
 
 const MAX_NDJSON_LINE_BYTES: usize = 1024 * 1024;
 
@@ -142,7 +142,7 @@ where
 
                     if line.len() > MAX_NDJSON_LINE_BYTES {
                         tracing::warn!(
-                            target: "overseerd::axum",
+                            target: "upwell::axum",
                             len = line.len(),
                             limit = MAX_NDJSON_LINE_BYTES,
                             "stream item exceeded maximum NDJSON line length; ending stream"
@@ -159,7 +159,7 @@ where
 
                     if state.buffer.len() > MAX_NDJSON_LINE_BYTES {
                         tracing::warn!(
-                            target: "overseerd::axum",
+                            target: "upwell::axum",
                             len = state.buffer.len(),
                             limit = MAX_NDJSON_LINE_BYTES,
                             "stream item exceeded maximum NDJSON line length; ending stream"
@@ -179,7 +179,7 @@ where
 
                             if pending_line_len > MAX_NDJSON_LINE_BYTES {
                                 tracing::warn!(
-                                    target: "overseerd::axum",
+                                    target: "upwell::axum",
                                     len = pending_line_len,
                                     limit = MAX_NDJSON_LINE_BYTES,
                                     "stream item exceeded maximum NDJSON line length; ending stream"
@@ -195,7 +195,7 @@ where
 
                         Some(Err(error)) => {
                             tracing::warn!(
-                                target: "overseerd::axum",
+                                target: "upwell::axum",
                                 %error,
                                 "stream transport error; ending stream"
                             );
@@ -216,7 +216,7 @@ where
 
                     Err(error) => {
                         tracing::warn!(
-                            target: "overseerd::axum",
+                            target: "upwell::axum",
                             %error,
                             "stream item failed to decode; ending stream"
                         );
@@ -282,7 +282,7 @@ where
                     // always-ready body can keep winning at or after the deadline indefinitely.
                     if tokio::time::Instant::now() >= deadline {
                         tracing::warn!(
-                            target: "overseerd::axum",
+                            target: "upwell::axum",
                             "streamed request exceeded its total deadline; ending stream"
                         );
 
@@ -293,7 +293,7 @@ where
                         Ok(next) => next,
                         Err(_) => {
                             tracing::warn!(
-                                target: "overseerd::axum",
+                                target: "upwell::axum",
                                 "streamed request exceeded its total deadline; ending stream"
                             );
 
@@ -312,7 +312,7 @@ where
 
                 if state.max_bytes > 0 && state.total_bytes > state.max_bytes {
                     tracing::warn!(
-                        target: "overseerd::axum",
+                        target: "upwell::axum",
                         total_bytes = state.total_bytes,
                         limit = state.max_bytes,
                         "streamed request exceeded its total byte limit; ending stream"
@@ -365,7 +365,7 @@ where
                     // records need the same explicit boundary check as ready body chunks.
                     if tokio::time::Instant::now() >= deadline {
                         tracing::warn!(
-                            target: "overseerd::axum",
+                            target: "upwell::axum",
                             "streamed request exceeded its total deadline; ending stream"
                         );
 
@@ -376,7 +376,7 @@ where
                         Ok(next) => next,
                         Err(_) => {
                             tracing::warn!(
-                                target: "overseerd::axum",
+                                target: "upwell::axum",
                                 "streamed request exceeded its total deadline; ending stream"
                             );
 
@@ -393,7 +393,7 @@ where
 
             if state.max_items > 0 && state.emitted == state.max_items {
                 tracing::warn!(
-                    target: "overseerd::axum",
+                    target: "upwell::axum",
                     limit = state.max_items,
                     "streamed request reached its item limit; ending stream"
                 );

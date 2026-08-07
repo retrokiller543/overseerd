@@ -4,7 +4,7 @@ Expression-form `app!` and the `daemon!` alias have been removed. `app!` now dec
 named host with compile-time lifecycle state, an optional generated CLI runner, and an optional
 target-local tooling entry.
 
-The [`app!` Rustdoc](https://docs.rs/overseerd/latest/overseerd/macro.app.html) is authoritative for
+The [`app!` Rustdoc](https://docs.rs/upwell/latest/upwell/macro.app.html) is authoritative for
 the full grammar, generated types and methods, lifecycle contracts, exact Clap defaults and
 precedence, commands, plugins, tooling, feature behavior, and errors. This guide covers migration
 choices and common source changes without duplicating that contract.
@@ -16,7 +16,7 @@ Move the definition to item scope, give the generated host a Rust type name, dec
 delegate the normal process entry to `run`:
 
 ```rust
-use overseerd::{daemon::prelude::*, prelude::*};
+use upwell::{daemon::prelude::*, prelude::*};
 
 app! {
     app NotifyApplication {
@@ -31,7 +31,7 @@ app! {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), overseerd::CliError> {
+async fn main() -> Result<(), upwell::CliError> {
     NotifyApplication::run().await
 }
 ```
@@ -54,7 +54,7 @@ names `::clap` types.
 clap = { version = "4", features = ["derive"] }
 ```
 
-The `overseerd` facade enables `cli` by default. Disable that feature if the crate only needs direct
+The `upwell` facade enables `cli` by default. Disable that feature if the crate only needs direct
 builder and typestate lifecycle APIs and should not generate a parser or runner.
 
 ## Move Assembly To Item Scope
@@ -144,7 +144,7 @@ reason to own runtime construction or error policy:
 
 ```rust
 #[tokio::main]
-async fn main() -> Result<(), overseerd::CliError> {
+async fn main() -> Result<(), upwell::CliError> {
     NotifyApplication::run().await
 }
 ```

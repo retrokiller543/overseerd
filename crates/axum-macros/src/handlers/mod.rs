@@ -18,10 +18,10 @@ use quote::quote;
 use syn::parse::ParseStream;
 use syn::{GenericParam, Ident, ItemImpl, Type};
 
-use overseerd_macros_core::client::ClientMethod;
-use overseerd_macros_core::extend::{ParseItem, ParseKeyed, eat_eq};
-use overseerd_macros_core::methods::self_ty_ident;
-use overseerd_macros_core::paths::Paths;
+use upwell_macros_core::client::ClientMethod;
+use upwell_macros_core::extend::{ParseItem, ParseKeyed, eat_eq};
+use upwell_macros_core::methods::self_ty_ident;
+use upwell_macros_core::paths::Paths;
 
 use http::RouteSpec;
 use ws::WsRouteSpec;

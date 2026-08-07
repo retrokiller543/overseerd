@@ -1,10 +1,10 @@
 mod response;
 
-use overseerd_macros_core::client::{Capability, ClientMethod};
-use overseerd_macros_core::paths::Paths;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, ReturnType, Type};
+use upwell_macros_core::client::{Capability, ClientMethod};
+use upwell_macros_core::paths::Paths;
 
 use self::response::{ResponsePlanInput, response_plan};
 use super::inputs::{Body, QueryInput, classify};

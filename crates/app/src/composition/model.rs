@@ -68,7 +68,7 @@ impl InstallationProvenance {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum Contributor {
-    /// Framework infrastructure contributed by `overseerd-app`.
+    /// Framework infrastructure contributed by `upwell-app`.
     Framework,
     /// A direct application declaration.
     Application,

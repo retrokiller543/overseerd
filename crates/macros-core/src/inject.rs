@@ -14,7 +14,7 @@
 //! Each dependency is keyed under `<H as Injectable>::Target`, so a blanket
 //! `Arc<T>` keys by `T` while a by-value handle keys by itself.
 //!
-//! [`Injectable`]: overseerd_core::Injectable
+//! [`Injectable`]: upwell_core::Injectable
 
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
@@ -249,8 +249,8 @@ pub fn field_injection_component(
 
         let factory_literal = quote! {
             #component_factory_descriptor {
-                construct: __overseerd_factory,
-                dependencies: __overseerd_deps,
+                construct: __upwell_factory,
+                dependencies: __upwell_deps,
                 default: true,
             }
         };
@@ -263,7 +263,7 @@ pub fn field_injection_component(
             quote! {
                 #[#distributed_slice(#registrations_slice)]
                 #[linkme(crate = #linkme_crate)]
-                static __OVERSEERD_DEFAULT_FACTORY: #registration =
+                static __UPWELL_DEFAULT_FACTORY: #registration =
                     #registration::Factory(#factory_literal);
             },
         );
@@ -274,7 +274,7 @@ pub fn field_injection_component(
             #wired
 
             #[allow(unused_variables)]
-            fn __overseerd_factory(
+            fn __upwell_factory(
                 cx: &mut #component_construction_context,
             ) -> ::core::pin::Pin<
                 ::std::boxed::Box<
@@ -297,7 +297,7 @@ pub fn field_injection_component(
                 })
             }
 
-            fn __overseerd_deps() -> ::std::vec::Vec<#dependency_descriptor> {
+            fn __upwell_deps() -> ::std::vec::Vec<#dependency_descriptor> {
                 ::std::vec![ #(#dep_descriptors),* ]
             }
 
@@ -316,7 +316,7 @@ pub fn field_injection_component(
     quote! {
         #default_factory
 
-        const __OVERSEERD_COMPONENT_DESCRIPTOR: #component_descriptor =
+        const __UPWELL_COMPONENT_DESCRIPTOR: #component_descriptor =
             #component_descriptor {
                 id: #id,
                 name: #name,
@@ -327,12 +327,12 @@ pub fn field_injection_component(
             };
 
         impl #descriptor_trait<#component_descriptor> for #self_ident {
-            const DESCRIPTOR: #component_descriptor = __OVERSEERD_COMPONENT_DESCRIPTOR;
+            const DESCRIPTOR: #component_descriptor = __UPWELL_COMPONENT_DESCRIPTOR;
         }
 
         #[#distributed_slice(#components_slice)]
         #[linkme(crate = #linkme_crate)]
-        static __OVERSEERD_COMPONENT: #component_descriptor = __OVERSEERD_COMPONENT_DESCRIPTOR;
+        static __UPWELL_COMPONENT: #component_descriptor = __UPWELL_COMPONENT_DESCRIPTOR;
     }
 }
 
@@ -362,8 +362,8 @@ pub fn explicit_factory(
 
     let factory_literal = quote! {
         #component_factory_descriptor {
-            construct: __overseerd_explicit_factory,
-            dependencies: __overseerd_explicit_deps,
+            construct: __upwell_explicit_factory,
+            dependencies: __upwell_explicit_deps,
             default: false,
         }
     };
@@ -376,18 +376,18 @@ pub fn explicit_factory(
         quote! {
             #[#distributed_slice(#registrations_slice)]
             #[linkme(crate = #linkme_crate)]
-            static __OVERSEERD_EXPLICIT_FACTORY: #registration =
+            static __UPWELL_EXPLICIT_FACTORY: #registration =
                 #registration::Factory(#factory_literal);
         },
     );
 
     quote! {
-        fn __overseerd_explicit_deps() -> ::std::vec::Vec<#dependency_descriptor> {
+        fn __upwell_explicit_deps() -> ::std::vec::Vec<#dependency_descriptor> {
             #factory_dependencies(#factory_path)
         }
 
         #[allow(unused_variables)]
-        fn __overseerd_explicit_factory(
+        fn __upwell_explicit_factory(
             cx: &mut #component_construction_context,
         ) -> ::core::pin::Pin<
             ::std::boxed::Box<

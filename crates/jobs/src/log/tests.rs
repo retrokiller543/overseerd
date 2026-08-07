@@ -11,7 +11,7 @@ fn record(run: u64, message: &str) -> JobLogRecord {
         job_name: Arc::from("Test::job"),
         timestamp: SystemTime::now(),
         level: JobLogLevel::Info,
-        target: "overseerd::example".to_string(),
+        target: "upwell::example".to_string(),
         message: message.to_string(),
     }
 }

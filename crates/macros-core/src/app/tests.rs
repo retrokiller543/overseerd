@@ -209,7 +209,7 @@ fn parses_complete_named_app() {
             guards: [guard()],
             error_handler: error_handler(),
             plugins: [Plugin, replace SLOT => Replacement, suppress OPTIONAL_SLOT],
-            overseerd: ::framework,
+            upwell: ::framework,
         }
     };
 
@@ -919,16 +919,16 @@ fn expands_app_specific_bootstrap_and_framework_parser() {
     assert!(output.contains("default_value = \"info\""));
     assert!(output.contains("pub log : Option < :: std :: string :: String >"));
     assert!(output.contains("default_value_t = LogFormat :: Json"));
-    assert!(output.contains("pub log_format : :: overseerd :: LogFormat"));
+    assert!(output.contains("pub log_format : :: upwell :: LogFormat"));
     assert!(output.contains("default_value = \"never\""));
-    assert!(output.contains("pub color : Option < :: overseerd :: ColorChoice >"));
+    assert!(output.contains("pub color : Option < :: upwell :: ColorChoice >"));
     assert!(output.contains("name = \"start\""));
     assert!(output.contains("struct __PolicyApplicationFrameworkCli"));
     assert!(output.contains("enum __PolicyApplicationFrameworkCommand"));
     assert!(output.contains("command : Option < __PolicyApplicationFrameworkCommand >"));
     assert!(output.contains("ValueSource"));
     assert!(output.contains("Self :: Serve"));
-    assert!(!output.contains("__OverseerdServe"));
+    assert!(!output.contains("__UpwellServe"));
 
     let input = parse2::<NamedApp>(quote! {
         app AdditionalDefaultForms {
@@ -949,7 +949,7 @@ fn expands_app_specific_bootstrap_and_framework_parser() {
     assert!(output.contains("default_value_t = :: std :: string :: String :: from (\"info\")"));
     assert!(output.contains("pub log : :: std :: string :: String"));
     assert!(output.contains("default_value_t = ColorChoice :: Never"));
-    assert!(output.contains("pub color : :: overseerd :: ColorChoice"));
+    assert!(output.contains("pub color : :: upwell :: ColorChoice"));
 }
 
 #[cfg(feature = "cli")]
@@ -1117,18 +1117,16 @@ fn expands_named_host_and_builder() {
     let output = expand(input).to_string();
 
     assert!(output.contains("pub struct Example"));
-    assert!(
-        output.contains("Stage : :: overseerd :: AppStage < Protocol > = :: overseerd :: Initial")
-    );
-    assert!(output.contains("impl Example < :: overseerd :: Initial >"));
-    assert!(output.contains("impl Example < :: overseerd :: Setup >"));
-    assert!(output.contains("impl Example < :: overseerd :: PreBuild >"));
-    assert!(output.contains("impl Example < :: overseerd :: Built >"));
-    assert!(!output.contains("__overseerd_setup"));
-    assert!(!output.contains("__overseerd_prepare"));
-    assert!(!output.contains("__overseerd_build"));
+    assert!(output.contains("Stage : :: upwell :: AppStage < Protocol > = :: upwell :: Initial"));
+    assert!(output.contains("impl Example < :: upwell :: Initial >"));
+    assert!(output.contains("impl Example < :: upwell :: Setup >"));
+    assert!(output.contains("impl Example < :: upwell :: PreBuild >"));
+    assert!(output.contains("impl Example < :: upwell :: Built >"));
+    assert!(!output.contains("__upwell_setup"));
+    assert!(!output.contains("__upwell_prepare"));
+    assert!(!output.contains("__upwell_build"));
     assert!(output.contains(
-        "pub fn builder () -> :: core :: result :: Result < :: overseerd :: AppBuilder < Protocol > , :: overseerd :: ConfigError >"
+        "pub fn builder () -> :: core :: result :: Result < :: upwell :: AppBuilder < Protocol > , :: upwell :: ConfigError >"
     ));
     assert!(output.contains("Result :: Ok"));
     assert_eq!(output.matches("with_component").count(), 1);
@@ -1149,9 +1147,9 @@ fn named_builder_propagates_directory_config_errors() {
     .expect("named app parses");
     let output = expand(input).to_string();
 
-    assert!(output.contains("ConfigManager :: < :: overseerd :: config :: Dynamic > :: load_from"));
+    assert!(output.contains("ConfigManager :: < :: upwell :: config :: Dynamic > :: load_from"));
     assert!(output.contains("?"));
-    assert!(output.contains("Result < :: overseerd :: AppBuilder"));
+    assert!(output.contains("Result < :: upwell :: AppBuilder"));
 }
 
 #[test]
@@ -1340,6 +1338,6 @@ fn generated_run_recognizes_exact_hidden_probe_contract_before_clap() {
     assert!(output.contains("arguments . len () == 2"));
     assert!(output.contains("__private :: install_process_probe_panic_hook"));
     assert!(output.contains("__private :: probe_target_identity_from_env"));
-    assert!(output.contains("Self :: __overseerd_tooling_probe (target)"));
+    assert!(output.contains("Self :: __upwell_tooling_probe (target)"));
     assert!(output.contains("__private :: emit_probe_envelope_from_env"));
 }

@@ -246,24 +246,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cargo-overseerd"
-version = "0.20.0"
-dependencies = [
- "cargo_metadata",
- "clap",
- "command-group",
- "fs2",
- "libc",
- "overseerd-test-utils",
- "overseerd-tooling-schema",
- "semver",
- "serde",
- "serde_json",
- "thiserror",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "cargo-platform"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -271,6 +253,24 @@ checksum = "dd0061da739915fae12ea00e16397555ed4371a6bb285431aab930f61b0aa4ba"
 dependencies = [
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "cargo-upwell"
+version = "0.20.0"
+dependencies = [
+ "cargo_metadata",
+ "clap",
+ "command-group",
+ "fs2",
+ "libc",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "upwell-test-utils",
+ "upwell-tooling-schema",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1527,405 +1527,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
-name = "overseerd"
-version = "0.20.0"
-dependencies = [
- "clap",
- "futures",
- "overseerd-app",
- "overseerd-axum",
- "overseerd-axum-json-ws",
- "overseerd-axum-stomp",
- "overseerd-client",
- "overseerd-config",
- "overseerd-core",
- "overseerd-di",
- "overseerd-dirs",
- "overseerd-hooks",
- "overseerd-jobs",
- "overseerd-macros",
- "overseerd-rpc",
- "overseerd-test-utils",
- "overseerd-tooling-schema",
- "overseerd-transport",
- "postcard",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "utoipa",
-]
-
-[[package]]
-name = "overseerd-app"
-version = "0.20.0"
-dependencies = [
- "clap",
- "futures",
- "overseerd-config",
- "overseerd-core",
- "overseerd-di",
- "overseerd-dirs",
- "overseerd-hooks",
- "overseerd-macros",
- "overseerd-test-utils",
- "overseerd-tooling-schema",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "overseerd-axum"
-version = "0.20.0"
-dependencies = [
- "axum",
- "bytes",
- "cookie",
- "futures",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "inventory",
- "js-sys",
- "linkme",
- "overseerd-app",
- "overseerd-axum-macros",
- "overseerd-build",
- "overseerd-client",
- "overseerd-config",
- "overseerd-core",
- "overseerd-di",
- "overseerd-hooks",
- "overseerd-test-utils",
- "overseerd-transport",
- "reqwest",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "serde_urlencoded",
- "thiserror",
- "tokio",
- "tokio-tungstenite-wasm",
- "tower",
- "tower-http",
- "tracing",
- "utoipa",
- "utoipa-rapidoc",
- "utoipa-redoc",
- "utoipa-scalar",
- "utoipa-swagger-ui",
- "uuid",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "overseerd-axum-json-ws"
-version = "0.20.0"
-dependencies = [
- "overseerd-axum",
- "overseerd-client",
- "overseerd-transport",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "wasm-bindgen",
- "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "overseerd-axum-macros"
-version = "0.20.0"
-dependencies = [
- "overseerd-macros-core",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "overseerd-axum-stomp"
-version = "0.20.0"
-dependencies = [
- "bytes",
- "futures",
- "js-sys",
- "overseerd-axum",
- "overseerd-client",
- "overseerd-transport",
- "serde",
- "serde_json",
- "stomp-parser",
- "thiserror",
- "tokio",
- "tokio-tungstenite-wasm",
- "tracing",
- "wasm-bindgen",
- "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "overseerd-build"
-version = "0.20.0"
-
-[[package]]
-name = "overseerd-client"
-version = "0.20.0"
-dependencies = [
- "futures",
- "overseerd-transport",
-]
-
-[[package]]
-name = "overseerd-config"
-version = "0.20.0"
-dependencies = [
- "arc-swap",
- "futures",
- "linkme",
- "notify",
- "overseerd-core",
- "overseerd-di",
- "overseerd-dirs",
- "overseerd-hooks",
- "serde",
- "serde_yaml_ng",
- "tempfile",
- "thiserror",
- "tokio",
- "toml",
- "tracing",
-]
-
-[[package]]
-name = "overseerd-core"
-version = "0.20.0"
-dependencies = [
- "inventory",
-]
-
-[[package]]
-name = "overseerd-di"
-version = "0.20.0"
-dependencies = [
- "arc-swap",
- "futures",
- "inventory",
- "linkme",
- "overseerd-build",
- "overseerd-core",
- "overseerd-hooks",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "overseerd-dirs"
-version = "0.20.0"
-dependencies = [
- "directories",
- "libc",
- "overseerd-core",
- "overseerd-di",
- "tempfile",
- "tracing",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "overseerd-example-daemon"
-version = "0.20.0"
-dependencies = [
- "clap",
- "overseerd",
- "overseerd-test-utils",
- "serde",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "overseerd-example-http"
-version = "0.20.0"
-dependencies = [
- "arc-swap",
- "clap",
- "futures",
- "http-body-util",
- "overseerd",
- "overseerd-test-utils",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite 0.29.0",
- "tower",
- "tracing",
- "tsify",
- "utoipa",
- "wasm-bindgen",
- "wasm-bindgen-futures",
-]
-
-[[package]]
-name = "overseerd-example-jobs"
-version = "0.20.0"
-dependencies = [
- "clap",
- "overseerd",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "overseerd-hooks"
-version = "0.20.0"
-dependencies = [
- "futures",
- "overseerd-core",
- "thiserror",
-]
-
-[[package]]
-name = "overseerd-jobs"
-version = "0.20.0"
-dependencies = [
- "arc-swap",
- "async-trait",
- "chrono",
- "croner",
- "humantime",
- "linkme",
- "overseerd-app",
- "overseerd-core",
- "overseerd-di",
- "overseerd-hooks",
- "overseerd-jobs-macros",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "overseerd-jobs-macros"
-version = "0.20.0"
-dependencies = [
- "humantime",
- "overseerd-macros-core",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "overseerd-macros"
-version = "0.20.0"
-dependencies = [
- "overseerd-macros-core",
- "proc-macro2",
-]
-
-[[package]]
-name = "overseerd-macros-core"
-version = "0.20.0"
-dependencies = [
- "overseerd-build",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "overseerd-rpc"
-version = "0.20.0"
-dependencies = [
- "arc-swap",
- "async-trait",
- "directories",
- "futures",
- "inventory",
- "linkme",
- "overseerd-app",
- "overseerd-build",
- "overseerd-client",
- "overseerd-config",
- "overseerd-core",
- "overseerd-di",
- "overseerd-dirs",
- "overseerd-hooks",
- "overseerd-rpc-macros",
- "overseerd-transport",
- "postcard",
- "serde",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tower",
- "tracing",
-]
-
-[[package]]
-name = "overseerd-rpc-macros"
-version = "0.20.0"
-dependencies = [
- "overseerd-macros-core",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "overseerd-test-utils"
-version = "0.20.0"
-dependencies = [
- "command-group",
- "libc",
- "overseerd-app",
- "overseerd-config",
- "overseerd-dirs",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "overseerd-tooling-schema"
-version = "0.20.0"
-dependencies = [
- "semver",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "overseerd-transport"
-version = "0.20.0"
-dependencies = [
- "bitflags 2.13.1",
- "futures",
- "libc",
- "overseerd-di",
- "overseerd-test-utils",
- "postcard",
- "serde",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3124,6 +2725,405 @@ name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
+
+[[package]]
+name = "upwell"
+version = "0.20.0"
+dependencies = [
+ "clap",
+ "futures",
+ "postcard",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "upwell-app",
+ "upwell-axum",
+ "upwell-axum-json-ws",
+ "upwell-axum-stomp",
+ "upwell-client",
+ "upwell-config",
+ "upwell-core",
+ "upwell-di",
+ "upwell-dirs",
+ "upwell-hooks",
+ "upwell-jobs",
+ "upwell-macros",
+ "upwell-rpc",
+ "upwell-test-utils",
+ "upwell-tooling-schema",
+ "upwell-transport",
+ "utoipa",
+]
+
+[[package]]
+name = "upwell-app"
+version = "0.20.0"
+dependencies = [
+ "clap",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "upwell-config",
+ "upwell-core",
+ "upwell-di",
+ "upwell-dirs",
+ "upwell-hooks",
+ "upwell-macros",
+ "upwell-test-utils",
+ "upwell-tooling-schema",
+]
+
+[[package]]
+name = "upwell-axum"
+version = "0.20.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "cookie",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "inventory",
+ "js-sys",
+ "linkme",
+ "reqwest",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "serde_urlencoded",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite-wasm",
+ "tower",
+ "tower-http",
+ "tracing",
+ "upwell-app",
+ "upwell-axum-macros",
+ "upwell-build",
+ "upwell-client",
+ "upwell-config",
+ "upwell-core",
+ "upwell-di",
+ "upwell-hooks",
+ "upwell-test-utils",
+ "upwell-transport",
+ "utoipa",
+ "utoipa-rapidoc",
+ "utoipa-redoc",
+ "utoipa-scalar",
+ "utoipa-swagger-ui",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "upwell-axum-json-ws"
+version = "0.20.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "upwell-axum",
+ "upwell-client",
+ "upwell-transport",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "upwell-axum-macros"
+version = "0.20.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "upwell-macros-core",
+]
+
+[[package]]
+name = "upwell-axum-stomp"
+version = "0.20.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "stomp-parser",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite-wasm",
+ "tracing",
+ "upwell-axum",
+ "upwell-client",
+ "upwell-transport",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "upwell-build"
+version = "0.20.0"
+
+[[package]]
+name = "upwell-client"
+version = "0.20.0"
+dependencies = [
+ "futures",
+ "upwell-transport",
+]
+
+[[package]]
+name = "upwell-config"
+version = "0.20.0"
+dependencies = [
+ "arc-swap",
+ "futures",
+ "linkme",
+ "notify",
+ "serde",
+ "serde_yaml_ng",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tracing",
+ "upwell-core",
+ "upwell-di",
+ "upwell-dirs",
+ "upwell-hooks",
+]
+
+[[package]]
+name = "upwell-core"
+version = "0.20.0"
+dependencies = [
+ "inventory",
+]
+
+[[package]]
+name = "upwell-di"
+version = "0.20.0"
+dependencies = [
+ "arc-swap",
+ "futures",
+ "inventory",
+ "linkme",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "upwell-build",
+ "upwell-core",
+ "upwell-hooks",
+]
+
+[[package]]
+name = "upwell-dirs"
+version = "0.20.0"
+dependencies = [
+ "directories",
+ "libc",
+ "tempfile",
+ "tracing",
+ "upwell-core",
+ "upwell-di",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "upwell-example-daemon"
+version = "0.20.0"
+dependencies = [
+ "clap",
+ "serde",
+ "tokio",
+ "tracing",
+ "upwell",
+ "upwell-test-utils",
+]
+
+[[package]]
+name = "upwell-example-http"
+version = "0.20.0"
+dependencies = [
+ "arc-swap",
+ "clap",
+ "futures",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "tower",
+ "tracing",
+ "tsify",
+ "upwell",
+ "upwell-test-utils",
+ "utoipa",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "upwell-example-jobs"
+version = "0.20.0"
+dependencies = [
+ "clap",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "upwell",
+]
+
+[[package]]
+name = "upwell-hooks"
+version = "0.20.0"
+dependencies = [
+ "futures",
+ "thiserror",
+ "upwell-core",
+]
+
+[[package]]
+name = "upwell-jobs"
+version = "0.20.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "chrono",
+ "croner",
+ "humantime",
+ "linkme",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "upwell-app",
+ "upwell-core",
+ "upwell-di",
+ "upwell-hooks",
+ "upwell-jobs-macros",
+]
+
+[[package]]
+name = "upwell-jobs-macros"
+version = "0.20.0"
+dependencies = [
+ "humantime",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "upwell-macros-core",
+]
+
+[[package]]
+name = "upwell-macros"
+version = "0.20.0"
+dependencies = [
+ "proc-macro2",
+ "upwell-macros-core",
+]
+
+[[package]]
+name = "upwell-macros-core"
+version = "0.20.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "upwell-build",
+]
+
+[[package]]
+name = "upwell-rpc"
+version = "0.20.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "directories",
+ "futures",
+ "inventory",
+ "linkme",
+ "postcard",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tower",
+ "tracing",
+ "upwell-app",
+ "upwell-build",
+ "upwell-client",
+ "upwell-config",
+ "upwell-core",
+ "upwell-di",
+ "upwell-dirs",
+ "upwell-hooks",
+ "upwell-rpc-macros",
+ "upwell-transport",
+]
+
+[[package]]
+name = "upwell-rpc-macros"
+version = "0.20.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "upwell-macros-core",
+]
+
+[[package]]
+name = "upwell-test-utils"
+version = "0.20.0"
+dependencies = [
+ "command-group",
+ "libc",
+ "tempfile",
+ "tokio",
+ "upwell-app",
+ "upwell-config",
+ "upwell-dirs",
+]
+
+[[package]]
+name = "upwell-tooling-schema"
+version = "0.20.0"
+dependencies = [
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "upwell-transport"
+version = "0.20.0"
+dependencies = [
+ "bitflags 2.13.1",
+ "futures",
+ "libc",
+ "postcard",
+ "serde",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "upwell-di",
+ "upwell-test-utils",
+]
 
 [[package]]
 name = "url"

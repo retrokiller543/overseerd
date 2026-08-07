@@ -5,8 +5,8 @@
 
 mod common;
 
-use overseerd::daemon::{App, ErrorResponse, ResponseError, ResponseStream, handlers, service};
-use overseerd::{CallResult, Flags, PredefinedCode, ServerEvent, StatusCode};
+use upwell::daemon::{App, ErrorResponse, ResponseError, ResponseStream, handlers, service};
+use upwell::{CallResult, Flags, PredefinedCode, ServerEvent, StatusCode};
 
 use common::{MemoryServer, deadline};
 
@@ -66,8 +66,8 @@ impl StatusSvc {
 
     /// An unchanged framework-error handler, mapped to its category.
     #[rpc]
-    async fn framework_error() -> overseerd::daemon::Result<u32> {
-        Err(overseerd::daemon::Error::InvalidPayload("nope".to_string()))
+    async fn framework_error() -> upwell::daemon::Result<u32> {
+        Err(upwell::daemon::Error::InvalidPayload("nope".to_string()))
     }
 
     /// A server stream that yields items then fails, terminating with the same
@@ -77,7 +77,7 @@ impl StatusSvc {
         ResponseStream::new(futures::stream::iter(vec![
             Ok(0u32),
             Ok(1u32),
-            Err(overseerd::daemon::Error::InvalidPayload(
+            Err(upwell::daemon::Error::InvalidPayload(
                 "mid-stream".to_string(),
             )),
         ]))
@@ -147,7 +147,7 @@ async fn custom_error_carries_code_and_body() {
 
 #[tokio::test]
 async fn framework_error_handler_maps_to_category() {
-    // SC-003: an unchanged `Result<T, overseerd::daemon::Error>` handler still works and
+    // SC-003: an unchanged `Result<T, upwell::daemon::Error>` handler still works and
     // maps to its predefined category (InvalidPayload -> BadInput).
     let server = start().await;
     let conn = server.connect().await;

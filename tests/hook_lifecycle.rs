@@ -9,10 +9,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures::FutureExt;
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::{ConfigManager, Shutdown, Startup, component, methods};
-use overseerd_app::{
+use upwell::config::Toml;
+use upwell::daemon::App;
+use upwell::{ConfigManager, Shutdown, Startup, component, methods};
+use upwell_app::{
     AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
     ShutdownSignal,
 };
@@ -98,14 +98,14 @@ impl PartiallyStartedComponent {
 #[methods]
 impl LifecycleComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> upwell::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -115,16 +115,14 @@ impl LifecycleComponent {
 #[methods]
 impl FailingStartupComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> upwell::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
-        Err(overseerd::daemon::Error::MissingComponent(
-            "startup rejected",
-        ))
+        Err(upwell::daemon::Error::MissingComponent("startup rejected"))
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -134,14 +132,14 @@ impl FailingStartupComponent {
 #[methods]
 impl NeverStartedComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> upwell::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -151,23 +149,23 @@ impl NeverStartedComponent {
 #[methods]
 impl PartiallyStartedComponent {
     #[hook(Startup)]
-    async fn first_startup(&self) -> overseerd::daemon::Result<()> {
+    async fn first_startup(&self) -> upwell::daemon::Result<()> {
         self.startups.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Startup)]
-    async fn second_startup_fails(&self) -> overseerd::daemon::Result<()> {
+    async fn second_startup_fails(&self) -> upwell::daemon::Result<()> {
         self.startups.fetch_add(1, Ordering::SeqCst);
 
-        Err(overseerd::daemon::Error::MissingComponent(
+        Err(upwell::daemon::Error::MissingComponent(
             "second startup rejected",
         ))
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -292,17 +290,16 @@ struct PanickingRuntime;
 
 impl ProtocolDefinition for PanickingProtocol {
     type Prepared = PreparedPanickingProtocol;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
-    const ID: overseerd::ProtocolId =
-        overseerd::namespaced_id!(overseerd::ProtocolId, "test/panicking");
-    const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
+    const ID: upwell::ProtocolId = upwell::namespaced_id!(upwell::ProtocolId, "test/panicking");
+    const SCOPE_TOPOLOGY: upwell::ScopeTopology = upwell::ScopeTopology::empty();
 
     fn register(&self, _registry: &mut AppRegistry) {}
 
     fn prepare(
         self,
-        _context: &overseerd::ValidationContext<'_>,
+        _context: &upwell::ValidationContext<'_>,
     ) -> Result<Self::Prepared, Self::Error> {
         Ok(PreparedPanickingProtocol)
     }
@@ -310,15 +307,15 @@ impl ProtocolDefinition for PanickingProtocol {
 
 impl PreparedProtocol for PreparedPanickingProtocol {
     type Runtime = PanickingRuntime;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
         Ok(PanickingRuntime)
     }
 
     #[cfg(feature = "tooling")]
-    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
-        contributions.display(overseerd_app::ResourceDisplay {
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
+        contributions.display(upwell_app::ResourceDisplay {
             label: Some(String::from("Panicking test protocol")),
             ..Default::default()
         });
@@ -326,7 +323,7 @@ impl PreparedProtocol for PreparedPanickingProtocol {
 }
 
 impl ProtocolRuntime for PanickingRuntime {
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 }
 
 impl Serve<()> for PanickingRuntime {
@@ -342,7 +339,7 @@ impl Serve<()> for PanickingRuntime {
 
 #[tokio::test]
 async fn protocol_panic_still_runs_shutdown_hooks() {
-    let app = overseerd_app::App::<PanickingProtocol>::builder("panic-cleanup-test")
+    let app = upwell_app::App::<PanickingProtocol>::builder("panic-cleanup-test")
         .config_source(ConfigManager::<Toml>::empty())
         .component::<LifecycleComponent>()
         .build()

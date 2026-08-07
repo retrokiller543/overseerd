@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-core"
-description = "Leaf vocabulary for the Overseerd framework: type descriptors, the dependency-edge model, scopes, and the resolver abstraction. Depends on nothing internal."
+name = "upwell-core"
+description = "Leaf vocabulary for the Upwell framework: type descriptors, the dependency-edge model, scopes, and the resolver abstraction. Depends on nothing internal."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

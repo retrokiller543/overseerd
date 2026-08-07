@@ -156,7 +156,7 @@ fn contribution_structure_is_validated_before_projection() {
 
     invalid_owner.resource("local", "Local");
     empty_name.resource("local", " ");
-    invalid_facet.facet("summary", 0, overseerd_tooling_schema::JsonValue::Null);
+    invalid_facet.facet("summary", 0, upwell_tooling_schema::JsonValue::Null);
 
     assert!(matches!(
         invalid_owner.finish(),

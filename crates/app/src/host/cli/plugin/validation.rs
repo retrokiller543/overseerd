@@ -11,7 +11,7 @@ use crate::host::cli::metadata::CliOwnership;
 pub(crate) struct AugmentedCli {
     pub(crate) command: Command,
     #[cfg(feature = "tooling")]
-    pub(crate) metadata: overseerd_tooling_schema::CliMetadata,
+    pub(crate) metadata: upwell_tooling_schema::CliMetadata,
 }
 
 pub(crate) fn augment_plugin_cli(

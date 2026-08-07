@@ -1,6 +1,6 @@
 use crate::TempFixture;
-use overseerd_config::{ConfigManager, ResolverChain, Toml};
-use overseerd_dirs::DirectoriesManager;
+use upwell_config::{ConfigManager, ResolverChain, Toml};
+use upwell_dirs::DirectoriesManager;
 
 /// Owns private application directories and environment-free configuration for a test.
 pub struct TestEnvironment {

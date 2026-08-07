@@ -1,6 +1,6 @@
 //! A statically installed operations plugin with generated CLI contributions.
 
-use overseerd::{
+use upwell::{
     ContributionId, Plugin, PluginCliCommand, PluginCliRegistrar, PluginCommandContext,
     PluginContributions, PluginId, Setup, component, namespaced_id,
 };
@@ -19,7 +19,7 @@ pub struct OperatorContextCommand;
 
 impl PluginCliCommand for OperatorContextCommand {
     type Phase = Setup;
-    type Error = overseerd::CommandContextError;
+    type Error = upwell::CommandContextError;
 
     async fn run(&self, context: PluginCommandContext<Self::Phase>) -> Result<(), Self::Error> {
         let arguments = context.require::<OperationsArgs>()?;

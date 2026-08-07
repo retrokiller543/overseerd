@@ -4,18 +4,16 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use overseerd_config::{ConfigManager, Toml};
-use overseerd_config::{ConfigProperties, ConfigReload};
-use overseerd_core::{
-    Cardinality, DependencyDescriptor, ResolutionMode, StaticScope, TypeDescriptor,
-};
-use overseerd_di::{
+use upwell_config::{ConfigManager, Toml};
+use upwell_config::{ConfigProperties, ConfigReload};
+use upwell_core::{Cardinality, DependencyDescriptor, ResolutionMode, StaticScope, TypeDescriptor};
+use upwell_di::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
     ComponentFactoryDescriptor, Injectable, ProviderDescriptor, ProviderOrder,
     ProviderOrderDirection, Singleton,
 };
-use overseerd_test_utils::TempFixture;
-use overseerd_tooling_schema::{
+use upwell_test_utils::TempFixture;
+use upwell_tooling_schema::{
     BinaryTargetIdentity, DocumentIdentity, PackageIdentity, ProbeEnvelope, RelationshipKind,
     SourceLocation,
 };
@@ -27,7 +25,7 @@ use crate::{
     RelationTarget, ScopeBoundary, ScopeParent, ScopeTopology, ToolingEndpoint,
     ToolingRelationshipKind, ValidationContext,
 };
-use overseerd_hooks::{HookCall, HookKind};
+use upwell_hooks::{HookCall, HookKind};
 
 static FACTORY_CALLS: AtomicUsize = AtomicUsize::new(0);
 static TOOLING_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -37,15 +35,15 @@ static HOOK_DESCRIPTOR_CALLS: AtomicUsize = AtomicUsize::new(0);
 static HOOK_DEPENDENCY_CALLS: AtomicUsize = AtomicUsize::new(0);
 static PROJECTION_CALLBACK_POISONED: AtomicBool = AtomicBool::new(false);
 
-const DIAGNOSTIC_CONSUMER_SCOPE_ID: overseerd_core::ScopeId =
-    overseerd_core::namespaced_id!(overseerd_core::ScopeId, "test/diagnostic-consumer");
-const DIAGNOSTIC_DEPENDENCY_SCOPE_ID: overseerd_core::ScopeId =
-    overseerd_core::namespaced_id!(overseerd_core::ScopeId, "test/diagnostic-dependency");
+const DIAGNOSTIC_CONSUMER_SCOPE_ID: upwell_core::ScopeId =
+    upwell_core::namespaced_id!(upwell_core::ScopeId, "test/diagnostic-consumer");
+const DIAGNOSTIC_DEPENDENCY_SCOPE_ID: upwell_core::ScopeId =
+    upwell_core::namespaced_id!(upwell_core::ScopeId, "test/diagnostic-dependency");
 
 struct DiagnosticConsumerScope;
 
 impl StaticScope for DiagnosticConsumerScope {
-    const ID: overseerd_core::ScopeId = DIAGNOSTIC_CONSUMER_SCOPE_ID;
+    const ID: upwell_core::ScopeId = DIAGNOSTIC_CONSUMER_SCOPE_ID;
     const RANK: u8 = 1;
     const NAME: &'static str = "Diagnostic Consumer";
 }
@@ -53,7 +51,7 @@ impl StaticScope for DiagnosticConsumerScope {
 struct DiagnosticDependencyScope;
 
 impl StaticScope for DiagnosticDependencyScope {
-    const ID: overseerd_core::ScopeId = DIAGNOSTIC_DEPENDENCY_SCOPE_ID;
+    const ID: upwell_core::ScopeId = DIAGNOSTIC_DEPENDENCY_SCOPE_ID;
     const RANK: u8 = 2;
     const NAME: &'static str = "Diagnostic Dependency";
 }
@@ -126,7 +124,7 @@ static DIAGNOSTIC_CONSUMER: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<DiagnosticConsumer>("DiagnosticConsumer"),
     scope: &DiagnosticConsumerScope,
     factories: diagnostic_consumer_factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 static DIAGNOSTIC_DEPENDENCY: ComponentDescriptor = ComponentDescriptor {
@@ -135,7 +133,7 @@ static DIAGNOSTIC_DEPENDENCY: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<DiagnosticDependency>("DiagnosticDependency"),
     scope: &DiagnosticDependencyScope,
     factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 static DIAGNOSTIC_PROVIDER_CONSUMER: ComponentDescriptor = ComponentDescriptor {
@@ -144,7 +142,7 @@ static DIAGNOSTIC_PROVIDER_CONSUMER: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<DiagnosticProviderConsumer>("DiagnosticProviderConsumer"),
     scope: &DiagnosticConsumerScope,
     factories: diagnostic_provider_consumer_factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 static DIAGNOSTIC_PROVIDER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
@@ -153,7 +151,7 @@ static DIAGNOSTIC_PROVIDER_COMPONENT: ComponentDescriptor = ComponentDescriptor 
     ty: TypeDescriptor::of::<DiagnosticProviderComponent>("DiagnosticProviderComponent"),
     scope: &DiagnosticDependencyScope,
     factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 fn erase_diagnostic_provider(_: &BoxedComponent) -> BoxedComponent {
@@ -215,13 +213,11 @@ impl ProtocolDefinition for DiagnosticProviderFailureProtocol {
 
 #[test]
 fn typed_config_failures_emit_safe_diagnostics_without_source_display() {
-    let error = crate::Error::Config(overseerd_config::ConfigError::Substitution {
+    let error = crate::Error::Config(upwell_config::ConfigError::Substitution {
         path: String::from("service.token"),
-        source: overseerd_config::TemplateError::Bare(
-            overseerd_config::TemplateErrorKind::Message(String::from(
-                "resolved secret=probe-secret",
-            )),
-        ),
+        source: upwell_config::TemplateError::Bare(upwell_config::TemplateErrorKind::Message(
+            String::from("resolved secret=probe-secret"),
+        )),
     });
     let failure = super::ToolingProbeError::Lifecycle(crate::PhaseError::new(
         crate::LifecyclePhase::Configure,
@@ -231,7 +227,7 @@ fn typed_config_failures_emit_safe_diagnostics_without_source_display() {
     let envelope = ProbeEnvelope::failure(probe_identity(), failure);
     let json = envelope.to_json().expect("typed failure serializes");
 
-    assert!(json.contains("overseerd/tooling-config-substitution"));
+    assert!(json.contains("upwell/tooling-config-substitution"));
     assert!(json.contains("config:service.token"));
     assert!(!json.contains("probe-secret"));
 }
@@ -290,7 +286,7 @@ fn plugin_composition_failures_preserve_stable_plugin_and_installation_identitie
 
 #[test]
 fn di_failures_use_stable_component_and_underlying_type_identities() {
-    let error = crate::Error::Di(overseerd_di::Error::MissingDependency {
+    let error = crate::Error::Di(upwell_di::Error::MissingDependency {
         component: String::from("Friendly Worker Name"),
         component_id: String::from("worker-component"),
         dependency: String::from("fixture::Service (qualifier `primary`)"),
@@ -316,8 +312,8 @@ fn di_failures_use_stable_component_and_underlying_type_identities() {
 
 #[test]
 fn orphan_provider_failures_emit_provider_component_and_type_identities() {
-    let error = crate::Error::Di(overseerd_di::Error::ProviderComponentMissing(Box::new(
-        overseerd_di::ProviderComponentMissing {
+    let error = crate::Error::Di(upwell_di::Error::ProviderComponentMissing(Box::new(
+        upwell_di::ProviderComponentMissing {
             trait_name: String::from("Friendly Service"),
             trait_type: String::from("fixture::Service"),
             component: String::from("Friendly Provider"),
@@ -332,10 +328,7 @@ fn orphan_provider_failures_emit_provider_component_and_type_identities() {
     .failure();
     let diagnostic = &failure.diagnostics[0];
 
-    assert_eq!(
-        diagnostic.code,
-        "overseerd/tooling-provider-component-missing"
-    );
+    assert_eq!(diagnostic.code, "upwell/tooling-provider-component-missing");
     assert_eq!(
         diagnostic.resources,
         [
@@ -356,11 +349,11 @@ fn orphan_provider_failures_emit_provider_component_and_type_identities() {
 #[test]
 fn scope_violation_diagnostics_include_component_type_and_scope_identities() {
     let consumer_scope =
-        overseerd_core::ScopeId::new("fixture/request").expect("valid consumer scope identity");
-    let dependency_scope = overseerd_core::ScopeId::new("fixture/connection")
-        .expect("valid dependency scope identity");
-    let error = crate::Error::Di(overseerd_di::Error::ScopeViolation(Box::new(
-        overseerd_di::ScopeViolation {
+        upwell_core::ScopeId::new("fixture/request").expect("valid consumer scope identity");
+    let dependency_scope =
+        upwell_core::ScopeId::new("fixture/connection").expect("valid dependency scope identity");
+    let error = crate::Error::Di(upwell_di::Error::ScopeViolation(Box::new(
+        upwell_di::ScopeViolation {
             component: String::from("Friendly Consumer"),
             component_id: String::from("consumer-component"),
             dependency: String::from("Friendly Dependency"),
@@ -391,18 +384,18 @@ fn scope_violation_diagnostics_include_component_type_and_scope_identities() {
 #[test]
 fn scope_unreachable_diagnostics_include_consumer_and_candidate_provider_identities() {
     let consumer_scope =
-        overseerd_core::ScopeId::new("fixture/request").expect("valid consumer scope identity");
+        upwell_core::ScopeId::new("fixture/request").expect("valid consumer scope identity");
     let provider_scope =
-        overseerd_core::ScopeId::new("fixture/sibling").expect("valid provider scope identity");
-    let error = crate::Error::Di(overseerd_di::Error::ScopeUnreachableDependency(Box::new(
-        overseerd_di::ScopeUnreachableDependency {
+        upwell_core::ScopeId::new("fixture/sibling").expect("valid provider scope identity");
+    let error = crate::Error::Di(upwell_di::Error::ScopeUnreachableDependency(Box::new(
+        upwell_di::ScopeUnreachableDependency {
             component: String::from("Friendly Consumer"),
             component_id: String::from("consumer-component"),
             dependency: String::from("Friendly Service"),
             dependency_type: String::from("fixture::Service"),
             component_scope: String::from("Request"),
             component_scope_id: consumer_scope,
-            providers: vec![overseerd_di::ScopeUnreachableProvider {
+            providers: vec![upwell_di::ScopeUnreachableProvider {
                 component: String::from("Friendly Provider"),
                 component_id: String::from("provider-component"),
                 component_type: String::from("fixture::Provider"),
@@ -419,7 +412,7 @@ fn scope_unreachable_diagnostics_include_consumer_and_candidate_provider_identit
     .failure();
     let diagnostic = &failure.diagnostics[0];
 
-    assert_eq!(diagnostic.code, "overseerd/tooling-scope-unreachable");
+    assert_eq!(diagnostic.code, "upwell/tooling-scope-unreachable");
     assert_eq!(
         diagnostic.resources,
         [
@@ -486,7 +479,7 @@ fn actual_prepare_failure_classifies_sibling_trait_provider_as_scope_unreachable
     .failure();
     let diagnostic = &failure.diagnostics[0];
 
-    assert_eq!(diagnostic.code, "overseerd/tooling-scope-unreachable");
+    assert_eq!(diagnostic.code, "upwell/tooling-scope-unreachable");
     assert!(
         diagnostic
             .resources
@@ -521,17 +514,17 @@ fn actual_prepare_failure_classifies_sibling_trait_provider_as_scope_unreachable
 
 #[test]
 fn invalid_envelope_does_not_open_or_truncate_response_path() {
-    let fixture = TempFixture::new("overseerd-app-invalid-before-open");
+    let fixture = TempFixture::new("upwell-app-invalid-before-open");
     let path = fixture.child("response.json");
     let mut envelope = ProbeEnvelope::failure(
         probe_identity(),
-        overseerd_tooling_schema::ProbeFailure {
+        upwell_tooling_schema::ProbeFailure {
             phase: None,
-            diagnostics: vec![overseerd_tooling_schema::Diagnostic {
+            diagnostics: vec![upwell_tooling_schema::Diagnostic {
                 code: String::from("invalid"),
-                severity: overseerd_tooling_schema::DiagnosticSeverity::Error,
+                severity: upwell_tooling_schema::DiagnosticSeverity::Error,
                 message: String::from("invalid fixture"),
-                ..overseerd_tooling_schema::Diagnostic::default()
+                ..upwell_tooling_schema::Diagnostic::default()
             }],
             resource_kinds: Default::default(),
         },
@@ -551,7 +544,7 @@ fn probe_identity() -> DocumentIdentity {
     DocumentIdentity {
         application: String::from("tooling-tests"),
         package: Some(PackageIdentity {
-            name: String::from("overseerd-app"),
+            name: String::from("upwell-app"),
             version: Some(String::from(env!("CARGO_PKG_VERSION"))),
             manifest_path: Some(format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"))),
         }),
@@ -626,7 +619,7 @@ impl Plugin for RelationPlugin {
         contributions.tooling().facet(
             "routes",
             1,
-            overseerd_tooling_schema::JsonValue::String(String::from("/health")),
+            upwell_tooling_schema::JsonValue::String(String::from("/health")),
         );
         contributions.tooling().resource("router", "Router");
         contributions.tooling().relationship(
@@ -644,7 +637,7 @@ impl Plugin for AlternateFacetPlugin {
         contributions.tooling().facet(
             "routes",
             1,
-            overseerd_tooling_schema::JsonValue::String(String::from("/alternate")),
+            upwell_tooling_schema::JsonValue::String(String::from("/alternate")),
         );
     }
 }
@@ -732,7 +725,7 @@ impl OrderedProvider for ProjectedComponent {}
 
 fn construct(
     _context: &mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + '_>> {
+) -> Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + '_>> {
     Box::pin(async {
         FACTORY_CALLS.fetch_add(1, Ordering::SeqCst);
 
@@ -743,11 +736,11 @@ fn construct(
     })
 }
 
-fn dependencies() -> Vec<overseerd_core::DependencyDescriptor> {
+fn dependencies() -> Vec<upwell_core::DependencyDescriptor> {
     Vec::new()
 }
 
-fn snapshot_dependencies() -> Vec<overseerd_core::DependencyDescriptor> {
+fn snapshot_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
     DEPENDENCY_DESCRIPTOR_CALLS.fetch_add(1, Ordering::SeqCst);
 
     vec![snapshot_dependency(
@@ -810,17 +803,16 @@ fn snapshot_hook_dependencies() -> Vec<DependencyDescriptor> {
     )]
 }
 
-static SNAPSHOT_HOOKS: [overseerd_hooks::HookDescriptor; 1] =
-    [overseerd_hooks::HookDescriptor::new(
-        3,
-        TypeDescriptor::of::<ProjectedComponent>(ProjectedComponent::NAME),
-        ConfigReload::NAME,
-        config_reload_type_id,
-        snapshot_hook_dependencies,
-        unreachable_hook_call as HookCall,
-    )];
+static SNAPSHOT_HOOKS: [upwell_hooks::HookDescriptor; 1] = [upwell_hooks::HookDescriptor::new(
+    3,
+    TypeDescriptor::of::<ProjectedComponent>(ProjectedComponent::NAME),
+    ConfigReload::NAME,
+    config_reload_type_id,
+    snapshot_hook_dependencies,
+    unreachable_hook_call as HookCall,
+)];
 
-fn snapshot_hooks() -> &'static [overseerd_hooks::HookDescriptor] {
+fn snapshot_hooks() -> &'static [upwell_hooks::HookDescriptor] {
     HOOK_DESCRIPTOR_CALLS.fetch_add(1, Ordering::SeqCst);
 
     if PROJECTION_CALLBACK_POISONED.load(Ordering::SeqCst) {
@@ -836,7 +828,7 @@ static COMPONENT: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<ProjectedComponent>(ProjectedComponent::NAME),
     scope: &Singleton,
     factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 static SNAPSHOT_COMPONENT: ComponentDescriptor = ComponentDescriptor {
@@ -863,18 +855,17 @@ fn no_hook_dependencies() -> Vec<DependencyDescriptor> {
     Vec::new()
 }
 
-type TestHookFuture<'a> = Pin<
-    Box<dyn Future<Output = overseerd_hooks::Result<Box<dyn std::any::Any + Send>>> + Send + 'a>,
->;
+type TestHookFuture<'a> =
+    Pin<Box<dyn Future<Output = upwell_hooks::Result<Box<dyn std::any::Any + Send>>> + Send + 'a>>;
 
 fn unreachable_hook_call<'a>(
-    _resolver: &'a (dyn overseerd_core::ResolverCtx + Send + Sync),
+    _resolver: &'a (dyn upwell_core::ResolverCtx + Send + Sync),
     _context: &'a (dyn std::any::Any + Send + Sync),
 ) -> TestHookFuture<'a> {
     unreachable!("tooling projection never invokes hooks")
 }
 
-static RELOAD_HOOKS: [overseerd_hooks::HookDescriptor; 1] = [overseerd_hooks::HookDescriptor::new(
+static RELOAD_HOOKS: [upwell_hooks::HookDescriptor; 1] = [upwell_hooks::HookDescriptor::new(
     1,
     TypeDescriptor::of::<ReloadHookComponent>(ReloadHookComponent::NAME),
     ConfigReload::NAME,
@@ -883,7 +874,7 @@ static RELOAD_HOOKS: [overseerd_hooks::HookDescriptor; 1] = [overseerd_hooks::Ho
     unreachable_hook_call as HookCall,
 )];
 
-fn reload_hooks() -> &'static [overseerd_hooks::HookDescriptor] {
+fn reload_hooks() -> &'static [upwell_hooks::HookDescriptor] {
     &RELOAD_HOOKS
 }
 
@@ -918,7 +909,7 @@ fn config_dependency(qualifier: Option<&'static str>) -> DependencyDescriptor {
 
 fn construct_config_consumer(
     _context: &mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + '_>> {
+) -> Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + '_>> {
     unreachable!("tooling projection never constructs config consumers")
 }
 
@@ -941,8 +932,8 @@ static RELOAD_HOOK_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     hooks: reload_hooks,
 };
 
-static AMBIGUOUS_CONFIG_HOOKS: [overseerd_hooks::HookDescriptor; 1] =
-    [overseerd_hooks::HookDescriptor::new(
+static AMBIGUOUS_CONFIG_HOOKS: [upwell_hooks::HookDescriptor; 1] =
+    [upwell_hooks::HookDescriptor::new(
         2,
         TypeDescriptor::of::<ReloadHookComponent>(ReloadHookComponent::NAME),
         ConfigReload::NAME,
@@ -951,8 +942,8 @@ static AMBIGUOUS_CONFIG_HOOKS: [overseerd_hooks::HookDescriptor; 1] =
         unreachable_hook_call as HookCall,
     )];
 
-static MISSING_CONFIG_HOOKS: [overseerd_hooks::HookDescriptor; 1] =
-    [overseerd_hooks::HookDescriptor::new(
+static MISSING_CONFIG_HOOKS: [upwell_hooks::HookDescriptor; 1] =
+    [upwell_hooks::HookDescriptor::new(
         4,
         TypeDescriptor::of::<ReloadHookComponent>(ReloadHookComponent::NAME),
         ConfigReload::NAME,
@@ -961,11 +952,11 @@ static MISSING_CONFIG_HOOKS: [overseerd_hooks::HookDescriptor; 1] =
         unreachable_hook_call as HookCall,
     )];
 
-fn ambiguous_config_hooks() -> &'static [overseerd_hooks::HookDescriptor] {
+fn ambiguous_config_hooks() -> &'static [upwell_hooks::HookDescriptor] {
     &AMBIGUOUS_CONFIG_HOOKS
 }
 
-fn missing_config_hooks() -> &'static [overseerd_hooks::HookDescriptor] {
+fn missing_config_hooks() -> &'static [upwell_hooks::HookDescriptor] {
     &MISSING_CONFIG_HOOKS
 }
 
@@ -993,7 +984,7 @@ static CONFIG_CONSUMER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<ConfigConsumer>(ConfigConsumer::NAME),
     scope: &Singleton,
     factories: config_consumer_factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 fn erase_first_provider(component: &BoxedComponent) -> BoxedComponent {
@@ -1101,7 +1092,7 @@ static PROVIDER_CONSUMER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<ProviderConsumer>(ProviderConsumer::NAME),
     scope: &Singleton,
     factories: provider_consumer_factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 static DISPLACED_COMPONENT: ComponentDescriptor = ComponentDescriptor::manual(
     "protocol-projected-component",
@@ -1442,7 +1433,7 @@ fn selected_plugin_component_and_provider_retain_provenance_and_resolution() {
         .resources
         .iter()
         .find(|resource| {
-            resource.kind == overseerd_tooling_schema::ResourceKind::Provider
+            resource.kind == upwell_tooling_schema::ResourceKind::Provider
                 && resource.labels.get("qualifier") == Some(&String::from("projected"))
         })
         .expect("contributed provider exists");
@@ -1511,7 +1502,7 @@ fn cli_providers_project_as_owned_contribution_resources() {
 
     assert_eq!(
         contribution.kind,
-        overseerd_tooling_schema::ResourceKind::Contribution
+        upwell_tooling_schema::ResourceKind::Contribution
     );
     assert_eq!(contribution.labels["provider-kind"], "args");
     assert_eq!(
@@ -1545,7 +1536,7 @@ fn tooling_feature_projects_without_cli() {
         .tooling_document()
         .expect("CLI-independent state projects");
 
-    assert_eq!(document.protocol, "overseerd/none");
+    assert_eq!(document.protocol, "upwell/none");
     assert!(document.cli.is_none());
 }
 
@@ -1815,7 +1806,7 @@ fn duplicate_plugin_config_bindings_select_one_owner() {
         .iter()
         .find(|resource| {
             resource.id.ends_with(":duplicate")
-                && resource.kind == overseerd_tooling_schema::ResourceKind::ConfigBinding
+                && resource.kind == upwell_tooling_schema::ResourceKind::ConfigBinding
         })
         .expect("selected config binding exists");
     let mut decisions: Vec<_> = document

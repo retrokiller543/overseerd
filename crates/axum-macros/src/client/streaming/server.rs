@@ -1,8 +1,8 @@
-use overseerd_macros_core::attr::{first_type_arg, type_name};
-use overseerd_macros_core::paths::Paths;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{GenericArgument, PathArguments, ReturnType, Type, TypeParamBound};
+use upwell_macros_core::attr::{first_type_arg, type_name};
+use upwell_macros_core::paths::Paths;
 
 /// How the macro wraps a bare stream return server-side.
 pub(crate) enum ServerWrap {

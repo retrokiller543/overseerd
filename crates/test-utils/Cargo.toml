@@ -1,5 +1,5 @@
 [package]
-name = "overseerd-test-utils"
+name = "upwell-test-utils"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,13 +10,13 @@ doctest = false
 
 [features]
 default = ["app"]
-app = ["dep:overseerd-app", "dep:overseerd-config", "dep:overseerd-dirs"]
+app = ["dep:upwell-app", "dep:upwell-config", "dep:upwell-dirs"]
 
 [dependencies]
 command-group = { workspace = true }
-overseerd-app = { workspace = true, optional = true }
-overseerd-config = { workspace = true, optional = true }
-overseerd-dirs = { workspace = true, optional = true }
+upwell-app = { workspace = true, optional = true }
+upwell-config = { workspace = true, optional = true }
+upwell-dirs = { workspace = true, optional = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 

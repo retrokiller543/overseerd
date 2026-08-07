@@ -5,7 +5,7 @@
 //! `RpcDescriptor`, and returning a [`ClientMethod`] hint so the **framework** generates the
 //! client (the client is protocol-agnostic). On emission `Rpcs` contributes only the RPC-
 //! specific surface: the wrappers and the `RpcGroup` registration appended to the service's
-//! `{Service}Rpcs` slice. The base [`MethodArgs`](overseerd_macros_core::methods::MethodArgs)
+//! `{Service}Rpcs` slice. The base [`MethodArgs`](upwell_macros_core::methods::MethodArgs)
 //! handles `#[init]`/`#[hook]`, so a `#[handlers]` block supports those too.
 
 use proc_macro2::TokenStream;
@@ -15,11 +15,11 @@ use syn::{
     Attribute, FnArg, Ident, ImplItemFn, ItemImpl, LitStr, Meta, ReturnType, Type, spanned::Spanned,
 };
 
-use overseerd_macros_core::attr;
-use overseerd_macros_core::client::{Capability, ClientMethod};
-use overseerd_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
-use overseerd_macros_core::methods::self_ty_ident;
-use overseerd_macros_core::paths::Paths;
+use upwell_macros_core::attr;
+use upwell_macros_core::client::{Capability, ClientMethod};
+use upwell_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
+use upwell_macros_core::methods::self_ty_ident;
+use upwell_macros_core::paths::Paths;
 
 /// The RPC handlers extension. Accumulates the impl's `#[rpc]` wrappers and descriptors and the
 /// captured impl context, then emits the wrappers and the RPC group registration. The client
@@ -156,11 +156,11 @@ impl ToTokens for Rpcs {
         let group_literal = quote! {
             #rpc_group {
                 service: #type_descriptor::of::<#self_ty>(#self_name),
-                rpcs: &__OVERSEERD_RPCS,
+                rpcs: &__UPWELL_RPCS,
             }
         };
         // One `RpcGroup` per `#[handlers]` block, registered into the service's per-type registry.
-        let register = overseerd_macros_core::backend::dual_backend(
+        let register = upwell_macros_core::backend::dual_backend(
             quote! {
                 #inventory::submit! {
                     #descriptor_for::<#self_ty, #rpc_group>::new(#group_literal)
@@ -169,7 +169,7 @@ impl ToTokens for Rpcs {
             quote! {
                 #[#distributed_slice(#rpcs_slice)]
                 #[linkme(crate = #linkme_crate)]
-                static __OVERSEERD_RPC_GROUP: #rpc_group = #group_literal;
+                static __UPWELL_RPC_GROUP: #rpc_group = #group_literal;
             },
         );
 
@@ -179,7 +179,7 @@ impl ToTokens for Rpcs {
             const _: () = {
                 #(#wrappers)*
 
-                static __OVERSEERD_RPCS: [#rpc_descriptor; #count] = [
+                static __UPWELL_RPCS: [#rpc_descriptor; #count] = [
                     #(#descriptors),*
                 ];
 
@@ -403,7 +403,7 @@ fn expand_method(
     let output_name = LitStr::new(&output_ty.to_token_stream().to_string(), output_ty.span());
 
     let wrapper_ident = format_ident!(
-        "__overseerd_rpc_{}_{}",
+        "__upwell_rpc_{}_{}",
         self_ident.to_string().to_lowercase(),
         method_ident
     );

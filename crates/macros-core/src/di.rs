@@ -97,10 +97,10 @@ pub fn assert_wired(self_ident: &Ident, paths: &Paths) -> TokenStream {
 
     quote! {
         const _: () = {
-            fn __overseerd_assert_wired<T: #wired>() {}
+            fn __upwell_assert_wired<T: #wired>() {}
 
-            fn __overseerd_check() {
-                __overseerd_assert_wired::<#self_ident>();
+            fn __upwell_check() {
+                __upwell_assert_wired::<#self_ident>();
             }
         };
     }
@@ -120,7 +120,7 @@ pub fn assert(targets: &[TokenStream], paths: &Paths) -> TokenStream {
 
     quote! {
         const _: () = {
-            fn __overseerd_assert_di()
+            fn __upwell_assert_di()
             where
                 #wiring: #(#provide<#targets>)+*,
             {

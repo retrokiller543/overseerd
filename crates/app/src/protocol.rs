@@ -4,9 +4,9 @@
 
 use std::future::Future;
 
-use overseerd_config::{Cfg, ConfigBinding, ConfigProperties, ConfigStore};
-use overseerd_core::{Descriptor, TypeDescriptor};
-use overseerd_di::{BoxedComponent, Component, ComponentDescriptor, Injectable};
+use upwell_config::{Cfg, ConfigBinding, ConfigProperties, ConfigStore};
+use upwell_core::{Descriptor, TypeDescriptor};
+use upwell_di::{BoxedComponent, Component, ComponentDescriptor, Injectable};
 
 use crate::lifecycle::ShutdownSignal;
 use crate::registry::AppRegistry;
@@ -191,7 +191,7 @@ impl ProtocolDefinition for () {
     type Prepared = ();
     type Error = crate::Error;
 
-    const ID: ProtocolId = overseerd_core::namespaced_id!(ProtocolId, "overseerd/none");
+    const ID: ProtocolId = upwell_core::namespaced_id!(ProtocolId, "upwell/none");
     const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
 
     fn register(&self, _registry: &mut AppRegistry) {}

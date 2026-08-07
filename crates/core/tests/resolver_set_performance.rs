@@ -4,7 +4,7 @@ use std::hint::black_box;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd_core::{Resolver, ResolverSet};
+use upwell_core::{Resolver, ResolverSet};
 
 struct TrackingAllocator;
 

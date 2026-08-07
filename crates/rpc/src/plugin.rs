@@ -2,13 +2,13 @@
 
 use std::sync::Arc;
 
-use overseerd_app::{
+use tower::{Layer, Service};
+use upwell_app::{
     AppBuilder, AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ValidationContext,
 };
-use overseerd_core::{Descriptor, TypeDescriptor};
-use overseerd_di::{ComponentDescriptor, ServiceComponent};
-use overseerd_transport::PeerInfo;
-use tower::{Layer, Service};
+use upwell_core::{Descriptor, TypeDescriptor};
+use upwell_di::{ComponentDescriptor, ServiceComponent};
+use upwell_transport::PeerInfo;
 
 use crate::descriptors::{RpcOutcome, SERVICES, ServiceDescriptor};
 use crate::extract::ErrorResponse;
@@ -28,7 +28,7 @@ type LayerApplier = Box<dyn FnOnce(RpcService) -> RpcService + Send>;
 /// descriptor intentionally has no factory: it declares the connection scope as the only
 /// valid runtime seed destination.
 static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
-    "__overseerd_peer_info",
+    "__upwell_peer_info",
     "PeerInfo",
     TypeDescriptor::of::<PeerInfo>("PeerInfo"),
     &ConnectionScope,
@@ -60,9 +60,9 @@ impl ProtocolDefinition for Rpc {
     type Prepared = PreparedRpc;
     type Error = crate::Error;
 
-    const ID: overseerd_app::ProtocolId =
-        overseerd_core::namespaced_id!(overseerd_app::ProtocolId, "overseerd/rpc");
-    const SCOPE_TOPOLOGY: overseerd_app::ScopeTopology = SCOPE_TOPOLOGY;
+    const ID: upwell_app::ProtocolId =
+        upwell_core::namespaced_id!(upwell_app::ProtocolId, "upwell/rpc");
+    const SCOPE_TOPOLOGY: upwell_app::ScopeTopology = SCOPE_TOPOLOGY;
 
     fn register(&self, registry: &mut AppRegistry) {
         registry.components.push(PEER_INFO_DESCRIPTOR);
@@ -122,10 +122,10 @@ impl PreparedProtocol for PreparedRpc {
     }
 
     #[cfg(feature = "tooling")]
-    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
         use std::collections::BTreeMap;
 
-        use overseerd_app::{ResourceDisplay, ToolingEndpoint, ToolingRelationshipKind};
+        use upwell_app::{ResourceDisplay, ToolingEndpoint, ToolingRelationshipKind};
 
         let route_count = self
             .resolved_services
@@ -146,7 +146,7 @@ impl PreparedProtocol for PreparedRpc {
         contributions.facet(
             "summary",
             1,
-            overseerd_app::tooling_schema::JsonValue::Object(
+            upwell_app::tooling_schema::JsonValue::Object(
                 [
                     (
                         String::from("service_count"),

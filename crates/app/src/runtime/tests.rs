@@ -2,16 +2,16 @@ use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseerd_core::{ResolverSet, Scope, ScopeId, StaticScope, TypeDescriptor};
-use overseerd_di::{BoxedComponent, ScopeContainer, ScopeRegistry};
-use overseerd_hooks::HookManager;
+use upwell_core::{ResolverSet, Scope, ScopeId, StaticScope, TypeDescriptor};
+use upwell_di::{BoxedComponent, ScopeContainer, ScopeRegistry};
+use upwell_hooks::HookManager;
 
 use super::*;
 use crate::{Error, ScopeBoundary, ScopeParent, ScopeTopology};
 
-const SESSION_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/session");
-const REQUEST_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/request");
-const OTHER_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/other");
+const SESSION_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/session");
+const REQUEST_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/request");
+const OTHER_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/other");
 
 struct Session;
 struct Request;
@@ -138,7 +138,7 @@ async fn open_rejects_undeclared_and_wrong_parent_boundaries() {
         Error::InvalidScopeParent {
             child: REQUEST_ID,
             expected: SESSION_ID,
-            actual: <overseerd_core::Singleton as StaticScope>::ID,
+            actual: <upwell_core::Singleton as StaticScope>::ID,
         }
     ));
 }
@@ -168,15 +168,15 @@ async fn open_rejects_foreign_runtime_and_noncanonical_root_parents() {
         foreign_error,
         Error::ForeignScopeParent {
             child: SESSION_ID,
-            parent: <overseerd_core::Singleton as StaticScope>::ID,
+            parent: <upwell_core::Singleton as StaticScope>::ID,
         }
     ));
     assert!(matches!(
         alternate_error,
         Error::InvalidScopeParent {
             child: SESSION_ID,
-            expected: <overseerd_core::Singleton as StaticScope>::ID,
-            actual: <overseerd_core::Singleton as StaticScope>::ID,
+            expected: <upwell_core::Singleton as StaticScope>::ID,
+            actual: <upwell_core::Singleton as StaticScope>::ID,
         }
     ));
 }

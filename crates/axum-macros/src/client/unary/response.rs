@@ -1,7 +1,7 @@
-use overseerd_macros_core::paths::Paths;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, ReturnType, Type};
+use upwell_macros_core::paths::Paths;
 
 use super::super::response::response_type;
 use crate::http_analysis::{ResponseBody, ResponseOrigin};

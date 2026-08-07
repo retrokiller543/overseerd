@@ -1,8 +1,8 @@
-use overseerd_macros_core::client::{Capability, ClientMethod};
-use overseerd_macros_core::paths::Paths;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, ReturnType, Type};
+use upwell_macros_core::client::{Capability, ClientMethod};
+use upwell_macros_core::paths::Paths;
 
 use super::super::inputs::classify;
 use super::super::path::{parse_template, plan_path};

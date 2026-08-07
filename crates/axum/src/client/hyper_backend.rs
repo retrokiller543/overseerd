@@ -11,9 +11,9 @@ use hyper::body::Frame;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
-use overseerd_client::{ClientError, MaybeSend, Transport, Unary};
-use overseerd_transport::{CodecError, Decodes, Encodes, Error as TransportError};
 use serde::de::DeserializeOwned;
+use upwell_client::{ClientError, MaybeSend, Transport, Unary};
+use upwell_transport::{CodecError, Decodes, Encodes, Error as TransportError};
 
 #[cfg(all(feature = "ws", feature = "client"))]
 use super::WebsocketClient;
@@ -447,7 +447,7 @@ fn net_err<T, S, E>(error: T) -> ClientError<S, E>
 where
     T: std::fmt::Display,
 {
-    ClientError::Transport(overseerd_transport::Error::Io(std::io::Error::other(
+    ClientError::Transport(upwell_transport::Error::Io(std::io::Error::other(
         error.to_string(),
     )))
 }

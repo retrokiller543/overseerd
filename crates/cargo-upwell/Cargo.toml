@@ -1,0 +1,31 @@
+[package]
+name = "cargo-upwell"
+description = "Cargo target discovery and probe execution for Upwell developer tooling."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+cargo_metadata = { workspace = true }
+clap = { workspace = true }
+command-group = { workspace = true }
+fs2 = { workspace = true }
+upwell-tooling-schema = { workspace = true }
+semver = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+upwell-test-utils = { workspace = true }

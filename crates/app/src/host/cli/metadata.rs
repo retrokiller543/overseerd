@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use clap::{Arg, ArgAction, Command};
-use overseerd_tooling_schema::{
+use upwell_tooling_schema::{
     CliArgument, CliCardinality, CliCommand, CliMetadata, CliOwner, CliProvider, CliProviderKind,
 };
 

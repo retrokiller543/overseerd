@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
 
-use overseerd_config::{CONFIG_BINDINGS, ConfigBinding};
-use overseerd_core::DependencyDescriptor;
-use overseerd_di::{
+use upwell_config::{CONFIG_BINDINGS, ConfigBinding};
+use upwell_core::DependencyDescriptor;
+use upwell_di::{
     COMPONENTS, Component, ComponentDescriptor, ComponentRegistry, PROVIDERS, ProviderDescriptor,
     ProviderSelectionModel,
 };
@@ -15,7 +15,7 @@ use crate::scope::PreparedScopeTopology;
 
 /// Holds the *agnostic* component, provider, and config-binding descriptors of an app —
 /// declarations only. Runtime instances live in the
-/// [`ScopeContainer`](overseerd_di::ScopeContainer).
+/// [`ScopeContainer`](upwell_di::ScopeContainer).
 ///
 /// Wraps the DI engine's [`ComponentRegistry`] (component/provider graph) with the config
 /// bindings, and runs the cross-cutting validation the component graph alone cannot
@@ -247,9 +247,9 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
 
-    use overseerd_config::{ConfigBinding, ConfigProperties};
-    use overseerd_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
-    use overseerd_di::{
+    use upwell_config::{ConfigBinding, ConfigProperties};
+    use upwell_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
+    use upwell_di::{
         BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
         ComponentFactoryDescriptor, Singleton,
     };
@@ -279,7 +279,7 @@ mod tests {
 
     fn fake_factory<'a>(
         _: &'a mut ComponentConstructionContext,
-    ) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + 'a>> {
         Box::pin(async { unreachable!("registry validation does not construct components") })
     }
 
@@ -292,7 +292,7 @@ mod tests {
             dynamic: false,
             qualifier: None,
             config: true,
-            resolution: overseerd_core::ResolutionMode::Eager,
+            resolution: upwell_core::ResolutionMode::Eager,
         }]
     }
 
@@ -313,7 +313,7 @@ mod tests {
             ty: TypeDescriptor::of::<()>("NeedsConfig"),
             scope: &Singleton,
             factories: config_factories,
-            hooks: overseerd_hooks::no_hooks,
+            hooks: upwell_hooks::no_hooks,
         }
     }
 

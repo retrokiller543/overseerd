@@ -1,13 +1,13 @@
+#[cfg(any(feature = "cli", feature = "tooling"))]
+use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(feature = "tooling")]
-use overseerd::component;
-use overseerd::{
+use upwell::component;
+use upwell::{
     App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, ExecutionMode, PreparedProtocol,
     ProtocolDefinition, ProtocolRuntime, app,
 };
 #[cfg(feature = "tooling")]
-use overseerd_test_utils::{TempFixture, path_ends_with_components};
-#[cfg(any(feature = "cli", feature = "tooling"))]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use upwell_test_utils::{TempFixture, path_ends_with_components};
 
 #[cfg(feature = "cli")]
 static HELP_SETUP_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -41,17 +41,17 @@ pub struct TestProtocol;
 
 impl ProtocolDefinition for TestProtocol {
     type Prepared = PreparedTestProtocol;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
-    const ID: overseerd::ProtocolId =
-        overseerd::namespaced_id!(overseerd::ProtocolId, "test/app-definition");
-    const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
+    const ID: upwell::ProtocolId =
+        upwell::namespaced_id!(upwell::ProtocolId, "test/app-definition");
+    const SCOPE_TOPOLOGY: upwell::ScopeTopology = upwell::ScopeTopology::empty();
 
     fn register(&self, _registry: &mut AppRegistry) {}
 
     fn prepare(
         self,
-        _context: &overseerd::ValidationContext<'_>,
+        _context: &upwell::ValidationContext<'_>,
     ) -> Result<Self::Prepared, Self::Error> {
         Ok(PreparedTestProtocol)
     }
@@ -65,15 +65,15 @@ pub struct TestRuntime;
 
 impl PreparedProtocol for PreparedTestProtocol {
     type Runtime = TestRuntime;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
         Ok(TestRuntime)
     }
 
     #[cfg(feature = "tooling")]
-    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
-        contributions.display(overseerd_app::ResourceDisplay {
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
+        contributions.display(upwell_app::ResourceDisplay {
             label: Some(String::from("Definition test protocol")),
             ..Default::default()
         });
@@ -81,7 +81,7 @@ impl PreparedProtocol for PreparedTestProtocol {
 }
 
 impl ProtocolRuntime for TestRuntime {
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 }
 
 app! {
@@ -254,19 +254,18 @@ impl Default for ToolingPlugin {
 }
 
 #[cfg(feature = "tooling")]
-impl overseerd::Plugin for ToolingPlugin {
-    const ID: overseerd::PluginId =
-        overseerd::namespaced_id!(overseerd::PluginId, "test/tooling-entry");
+impl upwell::Plugin for ToolingPlugin {
+    const ID: upwell::PluginId = upwell::namespaced_id!(upwell::PluginId, "test/tooling-entry");
 
-    fn contribute(self, _contributions: &mut overseerd::PluginContributions) {
+    fn contribute(self, _contributions: &mut upwell::PluginContributions) {
         TOOLING_PLUGIN_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
     }
 
     #[cfg(feature = "cli")]
-    fn cli(&self, cli: &mut overseerd::PluginCliRegistrar) {
+    fn cli(&self, cli: &mut upwell::PluginCliRegistrar) {
         TOOLING_PLUGIN_CLI_CALLS.fetch_add(1, Ordering::SeqCst);
-        cli.args::<ToolingPluginArgs>(overseerd::namespaced_id!(
-            overseerd::ContributionId,
+        cli.args::<ToolingPluginArgs>(upwell::namespaced_id!(
+            upwell::ContributionId,
             "test/tooling-entry-args"
         ));
     }
@@ -289,17 +288,16 @@ pub struct ToolingProtocol;
 #[cfg(feature = "tooling")]
 impl ProtocolDefinition for ToolingProtocol {
     type Prepared = PreparedToolingProtocol;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
-    const ID: overseerd::ProtocolId =
-        overseerd::namespaced_id!(overseerd::ProtocolId, "test/tooling-entry");
-    const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
+    const ID: upwell::ProtocolId = upwell::namespaced_id!(upwell::ProtocolId, "test/tooling-entry");
+    const SCOPE_TOPOLOGY: upwell::ScopeTopology = upwell::ScopeTopology::empty();
 
     fn register(&self, _registry: &mut AppRegistry) {}
 
     fn prepare(
         self,
-        _context: &overseerd::ValidationContext<'_>,
+        _context: &upwell::ValidationContext<'_>,
     ) -> Result<Self::Prepared, Self::Error> {
         TOOLING_PROTOCOL_PREPARES.fetch_add(1, Ordering::SeqCst);
 
@@ -318,7 +316,7 @@ pub struct ToolingRuntime;
 #[cfg(feature = "tooling")]
 impl PreparedProtocol for PreparedToolingProtocol {
     type Runtime = ToolingRuntime;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
         TOOLING_PROTOCOL_BUILDS.fetch_add(1, Ordering::SeqCst);
@@ -326,8 +324,8 @@ impl PreparedProtocol for PreparedToolingProtocol {
         Ok(ToolingRuntime)
     }
 
-    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
-        contributions.display(overseerd_app::ResourceDisplay {
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
+        contributions.display(upwell_app::ResourceDisplay {
             label: Some(String::from("Generated tooling protocol")),
             ..Default::default()
         });
@@ -336,7 +334,7 @@ impl PreparedProtocol for PreparedToolingProtocol {
 
 #[cfg(feature = "tooling")]
 impl ProtocolRuntime for ToolingRuntime {
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 }
 
 #[cfg(feature = "tooling")]
@@ -511,7 +509,7 @@ async fn named_app_tags_lifecycle_errors_with_their_phase() {
         Err(error) => error,
     };
 
-    assert_eq!(error.phase(), overseerd::LifecyclePhase::Setup);
+    assert_eq!(error.phase(), upwell::LifecyclePhase::Setup);
     assert_eq!(
         error.to_string(),
         "setup phase failed: setup failed with secret api-token=probe-secret"
@@ -535,7 +533,7 @@ async fn named_app_rejects_component_construction_in_tooling_mode() {
         Err(error) => error,
     };
 
-    assert_eq!(error.phase(), overseerd::LifecyclePhase::Build);
+    assert_eq!(error.phase(), upwell::LifecyclePhase::Build);
     assert_eq!(
         error.to_string(),
         "build phase failed: tooling mode cannot construct application components or protocols"
@@ -565,7 +563,7 @@ async fn generated_tooling_entry_prepares_real_target_without_constructing_runti
     let envelope = ToolingApplication::tooling_probe(tooling_target("thin-tooling-bin"))
         .await
         .expect("generated declaration identity validates");
-    let overseerd::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
+    let upwell::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
         panic!("generated tooling probe unexpectedly failed");
     };
 
@@ -589,7 +587,7 @@ async fn generated_tooling_entry_prepares_real_target_without_constructing_runti
             .package
             .as_ref()
             .map(|package| package.name.as_str()),
-        Some("overseerd")
+        Some("upwell")
     );
     assert_eq!(
         document
@@ -630,13 +628,13 @@ async fn generated_tooling_entry_returns_typed_lifecycle_failure_envelope() {
     let envelope = FailingLifecycleApplication::tooling_probe(tooling_target("failure-bin"))
         .await
         .expect("generated declaration identity validates");
-    let overseerd::tooling::ProbeOutcome::Failure { failure } = &envelope.outcome else {
+    let upwell::tooling::ProbeOutcome::Failure { failure } = &envelope.outcome else {
         panic!("failing application unexpectedly produced a document");
     };
     let diagnostic = &failure.diagnostics[0];
 
     assert_eq!(envelope.identity.application, "failing-lifecycle-app-test");
-    assert_eq!(diagnostic.code, "overseerd/tooling-setup");
+    assert_eq!(diagnostic.code, "upwell/tooling-setup");
     assert_eq!(failure.phase.as_deref(), Some("setup"));
     assert_eq!(
         diagnostic.message,
@@ -657,14 +655,13 @@ async fn tooling_response_file_is_pure_json_when_application_writes_stdout() {
     let envelope = ToolingApplication::tooling_probe(tooling_target("response-file-bin"))
         .await
         .expect("generated declaration identity validates");
-    let fixture = TempFixture::new("overseerd-probe-stdout-purity-");
+    let fixture = TempFixture::new("upwell-probe-stdout-purity-");
     let path = fixture.child("response.json");
 
-    overseerd_app::tooling::emit_probe_envelope(&path, &envelope)
-        .expect("response file is emitted");
+    upwell_app::tooling::emit_probe_envelope(&path, &envelope).expect("response file is emitted");
 
     let json = std::fs::read_to_string(&path).expect("response file is readable");
-    let decoded = overseerd::tooling::ProbeEnvelope::from_json(json.trim_end())
+    let decoded = upwell::tooling::ProbeEnvelope::from_json(json.trim_end())
         .expect("response contains only one valid envelope");
 
     assert!(decoded.is_success());
@@ -711,12 +708,12 @@ async fn generated_tooling_entry_sanitizes_panics() {
     let envelope = PanickingToolingApplication::tooling_probe(tooling_target("panic-bin"))
         .await
         .expect("generated declaration identity validates");
-    let overseerd::tooling::ProbeOutcome::Failure { failure } = &envelope.outcome else {
+    let upwell::tooling::ProbeOutcome::Failure { failure } = &envelope.outcome else {
         panic!("panicking application unexpectedly produced a document");
     };
     let diagnostic = &failure.diagnostics[0];
 
-    assert_eq!(diagnostic.code, "overseerd/tooling-panic");
+    assert_eq!(diagnostic.code, "upwell/tooling-panic");
     assert_eq!(
         diagnostic.message,
         "The tooling probe panicked while preparing the application."
@@ -730,14 +727,14 @@ async fn generated_tooling_entry_sanitizes_panics() {
 }
 
 #[cfg(feature = "tooling")]
-fn tooling_target(binary: &str) -> overseerd::tooling::ProbeTargetIdentity {
-    overseerd::tooling::ProbeTargetIdentity::new(
-        overseerd::tooling::PackageIdentity {
-            name: String::from("overseerd"),
+fn tooling_target(binary: &str) -> upwell::tooling::ProbeTargetIdentity {
+    upwell::tooling::ProbeTargetIdentity::new(
+        upwell::tooling::PackageIdentity {
+            name: String::from("upwell"),
             version: Some(String::from(env!("CARGO_PKG_VERSION"))),
             manifest_path: Some(format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"))),
         },
-        overseerd::tooling::BinaryTargetIdentity {
+        upwell::tooling::BinaryTargetIdentity {
             name: binary.to_string(),
         },
     )
@@ -776,7 +773,7 @@ async fn generated_cli_help_and_version_do_not_run_setup() {
             .await
             .expect_err("early output is returned to the caller");
 
-        assert!(matches!(error, overseerd::CliError::Clap(error) if error.kind() == expected));
+        assert!(matches!(error, upwell::CliError::Clap(error) if error.kind() == expected));
     }
 
     assert_eq!(HELP_SETUP_CALLS.load(Ordering::SeqCst), 0);

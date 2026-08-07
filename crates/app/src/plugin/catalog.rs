@@ -6,9 +6,9 @@ use crate::composition::{
 use crate::{PluginId, ProtocolDefinition, ProtocolId};
 
 #[cfg(feature = "cli")]
-use overseerd_core::NamespacedIdType;
-#[cfg(feature = "cli")]
 use std::collections::BTreeSet;
+#[cfg(feature = "cli")]
+use upwell_core::NamespacedIdType;
 
 use super::Plugin;
 use super::contribution::{CollectedPluginPlan, PluginContributions, PluginPlanError};
@@ -257,7 +257,7 @@ pub struct EarlyPluginCatalog {
     #[cfg(feature = "cli")]
     cli_metadata: Vec<PluginCliProviderMetadata>,
     #[cfg(all(feature = "cli", feature = "tooling"))]
-    cli_parser_metadata: Option<overseerd_tooling_schema::CliMetadata>,
+    cli_parser_metadata: Option<upwell_tooling_schema::CliMetadata>,
 }
 
 impl EarlyPluginCatalog {
@@ -448,7 +448,7 @@ fn validate_cli_metadata(metadata: &[PluginCliProviderMetadata]) -> Result<(), P
 
         if provenance
             .contribution()
-            .is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE)
+            .is_in_namespace(upwell_core::FRAMEWORK_NAMESPACE)
         {
             return Err(PluginPlanError::ReservedCliProviderNamespace { provenance });
         }
@@ -603,7 +603,7 @@ fn next_ordinal(ordinal: u32) -> u32 {
 fn ordinal_overflow() -> ! {
     panic!(
         "plugin installation count exceeds u32::MAX; report this limit with `gh issue create \
-         --repo retrokiller543/overseerd --title 'Widen plugin installation ordinals' \
+         --repo retrokiller543/upwell --title 'Widen plugin installation ordinals' \
          --body 'Plugin installation provenance exceeded u32::MAX; migrate the ordinal to u64 \
          or usize.'`"
     )

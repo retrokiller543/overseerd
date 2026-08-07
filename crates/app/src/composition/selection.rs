@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use overseerd_core::NamespacedIdType;
+use upwell_core::NamespacedIdType;
 
 use super::diagnostic::CompositionDiagnostic;
 use super::model::DirectiveKind;
@@ -41,7 +41,7 @@ impl<'a> Directives<'a> {
 
             match directive.kind() {
                 DirectiveKind::Replace { slot, .. } | DirectiveKind::Suppress { slot, .. }
-                    if slot.is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE) =>
+                    if slot.is_in_namespace(upwell_core::FRAMEWORK_NAMESPACE) =>
                 {
                     diagnostics.push(CompositionDiagnostic::ReservedSlotNamespace {
                         slot: *slot,
@@ -147,7 +147,7 @@ fn validate_plugin_ids<'a>(
     {
         if declaration
             .id()
-            .is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE)
+            .is_in_namespace(upwell_core::FRAMEWORK_NAMESPACE)
         {
             diagnostics.push(CompositionDiagnostic::ReservedNamespace {
                 plugin: declaration.id(),
@@ -190,7 +190,7 @@ fn validate_slots<'a>(
             continue;
         };
 
-        if slot.is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE) {
+        if slot.is_in_namespace(upwell_core::FRAMEWORK_NAMESPACE) {
             diagnostics.push(CompositionDiagnostic::ReservedSlotNamespace {
                 slot,
                 provenance: declaration.provenance(),

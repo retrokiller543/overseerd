@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use overseerd_config::{ConfigManager, Toml};
-use overseerd_core::{Cardinality, DependencyDescriptor, ResolutionMode, TypeDescriptor};
-use overseerd_di::{
+use upwell_config::{ConfigManager, Toml};
+use upwell_core::{Cardinality, DependencyDescriptor, ResolutionMode, TypeDescriptor};
+use upwell_di::{
     BoxedComponent, ComponentConstructionContext, ComponentDescriptor, ComponentFactoryDescriptor,
     ProviderDescriptor, Singleton,
 };
-use overseerd_tooling_schema::{DocumentIdentity, Relationship, RelationshipKind, ToolingDocument};
+use upwell_tooling_schema::{DocumentIdentity, Relationship, RelationshipKind, ToolingDocument};
 
 use super::merge_relationship_labels;
 use crate::App;
@@ -22,7 +22,7 @@ impl AggregateTrait for AggregateProvider {}
 
 fn fake_factory<'a>(
     _: &'a mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + 'a>> {
+) -> Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + 'a>> {
     Box::pin(async { unreachable!("projection tests do not construct components") })
 }
 
@@ -85,7 +85,7 @@ static PROVIDER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<AggregateProvider>("AggregateProvider"),
     scope: &Singleton,
     factories: provider_factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 static CONSUMER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
@@ -94,7 +94,7 @@ static CONSUMER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<AggregateConsumer>("AggregateConsumer"),
     scope: &Singleton,
     factories: consumer_factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 static PROVIDER: ProviderDescriptor = ProviderDescriptor {
@@ -188,15 +188,15 @@ fn conflicting_dependency_facts_are_sorted_and_schema_unique() {
         "test/protocol",
     );
     document.resources.extend([
-        overseerd_tooling_schema::Resource {
+        upwell_tooling_schema::Resource {
             id: String::from("component:consumer"),
-            kind: overseerd_tooling_schema::ResourceKind::Component,
+            kind: upwell_tooling_schema::ResourceKind::Component,
             name: String::from("Consumer"),
             ..Default::default()
         },
-        overseerd_tooling_schema::Resource {
+        upwell_tooling_schema::Resource {
             id: String::from("provider:test"),
-            kind: overseerd_tooling_schema::ResourceKind::Provider,
+            kind: upwell_tooling_schema::ResourceKind::Provider,
             name: String::from("Provider"),
             ..Default::default()
         },
@@ -229,7 +229,7 @@ fn projection_aggregates_dependencies_to_the_same_type_and_provider() {
         .resources
         .iter()
         .find(|resource| {
-            resource.kind == overseerd_tooling_schema::ResourceKind::Provider
+            resource.kind == upwell_tooling_schema::ResourceKind::Provider
                 && resource.labels.get("qualifier") == Some(&String::from("shared"))
         })
         .expect("provider resource exists");

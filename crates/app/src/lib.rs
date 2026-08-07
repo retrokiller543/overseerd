@@ -1,4 +1,4 @@
-//! The Overseerd protocol-agnostic application core.
+//! The Upwell protocol-agnostic application core.
 //!
 //! This crate ties the DI engine, config, hooks, and dirs into a runnable [`App`] that is
 //! generic over the [`ProtocolDefinition`] it prepares. It owns the [`AppBuilder`], the agnostic
@@ -54,7 +54,6 @@ pub use host::{
     finalize_bootstrap, prepare_cli_context, validate_cli,
 };
 pub use lifecycle::{ShutdownHandle, ShutdownSignal};
-pub use overseerd_core::{Scope, ScopeId, StaticScope, namespaced_id};
 pub use plugin::{
     ApplicationPluginRegistrar, EarlyPluginCatalog, EffectivePluginPlan, Plugin,
     PluginContribution, PluginContributionKind, PluginContributions, PluginPlanError,
@@ -75,9 +74,10 @@ pub use tooling::{
     ToolingProbeOutputError, ToolingProbeOutputTargetError, ToolingProbeTargetError,
     ToolingProjectionError, ToolingRelationshipKind,
 };
+pub use upwell_core::{Scope, ScopeId, StaticScope, namespaced_id};
 
 #[cfg(feature = "tooling")]
-pub use overseerd_tooling_schema as tooling_schema;
+pub use upwell_tooling_schema as tooling_schema;
 
 #[cfg(feature = "cli")]
 pub use clap;

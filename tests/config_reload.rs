@@ -6,12 +6,12 @@
 use std::fs;
 use std::sync::Arc;
 
-use overseerd::config::Toml;
-use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{App, Cfg, ConfigManager, component, config};
-use overseerd_config::ResolverChain;
 use serde::Deserialize;
 use tempfile::TempDir;
+use upwell::config::Toml;
+use upwell::dirs::{Config, DirectoriesManager};
+use upwell::{App, Cfg, ConfigManager, component, config};
+use upwell_config::ResolverChain;
 
 #[config(path = "svc")]
 #[derive(Deserialize)]
@@ -46,7 +46,7 @@ impl Consumer {
 
 fn temp_config_dir() -> TempDir {
     tempfile::Builder::new()
-        .prefix("overseerd-config-reload-")
+        .prefix("upwell-config-reload-")
         .tempdir()
         .expect("create temp config dir")
 }

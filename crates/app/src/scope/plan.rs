@@ -1,8 +1,8 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
-use overseerd_core::{ScopeId, Singleton, StaticScope, Transient};
-use overseerd_di::{ComponentDescriptor, ProviderSelectionModel, topological_sort};
+use upwell_core::{ScopeId, Singleton, StaticScope, Transient};
+use upwell_di::{ComponentDescriptor, ProviderSelectionModel, topological_sort};
 
 use super::PreparedScopeTopology;
 

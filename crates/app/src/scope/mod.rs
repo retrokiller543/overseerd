@@ -2,8 +2,8 @@
 
 use std::fmt;
 
-use overseerd_core::{Scope, ScopeId, Singleton, StaticScope, Transient};
 use thiserror::Error;
+use upwell_core::{Scope, ScopeId, Singleton, StaticScope, Transient};
 
 mod plan;
 

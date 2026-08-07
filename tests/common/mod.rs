@@ -1,13 +1,13 @@
-use overseerd::daemon::App;
-use overseerd::{MemoryClient, MemoryConnectionHandle};
+use upwell::daemon::App;
+use upwell::{MemoryClient, MemoryConnectionHandle};
 
-pub(crate) use overseerd_test_utils::{AbortOnDropTask, deadline};
+pub(crate) use upwell_test_utils::{AbortOnDropTask, deadline};
 
 /// Owns a memory transport daemon and its client-side accept handle.
 #[allow(dead_code)]
 pub(crate) struct MemoryServer {
     client: Option<MemoryClient>,
-    task: AbortOnDropTask<overseerd::daemon::Result<()>>,
+    task: AbortOnDropTask<upwell::daemon::Result<()>>,
 }
 
 #[allow(dead_code)]

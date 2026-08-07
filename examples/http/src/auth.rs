@@ -11,16 +11,16 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd::axum::axum::Json;
-use overseerd::axum::axum::body::Body;
-use overseerd::axum::axum::extract::Request;
-use overseerd::axum::axum::http::{StatusCode, header};
-use overseerd::axum::axum::middleware::Next;
-use overseerd::axum::axum::response::{IntoResponse, Redirect, Response};
-use overseerd::axum::client::HttpBody;
-use overseerd::axum::prelude::*;
-use overseerd::axum::{AxumMiddleware, HttpRequest, RequestMeta};
-use overseerd::{component, methods};
+use upwell::axum::axum::Json;
+use upwell::axum::axum::body::Body;
+use upwell::axum::axum::extract::Request;
+use upwell::axum::axum::http::{StatusCode, header};
+use upwell::axum::axum::middleware::Next;
+use upwell::axum::axum::response::{IntoResponse, Redirect, Response};
+use upwell::axum::client::HttpBody;
+use upwell::axum::prelude::*;
+use upwell::axum::{AxumMiddleware, HttpRequest, RequestMeta};
+use upwell::{component, methods};
 
 /// A plain `axum::middleware::from_fn` closure — standard, un-wrapped axum middleware,
 /// registered globally in `main.rs` via `.layer(...)` alongside the DI-backed kind below.
@@ -160,7 +160,7 @@ impl MeController {
 
 #[cfg(test)]
 mod tests {
-    use overseerd::axum::client::{HttpResponse, ReqwestClient};
+    use upwell::axum::client::{HttpResponse, ReqwestClient};
 
     use super::{MeControllerClient, WhoAmI};
 
@@ -169,7 +169,7 @@ mod tests {
     ) -> impl Future<
         Output = Result<
             HttpResponse<WhoAmI>,
-            overseerd::client::ClientError<overseerd::axum::http::StatusCode>,
+            upwell::client::ClientError<upwell::axum::http::StatusCode>,
         >,
     > + '_ {
         client.login_callback()

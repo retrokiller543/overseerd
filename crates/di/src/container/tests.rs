@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd_core::{ResolverSet, ScopeId, TypeDescriptor};
+use upwell_core::{ResolverSet, ScopeId, TypeDescriptor};
 
 use super::*;
 use crate::registry::selection::select_single_provider;

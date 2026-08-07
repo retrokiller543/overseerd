@@ -25,7 +25,7 @@ Only `#144` is implementation-ready below. Replan `#145` and `#146` from the mer
 ## Settled CLI Boundaries
 
 - Clap is the CLI API. Do not introduce a protocol-neutral argument schema.
-- Add a default-on `cli` feature to the facade, `overseerd-app`, `overseerd-macros`, and `overseerd-macros-core`.
+- Add a default-on `cli` feature to the facade, `upwell-app`, `upwell-macros`, and `upwell-macros-core`.
 - Clap references and generated runner APIs exist only under `cli`; named app definitions, lifecycle APIs, direct `App::builder`, and tooling preparation compile without it.
 - Re-export Clap from the framework for shared runtime types, but require applications using generated CLI derives to declare a direct Clap dependency. This keeps generated `Parser`/`Args`/`Subcommand` types native and directly extensible by application code.
 - Finite CLI choices use enums: `LogFormat` and `ColorChoice`. Open filter grammars remain strings.
@@ -98,11 +98,11 @@ CLI > environment > profile config > base config > type defaults
 
 - Config location:
   - CLI `--config`.
-  - `OVERSEERD_CONFIG`.
+  - `UPWELL_CONFIG`.
   - generated platform application config directory.
 - Profiles:
   - CLI repeatable `--profile`.
-  - existing `OVERSEERD_PROFILES` behavior when CLI profiles are absent.
+  - existing `UPWELL_PROFILES` behavior when CLI profiles are absent.
   - profile files override base files in declared order.
 - Log filter:
   - CLI `--log`.
@@ -111,7 +111,7 @@ CLI > environment > profile config > base config > type defaults
   - `LoggingConfig::default()`.
 - Log format:
   - CLI `--log-format`.
-  - `OVERSEERD_LOG_FORMAT`.
+  - `UPWELL_LOG_FORMAT`.
   - `logging.format`.
   - `LogFormat::default()`.
 - Color:
@@ -149,7 +149,7 @@ Do not invent arbitrary environment-to-config-field mapping. Existing `${ENV}` p
 
 ### 2. Config Source Completion
 
-- Add exact-file plus ordered-profile loading to `overseerd-config`.
+- Add exact-file plus ordered-profile loading to `upwell-config`.
 - Preserve retained source order so reload maintains profile precedence.
 - Test TOML, YAML when enabled, absent profiles, malformed files, duplicate profile order, and file-versus-directory selection.
 - Keep environment profile fallback deterministic and prevent CLI profile values from being appended twice.
@@ -224,7 +224,7 @@ Precedence tests:
 - CLI log beats `RUST_LOG`, which beats config/default;
 - CLI profile selection prevents environment profiles from being appended unexpectedly;
 - later profile files override earlier profiles and base config;
-- CLI config file/directory beats `OVERSEERD_CONFIG` and platform default;
+- CLI config file/directory beats `UPWELL_CONFIG` and platform default;
 - CLI color beats `NO_COLOR`/`CLICOLOR_FORCE` with documented behavior;
 - absent options preserve existing defaults.
 
@@ -313,7 +313,7 @@ commands: {
             list: ListGroupsCommand,
         },
     },
-    rpc: nested overseerd::daemon::RpcCommands,
+    rpc: nested upwell::daemon::RpcCommands,
     tooling: flatten ToolingCommands,
 }
 ```

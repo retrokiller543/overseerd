@@ -1,5 +1,5 @@
 //! Builders that stand up DI graphs of a chosen size, layered across several scopes, using only the
-//! public `overseerd-di` API.
+//! public `upwell-di` API.
 //!
 //! Two component families let a bench separate framework overhead from user-data cost:
 //!
@@ -18,8 +18,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseerd_core::{ResolverSet, Scope, Singleton, TypeDescriptor};
-use overseerd_di::{
+use upwell_core::{ResolverSet, Scope, Singleton, TypeDescriptor};
+use upwell_di::{
     BoxedComponent, Component, ComponentDescriptor, ComponentRegistry, Injectable, Live,
     ProviderDescriptor, ScopeContainer, ScopeRegistry,
 };
@@ -179,8 +179,8 @@ macro_rules! layer_scopes {
             struct $name;
 
             impl Scope for $name {
-                fn id(&self) -> overseerd_core::ScopeId {
-                    overseerd_core::ScopeId::new(concat!("benchmark/", stringify!($name)))
+                fn id(&self) -> upwell_core::ScopeId {
+                    upwell_core::ScopeId::new(concat!("benchmark/", stringify!($name)))
                         .expect("valid benchmark scope ID")
                 }
 

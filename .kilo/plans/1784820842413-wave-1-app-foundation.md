@@ -46,10 +46,10 @@ git switch -c feat/142-app-definition
 Use a named wrapper around the existing declarative assembly fields:
 
 ```rust
-overseerd::app! {
+upwell::app! {
     pub app Homeledger {
         name: "homeledger",
-        protocol: overseerd::daemon::RpcPlugin,
+        protocol: upwell::daemon::RpcPlugin,
         services: [Notifications],
         components: [clock],
         configs: [DbConfig => "app.db"],
@@ -70,14 +70,14 @@ The generated surface is intentionally small:
 pub struct Homeledger;
 
 impl Homeledger {
-    pub fn builder() -> Result<overseerd::AppBuilder<RpcPlugin>, overseerd::ConfigError>;
+    pub fn builder() -> Result<upwell::AppBuilder<RpcPlugin>, upwell::ConfigError>;
 }
 ```
 
 - `builder()` reevaluates declaration expressions on each call; it does not cache state or create components.
 - Visibility on `app` is applied to the host type.
 - Runtime app `name` and `protocol` remain required.
-- Existing `overseerd = ...` and `crate = ...` path overrides remain accepted in the declaration body.
+- Existing `upwell = ...` and `crate = ...` path overrides remain accepted in the declaration body.
 - No `run`, `serve`, callback, command, CLI, or tooling methods are generated yet.
 
 ### Parser And Expansion Work
@@ -126,8 +126,8 @@ Workspace integration test:
 
 ```text
 cargo fmt --all -- --check
-cargo test -p overseerd-macros-core
-cargo test -p overseerd-macros
+cargo test -p upwell-macros-core
+cargo test -p upwell-macros
 cargo check --workspace --all-features
 cargo clippy --workspace --all-targets --all-features
 ```
@@ -257,11 +257,11 @@ Extend `ProtocolPlugin` with two preparation-safe methods: mutable pre-build con
 
 ### Protocol-Neutral Placeholder
 
-Implement the protocol traits directly for `()` in `overseerd-app`:
+Implement the protocol traits directly for `()` in `upwell-app`:
 
 - no scopes, descriptors, runtime resources, or serving behavior;
 - protocol `build` succeeds without touching components;
-- intended for host tests and the later `cargo overseerd init` placeholder;
+- intended for host tests and the later `cargo upwell init` placeholder;
 - do not add a fake long-running `Serve` implementation in Wave 1.
 
 ### PR 2 Tests
@@ -302,10 +302,10 @@ Behavior preservation tests:
 
 ```text
 cargo fmt --all -- --check
-cargo nextest run -p overseerd-app
-cargo nextest run -p overseerd-macros-core
-cargo nextest run -p overseerd-rpc
-cargo nextest run -p overseerd-axum --all-features
+cargo nextest run -p upwell-app
+cargo nextest run -p upwell-macros-core
+cargo nextest run -p upwell-rpc
+cargo nextest run -p upwell-axum --all-features
 cargo nextest run --workspace --all-features
 cargo clippy --workspace --all-targets --all-features
 cargo check --workspace --no-default-features

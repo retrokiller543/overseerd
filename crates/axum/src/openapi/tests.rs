@@ -148,7 +148,7 @@ fn overlapping_json_and_ui_paths_are_rejected() {
 #[cfg(feature = "openapi-redoc")]
 #[test]
 fn overlapping_paths_fail_during_app_prepare() {
-    let config = overseerd_config::ConfigManager::<overseerd_config::Toml>::from_str(
+    let config = upwell_config::ConfigManager::<upwell_config::Toml>::from_str(
         r#"
             [axum.openapi]
             enabled = true

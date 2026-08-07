@@ -6,15 +6,15 @@
 use std::fs;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
-use overseerd::config::Toml;
-use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{
+use serde::Deserialize;
+use tempfile::TempDir;
+use upwell::config::Toml;
+use upwell::dirs::{Config, DirectoriesManager};
+use upwell::{
     App, AppError, Cfg, CfgNext, ConfigManager, ConfigReload, HookOutcome, component, config,
     methods,
 };
-use overseerd_config::ResolverChain;
-use serde::Deserialize;
-use tempfile::TempDir;
+use upwell_config::ResolverChain;
 
 #[config(path = "svc")]
 #[derive(Deserialize)]
@@ -115,7 +115,7 @@ impl RestartWatcher {
 
 fn temp_config_dir() -> TempDir {
     tempfile::Builder::new()
-        .prefix("overseerd-hooks-")
+        .prefix("upwell-hooks-")
         .tempdir()
         .expect("create temp config dir")
 }

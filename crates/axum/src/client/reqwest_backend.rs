@@ -12,9 +12,9 @@ use std::sync::{Arc, RwLock};
 
 use http::header::HeaderMap;
 use http::{Request, Uri};
-use overseerd_client::{ClientError, MaybeSend, MaybeSync, Transport, Unary};
-use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
+use upwell_client::{ClientError, MaybeSend, MaybeSync, Transport, Unary};
+use upwell_transport::{CodecError, Decodes, Encodes};
 
 #[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
 use super::WebsocketClient;
@@ -507,7 +507,7 @@ where
 /// Maps a reqwest network failure onto the transport arm of [`ClientError`] (status `S` and error
 /// body `E` are inferred from the call site; the transport arm carries neither).
 fn net_err<S, E>(error: reqwest::Error) -> ClientError<S, E> {
-    ClientError::Transport(overseerd_transport::Error::Io(std::io::Error::other(
+    ClientError::Transport(upwell_transport::Error::Io(std::io::Error::other(
         error.to_string(),
     )))
 }

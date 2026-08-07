@@ -6,9 +6,9 @@ use crate::audit::AuditSink;
 use crate::components::{DatabaseConfig, DatabaseConnection, LedgerConfig};
 use crate::operations::OperationsRegistry;
 use crate::protocol::AuditPolicyConfig;
-use overseerd::daemon::{Inject, Payload, handlers, service};
-use overseerd::{Cfg, CfgNext, ConfigReload, Dep, HookOutcome, ServerConfig, ShutdownHandle};
 use serde::{Deserialize, Serialize};
+use upwell::daemon::{Inject, Payload, handlers, service};
+use upwell::{Cfg, CfgNext, ConfigReload, Dep, HookOutcome, ServerConfig, ShutdownHandle};
 
 /// A request to record one categorized household transaction.
 #[derive(Serialize, Deserialize)]
@@ -110,7 +110,7 @@ impl LedgerService {
     async fn on_ledger_reload(
         &self,
         #[config("homeledger.ledger")] next: CfgNext<LedgerConfig>,
-    ) -> overseerd::daemon::Result<HookOutcome> {
+    ) -> upwell::daemon::Result<HookOutcome> {
         tracing::info!(
             target: "homeledger::config",
             household = %next.household,

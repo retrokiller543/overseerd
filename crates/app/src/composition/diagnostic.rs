@@ -68,13 +68,13 @@ impl CompositionEdge {
 #[non_exhaustive]
 pub enum CompositionDiagnostic {
     /// A public catalog declaration claims the reserved framework namespace.
-    #[error("plugin '{plugin}' uses the reserved 'overseerd/' namespace ({provenance:?})")]
+    #[error("plugin '{plugin}' uses the reserved 'upwell/' namespace ({provenance:?})")]
     ReservedNamespace {
         plugin: PluginId,
         provenance: InstallationProvenance,
     },
     /// A public catalog declaration claims a framework-owned capability slot.
-    #[error("plugin slot '{slot}' uses the reserved 'overseerd/' namespace ({provenance:?})")]
+    #[error("plugin slot '{slot}' uses the reserved 'upwell/' namespace ({provenance:?})")]
     ReservedSlotNamespace {
         slot: PluginSlotId,
         provenance: InstallationProvenance,

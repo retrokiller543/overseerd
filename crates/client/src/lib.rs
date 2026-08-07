@@ -1,7 +1,7 @@
-//! The Overseerd protocol-agnostic client *contract*.
+//! The Upwell protocol-agnostic client *contract*.
 //!
 //! The framework implements no client calls. It defines **capabilities** a protocol may
-//! support — one trait each — and a protocol (`overseerd-rpc`, a future HTTP binding, …)
+//! support — one trait each — and a protocol (`upwell-rpc`, a future HTTP binding, …)
 //! implements the subset it can. A protocol *declares* support by implementing a capability
 //! and *refuses* by simply not: a client-streaming call over HTTP/1.1 is then a compile
 //! error — a protocol limitation expressed in the type system, never a framework limit.
@@ -34,9 +34,9 @@ use std::marker::PhantomData;
 
 use futures::Stream;
 
-use overseerd_transport::Error;
+use upwell_transport::Error;
 
-pub use overseerd_transport::{CodecError, Decodes, Encodes};
+pub use upwell_transport::{CodecError, Decodes, Encodes};
 
 // ---------------------------------------------------------------------------
 // Target-conditional thread-safety markers. Natively the client contract keeps

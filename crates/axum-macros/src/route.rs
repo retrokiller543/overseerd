@@ -179,7 +179,7 @@ pub struct RouteAttr {
     /// server-streaming for the client; the framing comes from the return type, never hard-wired.
     pub streamed: bool,
 
-    /// `middleware = [Type, ..]` — DI-backed [`AxumMiddleware`](../overseerd_axum/trait.AxumMiddleware.html)
+    /// `middleware = [Type, ..]` — DI-backed [`AxumMiddleware`](../upwell_axum/trait.AxumMiddleware.html)
     /// singletons scoped to just this route, first-listed outermost. Empty if unset.
     pub middleware: Vec<Path>,
     /// Explicit decoded success body type for otherwise opaque responses.

@@ -1,4 +1,4 @@
-use overseerd_transport::PredefinedCode;
+use upwell_transport::PredefinedCode;
 
 use super::Error;
 use crate::extract::ResponseError;
@@ -13,7 +13,7 @@ fn response_message(error: Error) -> (PredefinedCode, String) {
 #[test]
 fn redacts_internal_error_details() {
     let secret = "/private/config/production.toml";
-    let (code, message) = response_message(Error::Transport(overseerd_transport::Error::Io(
+    let (code, message) = response_message(Error::Transport(upwell_transport::Error::Io(
         std::io::Error::other(secret),
     )));
 

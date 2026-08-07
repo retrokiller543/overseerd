@@ -10,13 +10,13 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use overseerd_core::{Singleton, TypeDescriptor};
-use overseerd_di::{
+use upwell_core::{Singleton, TypeDescriptor};
+use upwell_di::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
     ComponentFactoryDescriptor, DependencyDescriptor, Injectable,
 };
-use overseerd_hooks::no_hooks;
-use overseerd_transport::CodecError;
+use upwell_hooks::no_hooks;
+use upwell_transport::CodecError;
 
 use crate::messaging::Topic;
 use crate::ws::PubSubProtocol;
@@ -122,7 +122,7 @@ impl<P: PubSubProtocol> Default for TopicBus<P> {
 impl<P: PubSubProtocol> Component for TopicBus<P> {
     type Handle = Self;
 
-    const ID: &'static str = "overseerd:axum:topic-bus";
+    const ID: &'static str = "upwell:axum:topic-bus";
     const NAME: &'static str = "TopicBus";
 
     fn into_handle(self) -> Self::Handle {
@@ -149,7 +149,7 @@ fn topic_bus_dependencies() -> Vec<DependencyDescriptor> {
 
 fn construct_topic_bus<P: PubSubProtocol>(
     _: &mut ComponentConstructionContext,
-) -> std::pin::Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + '_>> {
+) -> std::pin::Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + '_>> {
     Box::pin(async {
         Ok(BoxedComponent {
             ty: TypeDescriptor::of::<TopicBus<P>>(std::any::type_name::<TopicBus<P>>()),
@@ -169,7 +169,7 @@ fn topic_bus_factories<P: PubSubProtocol>() -> &'static [ComponentFactoryDescrip
 /// Builds the DI descriptor for one protocol's shared topic bus.
 pub fn topic_bus_descriptor<P: PubSubProtocol>() -> ComponentDescriptor {
     let name = std::any::type_name::<TopicBus<P>>();
-    let id = Box::leak(format!("overseerd:axum:topic-bus:{name}").into_boxed_str());
+    let id = Box::leak(format!("upwell:axum:topic-bus:{name}").into_boxed_str());
 
     ComponentDescriptor {
         id,
@@ -182,9 +182,9 @@ pub fn topic_bus_descriptor<P: PubSubProtocol>() -> ComponentDescriptor {
 }
 
 /// Registers one protocol's shared topic bus in the application DI graph.
-pub fn register_topic_bus<P: PubSubProtocol>(registry: &mut overseerd_app::AppRegistry) {
+pub fn register_topic_bus<P: PubSubProtocol>(registry: &mut upwell_app::AppRegistry) {
     registry.components.push(topic_bus_descriptor::<P>());
 }
 
 #[cfg(feature = "di-check")]
-impl<P: PubSubProtocol> overseerd_di::Provide<TopicBus<P>> for overseerd_di::Wiring {}
+impl<P: PubSubProtocol> upwell_di::Provide<TopicBus<P>> for upwell_di::Wiring {}

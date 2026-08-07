@@ -5,7 +5,7 @@
 use wasm_bindgen::prelude::*;
 
 use crate::Stomp;
-use overseerd_axum::client::{Connection, TopicWasmClient};
+use upwell_axum::client::{Connection, TopicWasmClient};
 
 use super::StompClientTransport;
 use super::StompConnectOptions;

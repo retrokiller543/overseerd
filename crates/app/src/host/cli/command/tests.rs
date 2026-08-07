@@ -9,7 +9,7 @@ struct TestHost;
 impl AppHost for TestHost {
     type Protocol = ();
 
-    fn builder() -> Result<crate::AppBuilder<Self::Protocol>, overseerd_config::ConfigError> {
+    fn builder() -> Result<crate::AppBuilder<Self::Protocol>, upwell_config::ConfigError> {
         Ok(crate::AppBuilder::new("test"))
     }
 }

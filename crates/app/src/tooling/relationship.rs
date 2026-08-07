@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use overseerd_tooling_schema::{Relationship, RelationshipKind};
+use upwell_tooling_schema::{Relationship, RelationshipKind};
 
 use super::Projection;
 use crate::ProtocolDefinition;

@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use overseerd::{
+use upwell::{
     AppError, AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ProtocolId,
     ProtocolRuntime, ScopeBoundary, ScopeId, ScopeParent, ScopeTopology, Serve, ShutdownSignal,
     StaticScope, ValidationContext, app,
@@ -10,7 +10,7 @@ use overseerd::{
 pub struct SessionScope;
 
 impl StaticScope for SessionScope {
-    const ID: ScopeId = overseerd::namespaced_id!(ScopeId, "third-party/session");
+    const ID: ScopeId = upwell::namespaced_id!(ScopeId, "third-party/session");
     const RANK: u8 = 200;
     const NAME: &'static str = "Session";
 }
@@ -36,7 +36,7 @@ impl ProtocolDefinition for ThirdPartyProtocol {
     type Prepared = PreparedThirdPartyProtocol;
     type Error = AppError;
 
-    const ID: ProtocolId = overseerd::namespaced_id!(ProtocolId, "third-party/example-protocol");
+    const ID: ProtocolId = upwell::namespaced_id!(ProtocolId, "third-party/example-protocol");
     const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::new(&SESSION_BOUNDARIES);
 
     fn register(&self, _registry: &mut AppRegistry) {}
@@ -63,8 +63,8 @@ impl PreparedProtocol for PreparedThirdPartyProtocol {
     }
 
     #[cfg(feature = "tooling")]
-    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
-        contributions.display(overseerd_app::ResourceDisplay {
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
+        contributions.display(upwell_app::ResourceDisplay {
             label: Some(String::from("Third-party protocol")),
             ..Default::default()
         });
@@ -97,7 +97,7 @@ app! {
 
 #[tokio::test]
 async fn facade_supports_third_party_protocol_states_and_topology() {
-    let prepared = ThirdPartyApplication::new(overseerd::ExecutionMode::Run)
+    let prepared = ThirdPartyApplication::new(upwell::ExecutionMode::Run)
         .prepare()
         .await
         .expect("third-party application prepares");

@@ -1,6 +1,6 @@
 //! The resolver abstraction: a type-keyed set of dependency sources.
 //!
-//! Resolution in Overseerd used to be a zoo of methods on the container — one each for
+//! Resolution in Upwell used to be a zoo of methods on the container — one each for
 //! single, qualified, config-by-path, config-by-type, collection, and keyed lookups,
 //! every one duplicated across the construction-time and request-time paths. The
 //! container also *owned* config values, coupling the DI engine to the config layer.

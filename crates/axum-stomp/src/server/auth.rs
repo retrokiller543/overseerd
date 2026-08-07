@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use overseerd_axum::{Component, DiError, FromContainer, Injectable, ScopeContainer};
+use upwell_axum::{Component, DiError, FromContainer, Injectable, ScopeContainer};
 
 use super::StompHeaders;
 
@@ -204,7 +204,7 @@ fn authenticator_dependency_error(
     error: DiError,
 ) -> StompAuthenticationError {
     tracing::error!(
-        target: "overseerd::axum",
+        target: "upwell::axum",
         dependency,
         %error,
         "STOMP authenticator dependency could not be resolved from the connection scope",
@@ -372,7 +372,7 @@ where
 }
 
 #[cfg(feature = "di-check")]
-impl overseerd_axum::Provide<StompPrincipal> for overseerd_axum::Wiring {}
+impl upwell_axum::Provide<StompPrincipal> for upwell_axum::Wiring {}
 
 #[cfg(test)]
 #[path = "auth/tests.rs"]

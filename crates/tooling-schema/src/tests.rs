@@ -441,7 +441,7 @@ fn probe_envelopes_round_trip_target_identity_for_success_and_failure() {
         ProbeFailure {
             phase: Some(String::from("prepare")),
             diagnostics: vec![Diagnostic {
-                code: String::from("overseerd/tooling-prepare"),
+                code: String::from("upwell/tooling-prepare"),
                 message: String::from("prepare failed"),
                 severity: DiagnosticSeverity::Error,
                 resources: vec![String::from("component:worker")],
@@ -674,7 +674,7 @@ fn failure_fixture() -> ProbeFailure {
     ProbeFailure {
         phase: Some(String::from("prepare")),
         diagnostics: vec![Diagnostic {
-            code: String::from("overseerd/tooling-prepare"),
+            code: String::from("upwell/tooling-prepare"),
             message: String::from("Application planning failed."),
             severity: DiagnosticSeverity::Error,
             resources: Vec::new(),

@@ -1,18 +1,18 @@
 //! Per-message DI seeds: the frame's [`StompHeaders`] and the connection's [`StompSession`].
 //!
 //! Both are **by-value injectables** (`Injectable<Target = Self>`, like `PeerInfo`): the serve loop
-//! seeds them into each message's [`WebsocketMessage`](overseerd_axum::WebsocketMessage) scope, and a `#[message]`
+//! seeds them into each message's [`WebsocketMessage`](upwell_axum::WebsocketMessage) scope, and a `#[message]`
 //! handler reaches them with `Inject<StompHeaders>` / `Inject<StompSession>` — the same DI a REST
 //! route gets. Their manual [`ComponentDescriptor`]s are registered by the plugin so the container
 //! knows each type's exact seed destination.
 
 use std::sync::Arc;
 
-use overseerd_axum::Injectable;
+use upwell_axum::Injectable;
 
 use super::broker::{Broker, BrokerExt};
 use crate::StompBody;
-use overseerd_axum::ConnectionId;
+use upwell_axum::ConnectionId;
 
 /// The headers of the STOMP frame that triggered the current message, in wire order (first value
 /// wins per the spec). A cheap, `Arc`-backed clone so seeding it per message is nearly free.
@@ -117,6 +117,6 @@ impl Injectable for StompSession {
 mod di_check {
     use super::{StompHeaders, StompSession};
 
-    impl overseerd_axum::Provide<StompHeaders> for overseerd_axum::Wiring {}
-    impl overseerd_axum::Provide<StompSession> for overseerd_axum::Wiring {}
+    impl upwell_axum::Provide<StompHeaders> for upwell_axum::Wiring {}
+    impl upwell_axum::Provide<StompSession> for upwell_axum::Wiring {}
 }

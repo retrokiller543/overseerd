@@ -13,7 +13,7 @@ metadata, generates the private tooling entry consumed by later Cargo probe exec
 the application migration and documentation.
 
 Cargo package and binary selection and external probe execution remain in #152. User-facing
-`cargo overseerd` commands remain in #153-#157 and #156.
+`cargo upwell` commands remain in #153-#157 and #156.
 
 ## Dependency Boundary
 

@@ -235,7 +235,7 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
 
                 let target = #probe_target_identity()
                     .map_err(|error| #cli_error::ToolingTarget(error))?;
-                let envelope = Self::__overseerd_tooling_probe(target)
+                let envelope = Self::__upwell_tooling_probe(target)
                     .await
                     .map_err(|error| #cli_error::ToolingIdentity(error))?;
                 let success = envelope.is_success();
@@ -285,7 +285,7 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
         #nested_command_types
 
         impl #ident<#initial> {
-            fn __overseerd_compose_cli(
+            fn __upwell_compose_cli(
                 plugins: &mut #early_plugin_catalog,
             ) -> ::core::result::Result<#clap::Command, #cli_error> {
                 let command = <#cli_ident as #clap::CommandFactory>::command();
@@ -350,7 +350,7 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
                 T: ::core::convert::Into<::std::ffi::OsString> + ::core::clone::Clone,
             {
                 let mut plugins = #resolve_host_plugin_catalog::<#ident<#initial>>()?;
-                let mut command = Self::__overseerd_compose_cli(&mut plugins)?;
+                let mut command = Self::__upwell_compose_cli(&mut plugins)?;
 
                 let mut matches = command.try_get_matches_from_mut(args)?;
                 let bootstrap_sources = #bootstrap_ident::__sources(&matches);

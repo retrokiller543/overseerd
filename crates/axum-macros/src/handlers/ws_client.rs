@@ -2,8 +2,8 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Ident, ImplItemFn, LitStr, parse_quote};
 
-use overseerd_macros_core::client::ClientMethod;
-use overseerd_macros_core::paths::Paths;
+use upwell_macros_core::client::ClientMethod;
+use upwell_macros_core::paths::Paths;
 
 use super::ws::ws_payload_type;
 use crate::client;
@@ -41,7 +41,7 @@ pub(super) fn build_message_send_method(
     Ok(Some(ClientMethod {
         ident: method_ident.clone(),
         path: String::new(),
-        capability: overseerd_macros_core::client::Capability::Unary,
+        capability: upwell_macros_core::client::Capability::Unary,
         request,
         encode_as: None,
         req_item: None,
@@ -100,7 +100,7 @@ pub(super) fn build_message_request_method(
     Ok(Some(ClientMethod {
         ident: method_ident.clone(),
         path: String::new(),
-        capability: overseerd_macros_core::client::Capability::Unary,
+        capability: upwell_macros_core::client::Capability::Unary,
         request,
         encode_as: None,
         req_item: None,

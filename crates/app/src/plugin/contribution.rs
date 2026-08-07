@@ -5,9 +5,9 @@ use std::any::TypeId;
 #[cfg(feature = "tooling")]
 use std::collections::BTreeMap;
 
-use overseerd_config::{ConfigBinding, ConfigProperties};
-use overseerd_core::{Descriptor, NamespacedIdType};
-use overseerd_di::{ComponentDescriptor, ProviderDescriptor};
+use upwell_config::{ConfigBinding, ConfigProperties};
+use upwell_core::{Descriptor, NamespacedIdType};
+use upwell_di::{ComponentDescriptor, ProviderDescriptor};
 
 use crate::{
     AppRegistry, ContributionId, ContributionProvenance, Contributor, InstallationProvenance,
@@ -61,7 +61,7 @@ pub struct EffectivePluginPlan {
     #[cfg(feature = "tooling")]
     tooling: Vec<crate::tooling::ToolingContributionSet>,
     #[cfg(all(feature = "cli", feature = "tooling"))]
-    cli_parser_metadata: Option<overseerd_tooling_schema::CliMetadata>,
+    cli_parser_metadata: Option<upwell_tooling_schema::CliMetadata>,
 }
 
 impl EffectivePluginPlan {
@@ -84,9 +84,7 @@ impl EffectivePluginPlan {
     }
 
     #[cfg(all(feature = "cli", feature = "tooling"))]
-    pub(crate) const fn cli_parser_metadata(
-        &self,
-    ) -> Option<&overseerd_tooling_schema::CliMetadata> {
+    pub(crate) const fn cli_parser_metadata(&self) -> Option<&upwell_tooling_schema::CliMetadata> {
         self.cli_parser_metadata.as_ref()
     }
 
@@ -226,7 +224,7 @@ impl PluginContributions {
 
             if provenance
                 .contribution()
-                .is_in_namespace(overseerd_core::FRAMEWORK_NAMESPACE)
+                .is_in_namespace(upwell_core::FRAMEWORK_NAMESPACE)
             {
                 return Err(PluginPlanError::ReservedContributionNamespace { provenance });
             }
@@ -258,7 +256,7 @@ pub enum PluginPlanError {
 
     /// A third-party plugin attempted to claim a framework-owned CLI provider identity.
     #[cfg(feature = "cli")]
-    #[error("plugin CLI provider '{provenance:?}' uses the reserved 'overseerd/' namespace")]
+    #[error("plugin CLI provider '{provenance:?}' uses the reserved 'upwell/' namespace")]
     ReservedCliProviderNamespace {
         /// The invalid stable CLI provider provenance.
         provenance: ContributionProvenance,
@@ -272,7 +270,7 @@ pub enum PluginPlanError {
     },
 
     /// A third-party plugin attempted to claim a framework-owned contribution identity.
-    #[error("plugin contribution '{provenance:?}' uses the reserved 'overseerd/' namespace")]
+    #[error("plugin contribution '{provenance:?}' uses the reserved 'upwell/' namespace")]
     ReservedContributionNamespace {
         /// The invalid contribution provenance.
         provenance: ContributionProvenance,
@@ -299,7 +297,7 @@ pub(crate) struct CollectedPluginPlan {
     #[cfg(feature = "tooling")]
     pub(super) tooling: Vec<crate::tooling::ToolingContributionSet>,
     #[cfg(all(feature = "cli", feature = "tooling"))]
-    pub(super) cli_parser_metadata: Option<overseerd_tooling_schema::CliMetadata>,
+    pub(super) cli_parser_metadata: Option<upwell_tooling_schema::CliMetadata>,
 }
 
 impl CollectedPluginPlan {
@@ -376,10 +374,10 @@ impl CollectedPluginPlan {
 /// `type T` is unambiguously a typed contribution in this macro.
 ///
 /// ```
-/// # use overseerd_app::{PluginContributions, contribute};
-/// # use overseerd_config::ConfigProperties;
-/// # use overseerd_core::Descriptor;
-/// # use overseerd_di::{ComponentDescriptor, ProviderDescriptor};
+/// # use upwell_app::{PluginContributions, contribute};
+/// # use upwell_config::ConfigProperties;
+/// # use upwell_core::Descriptor;
+/// # use upwell_di::{ComponentDescriptor, ProviderDescriptor};
 /// # struct Scheduler;
 /// # #[derive(serde::Deserialize)]
 /// # struct JobsConfig;

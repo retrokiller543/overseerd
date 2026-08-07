@@ -3,8 +3,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::{CommandFactory as _, Parser as _};
-use overseerd::config::Toml;
-use overseerd::{
+use upwell::config::Toml;
+use upwell::{
     App, AppBuilder, AppRegistry, AppRuntime, BootstrapContext, Built, CliCommand, CliError,
     CommandContext, ConfigManager, ContributionId, Plugin, PluginCliCommand, PluginCliRegistrar,
     PluginCommandContext, PluginContributions, PreBuild, PreparedProtocol, ProtocolDefinition,
@@ -33,19 +33,19 @@ static CUSTOMIZED_TOOLING_BOOTSTRAP: std::sync::Mutex<Option<CustomizedToolingBo
 struct CustomizedToolingBootstrap {
     profiles: Vec<String>,
     log: String,
-    format: overseerd::LogFormat,
-    color: overseerd::ColorChoice,
+    format: upwell::LogFormat,
+    color: upwell::ColorChoice,
 }
 
 #[cfg(feature = "tooling")]
-fn tooling_target(binary: &str) -> overseerd::tooling::ProbeTargetIdentity {
-    overseerd::tooling::ProbeTargetIdentity::new(
-        overseerd::tooling::PackageIdentity {
-            name: String::from("overseerd"),
+fn tooling_target(binary: &str) -> upwell::tooling::ProbeTargetIdentity {
+    upwell::tooling::ProbeTargetIdentity::new(
+        upwell::tooling::PackageIdentity {
+            name: String::from("upwell"),
             version: Some(String::from(env!("CARGO_PKG_VERSION"))),
             manifest_path: Some(format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"))),
         },
-        overseerd::tooling::BinaryTargetIdentity {
+        upwell::tooling::BinaryTargetIdentity {
             name: binary.to_string(),
         },
     )
@@ -94,13 +94,12 @@ impl Default for CollidingCliPlugin {
 }
 
 impl Plugin for CollidingCliPlugin {
-    const ID: overseerd::PluginId =
-        overseerd::namespaced_id!(overseerd::PluginId, "test/colliding-cli");
+    const ID: upwell::PluginId = upwell::namespaced_id!(upwell::PluginId, "test/colliding-cli");
 
     fn contribute(self, _contributions: &mut PluginContributions) {}
 
     fn cli(&self, cli: &mut PluginCliRegistrar) {
-        cli.args::<CollidingPluginArgs>(overseerd::namespaced_id!(
+        cli.args::<CollidingPluginArgs>(upwell::namespaced_id!(
             ContributionId,
             "test/colliding-args"
         ));
@@ -170,8 +169,7 @@ impl Default for ProtocolCliPlugin {
 }
 
 impl Plugin for ProtocolCliPlugin {
-    const ID: overseerd::PluginId =
-        overseerd::namespaced_id!(overseerd::PluginId, "test/protocol-cli");
+    const ID: upwell::PluginId = upwell::namespaced_id!(upwell::PluginId, "test/protocol-cli");
 
     fn contribute(self, _contributions: &mut PluginContributions) {
         assert!(self.marker);
@@ -180,11 +178,11 @@ impl Plugin for ProtocolCliPlugin {
     }
 
     fn cli(&self, cli: &mut PluginCliRegistrar) {
-        cli.args::<ProtocolPluginArgs>(overseerd::namespaced_id!(
+        cli.args::<ProtocolPluginArgs>(upwell::namespaced_id!(
             ContributionId,
             "test/protocol-args"
         ));
-        cli.commands::<ProtocolPluginCommands>(overseerd::namespaced_id!(
+        cli.commands::<ProtocolPluginCommands>(upwell::namespaced_id!(
             ContributionId,
             "test/protocol-commands"
         ));
@@ -203,8 +201,7 @@ impl Default for ApplicationCliPlugin {
 }
 
 impl Plugin for ApplicationCliPlugin {
-    const ID: overseerd::PluginId =
-        overseerd::namespaced_id!(overseerd::PluginId, "test/application-cli");
+    const ID: upwell::PluginId = upwell::namespaced_id!(upwell::PluginId, "test/application-cli");
 
     fn contribute(self, _contributions: &mut PluginContributions) {
         APPLICATION_PLUGIN_CONTRIBUTIONS.fetch_add(1, Ordering::SeqCst);
@@ -212,7 +209,7 @@ impl Plugin for ApplicationCliPlugin {
 
     fn cli(&self, cli: &mut PluginCliRegistrar) {
         cli.command::<PluginInspectCommand>(
-            overseerd::namespaced_id!(ContributionId, "test/plugin-inspect-command"),
+            upwell::namespaced_id!(ContributionId, "test/plugin-inspect-command"),
             "plugin-inspect",
         );
     }
@@ -249,7 +246,7 @@ pub struct PluginBuildCommand;
 
 impl PluginCliCommand for PluginBuildCommand {
     type Phase = Built;
-    type Error = overseerd::DiError;
+    type Error = upwell::DiError;
 
     async fn run(&self, context: PluginCommandContext<Self::Phase>) -> Result<(), Self::Error> {
         let marker = context.resolve::<std::sync::Arc<BuildMarker>>().await?;
@@ -275,18 +272,17 @@ impl Default for PluginOnlyCliPlugin {
 }
 
 impl Plugin for PluginOnlyCliPlugin {
-    const ID: overseerd::PluginId =
-        overseerd::namespaced_id!(overseerd::PluginId, "test/plugin-only-cli");
+    const ID: upwell::PluginId = upwell::namespaced_id!(upwell::PluginId, "test/plugin-only-cli");
 
     fn contribute(self, _contributions: &mut PluginContributions) {}
 
     fn cli(&self, cli: &mut PluginCliRegistrar) {
         cli.command::<PluginCatalogCommand>(
-            overseerd::namespaced_id!(ContributionId, "test/plugin-catalog-command"),
+            upwell::namespaced_id!(ContributionId, "test/plugin-catalog-command"),
             "plugin-catalog",
         );
         cli.command::<PluginBuildCommand>(
-            overseerd::namespaced_id!(ContributionId, "test/plugin-build-command"),
+            upwell::namespaced_id!(ContributionId, "test/plugin-build-command"),
             "plugin-build",
         );
     }
@@ -308,17 +304,16 @@ pub struct TestProtocol;
 
 impl ProtocolDefinition for TestProtocol {
     type Prepared = PreparedTestProtocol;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
-    const ID: overseerd::ProtocolId =
-        overseerd::namespaced_id!(overseerd::ProtocolId, "test/app-commands");
-    const SCOPE_TOPOLOGY: overseerd::ScopeTopology = overseerd::ScopeTopology::empty();
+    const ID: upwell::ProtocolId = upwell::namespaced_id!(upwell::ProtocolId, "test/app-commands");
+    const SCOPE_TOPOLOGY: upwell::ScopeTopology = upwell::ScopeTopology::empty();
 
     fn register(&self, _registry: &mut AppRegistry) {}
 
     fn prepare(
         self,
-        _context: &overseerd::ValidationContext<'_>,
+        _context: &upwell::ValidationContext<'_>,
     ) -> Result<Self::Prepared, Self::Error> {
         Ok(PreparedTestProtocol)
     }
@@ -336,7 +331,7 @@ pub struct TestRuntime;
 
 impl PreparedProtocol for PreparedTestProtocol {
     type Runtime = TestRuntime;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
         PROTOCOL_BUILDS.fetch_add(1, Ordering::SeqCst);
@@ -345,8 +340,8 @@ impl PreparedProtocol for PreparedTestProtocol {
     }
 
     #[cfg(feature = "tooling")]
-    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
-        contributions.display(overseerd_app::ResourceDisplay {
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
+        contributions.display(upwell_app::ResourceDisplay {
             label: Some(String::from("Command test protocol")),
             ..Default::default()
         });
@@ -354,7 +349,7 @@ impl PreparedProtocol for PreparedTestProtocol {
 }
 
 impl ProtocolRuntime for TestRuntime {
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 }
 
 impl Drop for TestRuntime {
@@ -658,7 +653,7 @@ app! {
                 default_values_t: [String::from("local")],
             },
             log: { default_value: "warn" },
-            log_format: { default_value_t: overseerd::LogFormat::Json },
+            log_format: { default_value_t: upwell::LogFormat::Json },
             color: { default_value: "never" },
             serve: {
                 name: "start",
@@ -728,13 +723,13 @@ impl CliCommand<CustomizedCliApplication> for CustomizedInspectCommand {
         if self.expect_cli {
             assert_eq!(bootstrap.profiles(), ["production", "regional"]);
             assert_eq!(bootstrap.logging().level, "trace,customized=debug");
-            assert_eq!(bootstrap.logging().format, overseerd::LogFormat::Pretty);
-            assert_eq!(bootstrap.color(), overseerd::ColorChoice::Always);
+            assert_eq!(bootstrap.logging().format, upwell::LogFormat::Pretty);
+            assert_eq!(bootstrap.color(), upwell::ColorChoice::Always);
         } else {
             assert_eq!(bootstrap.profiles(), ["local"]);
             assert_eq!(bootstrap.logging().level, "warn");
-            assert_eq!(bootstrap.logging().format, overseerd::LogFormat::Json);
-            assert_eq!(bootstrap.color(), overseerd::ColorChoice::Never);
+            assert_eq!(bootstrap.logging().format, upwell::LogFormat::Json);
+            assert_eq!(bootstrap.color(), upwell::ColorChoice::Never);
         }
 
         Ok(())
@@ -789,7 +784,7 @@ async fn tooling_probe_projects_effective_application_and_plugin_cli_metadata() 
     let envelope = CommandApplication::tooling_probe(tooling_target("command-bin"))
         .await
         .expect("generated declaration identity validates");
-    let overseerd::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
+    let upwell::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
         panic!("command application tooling probe failed");
     };
     let cli = document
@@ -851,53 +846,47 @@ async fn tooling_probe_projects_effective_application_and_plugin_cli_metadata() 
 
     assert!(matches!(
         output.owner,
-        overseerd::tooling::CliOwner::Application
+        upwell::tooling::CliOwner::Application
     ));
     assert!(matches!(
         profile.owner,
-        overseerd::tooling::CliOwner::Framework
+        upwell::tooling::CliOwner::Framework
     ));
-    assert!(matches!(
-        api.owner,
-        overseerd::tooling::CliOwner::Application
-    ));
+    assert!(matches!(api.owner, upwell::tooling::CliOwner::Application));
     assert!(matches!(
         plugin_inspect.owner,
-        overseerd::tooling::CliOwner::Plugin { .. }
+        upwell::tooling::CliOwner::Plugin { .. }
     ));
     assert!(matches!(
         protocol_status.owner,
-        overseerd::tooling::CliOwner::Plugin { .. }
+        upwell::tooling::CliOwner::Plugin { .. }
     ));
-    assert!(matches!(
-        serve.owner,
-        overseerd::tooling::CliOwner::Framework
-    ));
+    assert!(matches!(serve.owner, upwell::tooling::CliOwner::Framework));
     assert_eq!(serve.id.as_deref(), Some("serve"));
     assert_eq!(cli.default_command.as_deref(), Some("serve"));
     assert!(matches!(
         root_help.owner,
-        overseerd::tooling::CliOwner::Framework
+        upwell::tooling::CliOwner::Framework
     ));
     assert!(matches!(
         root_version.owner,
-        overseerd::tooling::CliOwner::Framework
+        upwell::tooling::CliOwner::Framework
     ));
     assert!(matches!(
         api_help.owner,
-        overseerd::tooling::CliOwner::Framework
+        upwell::tooling::CliOwner::Framework
     ));
     assert!(cli.providers.iter().any(|provider| {
         provider.contribution == "test/protocol-args"
-            && provider.kind == overseerd::tooling::CliProviderKind::Args
+            && provider.kind == upwell::tooling::CliProviderKind::Args
     }));
     assert!(cli.providers.iter().any(|provider| {
         provider.contribution == "test/plugin-inspect-command"
-            && provider.kind == overseerd::tooling::CliProviderKind::Command
+            && provider.kind == upwell::tooling::CliProviderKind::Command
     }));
     assert!(cli.providers.iter().any(|provider| {
         provider.contribution == "test/protocol-commands"
-            && provider.kind == overseerd::tooling::CliProviderKind::CommandSet
+            && provider.kind == upwell::tooling::CliProviderKind::CommandSet
     }));
     assert_eq!(
         api.commands
@@ -920,7 +909,7 @@ async fn tooling_projects_customized_framework_shape_from_the_effective_parser()
     let envelope = CustomizedCliApplication::tooling_probe(tooling_target("customized-bin"))
         .await
         .expect("generated declaration identity validates");
-    let overseerd::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
+    let upwell::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
         panic!("customized CLI tooling probe failed");
     };
     let cli = document.cli.expect("CLI metadata exists");
@@ -966,7 +955,7 @@ async fn tooling_projects_customized_framework_shape_from_the_effective_parser()
     assert_eq!(profile.aliases, ["profile"]);
     assert!(matches!(
         profile.owner,
-        overseerd::tooling::CliOwner::Framework
+        upwell::tooling::CliOwner::Framework
     ));
     assert_eq!(profile.default_values, ["local"]);
     assert_eq!(profile.id, "profiles");
@@ -977,10 +966,7 @@ async fn tooling_projects_customized_framework_shape_from_the_effective_parser()
     assert_eq!(serve.visible_aliases, ["run"]);
     assert_eq!(serve.id.as_deref(), Some("serve"));
     assert_eq!(cli.default_command, None);
-    assert!(matches!(
-        serve.owner,
-        overseerd::tooling::CliOwner::Framework
-    ));
+    assert!(matches!(serve.owner, upwell::tooling::CliOwner::Framework));
     let snapshot = CUSTOMIZED_TOOLING_BOOTSTRAP
         .lock()
         .expect("customized tooling bootstrap lock is available")
@@ -989,16 +975,16 @@ async fn tooling_projects_customized_framework_shape_from_the_effective_parser()
 
     assert_eq!(snapshot.profiles, ["local"]);
     assert_eq!(snapshot.log, "warn");
-    assert_eq!(snapshot.format, overseerd::LogFormat::Json);
-    assert_eq!(snapshot.color, overseerd::ColorChoice::Never);
+    assert_eq!(snapshot.format, upwell::LogFormat::Json);
+    assert_eq!(snapshot.color, upwell::ColorChoice::Never);
 
     let envelope = CustomizedCliApplication::tooling_probe(tooling_target("customized-bin"))
         .await
         .expect("second generated tooling probe succeeds");
     let json = envelope.to_json().expect("probe envelope serializes");
-    let decoded = overseerd::tooling::ProbeEnvelope::from_json(&json)
+    let decoded = upwell::tooling::ProbeEnvelope::from_json(&json)
         .expect("probe envelope metadata round-trips through process JSON");
-    let overseerd::tooling::ProbeOutcome::Success { document } = decoded.outcome else {
+    let upwell::tooling::ProbeOutcome::Success { document } = decoded.outcome else {
         panic!("round-tripped customized CLI tooling probe failed");
     };
     let cli = document.cli.expect("round-tripped CLI metadata exists");
@@ -1033,7 +1019,7 @@ async fn tooling_projects_generated_host_lifecycle_capabilities_without_invented
     let envelope = CommandApplication::tooling_probe(tooling_target("command-bin"))
         .await
         .expect("generated declaration identity validates");
-    let overseerd::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
+    let upwell::tooling::ProbeOutcome::Success { document } = envelope.outcome else {
         panic!("command application tooling probe failed");
     };
 
@@ -1410,12 +1396,12 @@ async fn plugin_argument_collisions_name_both_contributors() {
         panic!("expected a CLI definition error");
     };
 
-    assert_eq!(error.first(), overseerd::CliDefinitionSource::Framework);
+    assert_eq!(error.first(), upwell::CliDefinitionSource::Framework);
     assert_eq!(
         error.second(),
-        overseerd::CliDefinitionSource::Plugin(overseerd::ContributionProvenance::new(
-            overseerd::Contributor::Plugin(CollidingCliPlugin::ID),
-            overseerd::namespaced_id!(ContributionId, "test/colliding-args"),
+        upwell::CliDefinitionSource::Plugin(upwell::ContributionProvenance::new(
+            upwell::Contributor::Plugin(CollidingCliPlugin::ID),
+            upwell::namespaced_id!(ContributionId, "test/colliding-args"),
         ))
     );
     assert!(error.to_string().contains("test/colliding-cli"));

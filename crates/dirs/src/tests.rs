@@ -6,7 +6,7 @@ use tempfile::TempDir;
 
 fn temp_dir(tag: &str) -> TempDir {
     tempfile::Builder::new()
-        .prefix(&format!("overseerd-dirs-{tag}-"))
+        .prefix(&format!("upwell-dirs-{tag}-"))
         .tempdir()
         .expect("create temp directory")
 }

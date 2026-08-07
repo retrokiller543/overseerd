@@ -1,24 +1,24 @@
-//! Homeledger, a complete generated Overseerd application host for a household ledger.
+//! Homeledger, a complete generated Upwell application host for a household ledger.
 //!
 //! The named `app!` declaration generates the Clap parser, lifecycle dispatcher, and
 //! `DaemonApplication::run()` process entry point. It also demonstrates application-specific
 //! customization of framework-owned CLI slots without replacing generated bootstrap or startup.
 //!
 //! ```text
-//! cargo run -p overseerd-example-daemon -- --help
-//! cargo run -p overseerd-example-daemon -- inspect registry --verbose
-//! cargo run -p overseerd-example-daemon -- database migrate --dry-run
-//! cargo run -p overseerd-example-daemon -- operator-context --operator release-bot
-//! cargo run -p overseerd-example-daemon -- --environment production --log-filter homeledger=trace --log-format json run
-//! cargo run -p overseerd-example-daemon --
+//! cargo run -p upwell-example-daemon -- --help
+//! cargo run -p upwell-example-daemon -- inspect registry --verbose
+//! cargo run -p upwell-example-daemon -- database migrate --dry-run
+//! cargo run -p upwell-example-daemon -- operator-context --operator release-bot
+//! cargo run -p upwell-example-daemon -- --environment production --log-filter homeledger=trace --log-format json run
+//! cargo run -p upwell-example-daemon --
 //! ```
 //!
 //! The declaration changes `--config` to `--config-dir`, `--profile` to `--environment`, and the
 //! generated `serve` command to `run`, while retaining visible compatibility aliases. The config
 //! directory and `development` profile declared with Clap's exact default settings are shown in
 //! help and make commands runnable from the workspace. Generated bootstrap retains their
-//! `DefaultValue` source. Config location resolves explicit CLI, `OVERSEERD_CONFIG`, parser default,
-//! then the platform directory; profiles resolve explicit CLI, `OVERSEERD_PROFILES`, parser
+//! `DefaultValue` source. Config location resolves explicit CLI, `UPWELL_CONFIG`, parser default,
+//! then the platform directory; profiles resolve explicit CLI, `UPWELL_PROFILES`, parser
 //! defaults, then an empty list. Loaded profile/base config participates later when logging and
 //! color settings are resolved.
 //! `--color` is deliberately disabled because Homeledger's logging destination owns ANSI policy
@@ -48,7 +48,7 @@ use crate::operations::HomeledgerOperationsPlugin;
 use crate::protocol::{
     AUDIT_EXPORT_SLOT, AUDIT_POLICY_SLOT, ComplianceAuditPolicyPlugin, HomeledgerRpc,
 };
-use overseerd::{Cfg, LogFormat, LoggingConfig, ServerConfig, TcpTransport, app};
+use upwell::{Cfg, LogFormat, LoggingConfig, ServerConfig, TcpTransport, app};
 
 app! {
     /// A generated Homeledger daemon host with lifecycle-aware administration commands.
@@ -130,13 +130,13 @@ app! {
 
             app.serve(transport).await?;
 
-            Ok::<(), overseerd::daemon::Error>(())
+            Ok::<(), upwell::daemon::Error>(())
         },
     }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), overseerd::CliError> {
+async fn main() -> Result<(), upwell::CliError> {
     DaemonApplication::run().await
 }
 

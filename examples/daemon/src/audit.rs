@@ -1,6 +1,6 @@
 //! Homeledger audit destinations and trait-provider injection.
 
-use overseerd::{component, injectable};
+use upwell::{component, injectable};
 
 /// A durable destination for transaction audit records.
 #[injectable]
