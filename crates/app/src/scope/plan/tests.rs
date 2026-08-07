@@ -2,10 +2,10 @@ use std::any::TypeId;
 use std::future::Future;
 use std::pin::Pin;
 
-use overseerd_core::{
+use upwell_core::{
     Cardinality, DependencyDescriptor, ResolutionMode, Scope, ScopeId, StaticScope, TypeDescriptor,
 };
-use overseerd_di::{
+use upwell_di::{
     BoxedComponent, ComponentConstructionContext, ComponentFactoryDescriptor, ComponentRegistry,
     DependencyTarget, ProviderDescriptor, ProviderOrder, ProviderOrderDirection,
     ProviderSelectionModel, Singleton,
@@ -14,10 +14,10 @@ use overseerd_di::{
 use super::*;
 use crate::{Error, ScopeBoundary, ScopeParent, ScopeTopology};
 
-const PARENT_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/parent");
-const CHILD_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/child");
-const SIBLING_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/sibling");
-const MISSING_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/missing");
+const PARENT_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/parent");
+const CHILD_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/child");
+const SIBLING_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/sibling");
+const MISSING_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/missing");
 
 struct Parent;
 struct Child;
@@ -87,7 +87,7 @@ trait ReorderedProvider: Send + Sync {}
 
 fn construct(
     _: &mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + '_>> {
+) -> Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + '_>> {
     Box::pin(async { unreachable!("planning does not invoke factories") })
 }
 
@@ -232,7 +232,7 @@ fn descriptor<T: 'static>(
         ty: TypeDescriptor::of::<T>(name),
         scope,
         factories,
-        hooks: overseerd_hooks::no_hooks,
+        hooks: upwell_hooks::no_hooks,
     }
 }
 
@@ -364,7 +364,7 @@ fn child_order_does_not_treat_sibling_factoryless_descriptors_as_prebuilt() {
 
     assert!(matches!(
         error,
-        Error::Di(overseerd_di::Error::DependencyCycle(_))
+        Error::Di(upwell_di::Error::DependencyCycle(_))
     ));
 }
 
@@ -385,7 +385,7 @@ fn topology_aware_registry_validation_rejects_sibling_dependencies() {
 
     assert!(matches!(
         error,
-        Error::Di(overseerd_di::Error::ScopeViolation(_))
+        Error::Di(upwell_di::Error::ScopeViolation(_))
     ));
 }
 
@@ -427,7 +427,7 @@ fn duplicate_qualifiers_across_scopes_plan_the_runtime_visible_provider() {
 
     assert!(matches!(
         selected.as_slice(),
-        [overseerd_di::SelectedDependency {
+        [upwell_di::SelectedDependency {
             target: DependencyTarget::Provider(provider),
             ..
         }] if provider.concrete_ty.type_id == TypeId::of::<ChildSharedProvider>()
@@ -469,7 +469,7 @@ fn reordered_transient_selection_plans_its_eager_dependencies() {
     let transient = descriptor::<SelectedTransientProvider>(
         "selected-transient",
         "SelectedTransientProvider",
-        &overseerd_core::Transient,
+        &upwell_core::Transient,
         transient_dependency_factory,
     );
     let descriptors = [consumer, scoped, dependency, transient];
@@ -509,7 +509,7 @@ fn reordered_transient_selection_plans_its_eager_dependencies() {
 
     assert!(matches!(
         selected.as_slice(),
-        [overseerd_di::SelectedDependency {
+        [upwell_di::SelectedDependency {
             target: DependencyTarget::Provider(provider),
             ..
         }] if provider.concrete_ty.type_id == TypeId::of::<SelectedTransientProvider>()

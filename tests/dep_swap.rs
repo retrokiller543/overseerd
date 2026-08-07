@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use overseerd::{App, Dep, component};
+use upwell::{App, Dep, component};
 
 /// The reloadable target. `id` distinguishes the original instance (built with
 /// `Default`) from a swapped-in replacement.

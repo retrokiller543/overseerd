@@ -61,10 +61,10 @@ fn expand_service_assertion(services: &[syn::Type], paths: &Paths) -> TokenStrea
 
         return quote! {
             const _: () = {
-                fn __overseerd_assert_wired<T: #wired>() {}
+                fn __upwell_assert_wired<T: #wired>() {}
 
-                fn __overseerd_app_check() {
-                    #(__overseerd_assert_wired::<#services>();)*
+                fn __upwell_app_check() {
+                    #(__upwell_assert_wired::<#services>();)*
                 }
             };
         };
@@ -84,8 +84,8 @@ fn expand_directories(
             value: ManagerValue::Instance(expression),
             ..
         }) => Ok((
-            quote!(let __overseerd_directories = #expression;),
-            quote!(.directories(__overseerd_directories)),
+            quote!(let __upwell_directories = #expression;),
+            quote!(.directories(__upwell_directories)),
             true,
         )),
         Some(ManagerSource {
@@ -112,8 +112,8 @@ fn expand_directories(
             };
 
             Ok((
-                quote!(let __overseerd_directories = #expression;),
-                quote!(.directories(__overseerd_directories)),
+                quote!(let __upwell_directories = #expression;),
+                quote!(.directories(__upwell_directories)),
                 true,
             ))
         }
@@ -134,8 +134,8 @@ fn expand_config(
             value: ManagerValue::Instance(expression),
             ..
         }) => Ok((
-            quote!(let __overseerd_config = #expression;),
-            quote!(.config_source(__overseerd_config)),
+            quote!(let __upwell_config = #expression;),
+            quote!(.config_source(__upwell_config)),
         )),
         Some(ManagerSource {
             key_span,
@@ -155,7 +155,7 @@ fn expand_config(
                     None => quote!(&[]),
                 };
 
-                quote!(#config_manager_path::<#config_dynamic>::load_from(&__overseerd_directories, #profiles)?)
+                quote!(#config_manager_path::<#config_dynamic>::load_from(&__upwell_directories, #profiles)?)
             } else {
                 return Err(error(
                     *key_span,
@@ -183,8 +183,8 @@ fn expand_config(
             }
 
             Ok((
-                quote!(let __overseerd_config = #chain;),
-                quote!(.config_source(__overseerd_config)),
+                quote!(let __upwell_config = #chain;),
+                quote!(.config_source(__upwell_config)),
             ))
         }
         None => Ok((TokenStream::new(), TokenStream::new())),

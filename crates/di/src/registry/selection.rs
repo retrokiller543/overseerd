@@ -1,7 +1,7 @@
 use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
 
-use overseerd_core::{Cardinality, DependencyDescriptor, ResolutionMode, Scope, ScopeId};
+use upwell_core::{Cardinality, DependencyDescriptor, ResolutionMode, Scope, ScopeId};
 
 use super::ComponentRegistry;
 use crate::descriptors::{ComponentDescriptor, ProviderDescriptor};

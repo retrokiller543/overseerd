@@ -2,10 +2,10 @@ use std::any::{Any, TypeId};
 use std::{fmt, future::Future, pin::Pin, sync::Mutex};
 
 use futures::Stream;
-use overseerd_core::{ResolverCtx, TypeDescriptor};
-use overseerd_di::{Component, ScopeContainer};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use upwell_core::{ResolverCtx, TypeDescriptor};
+use upwell_di::{Component, ScopeContainer};
 
 use crate::extract::ErrorResponse;
 
@@ -61,7 +61,7 @@ pub struct RpcCallContext {
     /// The remote peer, carried directly so the `Peer` extractor reaches it
     /// without a connection-scope container — letting an otherwise-empty
     /// connection scope be skipped.
-    pub(crate) peer: overseerd_transport::PeerInfo,
+    pub(crate) peer: upwell_transport::PeerInfo,
     /// `Mutex<Option<_>>` because extractors borrow `&ctx`; the `Streaming<T>`
     /// extractor takes the receiver out exactly once.
     pub(crate) requests: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
@@ -82,7 +82,7 @@ impl RpcCallContext {
     /// cancellation token.
     pub fn new(
         payload: Vec<u8>,
-        peer: overseerd_transport::PeerInfo,
+        peer: upwell_transport::PeerInfo,
         scope: std::sync::Arc<ScopeContainer>,
         requests: Option<mpsc::Receiver<Vec<u8>>>,
         cancel: CancellationToken,
@@ -103,7 +103,7 @@ impl RpcCallContext {
 
     /// The remote peer for this call. Public so guards and middleware can make
     /// admit/reject decisions on the peer without a handler extractor.
-    pub fn peer(&self) -> &overseerd_transport::PeerInfo {
+    pub fn peer(&self) -> &upwell_transport::PeerInfo {
         &self.peer
     }
 

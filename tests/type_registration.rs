@@ -11,8 +11,8 @@
 
 mod common;
 
-use overseerd::CallResult;
-use overseerd::daemon::{App, Payload, RpcAppBuilder, handlers, service};
+use upwell::CallResult;
+use upwell::daemon::{App, Payload, RpcAppBuilder, handlers, service};
 
 use common::{MemoryServer, deadline};
 

@@ -1,5 +1,5 @@
-use overseerd_config::{ConfigManager, Dynamic};
-use overseerd_dirs::DirectoriesManager;
+use upwell_config::{ConfigManager, Dynamic};
+use upwell_dirs::DirectoriesManager;
 
 use super::super::{BootstrapContext, PhaseError};
 use super::{CliDefinitionError, CommandError};
@@ -106,7 +106,7 @@ pub enum BootstrapError {
     Directories(#[source] std::io::Error),
     /// Configuration loading or extraction failed.
     #[error(transparent)]
-    Config(#[from] overseerd_config::ConfigError),
+    Config(#[from] upwell_config::ConfigError),
     /// An environment-provided log format was not recognized.
     #[error("unknown log format '{value}', expected one of: full, compact, pretty, json")]
     LogFormat { value: String },
@@ -311,7 +311,7 @@ pub enum CliError {
     /// Generated application declaration identity is incomplete.
     #[cfg(feature = "tooling")]
     #[error(transparent)]
-    ToolingIdentity(#[from] overseerd_tooling_schema::IdentityValidationError),
+    ToolingIdentity(#[from] upwell_tooling_schema::IdentityValidationError),
     /// Framework bootstrap failed before the app lifecycle began.
     #[error(transparent)]
     Bootstrap(#[from] BootstrapError),

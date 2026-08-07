@@ -1,6 +1,6 @@
 # Jobs Development Guide
 
-This document captures the next development direction for `overseerd-jobs`.
+This document captures the next development direction for `upwell-jobs`.
 The current implementation provides the core scheduling path: static `#[job]`
 discovery, dynamic scheduling, interval and cron schedules, per-run DI,
 cancellation, and tracing logs. The next useful step is to make jobs observable
@@ -9,7 +9,7 @@ and controllable while keeping storage and operational policy pluggable.
 ## Goals
 
 - Give applications a first-class way to inspect scheduled jobs and recent runs.
-- Support per-run progress and logs without coupling `overseerd-jobs` to a
+- Support per-run progress and logs without coupling `upwell-jobs` to a
   specific storage backend.
 - Add operational controls such as trigger-now, pause/resume, and reschedule.
 - Preserve the lightweight scheduler model: no persistence requirement, no
@@ -205,7 +205,7 @@ The runtime should expose these through a small observation interface and let
 the application connect it to `metrics`, OpenTelemetry, health endpoints, or its
 own system.
 
-Health should be policy-driven. `overseerd-jobs` should provide enough state for
+Health should be policy-driven. `upwell-jobs` should provide enough state for
 an application to decide whether a failed or stale job makes the process
 unhealthy; it should not hard-code that policy.
 
@@ -251,7 +251,7 @@ Proposed run span:
 
 ```rust
 let span = tracing::info_span!(
-    target: "overseerd::jobs",
+    target: "upwell::jobs",
     "job.run",
     job_id = %job_id,
     job_name = %name,

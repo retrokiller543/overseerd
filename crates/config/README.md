@@ -1,8 +1,8 @@
-# overseerd-config
+# upwell-config
 
-> Typed configuration for Overseerd: format-agnostic loading plus a DI-integrated `Cfg`/`ConfigManager`/reload layer.
+> Typed configuration for Upwell: format-agnostic loading plus a DI-integrated `Cfg`/`ConfigManager`/reload layer.
 
-Part of the [Overseerd](../../README.md) framework — the config layer, sitting above `overseerd-dirs` and below `overseerd-app` and the protocol crates.
+Part of the [Upwell](../../README.md) framework — the config layer, sitting above `upwell-dirs` and below `upwell-app` and the protocol crates.
 
 ## Role
 
@@ -10,10 +10,10 @@ This crate owns two layers. The **parser** is the format-agnostic core: a normal
 
 ## Usage
 
-Most users depend on the [`overseerd`](../../README.md) facade, which re-exports this crate — you rarely name it directly. In practice you meet it through the `#[config("path")]` field attribute, which binds a `#[config]` type from the merged config tree and injects it as a [`Cfg<T>`]; `${VAR}` templating and `#[default]`s are resolved during deserialization, and live reload is driven by the [`ConfigReloader`].
+Most users depend on the [`upwell`](../../README.md) facade, which re-exports this crate — you rarely name it directly. In practice you meet it through the `#[config("path")]` field attribute, which binds a `#[config]` type from the merged config tree and injects it as a [`Cfg<T>`]; `${VAR}` templating and `#[default]`s are resolved during deserialization, and live reload is driven by the [`ConfigReloader`].
 
 ```rust
-use overseerd::{Cfg, config};
+use upwell::{Cfg, config};
 
 #[config]
 #[derive(serde::Deserialize)]
@@ -31,7 +31,7 @@ pub struct Notifications {
 
 ## Internal role
 
-`overseerd-app` builds on this crate to load and merge the config tree during app assembly, expose it through the DI container via [`ConfigStore`]/[`ContainerConfigExt`], and register the [`ConfigReloader`] into the lifecycle. The protocol crates (`overseerd-rpc`, `overseerd-axum`) and the `#[config]`/`#[service]` macros rely on the [`Cfg<T>`] injectable and the `CONFIG_BINDINGS` descriptor slice for compile-time binding discovery.
+`upwell-app` builds on this crate to load and merge the config tree during app assembly, expose it through the DI container via [`ConfigStore`]/[`ContainerConfigExt`], and register the [`ConfigReloader`] into the lifecycle. The protocol crates (`upwell-rpc`, `upwell-axum`) and the `#[config]`/`#[service]` macros rely on the [`Cfg<T>`] injectable and the `CONFIG_BINDINGS` descriptor slice for compile-time binding discovery.
 
 ## Feature flags
 
@@ -40,4 +40,4 @@ pub struct Notifications {
 | `toml` *(default)* | TOML config sources (via `toml`) |
 | `yaml` | YAML config sources (via `serde_yaml_ng`), exposing `Yaml` |
 | `watch` | watch config files and reload on change (`ConfigManager::watch_config`), via `notify` |
-| `di-check` | compile-time DI graph validation (forwards to `overseerd-di/di-check`) |
+| `di-check` | compile-time DI graph validation (forwards to `upwell-di/di-check`) |

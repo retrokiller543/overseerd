@@ -17,9 +17,9 @@ use quote::{ToTokens, format_ident, quote};
 use syn::parse::ParseStream;
 use syn::{Ident, LitStr};
 
-use overseerd_macros_core::attr::ComponentArgs;
-use overseerd_macros_core::paths::Paths;
-use overseerd_macros_core::{ComponentContext, ComponentExt, NoExt, ParseItem, ParseKeyed, eat_eq};
+use upwell_macros_core::attr::ComponentArgs;
+use upwell_macros_core::paths::Paths;
+use upwell_macros_core::{ComponentContext, ComponentExt, NoExt, ParseItem, ParseKeyed, eat_eq};
 
 /// The `#[service]` args: the base component args extended with the RPC [`Router`]. (The
 /// `T: ComponentExt` bound is enforced through `Router<T>`'s own impls, not the alias.)
@@ -138,8 +138,7 @@ impl<T: ComponentExt> ToTokens for Router<T> {
 
         let client_struct = client_struct(ident);
 
-        let service_static =
-            format_ident!("__OVERSEERD_SERVICE_{}", ident.to_string().to_uppercase());
+        let service_static = format_ident!("__UPWELL_SERVICE_{}", ident.to_string().to_uppercase());
         let rpcs_slice = self
             .rpc_slice
             .clone()
@@ -160,12 +159,12 @@ impl<T: ComponentExt> ToTokens for Router<T> {
         // The service's own RPC groups — a single-kind per-type registry (no `Registration` merge),
         // so the `linkme` accessor returns its slice directly while the `inventory` accessor
         // materializes its bucket into a `OnceLock` cache. Both return `&'static [RpcGroup]`.
-        let registry = overseerd_macros_core::backend::registry_for_impl(
+        let registry = upwell_macros_core::backend::registry_for_impl(
             quote!(#ident),
             quote!(#rpc_group),
             paths,
         );
-        let rpcs_infra = overseerd_macros_core::backend::dual_backend(
+        let rpcs_infra = upwell_macros_core::backend::dual_backend(
             quote! {
                 #registry
 
@@ -209,7 +208,7 @@ impl<T: ComponentExt> ToTokens for Router<T> {
             #rpcs_infra
 
             const _: () = {
-                const __OVERSEERD_SERVICE_DESCRIPTOR: #service_descriptor =
+                const __UPWELL_SERVICE_DESCRIPTOR: #service_descriptor =
                     #service_descriptor {
                         id: #id,
                         name: #name,
@@ -219,12 +218,12 @@ impl<T: ComponentExt> ToTokens for Router<T> {
                     };
 
                 impl #descriptor_trait<#service_descriptor> for #ident {
-                    const DESCRIPTOR: #service_descriptor = __OVERSEERD_SERVICE_DESCRIPTOR;
+                    const DESCRIPTOR: #service_descriptor = __UPWELL_SERVICE_DESCRIPTOR;
                 }
 
                 #[#distributed_slice(#services_slice)]
                 #[linkme(crate = #linkme_crate)]
-                static #service_static: #service_descriptor = __OVERSEERD_SERVICE_DESCRIPTOR;
+                static #service_static: #service_descriptor = __UPWELL_SERVICE_DESCRIPTOR;
             };
 
             #inner

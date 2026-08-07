@@ -3,9 +3,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd_config::{ConfigManager, Toml};
-use overseerd_core::TypeDescriptor;
-use overseerd_di::{
+use upwell_config::{ConfigManager, Toml};
+use upwell_core::TypeDescriptor;
+use upwell_di::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
     ComponentFactoryDescriptor, Injectable, Singleton,
 };
@@ -50,7 +50,7 @@ impl Component for SeededComponent {
 
 fn construct_boundary_component(
     _context: &mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + '_>> {
+) -> Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + '_>> {
     Box::pin(async {
         FACTORY_CALLS.fetch_add(1, Ordering::SeqCst);
 
@@ -61,7 +61,7 @@ fn construct_boundary_component(
     })
 }
 
-fn no_dependencies() -> Vec<overseerd_core::DependencyDescriptor> {
+fn no_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
     Vec::new()
 }
 
@@ -81,7 +81,7 @@ static BOUNDARY_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<BoundaryComponent>(BoundaryComponent::NAME),
     scope: &Singleton,
     factories: boundary_factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 /// Protocol definition recording preparation calls.
@@ -102,8 +102,7 @@ impl ProtocolDefinition for BoundaryProtocol {
     type Prepared = PreparedBoundaryProtocol;
     type Error = crate::Error;
 
-    const ID: crate::ProtocolId =
-        overseerd_core::namespaced_id!(crate::ProtocolId, "test/boundary");
+    const ID: crate::ProtocolId = upwell_core::namespaced_id!(crate::ProtocolId, "test/boundary");
     const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
 
     fn register(&self, _registry: &mut AppRegistry) {}

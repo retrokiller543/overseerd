@@ -11,7 +11,7 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use overseerd_config::{
+use upwell_config::{
     ConfigManager, ConfigProperties, ConfigStr, ConfigValue, DefaultSpec, MapResolver, Resolver,
     ResolverChain, Toml, from_value,
 };

@@ -5,10 +5,10 @@
 
 use std::path::PathBuf;
 
-use overseerd::config::Toml;
-use overseerd::{ConfigManager, DirectoriesManager, config};
-use overseerd_config::ResolverChain;
 use serde::Deserialize;
+use upwell::config::Toml;
+use upwell::{ConfigManager, DirectoriesManager, config};
+use upwell_config::ResolverChain;
 
 /// Resolves directory placeholders against a fixed root, so `${@runtime}` becomes
 /// `<root>/runtime` deterministically.

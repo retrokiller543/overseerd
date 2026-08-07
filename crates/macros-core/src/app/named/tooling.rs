@@ -58,7 +58,7 @@ pub(super) fn expand(
             let plugins = #resolve_host_plugin_catalog::<#ident<#initial>>()
                 .map_err(#cli_error::from)
                 .and_then(|mut plugins| {
-                    Self::__overseerd_compose_cli(&mut plugins)?;
+                    Self::__upwell_compose_cli(&mut plugins)?;
 
                     Ok(plugins)
                 });
@@ -106,7 +106,7 @@ pub(super) fn expand(
 
             /// Internal generated alias used by the process runner and crate-local tests.
             #[doc(hidden)]
-            pub(crate) async fn __overseerd_tooling_probe(
+            pub(crate) async fn __upwell_tooling_probe(
                 target: #probe_target_identity,
             ) -> ::core::result::Result<#probe_envelope, #identity_error> {
                 Self::tooling_probe(target).await

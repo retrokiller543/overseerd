@@ -1,7 +1,7 @@
-use overseerd_macros_core::paths::Paths;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Ident, Type};
+use upwell_macros_core::paths::Paths;
 
 use super::inputs::{Body, BodyKind, QueryInput};
 use crate::route::RouteAttr;

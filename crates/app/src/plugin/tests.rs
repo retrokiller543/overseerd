@@ -3,9 +3,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd_config::{ConfigManager, ConfigProperties, Toml};
-use overseerd_core::TypeDescriptor;
-use overseerd_di::{
+use upwell_config::{ConfigManager, ConfigProperties, Toml};
+use upwell_core::TypeDescriptor;
+use upwell_di::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
     ComponentFactoryDescriptor, ProviderDescriptor, Singleton,
 };
@@ -83,17 +83,17 @@ static PLUGIN_PROVIDER: ProviderDescriptor = ProviderDescriptor {
 
 fn construct_protocol_component(
     _context: &mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + '_>> {
+) -> Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + '_>> {
     unreachable!("plugin preparation must not construct components")
 }
 
 fn construct_application_component(
     _context: &mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + '_>> {
+) -> Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + '_>> {
     unreachable!("plugin preparation must not construct components")
 }
 
-fn no_dependencies() -> Vec<overseerd_core::DependencyDescriptor> {
+fn no_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
     Vec::new()
 }
 
@@ -123,7 +123,7 @@ static PROTOCOL_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<ProtocolComponent>(ProtocolComponent::NAME),
     scope: &Singleton,
     factories: protocol_factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 static APPLICATION_COMPONENT: ComponentDescriptor = ComponentDescriptor {
@@ -132,10 +132,10 @@ static APPLICATION_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<ApplicationComponent>(ApplicationComponent::NAME),
     scope: &Singleton,
     factories: application_factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
-impl overseerd_core::Descriptor<ComponentDescriptor> for ApplicationComponent {
+impl upwell_core::Descriptor<ComponentDescriptor> for ApplicationComponent {
     const DESCRIPTOR: ComponentDescriptor = APPLICATION_COMPONENT;
 }
 
@@ -323,7 +323,7 @@ struct ReplacementHost;
 impl AppHost for ReplacementHost {
     type Protocol = DefaultProtocol;
 
-    fn builder() -> Result<AppBuilder<Self::Protocol>, overseerd_config::ConfigError> {
+    fn builder() -> Result<AppBuilder<Self::Protocol>, upwell_config::ConfigError> {
         Ok(
             App::<DefaultProtocol>::builder("static-plugin-declarations")
                 .config_source(ConfigManager::<Toml>::empty())
@@ -556,7 +556,7 @@ fn plugin_provider_without_component_is_rejected_during_preparation() {
 
     assert!(matches!(
         error,
-        crate::Error::Di(overseerd_di::Error::ProviderComponentMissing(_))
+        crate::Error::Di(upwell_di::Error::ProviderComponentMissing(_))
     ));
 }
 
@@ -569,7 +569,7 @@ fn protocol_provider_without_component_is_rejected_during_preparation() {
 
     assert!(matches!(
         error,
-        crate::Error::Di(overseerd_di::Error::ProviderComponentMissing(_))
+        crate::Error::Di(upwell_di::Error::ProviderComponentMissing(_))
     ));
 }
 

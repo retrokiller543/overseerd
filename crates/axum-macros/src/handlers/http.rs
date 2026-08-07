@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{FnArg, Ident, ImplItemFn, LitStr, Path, Type};
 
-use overseerd_macros_core::paths::Paths;
+use upwell_macros_core::paths::Paths;
 
 use crate::client;
 use crate::route::RouteAttr;

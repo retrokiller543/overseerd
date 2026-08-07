@@ -1,5 +1,5 @@
-use overseerd_test_utils::TempFixture;
-use overseerd_tooling_schema::{
+use upwell_test_utils::TempFixture;
+use upwell_tooling_schema::{
     BinaryTargetIdentity, Diagnostic, DiagnosticSeverity, DocumentIdentity, PackageIdentity,
     ProbeEnvelope, ProbeFailure, SourceLocation,
 };
@@ -11,7 +11,7 @@ use super::{
 
 #[test]
 fn response_is_published_as_valid_canonical_json() {
-    let fixture = TempFixture::new("overseerd-tooling-output-publish");
+    let fixture = TempFixture::new("upwell-tooling-output-publish");
     let path = fixture.child("response.json");
 
     emit_probe_envelope(&path, &envelope()).expect("response publishes");
@@ -28,7 +28,7 @@ fn response_is_published_as_valid_canonical_json() {
 
 #[test]
 fn invalid_envelope_is_rejected_before_target_inspection() {
-    let fixture = TempFixture::new("overseerd-tooling-output-serialize-first");
+    let fixture = TempFixture::new("upwell-tooling-output-serialize-first");
     let path = fixture.child("response.json");
     let mut envelope = envelope();
 
@@ -47,7 +47,7 @@ fn invalid_envelope_is_rejected_before_target_inspection() {
 
 #[test]
 fn existing_regular_target_is_never_intentionally_replaced() {
-    let fixture = TempFixture::new("overseerd-tooling-output-existing-file");
+    let fixture = TempFixture::new("upwell-tooling-output-existing-file");
     let path = fixture.child("response.json");
 
     std::fs::write(&path, "preserve-me").expect("existing fixture is written");
@@ -67,7 +67,7 @@ fn existing_regular_target_is_never_intentionally_replaced() {
 
 #[test]
 fn raced_target_atomically_rejects_publication_and_cleans_temporary_file() {
-    let fixture = TempFixture::new("overseerd-tooling-output-publish-race-secret");
+    let fixture = TempFixture::new("upwell-tooling-output-publish-race-secret");
     let path = fixture.child("response.json");
     let attacker_content = "attacker-content";
 
@@ -95,7 +95,7 @@ fn raced_target_atomically_rejects_publication_and_cleans_temporary_file() {
 
 #[test]
 fn missing_parent_is_rejected_without_creating_directories() {
-    let fixture = TempFixture::new("overseerd-tooling-output-missing-parent");
+    let fixture = TempFixture::new("upwell-tooling-output-missing-parent");
     let directory = fixture.child("missing-parent");
     let path = directory.join("response.json");
 
@@ -114,7 +114,7 @@ fn missing_parent_is_rejected_without_creating_directories() {
 fn published_response_is_private_and_symlink_targets_are_rejected() {
     use std::os::unix::fs::{MetadataExt as _, symlink};
 
-    let fixture = TempFixture::new("overseerd-tooling-output-private");
+    let fixture = TempFixture::new("upwell-tooling-output-private");
     let path = fixture.child("response.json");
 
     emit_probe_envelope(&path, &envelope()).expect("response publishes");
@@ -144,7 +144,7 @@ fn envelope() -> ProbeEnvelope {
         DocumentIdentity {
             application: String::from("output-test"),
             package: Some(PackageIdentity {
-                name: String::from("overseerd-app"),
+                name: String::from("upwell-app"),
                 version: Some(String::from(env!("CARGO_PKG_VERSION"))),
                 manifest_path: Some(format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR"))),
             }),
@@ -160,7 +160,7 @@ fn envelope() -> ProbeEnvelope {
         ProbeFailure {
             phase: Some(String::from("setup")),
             diagnostics: vec![Diagnostic {
-                code: String::from("overseerd/tooling-setup"),
+                code: String::from("upwell/tooling-setup"),
                 severity: DiagnosticSeverity::Error,
                 message: String::from("Application setup failed during the tooling probe."),
                 ..Diagnostic::default()

@@ -3,10 +3,10 @@
 use crate::components::Database;
 use crate::operations::OperationsArgs;
 use crate::protocol::{ComplianceAuditArgs, HomeledgerRpc};
-use overseerd::{App, BootstrapContext, DiError, resolve_host_dependency};
+use upwell::{App, BootstrapContext, DiError, resolve_host_dependency};
 
 #[cfg(test)]
-use overseerd::{ColorChoice, LogFormat};
+use upwell::{ColorChoice, LogFormat};
 
 #[cfg(test)]
 use std::sync::Mutex;

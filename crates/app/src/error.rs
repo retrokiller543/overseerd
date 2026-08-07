@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use overseerd_core::ScopeId;
+use upwell_core::ScopeId;
 
 /// Errors from the protocol-agnostic application core: registry validation, the DI
 /// engine, config, and hooks.
@@ -104,15 +104,15 @@ pub enum Error {
     /// A component-graph failure from the DI engine (cycle, missing dependency, ambiguous
     /// provider, scope violation, duplicate/ambiguous factory, …).
     #[error(transparent)]
-    Di(#[from] overseerd_di::Error),
+    Di(#[from] upwell_di::Error),
 
     /// A configuration loading, binding, or substitution failure.
     #[error(transparent)]
-    Config(#[from] overseerd_config::ConfigError),
+    Config(#[from] upwell_config::ConfigError),
 
     /// A hook failure (e.g. an unresolvable receiver or parameter).
     #[error(transparent)]
-    Hook(#[from] overseerd_hooks::Error),
+    Hook(#[from] upwell_hooks::Error),
 
     /// A protocol-owned scope topology declaration is structurally invalid.
     #[error(transparent)]

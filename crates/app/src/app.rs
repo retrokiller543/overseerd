@@ -9,22 +9,22 @@ use std::{
 use std::path::PathBuf;
 
 use futures::FutureExt;
-use overseerd_config::{
+use tracing::{debug, error, info};
+use upwell_config::{
     CONFIG_RELOADER_ID, CONFIG_RELOADER_NAME, ConfigBinding, ConfigManager, ConfigProperties,
     ConfigReloader, ConfigStore, ReloadTriggers, spawn_reload_triggers, stop_reload_triggers,
 };
-use overseerd_core::{
+use upwell_core::{
     Descriptor, ResolverCtx, ResolverSet, Singleton as SingletonScope, TypeDescriptor,
 };
-use overseerd_di::{
+use upwell_di::{
     BoxedComponent, Component, ComponentDescriptor, Injectable, RootResolver, ScopeContainer,
     ScopeRegistry, root_resolver_descriptor, topological_sort,
 };
-use overseerd_dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp};
-use overseerd_hooks::{
+use upwell_dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp};
+use upwell_hooks::{
     HOOK_MANAGER_ID, HOOK_MANAGER_NAME, HookDescriptor, HookKind, HookManager, Shutdown, Startup,
 };
-use tracing::{debug, error, info};
 
 use crate::error::Error;
 use crate::lifecycle::{ShutdownHandle, ShutdownSignal};
@@ -67,7 +67,7 @@ static HOOK_MANAGER_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manua
 ///
 /// Generic over the [`ProtocolDefinition`] it prepares. The agnostic builder methods (config,
 /// components, directories, auto-discovery) live here; protocol-specific methods come from
-/// an extension trait (e.g. `RpcAppBuilder` in `overseerd-rpc`), so the same builder serves
+/// an extension trait (e.g. `RpcAppBuilder` in `upwell-rpc`), so the same builder serves
 /// any protocol.
 pub struct AppBuilder<D: ProtocolDefinition> {
     name: String,
@@ -111,7 +111,7 @@ pub struct PreparedApp<D: ProtocolDefinition> {
     tooling_snapshot: Arc<crate::tooling::ProjectionSnapshot>,
     scope_registry: Arc<ScopeRegistry>,
     scope_topology: Arc<PreparedScopeTopology>,
-    scope_orders: Arc<HashMap<overseerd_core::ScopeId, Vec<ComponentDescriptor>>>,
+    scope_orders: Arc<HashMap<upwell_core::ScopeId, Vec<ComponentDescriptor>>>,
     seed_destinations: Arc<HashMap<std::any::TypeId, SeedDestination>>,
     resolvers: ResolverSet,
 }
@@ -299,7 +299,7 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
 
     /// Registers and validates the application without constructing ordinary components.
     pub fn prepare(self) -> Result<PreparedApp<D>, D::Error> {
-        debug!(target: "overseerd::app", app = %self.name, "building app");
+        debug!(target: "upwell::app", app = %self.name, "building app");
 
         let mut registry = self.registry;
         let mut instances = self.instances;
@@ -645,7 +645,7 @@ impl<D: ProtocolDefinition> PreparedApp<D> {
         // from the container at run time (kept as a `Weak`, so it adds no reference cycle).
         root_resolver.attach(&root);
 
-        info!(target: "overseerd::app",
+        info!(target: "upwell::app",
             app = %name,
             components = registry.components.len(),
             "app built"
@@ -778,7 +778,7 @@ impl<D: ProtocolDefinition> App<D> {
     }
 
     /// Starts building an app for protocol definition `D`. Most protocols expose a pinned
-    /// alias (e.g. `overseerd_rpc::App = App<Rpc>`) so `App::builder(name)` resolves
+    /// alias (e.g. `upwell_rpc::App = App<Rpc>`) so `App::builder(name)` resolves
     /// without a turbofish.
     pub fn builder(name: impl Into<String>) -> AppBuilder<D> {
         AppBuilder::new(name)
@@ -861,7 +861,7 @@ impl<D: ProtocolDefinition> App<D> {
         let shutdown_handle = shutdown.handle();
         let ctrlc = tokio::spawn(async move {
             if tokio::signal::ctrl_c().await.is_ok() {
-                info!(target: "overseerd::app", "ctrl-c received, shutting down");
+                info!(target: "upwell::app", "ctrl-c received, shutting down");
                 shutdown_handle.shutdown();
             }
         });
@@ -935,7 +935,7 @@ async fn run_startup(
             }
             Err(error) => {
                 error!(
-                    target: "overseerd::app",
+                    target: "upwell::app",
                     hook = Startup::NAME,
                     component = %component.name,
                     %error,
@@ -963,7 +963,7 @@ async fn run_shutdown(hooks: &HookManager, started: &HashSet<TypeId>) {
     {
         if let Err(error) = result {
             error!(
-                target: "overseerd::app",
+                target: "upwell::app",
                 hook = Shutdown::NAME,
                 component = %component.name,
                 %error,

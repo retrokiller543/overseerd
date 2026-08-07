@@ -87,7 +87,7 @@ fn framework_scopes_have_reserved_stable_ids() {
     let singleton: &dyn Scope = &Singleton;
     let transient: &dyn Scope = &Transient;
 
-    assert_eq!(singleton.id().as_str(), "overseerd/singleton");
-    assert_eq!(transient.id().as_str(), "overseerd/transient");
+    assert_eq!(singleton.id().as_str(), "upwell/singleton");
+    assert_eq!(transient.id().as_str(), "upwell/transient");
     assert!(transient.is_transient());
 }

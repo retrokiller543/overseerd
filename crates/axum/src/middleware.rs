@@ -15,8 +15,8 @@ use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::Response;
 use axum::routing::Route;
-use overseerd_app::AppRuntime;
 use tower::{Layer, Service};
+use upwell_app::AppRuntime;
 
 /// DI-backed middleware: intercepts a request before/after axum's handler dispatch.
 ///
@@ -55,7 +55,7 @@ where
 
 /// One registered global attach-point action: applies a layer — raw or DI-resolved — to the
 /// router being built. Boxed because it may capture a runtime layer *value* (not just a type),
-/// mirroring the RPC protocol's `LayerApplier` (`overseerd_rpc::middleware`).
+/// mirroring the RPC protocol's `LayerApplier` (`upwell_rpc::middleware`).
 pub(crate) type MiddlewareApplier =
     Box<dyn FnOnce(&AppRuntime, axum::Router) -> axum::Router + Send>;
 

@@ -8,19 +8,19 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::{
+use serde::{Deserialize, Deserializer};
+use tempfile::TempDir;
+use upwell::config::Toml;
+use upwell::daemon::App;
+use upwell::{
     Cfg, CfgNext, ConfigManager, ConfigProperties, ConfigReload, ConfigReloadError, HookOutcome,
     component, config, methods,
 };
-use overseerd_config::{Resolver, ResolverChain};
-use serde::{Deserialize, Deserializer};
-use tempfile::TempDir;
+use upwell_config::{Resolver, ResolverChain};
 
 fn temp_config(tag: &str, contents: &str) -> (TempDir, PathBuf) {
     let root = tempfile::Builder::new()
-        .prefix(&format!("overseerd-reload-hardening-{tag}-"))
+        .prefix(&format!("upwell-reload-hardening-{tag}-"))
         .tempdir()
         .expect("create config directory");
     let config = root.path().join("application.toml");
@@ -268,7 +268,7 @@ impl PanicOnceHook {
     async fn on_reload(
         &self,
         #[config("hooked")] _next: CfgNext<HookPanicConfig>,
-    ) -> overseerd::daemon::Result<HookOutcome> {
+    ) -> upwell::daemon::Result<HookOutcome> {
         if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
             panic!("sensitive hook panic payload");
         }

@@ -238,10 +238,10 @@ fn parse_command_entries(input: ParseStream) -> syn::Result<Vec<CommandEntry>> {
 
         variants.insert(variant);
 
-        if normalized.starts_with("--overseerd") || normalized.starts_with("__overseerd") {
+        if normalized.starts_with("--upwell") || normalized.starts_with("__upwell") {
             return Err(syn::Error::new(
                 name.span(),
-                "command names beginning with `__overseerd` are reserved for framework tooling",
+                "command names beginning with `__upwell` are reserved for framework tooling",
             ));
         }
 

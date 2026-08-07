@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.17.0](https://github.com/retrokiller543/overseerd/compare/overseerd-transport-v0.16.0...overseerd-transport-v0.17.0) - 2026-07-17
+## [0.17.0](https://github.com/upwell-rs/upwell/compare/upwell-transport-v0.16.0...upwell-transport-v0.17.0) - 2026-07-17
 
 ### Fixed
 
@@ -17,43 +17,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(rpc)* close cancellation and write-failure gaps
 - harden RPC transport resource handling
 
-## [0.16.0](https://github.com/retrokiller543/overseerd/compare/overseerd-transport-v0.15.0...overseerd-transport-v0.16.0) - 2026-07-17
+## [0.16.0](https://github.com/upwell-rs/upwell/compare/upwell-transport-v0.15.0...upwell-transport-v0.16.0) - 2026-07-17
 
 ### Fixed
 
-- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/retrokiller543/overseerd/pull/85))
+- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/upwell-rs/upwell/pull/85))
 
-## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-transport-v0.11.2...overseerd-transport-v0.12.0) - 2026-07-08
+## [0.12.0](https://github.com/upwell-rs/upwell/compare/upwell-transport-v0.11.2...upwell-transport-v0.12.0) - 2026-07-08
 
 ### Other
 
 - Added docs to all crates
 
-## [0.10.0](https://github.com/retrokiller543/overseerd/compare/overseerd-transport-v0.9.1...overseerd-transport-v0.10.0) - 2026-07-03
+## [0.10.0](https://github.com/upwell-rs/upwell/compare/upwell-transport-v0.9.1...upwell-transport-v0.10.0) - 2026-07-03
 
 ### Added
 
 - Made the framework compile to wasm and be able to generate wasm rest clients for axum.
 
-## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-transport-v0.6.0...overseerd-transport-v0.7.0) - 2026-06-30
+## [0.7.0](https://github.com/upwell-rs/upwell/compare/upwell-transport-v0.6.0...upwell-transport-v0.7.0) - 2026-06-30
 
 ### Other
 
-- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/overseerd/pull/20))
+- Feature/protocol agnostic ([#20](https://github.com/upwell-rs/upwell/pull/20))
 
-## [0.4.0](https://github.com/retrokiller543/overseerd/compare/overseerd-transport-v0.3.0...overseerd-transport-v0.4.0) - 2026-06-25
+## [0.4.0](https://github.com/upwell-rs/upwell/compare/upwell-transport-v0.3.0...upwell-transport-v0.4.0) - 2026-06-25
 
 ### Other
 
-- directory-namespace ergonomics + tagged-enum defaults ([#10](https://github.com/retrokiller543/overseerd/pull/10))
+- directory-namespace ergonomics + tagged-enum defaults ([#10](https://github.com/upwell-rs/upwell/pull/10))
 
-## [0.1.1](https://github.com/retrokiller543/overseerd/compare/overseerd-transport-v0.1.0...overseerd-transport-v0.1.1) - 2026-06-24
+## [0.1.1](https://github.com/upwell-rs/upwell/compare/upwell-transport-v0.1.0...upwell-transport-v0.1.1) - 2026-06-24
 
 ### Other
 
 - release v0.1.0
 
-## [0.1.0](https://github.com/retrokiller543/overseerd/releases/tag/overseerd-transport-v0.1.0) - 2026-06-24
+## [0.1.0](https://github.com/upwell-rs/upwell/releases/tag/upwell-transport-v0.1.0) - 2026-06-24
 
 ### Fixed
 
@@ -62,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Other
 
 - add crate metadata and internal dep versions for publishing
-- renamed the project to overseerd
+- renamed the project to upwell
 - Add configuration system and application directories
 - Add support for streaming with custom codecs and enhance client call handling
 - Add client SDK generation support and enhance error handling

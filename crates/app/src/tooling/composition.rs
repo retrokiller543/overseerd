@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use overseerd_tooling_schema::{RelationshipKind, ResourceKind};
+use upwell_tooling_schema::{RelationshipKind, ResourceKind};
 
 use super::{
     Projection, ToolingContributionError, ToolingProjectionError, contribution_id,
@@ -237,10 +237,10 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
                     &id,
                     ResourceKind::Contribution,
                     &provider.contribution,
-                    Some(overseerd_tooling_schema::Provenance {
+                    Some(upwell_tooling_schema::Provenance {
                         owner: Some(provider.contributor.clone()),
                         origin: Some(String::from("cli-provider")),
-                        ..overseerd_tooling_schema::Provenance::default()
+                        ..upwell_tooling_schema::Provenance::default()
                     }),
                     BTreeMap::from([
                         (String::from("provider-id"), provider.id),
@@ -355,11 +355,11 @@ fn contribution_kind_name(kind: PluginContributionKind) -> &'static str {
 }
 
 #[cfg(feature = "cli")]
-fn cli_provider_kind_name(kind: overseerd_tooling_schema::CliProviderKind) -> &'static str {
+fn cli_provider_kind_name(kind: upwell_tooling_schema::CliProviderKind) -> &'static str {
     match kind {
-        overseerd_tooling_schema::CliProviderKind::Args => "args",
-        overseerd_tooling_schema::CliProviderKind::Command => "command",
-        overseerd_tooling_schema::CliProviderKind::CommandSet => "command-set",
+        upwell_tooling_schema::CliProviderKind::Args => "args",
+        upwell_tooling_schema::CliProviderKind::Command => "command",
+        upwell_tooling_schema::CliProviderKind::CommandSet => "command-set",
         _ => "unknown",
     }
 }

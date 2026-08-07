@@ -6,15 +6,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use overseerd::daemon::{
+use tokio::time::timeout;
+use upwell::daemon::{
     App, Cancel, ErrorHandler, ErrorResponse, Payload, RpcAppBuilder, RpcLimits, handlers, service,
 };
-use overseerd::{
+use upwell::{
     CallResult, Connection, MemoryClient, MemoryConnection, MemoryTransport, PeerInfo,
     PredefinedCode, Respond, RespondStream, ResponseSink, StatusCode, Transport,
 };
-use overseerd_test_utils::AbortOnDropTask;
-use tokio::time::timeout;
+use upwell_test_utils::AbortOnDropTask;
 
 #[service(id = "hardening", version = "0.1")]
 struct Hardening;
@@ -87,8 +87,8 @@ fn encode<T: serde::Serialize>(value: &T) -> Vec<u8> {
 async fn start_memory(
     limits: RpcLimits,
 ) -> (
-    overseerd::MemoryConnectionHandle,
-    AbortOnDropTask<overseerd::daemon::Result<()>>,
+    upwell::MemoryConnectionHandle,
+    AbortOnDropTask<upwell::daemon::Result<()>>,
 ) {
     let (client, transport) = MemoryClient::pair();
     let app = App::builder("hardening-test")
@@ -285,8 +285,8 @@ struct PermanentFailTransport;
 impl Transport for PermanentFailTransport {
     type Connection = MemoryConnection;
 
-    async fn accept(&mut self) -> overseerd::transport::Result<Self::Connection> {
-        Err(overseerd::transport::Error::Io(std::io::Error::new(
+    async fn accept(&mut self) -> upwell::transport::Result<Self::Connection> {
+        Err(upwell::transport::Error::Io(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             "permanent test failure",
         )))
@@ -296,9 +296,9 @@ impl Transport for PermanentFailTransport {
 impl Transport for FlakyTransport {
     type Connection = MemoryConnection;
 
-    async fn accept(&mut self) -> overseerd::transport::Result<Self::Connection> {
+    async fn accept(&mut self) -> upwell::transport::Result<Self::Connection> {
         if std::mem::take(&mut self.fail_next) {
-            return Err(overseerd::transport::Error::Io(std::io::Error::new(
+            return Err(upwell::transport::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
                 "transient test failure",
             )));
@@ -373,7 +373,7 @@ struct PendingResponder;
 struct PendingSink;
 
 impl Respond for PendingResponder {
-    async fn respond(self, _outcome: CallResult) -> overseerd::transport::Result<()> {
+    async fn respond(self, _outcome: CallResult) -> upwell::transport::Result<()> {
         Ok(())
     }
 }
@@ -387,15 +387,15 @@ impl RespondStream for PendingResponder {
 }
 
 impl ResponseSink for PendingSink {
-    async fn send(&mut self, _item: Vec<u8>) -> overseerd::transport::Result<()> {
+    async fn send(&mut self, _item: Vec<u8>) -> upwell::transport::Result<()> {
         Ok(())
     }
 
-    async fn error(self, _code: StatusCode, _body: Vec<u8>) -> overseerd::transport::Result<()> {
+    async fn error(self, _code: StatusCode, _body: Vec<u8>) -> upwell::transport::Result<()> {
         Ok(())
     }
 
-    async fn finish(self) -> overseerd::transport::Result<()> {
+    async fn finish(self) -> upwell::transport::Result<()> {
         Ok(())
     }
 }
@@ -420,7 +420,7 @@ impl Connection for PendingConnection {
 
     async fn recv(
         &mut self,
-    ) -> overseerd::transport::Result<Option<(overseerd::IncomingCall, Self::Responder)>> {
+    ) -> upwell::transport::Result<Option<(upwell::IncomingCall, Self::Responder)>> {
         pending().await
     }
 }
@@ -433,7 +433,7 @@ struct UnlimitedTransport {
 impl Transport for UnlimitedTransport {
     type Connection = PendingConnection;
 
-    async fn accept(&mut self) -> overseerd::transport::Result<Self::Connection> {
+    async fn accept(&mut self) -> upwell::transport::Result<Self::Connection> {
         self.accepted.fetch_add(1, Ordering::SeqCst);
         self.live.fetch_add(1, Ordering::SeqCst);
         Ok(PendingConnection {

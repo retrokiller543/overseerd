@@ -1,5 +1,5 @@
 //! The RPC protocol's client: a byte-stream carry plus implementations of the
-//! [`overseerd_client`] capability traits.
+//! [`upwell_client`] capability traits.
 //!
 //! [`StreamClientTransport`] is the public transport (TCP/Unix); the call carry
 //! (`RpcCall`/`RpcSink`/`RpcSource`, the demux read loop, the `Reply` frames) is RPC-internal.
@@ -26,15 +26,15 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use overseerd_client::{
+use upwell_client::{
     BidiStreaming, ClientError, ClientStreaming, ErrorBody, ServerStreaming, StreamArg, Transport,
     Unary, retype,
 };
-use overseerd_transport::protocol::{
+use upwell_transport::protocol::{
     WireMessage, WireRequest, WireResponse,
     codec::{FrameConfig, MessageReader},
 };
-use overseerd_transport::{CallId, CodecError, Decodes, Encodes, Error, StatusCode, WireOutcome};
+use upwell_transport::{CallId, CodecError, Decodes, Encodes, Error, StatusCode, WireOutcome};
 
 /// Outbound frames buffered per call before the read loop backpressures.
 const REPLY_BUFFER: usize = 32;

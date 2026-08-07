@@ -1,4 +1,4 @@
-//! JSON-envelope request/reply over Overseerd's neutral WebSocket host.
+//! JSON-envelope request/reply over Upwell's neutral WebSocket host.
 //!
 //! Each inbound text frame is a `{ "dest": "<destination>", "id": <n>, "payload": <json> }` call;
 //! each reply is a `{ "dest": <destination>, "id": <n>, "ok": <json> }` or
@@ -12,40 +12,40 @@ use std::collections::HashMap;
 #[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 
-#[cfg(not(target_family = "wasm"))]
-use overseerd_axum::axum::body::Bytes;
-#[cfg(not(target_family = "wasm"))]
-use overseerd_axum::axum::extract::ws::{Message, Utf8Bytes, WebSocket};
-#[cfg(not(target_family = "wasm"))]
-use overseerd_axum::{AppRuntime, ScopeContainer};
-#[cfg(feature = "client")]
-use overseerd_client::{ClientError, ErrorBody};
-use overseerd_transport::CodecError;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_family = "wasm"))]
 use tracing::{debug, warn};
+#[cfg(not(target_family = "wasm"))]
+use upwell_axum::axum::body::Bytes;
+#[cfg(not(target_family = "wasm"))]
+use upwell_axum::axum::extract::ws::{Message, Utf8Bytes, WebSocket};
+#[cfg(not(target_family = "wasm"))]
+use upwell_axum::{AppRuntime, ScopeContainer};
+#[cfg(feature = "client")]
+use upwell_client::{ClientError, ErrorBody};
+use upwell_transport::CodecError;
 
 #[cfg(feature = "client")]
-use overseerd_axum::MessagingClientProtocol;
+use upwell_axum::MessagingClientProtocol;
 #[cfg(feature = "client")]
-use overseerd_axum::client::{
+use upwell_axum::client::{
     MessageRequest, MessageSend, TokioTungsteniteWs, WebsocketClient, WebsocketClientProtocol,
     WebsocketDecodes, WebsocketEncodes, WsClientFrame,
 };
 #[cfg(not(target_family = "wasm"))]
-use overseerd_axum::{
+use upwell_axum::{
     MessageReply, SOCKET_SEND_TIMEOUT, WebsocketMessageScope, WebsocketProtocol,
     WsControllerDescriptor, WsDispatchError, WsHandlerFn, WsIdle, WsRespond, WsShutdown,
 };
-use overseerd_axum::{MessagingProtocol, TopicCodec};
+use upwell_axum::{MessagingProtocol, TopicCodec};
 
 /// The JSON value carried as a message body.
 pub type WsValue = serde_json::Value;
 
 /// The baseline JSON-envelope protocol: a flat destination → handler table, point-to-point
 /// request/response over one socket. Holds a clone of the [`AppRuntime`] so it can open a fresh
-/// per-message [`WebsocketMessage`](overseerd_axum::WebsocketMessage) scope for handler DI.
+/// per-message [`WebsocketMessage`](upwell_axum::WebsocketMessage) scope for handler DI.
 pub struct JsonWs {
     #[cfg(not(target_family = "wasm"))]
     routes: HashMap<&'static str, WsHandlerFn<Self>>,
@@ -154,7 +154,7 @@ impl WebsocketProtocol for JsonWs {
 
                 _ = idle.wait() => {
                     if idle.on_timeout() {
-                        debug!(target: "overseerd::axum", "ws peer did not answer idle probe");
+                        debug!(target: "upwell::axum", "ws peer did not answer idle probe");
 
                         break;
                     }
@@ -196,7 +196,7 @@ impl WebsocketProtocol for JsonWs {
                         Some(Ok(_)) => idle.on_activity(),
 
                         Some(Err(error)) => {
-                            debug!(target: "overseerd::axum", %error, "ws connection read error");
+                            debug!(target: "upwell::axum", %error, "ws connection read error");
 
                             break;
                         }
@@ -234,7 +234,7 @@ impl JsonWs {
     /// Routes one inbound text frame and renders its reply. Returns `None` for a frame that can't be
     /// parsed at all (no `dest` to correlate a reply against) — it is dropped with a warning.
     ///
-    /// Opens a fresh per-message [`WebsocketMessage`](overseerd_axum::WebsocketMessage) scope
+    /// Opens a fresh per-message [`WebsocketMessage`](upwell_axum::WebsocketMessage) scope
     /// parented at the socket's connection scope, so a handler's `Inject<T>` resolves
     /// message-scoped components per message
     /// (and connection-/singleton-scoped ones through the chain).
@@ -243,7 +243,7 @@ impl JsonWs {
             Ok(inbound) => inbound,
 
             Err(error) => {
-                warn!(target: "overseerd::axum", %error, "unparseable ws frame; dropping");
+                warn!(target: "upwell::axum", %error, "unparseable ws frame; dropping");
 
                 return None;
             }
@@ -404,7 +404,7 @@ impl MessageSend<JsonWs> for TokioTungsteniteWs<JsonWs> {
 #[cfg(all(target_family = "wasm", feature = "tungstenite"))]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = connectJsonWs)]
 pub async fn connect_json_ws(
-    connection: &overseerd_axum::client::Connection,
+    connection: &upwell_axum::client::Connection,
     endpoint: String,
 ) -> Result<(), wasm_bindgen::JsError> {
     let url = connection.websocket_url(&endpoint);
@@ -420,16 +420,16 @@ pub async fn connect_json_ws(
 /// Detaches JSON WebSocket from the shared browser connection.
 #[cfg(all(target_family = "wasm", feature = "tungstenite"))]
 #[wasm_bindgen::prelude::wasm_bindgen(js_name = disconnectJsonWs)]
-pub fn disconnect_json_ws(connection: &overseerd_axum::client::Connection) {
+pub fn disconnect_json_ws(connection: &upwell_axum::client::Connection) {
     let _ = connection.detach_transport::<JsonWs, TokioTungsteniteWs<JsonWs>>();
 }
 
 #[cfg(all(target_family = "wasm", feature = "tungstenite"))]
-impl overseerd_axum::client::TopicWasmClient for JsonWs {
+impl upwell_axum::client::TopicWasmClient for JsonWs {
     type Transport = TokioTungsteniteWs<JsonWs>;
 
     fn transport(
-        connection: &overseerd_axum::client::Connection,
+        connection: &upwell_axum::client::Connection,
     ) -> Result<Self::Transport, wasm_bindgen::JsError> {
         connection.transport::<JsonWs, Self::Transport>()
     }
@@ -475,7 +475,7 @@ fn render_reply(
 
         Err(error) => {
             warn!(
-                target: "overseerd::axum",
+                target: "upwell::axum",
                 %error,
                 dest,
                 "ws message dispatch failed"

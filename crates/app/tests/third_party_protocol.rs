@@ -1,23 +1,23 @@
 use std::cell::Cell;
 
-use overseerd_app::{
+use upwell_app::{
     App, AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ProtocolId,
     ProtocolRuntime, ScopeBoundary, ScopeId, ScopeParent, ScopeTopology, Serve, ShutdownSignal,
     StaticScope, ValidationContext,
 };
 
-/// A custom boundary authored through `overseerd-app` alone.
+/// A custom boundary authored through `upwell-app` alone.
 struct SessionScope;
 
 impl StaticScope for SessionScope {
-    const ID: ScopeId = overseerd_app::namespaced_id!(ScopeId, "third-party/session");
+    const ID: ScopeId = upwell_app::namespaced_id!(ScopeId, "third-party/session");
     const RANK: u8 = 200;
     const NAME: &'static str = "Session";
 }
 
 const BOUNDARIES: [ScopeBoundary; 1] = [ScopeBoundary::new(&SessionScope, ScopeParent::Root)];
 
-/// A protocol definition authored through `overseerd-app` alone.
+/// A protocol definition authored through `upwell-app` alone.
 #[derive(Default)]
 struct Definition;
 
@@ -29,10 +29,10 @@ struct Runtime(Cell<u8>);
 
 impl ProtocolDefinition for Definition {
     type Prepared = Prepared;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
     const ID: ProtocolId =
-        overseerd_app::namespaced_id!(ProtocolId, "third-party/direct-app-contract");
+        upwell_app::namespaced_id!(ProtocolId, "third-party/direct-app-contract");
     const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::new(&BOUNDARIES);
 
     fn register(&self, _registry: &mut AppRegistry) {}
@@ -44,7 +44,7 @@ impl ProtocolDefinition for Definition {
 
 impl PreparedProtocol for Prepared {
     type Runtime = Runtime;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
         assert_eq!(self.0.get(), 1);
@@ -53,8 +53,8 @@ impl PreparedProtocol for Prepared {
     }
 
     #[cfg(feature = "tooling")]
-    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
-        contributions.display(overseerd_app::ResourceDisplay {
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
+        contributions.display(upwell_app::ResourceDisplay {
             label: Some(String::from("Direct app test protocol")),
             ..Default::default()
         });
@@ -62,7 +62,7 @@ impl PreparedProtocol for Prepared {
 }
 
 impl ProtocolRuntime for Runtime {
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 }
 
 impl Serve<()> for Runtime {

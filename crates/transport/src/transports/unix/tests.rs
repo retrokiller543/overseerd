@@ -3,7 +3,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use super::UnixTransport;
-use overseerd_test_utils::{TempFixture, run_command_with_timeout};
+use upwell_test_utils::{TempFixture, run_command_with_timeout};
 
 const RELATIVE_SOCKET_HELPER: &str =
     "transports::unix::tests::relative_socket_path_without_a_parent_helper";
@@ -13,7 +13,7 @@ const RELATIVE_SOCKET_HELPER_TIMEOUT: Duration = Duration::from_secs(5);
 async fn socket_and_parent_are_private() {
     use std::os::unix::fs::PermissionsExt;
 
-    let fixture = TempFixture::new("overseerd-unix-mode-");
+    let fixture = TempFixture::new("upwell-unix-mode-");
     let parent = fixture.child("socket");
     let path = parent.join("daemon.sock");
     let transport = UnixTransport::bind(path.clone()).expect("bind Unix socket");
@@ -35,7 +35,7 @@ async fn socket_and_parent_are_private() {
 fn symlinked_socket_parent_is_rejected() {
     use std::os::unix::fs::symlink;
 
-    let fixture = TempFixture::new("overseerd-unix-symlink-");
+    let fixture = TempFixture::new("upwell-unix-symlink-");
     let link = fixture.child("link");
     let target = fixture.child("target");
     let path = link.join("daemon.sock");
@@ -56,7 +56,7 @@ fn symlinked_socket_parent_is_rejected() {
 fn intermediate_symlink_in_socket_path_is_rejected() {
     use std::os::unix::fs::symlink;
 
-    let fixture = TempFixture::new("overseerd-unix-intermediate-");
+    let fixture = TempFixture::new("upwell-unix-intermediate-");
     let base = fixture.child("base");
     let target = fixture.child("target");
     let link = base.join("link");
@@ -98,7 +98,7 @@ async fn relative_socket_path_without_a_parent_helper() {
 
 #[test]
 fn relative_socket_path_without_a_parent_still_binds() {
-    let fixture = TempFixture::new("overseerd-unix-relative-");
+    let fixture = TempFixture::new("upwell-unix-relative-");
     let mut command = Command::new(std::env::current_exe().expect("locate test executable"));
 
     command
@@ -126,7 +126,7 @@ fn relative_socket_path_without_a_parent_still_binds() {
 fn group_writable_socket_parent_is_rejected_before_permissions_change() {
     use std::os::unix::fs::PermissionsExt;
 
-    let fixture = TempFixture::new("overseerd-unix-group-writable-parent-");
+    let fixture = TempFixture::new("upwell-unix-group-writable-parent-");
     let parent = fixture.child("parent");
     let path = parent.join("daemon.sock");
     std::fs::create_dir(&parent).expect("create parent");
@@ -151,7 +151,7 @@ fn group_writable_socket_parent_is_rejected_before_permissions_change() {
 fn group_writable_socket_ancestor_is_rejected() {
     use std::os::unix::fs::PermissionsExt;
 
-    let fixture = TempFixture::new("overseerd-unix-group-writable-ancestor-");
+    let fixture = TempFixture::new("upwell-unix-group-writable-ancestor-");
     let ancestor = fixture.child("ancestor");
     let path = ancestor.join("parent").join("daemon.sock");
     std::fs::create_dir(&ancestor).expect("create ancestor");

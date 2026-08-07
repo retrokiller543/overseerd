@@ -1,15 +1,15 @@
-use overseerd_core::{Scope, ScopeId, Singleton, StaticScope, Transient};
+use upwell_core::{Scope, ScopeId, Singleton, StaticScope, Transient};
 
 use super::*;
 
-const HTTP_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/http-request");
-const CONNECTION_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/websocket-connection");
-const MESSAGE_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/websocket-message");
-const SIBLING_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/sibling");
-const MISSING_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/missing");
-const CYCLE_A_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/cycle-a");
-const CYCLE_B_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/cycle-b");
-const LONG_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/long");
+const HTTP_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/http-request");
+const CONNECTION_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/websocket-connection");
+const MESSAGE_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/websocket-message");
+const SIBLING_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/sibling");
+const MISSING_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/missing");
+const CYCLE_A_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/cycle-a");
+const CYCLE_B_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/cycle-b");
+const LONG_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/long");
 
 struct Http;
 struct Connection;

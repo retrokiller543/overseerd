@@ -7,13 +7,13 @@ use std::panic::AssertUnwindSafe;
 use std::path::Path;
 
 use futures::FutureExt as _;
-use overseerd_di::ProviderDescriptor;
-use overseerd_tooling_schema::{
+use thiserror::Error;
+use upwell_di::ProviderDescriptor;
+use upwell_tooling_schema::{
     BinaryTargetIdentity, Diagnostic, DiagnosticSeverity, DocumentIdentity, PackageIdentity,
     ProbeEnvelope, ProbeFailure, ProbeTargetIdentity, Provenance, Resource, ResourceKind,
     ToolingDocument,
 };
-use thiserror::Error;
 
 use crate::{
     AppHost, BootstrapContext, ContributionProvenance, Contributor, ExecutionMode,
@@ -38,9 +38,9 @@ pub use output::{
     ToolingProbeOutputError, ToolingProbeOutputTargetError, emit_probe_envelope,
     emit_probe_envelope_from_env,
 };
-pub use overseerd_tooling_schema::ResourceDisplay;
 pub use panic::install_process_probe_panic_hook;
 pub(crate) use snapshot::ProjectionSnapshot;
+pub use upwell_tooling_schema::ResourceDisplay;
 
 /// A typed failure while projecting an already prepared application.
 #[derive(Debug, Error)]
@@ -51,7 +51,7 @@ pub enum ToolingProjectionError {
     Contribution(#[from] ToolingContributionError),
     /// The projected document violates the public schema.
     #[error(transparent)]
-    Schema(#[from] overseerd_tooling_schema::ValidationError),
+    Schema(#[from] upwell_tooling_schema::ValidationError),
 }
 
 /// A typed failure while preparing and projecting a generated application target.
@@ -111,7 +111,7 @@ pub enum ToolingProbeTargetError {
     RelativeManifestPath,
     /// The invoker-owned package or binary target identity is incomplete.
     #[error(transparent)]
-    InvalidIdentity(#[from] overseerd_tooling_schema::IdentityValidationError),
+    InvalidIdentity(#[from] upwell_tooling_schema::IdentityValidationError),
 }
 
 impl ToolingProbeError {
@@ -125,13 +125,13 @@ impl ToolingProbeError {
             Self::Bootstrap(error) => bootstrap_failure(error),
             Self::PluginCatalog(error) => framework_failure(
                 error,
-                "overseerd/tooling-plugin-catalog",
+                "upwell/tooling-plugin-catalog",
                 "The tooling plugin catalog could not be resolved.",
                 None,
             ),
             #[cfg(feature = "cli")]
             Self::CliDefinition(error) => (
-                "overseerd/tooling-cli-definition",
+                "upwell/tooling-cli-definition",
                 "The generated command-line definition is structurally invalid.",
                 None,
                 vec![format!("cli-command:{}", error.command())],
@@ -140,7 +140,7 @@ impl ToolingProbeError {
             ),
             #[cfg(feature = "cli")]
             Self::CliParse(_) => (
-                "overseerd/tooling-cli-bootstrap",
+                "upwell/tooling-cli-bootstrap",
                 "The generated framework parser rejected its own bootstrap defaults.",
                 None,
                 Vec::new(),
@@ -156,7 +156,7 @@ impl ToolingProbeError {
                 Some(error.phase().to_string()),
             ),
             Self::Projection(_) => (
-                "overseerd/tooling-projection",
+                "upwell/tooling-projection",
                 "The prepared application could not be projected into a valid tooling document.",
                 None,
                 Vec::new(),
@@ -164,7 +164,7 @@ impl ToolingProbeError {
                 Some("Correct the reported application metadata and retry the probe."),
             ),
             Self::Panic => (
-                "overseerd/tooling-panic",
+                "upwell/tooling-panic",
                 "The tooling probe panicked while preparing the application.",
                 None,
                 Vec::new(),
@@ -264,7 +264,7 @@ fn probe_envelope(
 /// This contract deliberately does not inspect `CARGO_CRATE_NAME`: a named application may be
 /// expanded in a library while the future Cargo invoker selects a thin binary target.
 pub fn probe_target_identity_from_env() -> Result<ProbeTargetIdentity, ToolingProbeTargetError> {
-    use overseerd_tooling_schema::{
+    use upwell_tooling_schema::{
         TOOLING_PROBE_BINARY_NAME_ENV, TOOLING_PROBE_MANIFEST_PATH_ENV,
         TOOLING_PROBE_PACKAGE_NAME_ENV, TOOLING_PROBE_PACKAGE_VERSION_ENV,
     };
@@ -326,7 +326,7 @@ type FailureDetails = (
     &'static str,
     Option<String>,
     Vec<String>,
-    Vec<overseerd_tooling_schema::SourceLocation>,
+    Vec<upwell_tooling_schema::SourceLocation>,
     Option<&'static str>,
 );
 
@@ -334,7 +334,7 @@ type FailureDetails = (
 fn bootstrap_failure(error: &crate::BootstrapError) -> FailureDetails {
     match error {
         crate::BootstrapError::Directories(_) => (
-            "overseerd/tooling-directories",
+            "upwell/tooling-directories",
             "Application directories could not be resolved for the tooling probe.",
             None,
             Vec::new(),
@@ -343,7 +343,7 @@ fn bootstrap_failure(error: &crate::BootstrapError) -> FailureDetails {
         ),
         crate::BootstrapError::Config(error) => config_failure(error, None),
         crate::BootstrapError::LogFormat { .. } => (
-            "overseerd/tooling-log-format",
+            "upwell/tooling-log-format",
             "The configured tooling log format is not supported.",
             None,
             Vec::new(),
@@ -351,7 +351,7 @@ fn bootstrap_failure(error: &crate::BootstrapError) -> FailureDetails {
             Some("Use one of: full, compact, pretty, or json."),
         ),
         crate::BootstrapError::MissingConfigPath { .. } => (
-            "overseerd/tooling-config-path-missing",
+            "upwell/tooling-config-path-missing",
             "The selected configuration path does not exist.",
             None,
             Vec::new(),
@@ -360,7 +360,7 @@ fn bootstrap_failure(error: &crate::BootstrapError) -> FailureDetails {
         ),
         #[cfg(feature = "tracing-subscriber")]
         crate::BootstrapError::Tracing(_) => (
-            "overseerd/tooling-tracing",
+            "upwell/tooling-tracing",
             "Tracing could not be initialized for the tooling probe.",
             None,
             Vec::new(),
@@ -395,7 +395,7 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
         crate::Error::MissingConfig {
             component, path, ..
         } => (
-            "overseerd/tooling-config-binding-missing",
+            "upwell/tooling-config-binding-missing",
             "A component requires a configuration binding that is not registered.",
             phase,
             vec![component_resource(component), config_resource(path)],
@@ -403,7 +403,7 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
             Some("Register the missing configuration binding or name an existing binding."),
         ),
         crate::Error::AmbiguousConfig { component, .. } => (
-            "overseerd/tooling-config-binding-ambiguous",
+            "upwell/tooling-config-binding-ambiguous",
             "A component configuration binding is ambiguous.",
             phase,
             vec![component_resource(component)],
@@ -413,7 +413,7 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
         crate::Error::Config(error) => config_failure(error, phase),
         crate::Error::Di(error) => failure::di_failure(error, phase),
         crate::Error::Hook(_) => (
-            "overseerd/tooling-hook",
+            "upwell/tooling-hook",
             "A framework lifecycle hook could not be prepared.",
             phase,
             Vec::new(),
@@ -421,7 +421,7 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
             Some("Run the selected target normally to investigate the hook failure."),
         ),
         crate::Error::Composition(_) => (
-            "overseerd/tooling-plugin-composition",
+            "upwell/tooling-plugin-composition",
             "Plugin declarations could not be composed into a deterministic plan.",
             phase,
             Vec::new(),
@@ -429,7 +429,7 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
             Some("Correct the conflicting plugin declarations or dependencies."),
         ),
         crate::Error::PluginPlan(_) => (
-            "overseerd/tooling-plugin-plan",
+            "upwell/tooling-plugin-plan",
             "Plugin contributions could not be lowered into the application plan.",
             phase,
             Vec::new(),
@@ -437,7 +437,7 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
             Some("Correct duplicate or reserved plugin contribution identities."),
         ),
         crate::Error::ScopeTopology(error) => (
-            "overseerd/tooling-scope-topology",
+            "upwell/tooling-scope-topology",
             "The protocol scope topology is structurally invalid.",
             phase,
             failure::scope_topology_resources(error),
@@ -447,7 +447,7 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
         crate::Error::UndeclaredScope {
             component, scope, ..
         } => (
-            "overseerd/tooling-scope-undeclared",
+            "upwell/tooling-scope-undeclared",
             "A component refers to a scope absent from the selected protocol.",
             phase,
             vec![component_resource(component), format!("scope:{scope}")],
@@ -455,7 +455,7 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
             Some("Declare the scope in the protocol topology or change the component scope."),
         ),
         _ => (
-            "overseerd/tooling-framework",
+            "upwell/tooling-framework",
             "The framework could not prepare the application tooling plan.",
             phase,
             Vec::new(),
@@ -465,42 +465,42 @@ fn app_failure(error: &crate::Error, phase: Option<String>) -> FailureDetails {
     }
 }
 
-fn config_failure(error: &overseerd_config::ConfigError, phase: Option<String>) -> FailureDetails {
+fn config_failure(error: &upwell_config::ConfigError, phase: Option<String>) -> FailureDetails {
     match error {
-        overseerd_config::ConfigError::Io { .. } => (
-            "overseerd/tooling-config-read",
+        upwell_config::ConfigError::Io { .. } => (
+            "upwell/tooling-config-read",
             "A configuration source could not be read.",
             phase,
             Vec::new(),
             Vec::new(),
             Some("Verify that the configuration source exists and is readable."),
         ),
-        overseerd_config::ConfigError::Parse { .. } => (
-            "overseerd/tooling-config-parse",
+        upwell_config::ConfigError::Parse { .. } => (
+            "upwell/tooling-config-parse",
             "A configuration source could not be parsed.",
             phase,
             Vec::new(),
             Vec::new(),
             Some("Correct the configuration syntax or unresolved placeholders."),
         ),
-        overseerd_config::ConfigError::UnsupportedFormat { .. } => (
-            "overseerd/tooling-config-format",
+        upwell_config::ConfigError::UnsupportedFormat { .. } => (
+            "upwell/tooling-config-format",
             "A configuration source uses an unsupported format.",
             phase,
             Vec::new(),
             Vec::new(),
             Some("Use a configuration format enabled for the selected target."),
         ),
-        overseerd_config::ConfigError::MissingPath { path } => (
-            "overseerd/tooling-config-value-missing",
+        upwell_config::ConfigError::MissingPath { path } => (
+            "upwell/tooling-config-value-missing",
             "A required configuration value is absent.",
             phase,
             vec![config_resource(path)],
             Vec::new(),
             Some("Define the required configuration path in an active source."),
         ),
-        overseerd_config::ConfigError::Substitution { path, .. } => (
-            "overseerd/tooling-config-substitution",
+        upwell_config::ConfigError::Substitution { path, .. } => (
+            "upwell/tooling-config-substitution",
             "A configuration placeholder could not be resolved.",
             phase,
             vec![config_resource(path)],
@@ -508,7 +508,7 @@ fn config_failure(error: &overseerd_config::ConfigError, phase: Option<String>) 
             Some("Define the referenced value without exposing it through probe output."),
         ),
         _ => (
-            "overseerd/tooling-config",
+            "upwell/tooling-config",
             "Configuration could not be prepared for tooling.",
             phase,
             Vec::new(),
@@ -564,13 +564,13 @@ async fn try_probe_host_with_plugins<H: AppHost>(
 
 fn lifecycle_failure_code(phase: LifecyclePhase) -> &'static str {
     match phase {
-        LifecyclePhase::Setup => "overseerd/tooling-setup",
-        LifecyclePhase::Configure => "overseerd/tooling-configure",
-        LifecyclePhase::BeforeBuild => "overseerd/tooling-before-build",
-        LifecyclePhase::Prepare => "overseerd/tooling-prepare",
-        LifecyclePhase::Build => "overseerd/tooling-build",
-        LifecyclePhase::AfterBuild => "overseerd/tooling-after-build",
-        LifecyclePhase::Serve => "overseerd/tooling-serve",
+        LifecyclePhase::Setup => "upwell/tooling-setup",
+        LifecyclePhase::Configure => "upwell/tooling-configure",
+        LifecyclePhase::BeforeBuild => "upwell/tooling-before-build",
+        LifecyclePhase::Prepare => "upwell/tooling-prepare",
+        LifecyclePhase::Build => "upwell/tooling-build",
+        LifecyclePhase::AfterBuild => "upwell/tooling-after-build",
+        LifecyclePhase::Serve => "upwell/tooling-serve",
     }
 }
 

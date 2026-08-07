@@ -14,11 +14,11 @@ use arc_swap::ArcSwap;
 // The axum extractors are used only by the REST handler bodies below, which the macros gate out on
 // wasm; the `axum` re-export doesn't exist on wasm, so the imports are gated with their uses.
 #[cfg(not(target_family = "wasm"))]
-use overseerd::axum::axum::Json;
+use upwell::axum::axum::Json;
 #[cfg(not(target_family = "wasm"))]
-use overseerd::axum::axum::extract::Path;
-use overseerd::axum::*;
-use overseerd::component;
+use upwell::axum::axum::extract::Path;
+use upwell::axum::*;
+use upwell::component;
 
 /// One chat message: which room it belongs to, who sent it, and its text.
 #[dto]

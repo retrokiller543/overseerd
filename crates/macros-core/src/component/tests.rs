@@ -13,7 +13,7 @@ fn component_impl_items_follow_trait_order() {
         struct Example;
     );
 
-    let tokens = expand(args, item, &Paths::overseerd()).expect("component expands");
+    let tokens = expand(args, item, &Paths::upwell()).expect("component expands");
     let file = syn::parse2::<syn::File>(tokens).expect("component expansion parses");
     let component_impl = file
         .items

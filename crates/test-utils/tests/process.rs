@@ -3,7 +3,7 @@
 use std::process::Command;
 use std::time::Duration;
 
-use overseerd_test_utils::{run_command, run_command_with_timeout};
+use upwell_test_utils::{run_command, run_command_with_timeout};
 
 #[test]
 fn command_closes_stdin_and_drains_large_output() {

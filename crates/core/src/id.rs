@@ -5,7 +5,7 @@ use std::{error::Error, fmt};
 const SEPARATOR: u8 = b'/';
 
 /// Namespace reserved for framework-owned stable identities.
-pub const FRAMEWORK_NAMESPACE: &str = "overseerd";
+pub const FRAMEWORK_NAMESPACE: &str = "upwell";
 
 /// Runtime namespace comparisons shared by category-safe namespaced ID types.
 ///

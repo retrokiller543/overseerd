@@ -1,15 +1,15 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use overseerd_core::{DependencyDescriptor, Singleton, StaticScope, Transient, TypeDescriptor};
+use upwell_core::{DependencyDescriptor, Singleton, StaticScope, Transient, TypeDescriptor};
 
 use super::*;
 use crate::descriptors::{
     BoxedComponent, ComponentConstructionContext, ComponentFactoryDescriptor,
 };
 
-const NEAR_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/selection-near");
-const FAR_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/selection-far");
+const NEAR_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/selection-near");
+const FAR_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/selection-far");
 
 struct NearScope;
 
@@ -68,7 +68,7 @@ fn component<T: 'static>(
         ty: TypeDescriptor::of::<T>(id),
         scope,
         factories,
-        hooks: overseerd_hooks::no_hooks,
+        hooks: upwell_hooks::no_hooks,
     }
 }
 

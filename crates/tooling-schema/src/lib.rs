@@ -1,4 +1,4 @@
-//! Versioned protocol-neutral documents exchanged with Overseerd developer tooling.
+//! Versioned protocol-neutral documents exchanged with Upwell developer tooling.
 //!
 //! The schema contains only stable textual identities and JSON data. It deliberately has no
 //! dependency on application runtime state, Clap, Cargo metadata, or a concrete protocol.
@@ -17,22 +17,22 @@ pub use serde_json::Value as JsonValue;
 pub const TOOLING_SCHEMA_VERSION: Version = parse_package_version(env!("CARGO_PKG_VERSION"));
 
 /// Exact hidden process argument used to request one target-local tooling probe.
-pub const TOOLING_PROBE_ARGUMENT: &str = "--__overseerd-tooling-probe-v1";
+pub const TOOLING_PROBE_ARGUMENT: &str = "--__upwell-tooling-probe-v1";
 
 /// Environment variable containing the response file path for a target-local tooling probe.
-pub const TOOLING_PROBE_OUTPUT_ENV: &str = "OVERSEERD_TOOLING_PROBE_OUTPUT";
+pub const TOOLING_PROBE_OUTPUT_ENV: &str = "UPWELL_TOOLING_PROBE_OUTPUT";
 
 /// Environment variable containing the Cargo package name selected by the tooling invoker.
-pub const TOOLING_PROBE_PACKAGE_NAME_ENV: &str = "OVERSEERD_TOOLING_PROBE_PACKAGE_NAME";
+pub const TOOLING_PROBE_PACKAGE_NAME_ENV: &str = "UPWELL_TOOLING_PROBE_PACKAGE_NAME";
 
 /// Environment variable containing the selected Cargo package version.
-pub const TOOLING_PROBE_PACKAGE_VERSION_ENV: &str = "OVERSEERD_TOOLING_PROBE_PACKAGE_VERSION";
+pub const TOOLING_PROBE_PACKAGE_VERSION_ENV: &str = "UPWELL_TOOLING_PROBE_PACKAGE_VERSION";
 
 /// Environment variable containing the selected Cargo package manifest path.
-pub const TOOLING_PROBE_MANIFEST_PATH_ENV: &str = "OVERSEERD_TOOLING_PROBE_MANIFEST_PATH";
+pub const TOOLING_PROBE_MANIFEST_PATH_ENV: &str = "UPWELL_TOOLING_PROBE_MANIFEST_PATH";
 
 /// Environment variable containing the Cargo binary target selected by the tooling invoker.
-pub const TOOLING_PROBE_BINARY_NAME_ENV: &str = "OVERSEERD_TOOLING_PROBE_BINARY_NAME";
+pub const TOOLING_PROBE_BINARY_NAME_ENV: &str = "UPWELL_TOOLING_PROBE_BINARY_NAME";
 
 const fn parse_package_version(version: &str) -> Version {
     let bytes = version.as_bytes();
@@ -978,7 +978,7 @@ impl Default for ValidationResult {
 pub struct ToolingDocument {
     /// Document compatibility version.
     pub schema: Version,
-    /// Overseerd framework version that produced the document.
+    /// Upwell framework version that produced the document.
     pub framework_version: String,
     /// Application/package/binary/source identity.
     pub identity: DocumentIdentity,

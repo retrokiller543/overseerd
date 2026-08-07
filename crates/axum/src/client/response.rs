@@ -24,7 +24,7 @@ pub struct RedirectResponse {
 /// (`response.field`, `&*response`) while [`status`](Self::status) and
 /// [`headers`](Self::headers) expose the rest. Bundled clients return this envelope for
 /// successful HTTP statuses; non-success statuses are surfaced as
-/// [`ClientError::Remote`](overseerd_client::ClientError::Remote) with the raw error body.
+/// [`ClientError::Remote`](upwell_client::ClientError::Remote) with the raw error body.
 pub struct HttpResponse<R> {
     status: StatusCode,
     headers: HeaderMap,

@@ -1,43 +1,43 @@
 use super::super::FailureDetails;
 
 pub(in crate::tooling) fn di_failure(
-    error: &overseerd_di::Error,
+    error: &upwell_di::Error,
     phase: Option<String>,
 ) -> FailureDetails {
     match error {
-        overseerd_di::Error::MissingDependency {
+        upwell_di::Error::MissingDependency {
             component_id,
             type_name,
             ..
         } => (
-            "overseerd/tooling-dependency-missing",
+            "upwell/tooling-dependency-missing",
             "A component dependency has no registered provider.",
             phase,
             vec![component_resource(component_id), type_resource(type_name)],
             Vec::new(),
             Some("Register one provider for the missing dependency type."),
         ),
-        overseerd_di::Error::DependencyCycle(_) => (
-            "overseerd/tooling-dependency-cycle",
+        upwell_di::Error::DependencyCycle(_) => (
+            "upwell/tooling-dependency-cycle",
             "Component dependencies contain a construction cycle.",
             phase,
             Vec::new(),
             Vec::new(),
             Some("Break the component dependency cycle."),
         ),
-        overseerd_di::Error::AmbiguousProvider {
+        upwell_di::Error::AmbiguousProvider {
             component_id,
             type_name,
         } => (
-            "overseerd/tooling-provider-ambiguous",
+            "upwell/tooling-provider-ambiguous",
             "A dependency has more than one eligible provider.",
             phase,
             optional_component_and_type(component_id.as_deref(), type_name),
             Vec::new(),
             Some("Mark one provider primary or request a provider collection."),
         ),
-        overseerd_di::Error::ProviderComponentMissing(error) => {
-            let overseerd_di::ProviderComponentMissing {
+        upwell_di::Error::ProviderComponentMissing(error) => {
+            let upwell_di::ProviderComponentMissing {
                 trait_type,
                 component_type,
                 qualifier,
@@ -45,7 +45,7 @@ pub(in crate::tooling) fn di_failure(
             } = error.as_ref();
 
             (
-                "overseerd/tooling-provider-component-missing",
+                "upwell/tooling-provider-component-missing",
                 "A provider descriptor references a concrete component that is not in the effective component set.",
                 phase,
                 vec![
@@ -60,8 +60,8 @@ pub(in crate::tooling) fn di_failure(
                 ),
             )
         }
-        overseerd_di::Error::ScopeViolation(error) => {
-            let overseerd_di::ScopeViolation {
+        upwell_di::Error::ScopeViolation(error) => {
+            let upwell_di::ScopeViolation {
                 component_id,
                 dependency_type,
                 component_scope_id,
@@ -70,7 +70,7 @@ pub(in crate::tooling) fn di_failure(
             } = error.as_ref();
 
             (
-                "overseerd/tooling-scope-violation",
+                "upwell/tooling-scope-violation",
                 "A component dependency crosses an inaccessible or shorter-lived scope boundary.",
                 phase,
                 vec![
@@ -83,8 +83,8 @@ pub(in crate::tooling) fn di_failure(
                 Some("Move the dependency to a reachable scope or shorten the consumer lifetime."),
             )
         }
-        overseerd_di::Error::ScopeUnreachableDependency(error) => {
-            let overseerd_di::ScopeUnreachableDependency {
+        upwell_di::Error::ScopeUnreachableDependency(error) => {
+            let upwell_di::ScopeUnreachableDependency {
                 component_id,
                 dependency_type,
                 component_scope_id,
@@ -111,7 +111,7 @@ pub(in crate::tooling) fn di_failure(
             }
 
             (
-                "overseerd/tooling-scope-unreachable",
+                "upwell/tooling-scope-unreachable",
                 "Registered providers exist, but none is reachable from the consumer scope.",
                 phase,
                 resources,
@@ -121,8 +121,8 @@ pub(in crate::tooling) fn di_failure(
                 ),
             )
         }
-        overseerd_di::Error::InvalidFreshDependency(error) => {
-            let overseerd_di::InvalidFreshDependency {
+        upwell_di::Error::InvalidFreshDependency(error) => {
+            let upwell_di::InvalidFreshDependency {
                 component_id,
                 dependency_type,
                 component_scope,
@@ -131,7 +131,7 @@ pub(in crate::tooling) fn di_failure(
             } = error.as_ref();
 
             (
-                "overseerd/tooling-fresh-dependency-invalid",
+                "upwell/tooling-fresh-dependency-invalid",
                 "A fresh dependency cannot be constructed from the consumer scope.",
                 phase,
                 vec![
@@ -146,8 +146,8 @@ pub(in crate::tooling) fn di_failure(
                 ),
             )
         }
-        overseerd_di::Error::DeferredTransientDependency(error) => {
-            let overseerd_di::DeferredTransientDependency {
+        upwell_di::Error::DeferredTransientDependency(error) => {
+            let upwell_di::DeferredTransientDependency {
                 component_id,
                 dependency_type,
                 component_scope,
@@ -156,7 +156,7 @@ pub(in crate::tooling) fn di_failure(
             } = error.as_ref();
 
             (
-                "overseerd/tooling-deferred-transient",
+                "upwell/tooling-deferred-transient",
                 "A deferred dependency selected a transient target that cannot be hydrated.",
                 phase,
                 vec![
@@ -169,29 +169,29 @@ pub(in crate::tooling) fn di_failure(
                 Some("Store the target in a scope or use eager, lazy, or fresh resolution."),
             )
         }
-        overseerd_di::Error::UnsupportedFreshFactory {
+        upwell_di::Error::UnsupportedFreshFactory {
             component_id,
             type_name,
             ..
         } => (
-            "overseerd/tooling-fresh-factory-unsupported",
+            "upwell/tooling-fresh-factory-unsupported",
             "Fresh construction selected a component without a usable factory.",
             phase,
             optional_component_and_type(component_id.as_deref(), type_name),
             Vec::new(),
             Some("Register a component factory or use stored resolution."),
         ),
-        overseerd_di::Error::DuplicateProviderQualifier {
+        upwell_di::Error::DuplicateProviderQualifier {
             trait_type, scope, ..
         } => (
-            "overseerd/tooling-provider-qualifier-duplicate",
+            "upwell/tooling-provider-qualifier-duplicate",
             "Provider qualifier selection is ambiguous within one scope.",
             phase,
             vec![type_resource(trait_type), scope_resource(*scope)],
             Vec::new(),
             Some("Give same-scope providers unique qualifiers."),
         ),
-        overseerd_di::Error::MissingProviderOrderTarget {
+        upwell_di::Error::MissingProviderOrderTarget {
             component_id,
             target_type,
             ..
@@ -199,7 +199,7 @@ pub(in crate::tooling) fn di_failure(
             phase,
             vec![component_resource(component_id), type_resource(target_type)],
         ),
-        overseerd_di::Error::SelfProviderOrder {
+        upwell_di::Error::SelfProviderOrder {
             component_id,
             component_type,
             ..
@@ -210,8 +210,8 @@ pub(in crate::tooling) fn di_failure(
                 type_resource(component_type),
             ],
         ),
-        overseerd_di::Error::ProviderOrderSourceTraitMismatch(error) => {
-            let overseerd_di::ProviderOrderSourceTraitMismatch {
+        upwell_di::Error::ProviderOrderSourceTraitMismatch(error) => {
+            let upwell_di::ProviderOrderSourceTraitMismatch {
                 component_id,
                 component_type,
                 trait_type,
@@ -227,8 +227,8 @@ pub(in crate::tooling) fn di_failure(
                 ],
             )
         }
-        overseerd_di::Error::ProviderOrderTargetTraitMismatch(error) => {
-            let overseerd_di::ProviderOrderTargetTraitMismatch {
+        upwell_di::Error::ProviderOrderTargetTraitMismatch(error) => {
+            let upwell_di::ProviderOrderTargetTraitMismatch {
                 component_id,
                 component_type,
                 target_id,
@@ -248,8 +248,8 @@ pub(in crate::tooling) fn di_failure(
                 ],
             )
         }
-        overseerd_di::Error::ProviderOrderCycle(error) => {
-            let overseerd_di::ProviderOrderCycle {
+        upwell_di::Error::ProviderOrderCycle(error) => {
+            let upwell_di::ProviderOrderCycle {
                 trait_type,
                 component_ids,
                 component_types,
@@ -263,7 +263,7 @@ pub(in crate::tooling) fn di_failure(
             provider_order_failure(phase, resources)
         }
         _ => (
-            "overseerd/tooling-dependency-graph",
+            "upwell/tooling-dependency-graph",
             "The dependency graph is structurally invalid.",
             phase,
             Vec::new(),
@@ -281,7 +281,7 @@ fn type_resource(type_name: &str) -> String {
     format!("type:{type_name}")
 }
 
-fn scope_resource(scope: overseerd_core::ScopeId) -> String {
+fn scope_resource(scope: upwell_core::ScopeId) -> String {
     format!("scope:{scope}")
 }
 
@@ -303,7 +303,7 @@ fn optional_component_and_type(component: Option<&str>, type_name: &str) -> Vec<
 
 fn provider_order_failure(phase: Option<String>, resources: Vec<String>) -> FailureDetails {
     (
-        "overseerd/tooling-provider-order",
+        "upwell/tooling-provider-order",
         "Provider precedence declarations are structurally invalid.",
         phase,
         resources,

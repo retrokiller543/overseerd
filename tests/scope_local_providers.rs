@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use overseerd::{
+use upwell::{
     ComponentDescriptor, ComponentRegistry, Descriptor, PROVIDERS, ResolverSet, ScopeContainer,
     ScopeId, ScopeRegistry, StaticScope, component, injectable, topological_sort,
 };
@@ -16,13 +16,13 @@ use overseerd::{
 struct ChildScope;
 
 impl StaticScope for ChildScope {
-    const ID: ScopeId = overseerd::namespaced_id!(ScopeId, "test/provider-child");
+    const ID: ScopeId = upwell::namespaced_id!(ScopeId, "test/provider-child");
     const RANK: u8 = 1;
     const NAME: &'static str = "Child";
 }
 
 fn can_reach(consumer: ScopeId, dependency: ScopeId) -> bool {
-    consumer == dependency || (consumer == ChildScope::ID && dependency == overseerd::Singleton::ID)
+    consumer == dependency || (consumer == ChildScope::ID && dependency == upwell::Singleton::ID)
 }
 
 /// A trait with providers in two scopes, exercising scope-local selection.

@@ -14,8 +14,8 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use overseerd::daemon::{App, Inject, handlers, service};
-use overseerd::{CallResult, MemoryConnectionHandle, PeerInfo, component, injectable};
+use upwell::daemon::{App, Inject, handlers, service};
+use upwell::{CallResult, MemoryConnectionHandle, PeerInfo, component, injectable};
 
 use common::{MemoryServer, deadline};
 
@@ -51,7 +51,7 @@ impl Default for TraceId {
 }
 
 /// Connection-scoped component; depends on the framework-seeded peer.
-#[component(scope = overseerd::daemon::Connection)]
+#[component(scope = upwell::daemon::Connection)]
 struct ConnState {
     _peer: PeerInfo,
     #[default]
@@ -59,7 +59,7 @@ struct ConnState {
 }
 
 /// Request-scoped component; depends on the connection-scoped one.
-#[component(scope = overseerd::daemon::Request)]
+#[component(scope = upwell::daemon::Request)]
 struct ReqState {
     conn: Arc<ConnState>,
     #[default]
@@ -67,7 +67,7 @@ struct ReqState {
 }
 
 /// Transient component, rebuilt on each resolution.
-#[component(scope = overseerd::scope::Transient)]
+#[component(scope = upwell::scope::Transient)]
 struct Trace {
     #[default]
     id: TraceId,
@@ -87,7 +87,7 @@ impl ScopedMarker for RootMarker {
     }
 }
 
-#[component(scope = overseerd::daemon::Request, provide = dyn ScopedMarker)]
+#[component(scope = upwell::daemon::Request, provide = dyn ScopedMarker)]
 struct RequestMarker;
 
 impl ScopedMarker for RequestMarker {
@@ -103,7 +103,7 @@ struct ScopeSvc;
 impl ScopeSvc {
     /// Returns (connection id, request id) for this call.
     #[rpc]
-    async fn ids(Inject(req): Inject<Arc<ReqState>>) -> overseerd::daemon::Result<(u64, u64)> {
+    async fn ids(Inject(req): Inject<Arc<ReqState>>) -> upwell::daemon::Result<(u64, u64)> {
         Ok((req.conn.id.0, req.id.0))
     }
 
@@ -112,14 +112,14 @@ impl ScopeSvc {
     async fn two_traces(
         Inject(a): Inject<Arc<Trace>>,
         Inject(b): Inject<Arc<Trace>>,
-    ) -> overseerd::daemon::Result<(u64, u64)> {
+    ) -> upwell::daemon::Result<(u64, u64)> {
         Ok((a.id.0, b.id.0))
     }
 
     #[rpc]
     async fn ordered_markers(
         Inject(markers): Inject<Vec<Arc<dyn ScopedMarker>>>,
-    ) -> overseerd::daemon::Result<Vec<String>> {
+    ) -> upwell::daemon::Result<Vec<String>> {
         Ok(markers
             .iter()
             .map(|marker| marker.name().to_string())

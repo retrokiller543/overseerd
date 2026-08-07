@@ -1,4 +1,4 @@
-//! Overseerd's generic-over-serde abstraction layers versus calling serde directly.
+//! Upwell's generic-over-serde abstraction layers versus calling serde directly.
 //!
 //! The framework never lets a handler touch a wire format: response bodies go through
 //! `Responder`, stream items through `StreamEncode`/`StreamDecode`, HTTP bodies through `HttpBody`
@@ -11,10 +11,10 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use overseerd_axum::client::{Form, HttpBody, Json};
-use overseerd_axum_stomp::{JsonCodec, StompCodec};
-use overseerd_rpc::Responder;
-use overseerd_transport::{StreamDecode, StreamEncode};
+use upwell_axum::client::{Form, HttpBody, Json};
+use upwell_axum_stomp::{JsonCodec, StompCodec};
+use upwell_rpc::Responder;
+use upwell_transport::{StreamDecode, StreamEncode};
 use serde::{Deserialize, Serialize};
 
 /// A representative response payload: a couple of scalars and two collections, so serialization
@@ -31,7 +31,7 @@ struct Payload {
 fn payload() -> Payload {
     Payload {
         id: 42,
-        name: "overseerd-benchmark-payload".to_string(),
+        name: "upwell-benchmark-payload".to_string(),
         tags: vec![
             "alpha".into(),
             "beta".into(),

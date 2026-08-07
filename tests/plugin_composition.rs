@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use overseerd::{
+use upwell::{
     App, Component, ComponentDescriptor, CompositionDirective, Descriptor, InstallationOrigin,
     InstallationProvenance, Plugin, PluginContributionKind, PluginContributions, PluginDeclaration,
     PluginId, ProtocolId, resolve_early_plugins,
@@ -29,10 +29,10 @@ impl Descriptor<ComponentDescriptor> for FacadePluginComponent {
 struct FacadePlugin;
 
 impl Plugin for FacadePlugin {
-    const ID: PluginId = overseerd::namespaced_id!(PluginId, "third-party/facade-plugin");
+    const ID: PluginId = upwell::namespaced_id!(PluginId, "third-party/facade-plugin");
 
     fn contribute(self, contributions: &mut PluginContributions) {
-        overseerd::contribute! {
+        upwell::contribute! {
             to contributions,
             components: [
                 "third-party/facade-component" => type FacadePluginComponent,
@@ -43,9 +43,9 @@ impl Plugin for FacadePlugin {
         {
             contributions.tooling().resource("worker", "Facade worker");
             contributions.tooling().relationship(
-                overseerd::tooling::ToolingRelationshipKind::Contains,
-                overseerd::tooling::ToolingEndpoint::Owner,
-                overseerd::tooling::ToolingEndpoint::Resource("worker"),
+                upwell::tooling::ToolingRelationshipKind::Contains,
+                upwell::tooling::ToolingEndpoint::Owner,
+                upwell::tooling::ToolingEndpoint::Resource("worker"),
             );
         }
     }
@@ -68,7 +68,7 @@ fn third_party_facade_plugin_projects_owner_scoped_generic_metadata() {
             .any(|resource| resource.id == "plugin:third-party/facade-plugin/tooling/worker")
     );
     assert!(document.relationships.iter().any(|relationship| {
-        relationship.kind == overseerd::tooling::RelationshipKind::Contains
+        relationship.kind == upwell::tooling::RelationshipKind::Contains
             && relationship.from == "plugin:third-party/facade-plugin"
             && relationship.to == "plugin:third-party/facade-plugin/tooling/worker"
     }));

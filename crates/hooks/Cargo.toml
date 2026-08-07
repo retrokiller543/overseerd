@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-hooks"
-description = "The Overseerd hook system: a general lifecycle/event hook framework, generic over the core resolver."
+name = "upwell-hooks"
+description = "The Upwell hook system: a general lifecycle/event hook framework, generic over the core resolver."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,6 +11,6 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-overseerd-core = { workspace = true }
+upwell-core = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }

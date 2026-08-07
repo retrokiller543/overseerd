@@ -3,8 +3,8 @@
 mod input;
 mod response;
 
-use overseerd_macros_core::attr::{first_type_arg, type_name};
 use syn::{Ident, ImplItemFn, LitStr, ReturnType, Type};
+use upwell_macros_core::attr::{first_type_arg, type_name};
 
 use crate::client;
 use crate::route::{ResponseCase, RouteAttr};

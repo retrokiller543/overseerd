@@ -8,19 +8,19 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::{SinkExt, StreamExt};
-use overseerd::axum::client::{TokioTungsteniteWs, WebsocketClient};
-use overseerd::axum::prelude::*;
-use overseerd::client::ClientError;
-use overseerd::prelude::*;
-use overseerd::{component, methods};
-use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
 use tokio_tungstenite::tungstenite::Message;
+use upwell::axum::client::{TokioTungsteniteWs, WebsocketClient};
+use upwell::axum::prelude::*;
+use upwell::client::ClientError;
+use upwell::prelude::*;
+use upwell::{component, methods};
+use upwell_test_utils::{TestEnvironment, TestServer, deadline};
 
 app! {
     /// Generated host for WebSocket integration tests.
     app WebsocketTestApplication {
         name: "ws-test",
-        protocol: overseerd::axum::Axum,
+        protocol: upwell::axum::Axum,
     }
 }
 
@@ -100,7 +100,7 @@ impl Sock {
 
 #[tokio::test]
 async fn ws_controller_dispatches_and_injects() {
-    let environment = TestEnvironment::new("overseerd-http-ws-");
+    let environment = TestEnvironment::new("upwell-http-ws-");
     let app = WebsocketTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())
@@ -203,7 +203,7 @@ async fn ws_controller_dispatches_and_injects() {
     .expect_err("unknown destination is remote error");
     match error {
         ClientError::Remote(body) => {
-            assert_eq!(body.code(), overseerd::axum::JsonWsStatus::Error);
+            assert_eq!(body.code(), upwell::axum::JsonWsStatus::Error);
             assert_eq!(
                 String::from_utf8(body.into_raw()).unwrap(),
                 "no handler for destination"

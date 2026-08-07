@@ -1,4 +1,4 @@
-use overseerd_tooling_schema::{Diagnostic, DiagnosticSeverity, ProbeFailure};
+use upwell_tooling_schema::{Diagnostic, DiagnosticSeverity, ProbeFailure};
 
 use super::{contribution_id, contributor_id};
 use crate::{ContributionProvenance, InstallationOrigin, InstallationProvenance};
@@ -30,7 +30,7 @@ pub(super) fn app_diagnostics(error: &crate::Error, phase: Option<String>) -> Op
 
 pub(super) fn diagnostic_resource_kinds(
     diagnostics: &[Diagnostic],
-) -> std::collections::BTreeMap<String, overseerd_tooling_schema::ResourceKind> {
+) -> std::collections::BTreeMap<String, upwell_tooling_schema::ResourceKind> {
     diagnostics
         .iter()
         .flat_map(|diagnostic| diagnostic.resources.iter())
@@ -38,8 +38,8 @@ pub(super) fn diagnostic_resource_kinds(
         .collect()
 }
 
-fn diagnostic_resource_kind(id: &str) -> Option<overseerd_tooling_schema::ResourceKind> {
-    use overseerd_tooling_schema::ResourceKind;
+fn diagnostic_resource_kind(id: &str) -> Option<upwell_tooling_schema::ResourceKind> {
+    use upwell_tooling_schema::ResourceKind;
 
     let kind = match id.split_once(':').map_or(id, |(prefix, _)| prefix) {
         "application" => ResourceKind::Application,
@@ -203,7 +203,7 @@ fn composition_diagnostic(error: &crate::CompositionDiagnostic) -> Diagnostic {
     };
 
     framework_diagnostic(
-        "overseerd/tooling-plugin-composition",
+        "upwell/tooling-plugin-composition",
         error.to_string(),
         resources,
         "Correct the conflicting plugin declarations or dependencies.",
@@ -230,7 +230,7 @@ fn plugin_plan_diagnostic(error: &crate::PluginPlanError) -> Diagnostic {
     };
 
     framework_diagnostic(
-        "overseerd/tooling-plugin-plan",
+        "upwell/tooling-plugin-plan",
         "Plugin contributions could not be lowered into the application plan.",
         resources,
         "Correct duplicate or reserved plugin contribution identities.",
@@ -241,7 +241,7 @@ fn scope_topology_diagnostic(error: &crate::ScopeTopologyError) -> Diagnostic {
     let resources = scope_topology_resources(error);
 
     framework_diagnostic(
-        "overseerd/tooling-scope-topology",
+        "upwell/tooling-scope-topology",
         error.to_string(),
         resources,
         "Correct duplicate, missing, cyclic, or invalid scope parent declarations.",
@@ -278,7 +278,7 @@ pub(super) fn cli_definition_diagnostic(error: &crate::CliDefinitionError) -> Di
     resources.extend(cli_definition_source_resources(error.second()));
 
     framework_diagnostic(
-        "overseerd/tooling-cli-definition",
+        "upwell/tooling-cli-definition",
         "The generated command-line definition is structurally invalid.",
         resources,
         "Rename or remove the conflicting command-line declaration.",
@@ -351,6 +351,6 @@ fn protocol_resource(protocol: crate::ProtocolId) -> String {
     format!("protocol:{}", protocol.as_str())
 }
 
-fn scope_resource(scope: overseerd_core::ScopeId) -> String {
+fn scope_resource(scope: upwell_core::ScopeId) -> String {
     format!("scope:{scope}")
 }

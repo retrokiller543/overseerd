@@ -7,8 +7,8 @@ pub use rpc::{
     RpcOutcome, RpcResponse,
 };
 
-pub use overseerd_core::Descriptor;
-use overseerd_core::{OverseerdDescriptor, TypeDescriptor};
+pub use upwell_core::Descriptor;
+use upwell_core::{TypeDescriptor, UpwellDescriptor};
 
 /// Identity of a service, tied to its implementing type, carrying a handle to its
 /// own RPC surface.
@@ -36,7 +36,7 @@ pub struct RpcGroup {
     pub rpcs: &'static [RpcDescriptor],
 }
 
-impl OverseerdDescriptor for RpcGroup {}
+impl UpwellDescriptor for RpcGroup {}
 
 /// A service type's own RPC groups.
 ///

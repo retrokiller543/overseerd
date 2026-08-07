@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 #[cfg(feature = "cli")]
-use overseerd_app::PluginCliRegistrar;
-use overseerd_app::{
+use upwell_app::PluginCliRegistrar;
+use upwell_app::{
     App, ContributionId, Plugin, PluginContributionKind, PluginContributions, PluginId,
 };
-use overseerd_core::Descriptor;
-use overseerd_di::{Component, ComponentDescriptor};
+use upwell_core::Descriptor;
+use upwell_di::{Component, ComponentDescriptor};
 
 /// A component contributed entirely through public direct-crate plugin APIs.
 struct ThirdPartyComponent;
@@ -40,10 +40,10 @@ struct ThirdPartyArgs {
 }
 
 impl Plugin for ThirdPartyPlugin {
-    const ID: PluginId = overseerd_app::namespaced_id!(PluginId, "third-party/direct-app-plugin");
+    const ID: PluginId = upwell_app::namespaced_id!(PluginId, "third-party/direct-app-plugin");
 
     fn contribute(self, contributions: &mut PluginContributions) {
-        contributions.component::<ThirdPartyComponent>(overseerd_app::namespaced_id!(
+        contributions.component::<ThirdPartyComponent>(upwell_app::namespaced_id!(
             ContributionId,
             "third-party/component"
         ));
@@ -51,7 +51,7 @@ impl Plugin for ThirdPartyPlugin {
 
     #[cfg(feature = "cli")]
     fn cli(&self, cli: &mut PluginCliRegistrar) {
-        cli.args::<ThirdPartyArgs>(overseerd_app::namespaced_id!(
+        cli.args::<ThirdPartyArgs>(upwell_app::namespaced_id!(
             ContributionId,
             "third-party/args"
         ));
@@ -75,7 +75,7 @@ fn direct_crate_exports_support_third_party_plugins() {
     assert_eq!(contribution.kind(), PluginContributionKind::Component);
     assert_eq!(
         contribution.provenance().contributor(),
-        overseerd_app::Contributor::Plugin(ThirdPartyPlugin::ID)
+        upwell_app::Contributor::Plugin(ThirdPartyPlugin::ID)
     );
     assert!(
         prepared

@@ -1,6 +1,6 @@
 # Performance and liveness testing
 
-Overseerd separates deterministic resource contracts from statistical timing benchmarks.
+Upwell separates deterministic resource contracts from statistical timing benchmarks.
 
 ## Pull-request CI
 
@@ -87,7 +87,7 @@ cargo bench --manifest-path benchmarks/Cargo.toml --bench <name> -- --test
 - `measure` — a custom Criterion measurement (`AllocBytes`) that reports allocated bytes instead of
   wall-clock time, so memory cost is a trended metric.
 - `di` — builders that stand up DI graphs of a chosen size layered across scopes, over the public
-  `overseerd-di` API.
+  `upwell-di` API.
 
 ### Guidance
 

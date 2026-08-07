@@ -18,7 +18,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use overseerd_core::{Cardinality, DependencyDescriptor, ResolutionMode, TypeDescriptor};
+use upwell_core::{Cardinality, DependencyDescriptor, ResolutionMode, TypeDescriptor};
 
 use crate::descriptors::{
     BoxedComponent, Component, ComponentConstructionContext, Dep, Injectable,
@@ -193,7 +193,7 @@ where
     fn into_component(self) -> crate::Result<C> {
         // Funnel any error into the DI error's `Other` arm. The factory error channel sits
         // at the DI layer, below the daemon, so a constructor returning a higher-layer or
-        // domain error (`overseerd::Result`, an app error) cannot convert *into* `di::Error`
+        // domain error (`upwell::Result`, an app error) cannot convert *into* `di::Error`
         // directly. `Into<Box<dyn Error + Send + Sync>>` is the common denominator: every
         // `Error + Send + Sync` type satisfies it, and so does `Box<dyn Error + Send + Sync>`
         // itself (the boxed-error constructor case).

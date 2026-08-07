@@ -1,6 +1,6 @@
 use std::{future::Future, pin::Pin};
 
-use overseerd_core::{
+use upwell_core::{
     Cardinality, DependencyDescriptor, ResolutionMode, ScopeId, StaticScope, TypeDescriptor,
 };
 
@@ -9,10 +9,10 @@ use crate::descriptors::{
     BoxedComponent, ComponentConstructionContext, ComponentFactoryDescriptor, ProviderDescriptor,
 };
 
-const HTTP_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/http");
-const CONNECTION_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/connection");
-const MESSAGE_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/message");
-const SIBLING_ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/sibling");
+const HTTP_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/http");
+const CONNECTION_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/connection");
+const MESSAGE_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/message");
+const SIBLING_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/sibling");
 
 /// A standalone request branch with the same display label as [`MessageScope`].
 struct HttpScope;
@@ -120,7 +120,7 @@ fn component(
         ty,
         scope,
         factories,
-        hooks: overseerd_hooks::no_hooks,
+        hooks: upwell_hooks::no_hooks,
     }
 }
 

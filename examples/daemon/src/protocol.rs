@@ -3,13 +3,13 @@
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd::daemon::{PreparedRpc, Rpc, RpcRuntime};
-use overseerd::{
+use serde::Deserialize;
+use upwell::daemon::{PreparedRpc, Rpc, RpcRuntime};
+use upwell::{
     AppRegistry, AppRuntime, ContributionId, Plugin, PluginCliRegistrar, PluginContributions,
     PluginId, PluginSlotId, PreBuildContext, PreparedProtocol, ProtocolDefinition,
     ProtocolPluginRegistrar, ValidationContext, config, namespaced_id,
 };
-use serde::Deserialize;
 
 /// Replaceable protocol slot for Homeledger's effective audit policy.
 pub const AUDIT_POLICY_SLOT: PluginSlotId = namespaced_id!(PluginSlotId, "homeledger/audit-policy");
@@ -104,10 +104,10 @@ pub struct HomeledgerRpc {
 
 impl ProtocolDefinition for HomeledgerRpc {
     type Prepared = PreparedHomeledgerRpc;
-    type Error = overseerd::daemon::Error;
+    type Error = upwell::daemon::Error;
 
-    const ID: overseerd::ProtocolId = namespaced_id!(overseerd::ProtocolId, "homeledger/rpc");
-    const SCOPE_TOPOLOGY: overseerd::ScopeTopology = Rpc::SCOPE_TOPOLOGY;
+    const ID: upwell::ProtocolId = namespaced_id!(upwell::ProtocolId, "homeledger/rpc");
+    const SCOPE_TOPOLOGY: upwell::ScopeTopology = Rpc::SCOPE_TOPOLOGY;
 
     fn register(&self, registry: &mut AppRegistry) {
         self.rpc.register(registry);
@@ -141,7 +141,7 @@ pub struct PreparedHomeledgerRpc {
 
 impl PreparedProtocol for PreparedHomeledgerRpc {
     type Runtime = RpcRuntime;
-    type Error = overseerd::daemon::Error;
+    type Error = upwell::daemon::Error;
 
     fn build(self, runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
         #[cfg(test)]
@@ -150,7 +150,7 @@ impl PreparedProtocol for PreparedHomeledgerRpc {
         self.rpc.build(runtime)
     }
 
-    fn tooling(&self, contributions: &mut overseerd::tooling::ToolingContributions) {
+    fn tooling(&self, contributions: &mut upwell::tooling::ToolingContributions) {
         self.rpc.tooling(contributions);
     }
 }

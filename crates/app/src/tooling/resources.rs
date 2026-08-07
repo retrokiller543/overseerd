@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use overseerd_core::{Singleton, StaticScope, Transient};
-use overseerd_tooling_schema::{Provenance, RelationshipKind, ResourceKind};
+use upwell_core::{Singleton, StaticScope, Transient};
+use upwell_tooling_schema::{Provenance, RelationshipKind, ResourceKind};
 
 use super::{
     Projection, component_id, config_binding_id, contribution_provenance, lifecycle_resource,
@@ -16,7 +16,7 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
         self.resource(
             "framework",
             ResourceKind::Contributor,
-            "overseerd",
+            "upwell",
             Some(Provenance {
                 owner: Some(String::from("framework")),
                 origin: Some(String::from("framework")),

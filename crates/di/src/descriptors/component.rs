@@ -10,11 +10,11 @@ use std::{
     sync::Arc,
 };
 
-use overseerd_core::{
-    DependencyDescriptor, OverseerdDescriptor, ResolutionMode, ResolverCtx, ResolverSet, Scope,
-    Singleton, TypeDescriptor,
+use upwell_core::{
+    DependencyDescriptor, ResolutionMode, ResolverCtx, ResolverSet, Scope, Singleton,
+    TypeDescriptor, UpwellDescriptor,
 };
-use overseerd_hooks::{HookDescriptor, no_hooks};
+use upwell_hooks::{HookDescriptor, no_hooks};
 
 /// Metadata trait for types registerable as components.
 ///
@@ -854,7 +854,7 @@ impl fmt::Debug for ComponentFactoryDescriptor {
     }
 }
 
-impl OverseerdDescriptor for ComponentFactoryDescriptor {}
+impl UpwellDescriptor for ComponentFactoryDescriptor {}
 
 /// The merged element type of a component's single `{Type}Registrations` `linkme` slice.
 ///
@@ -898,7 +898,7 @@ impl Registration {
     }
 }
 
-impl OverseerdDescriptor for Registration {}
+impl UpwellDescriptor for Registration {}
 
 /// A component type's own construction factories.
 ///

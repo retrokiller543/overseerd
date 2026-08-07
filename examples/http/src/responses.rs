@@ -1,13 +1,13 @@
 //! Response-shape stress examples for generated clients, tooling, and OpenAPI.
 
-use overseerd::axum::prelude::*;
+use upwell::axum::prelude::*;
 
 #[cfg(not(target_family = "wasm"))]
-use overseerd::axum::axum::Json;
+use upwell::axum::axum::Json;
 #[cfg(not(target_family = "wasm"))]
-use overseerd::axum::axum::http::StatusCode;
+use upwell::axum::axum::http::StatusCode;
 #[cfg(not(target_family = "wasm"))]
-use overseerd::axum::axum::response::{IntoResponse, Response};
+use upwell::axum::axum::response::{IntoResponse, Response};
 
 #[dto]
 #[derive(Clone, Debug, PartialEq)]
@@ -85,8 +85,8 @@ impl ResponseController {
 
     /// Empty responses retain status without inventing a body type.
     #[delete("/empty")]
-    async fn empty(&self) -> overseerd::axum::http::StatusCode {
-        overseerd::axum::http::StatusCode::NO_CONTENT
+    async fn empty(&self) -> upwell::axum::http::StatusCode {
+        upwell::axum::http::StatusCode::NO_CONTENT
     }
 
     /// Empty and redirect outcomes are distinct generated response variants.
@@ -130,7 +130,7 @@ fn opaque_teapot_response() -> Response {
 
 #[cfg(test)]
 mod tests {
-    use overseerd::axum::client::{HttpResponse, ReqwestClient};
+    use upwell::axum::client::{HttpResponse, ReqwestClient};
 
     use super::{ManualOutcome, ResponseControllerClient, ResponseControllerGeneratedResponse};
 
@@ -139,7 +139,7 @@ mod tests {
     ) -> impl Future<
         Output = Result<
             HttpResponse<ResponseControllerGeneratedResponse>,
-            overseerd::client::ClientError<overseerd::axum::http::StatusCode>,
+            upwell::client::ClientError<upwell::axum::http::StatusCode>,
         >,
     > + '_ {
         client.generated(true)
@@ -150,7 +150,7 @@ mod tests {
     ) -> impl Future<
         Output = Result<
             HttpResponse<ManualOutcome>,
-            overseerd::client::ClientError<overseerd::axum::http::StatusCode>,
+            upwell::client::ClientError<upwell::axum::http::StatusCode>,
         >,
     > + '_ {
         client.manual(true)

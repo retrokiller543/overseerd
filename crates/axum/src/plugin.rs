@@ -8,13 +8,13 @@ use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::Route;
-use overseerd_app::{
+use tower::{Layer, Service};
+use upwell_app::{
     AppBuilder, AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ValidationContext,
 };
-use overseerd_config::{ConfigBinding, ContainerConfigExt};
-use overseerd_core::{Descriptor, TypeDescriptor};
-use overseerd_di::{BoxedComponent, Component, ComponentDescriptor};
-use tower::{Layer, Service};
+use upwell_config::{ConfigBinding, ContainerConfigExt};
+use upwell_core::{Descriptor, TypeDescriptor};
+use upwell_di::{BoxedComponent, Component, ComponentDescriptor};
 
 use crate::config::{AXUM_CONFIG_PATH, AxumConfig};
 use crate::controller::{CONTROLLERS, ControllerDescriptor};
@@ -98,9 +98,9 @@ impl ProtocolDefinition for Axum {
     type Prepared = PreparedAxum;
     type Error = crate::Error;
 
-    const ID: overseerd_app::ProtocolId =
-        overseerd_core::namespaced_id!(overseerd_app::ProtocolId, "overseerd/axum");
-    const SCOPE_TOPOLOGY: overseerd_app::ScopeTopology = SCOPE_TOPOLOGY;
+    const ID: upwell_app::ProtocolId =
+        upwell_core::namespaced_id!(upwell_app::ProtocolId, "upwell/axum");
+    const SCOPE_TOPOLOGY: upwell_app::ScopeTopology = SCOPE_TOPOLOGY;
 
     fn register(&self, registry: &mut AppRegistry) {
         // Protocol configuration is a builtin: it is present even when the app does not call
@@ -317,7 +317,7 @@ impl PreparedProtocol for PreparedAxum {
 
                         Err(error) => {
                             tracing::error!(
-                                target: "overseerd::axum",
+                                target: "upwell::axum",
                                 error = %error,
                                 "request scope build failed"
                             );
@@ -359,10 +359,10 @@ impl PreparedProtocol for PreparedAxum {
     }
 
     #[cfg(feature = "tooling")]
-    fn tooling(&self, contributions: &mut overseerd_app::ToolingContributions) {
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
         use std::collections::BTreeMap;
 
-        use overseerd_app::{ResourceDisplay, ToolingEndpoint, ToolingRelationshipKind};
+        use upwell_app::{ResourceDisplay, ToolingEndpoint, ToolingRelationshipKind};
 
         contributions.display(ResourceDisplay {
             label: Some(String::from("Axum HTTP")),
@@ -385,7 +385,7 @@ impl PreparedProtocol for PreparedAxum {
         contributions.facet(
             "summary",
             1,
-            overseerd_app::tooling_schema::JsonValue::Object(
+            upwell_app::tooling_schema::JsonValue::Object(
                 [
                     (
                         String::from("controller_count"),
@@ -739,7 +739,7 @@ mod tests;
 
 /// Configured serving for a built axum app.
 ///
-/// This is the zero-boilerplate counterpart to [`overseerd_app::App::serve`]: it binds the
+/// This is the zero-boilerplate counterpart to [`upwell_app::App::serve`]: it binds the
 /// listener described by the protocol-owned [`AxumConfig`] instead of requiring a `SocketAddr` at
 /// the call site. Explicit `SocketAddr` and pre-bound `TcpListener` serving remain available for
 /// tests and advanced embedding.
@@ -748,7 +748,7 @@ pub trait AxumAppServe {
     fn serve_configured(self) -> impl Future<Output = crate::Result<()>> + Send;
 }
 
-impl AxumAppServe for overseerd_app::App<Axum> {
+impl AxumAppServe for upwell_app::App<Axum> {
     fn serve_configured(self) -> impl Future<Output = crate::Result<()>> + Send {
         self.serve(())
     }

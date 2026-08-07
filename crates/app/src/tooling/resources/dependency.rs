@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use overseerd_core::{
+use upwell_core::{
     Cardinality, DependencyDescriptor, ResolutionMode, Singleton, StaticScope, Transient,
 };
-use overseerd_di::{DependencyTarget, ProviderDescriptor};
-use overseerd_tooling_schema::{RelationshipKind, ResourceKind};
+use upwell_di::{DependencyTarget, ProviderDescriptor};
+use upwell_tooling_schema::{RelationshipKind, ResourceKind};
 
 use super::super::snapshot::{ComponentSnapshot, ConstructionPlanEntry, DependencySnapshot};
 use super::super::{

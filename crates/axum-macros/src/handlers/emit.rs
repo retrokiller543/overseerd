@@ -95,13 +95,13 @@ fn emit_http(handlers: &AxumHandlers, cx: &super::HandlerContext, out: &mut Toke
         }
         quote!(.route(#path, #chain))
     });
-    let register = overseerd_macros_core::backend::dual_backend(
+    let register = upwell_macros_core::backend::dual_backend(
         quote! {
             #inventory::submit! {
                 #descriptor_for::<#self_ty, #controller_route<#self_ty>>::new(
                     #controller_route {
-                        build: __overseerd_axum_route_group,
-                        routes: __OVERSEERD_AXUM_ROUTE_DESCRIPTORS,
+                        build: __upwell_axum_route_group,
+                        routes: __UPWELL_AXUM_ROUTE_DESCRIPTORS,
                     }
                 )
             }
@@ -109,10 +109,10 @@ fn emit_http(handlers: &AxumHandlers, cx: &super::HandlerContext, out: &mut Toke
         quote! {
             #[#distributed_slice(#routes_slice)]
             #[linkme(crate = #linkme_crate)]
-            static __OVERSEERD_AXUM_ROUTE_GROUP: #controller_route<#self_ty> =
+            static __UPWELL_AXUM_ROUTE_GROUP: #controller_route<#self_ty> =
                 #controller_route {
-                    build: __overseerd_axum_route_group,
-                    routes: __OVERSEERD_AXUM_ROUTE_DESCRIPTORS,
+                    build: __upwell_axum_route_group,
+                    routes: __UPWELL_AXUM_ROUTE_DESCRIPTORS,
                 };
         },
     );
@@ -183,14 +183,14 @@ fn emit_http(handlers: &AxumHandlers, cx: &super::HandlerContext, out: &mut Toke
 
     out.extend(quote! {
         const _: () = {
-            fn __overseerd_assert_controller<T: #controller_trait>() {}
-            let _ = __overseerd_assert_controller::<#self_ty>;
+            fn __upwell_assert_controller<T: #controller_trait>() {}
+            let _ = __upwell_assert_controller::<#self_ty>;
 
-            static __OVERSEERD_AXUM_ROUTE_DESCRIPTORS: &[#http_route_descriptor] = &[
+            static __UPWELL_AXUM_ROUTE_DESCRIPTORS: &[#http_route_descriptor] = &[
                 #(#route_descriptors),*
             ];
 
-            fn __overseerd_axum_route_group(
+            fn __upwell_axum_route_group(
                 svc: ::std::sync::Arc<#self_ty>,
                 runtime: & #app_runtime,
             ) -> #axum::Router {

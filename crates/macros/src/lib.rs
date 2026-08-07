@@ -1,6 +1,6 @@
-//! Procedural macros for the Overseerd framework.
+//! Procedural macros for the Upwell framework.
 //!
-//! These protocol-neutral macros are re-exported from the `overseerd` facade crate; depend on that
+//! These protocol-neutral macros are re-exported from the `upwell` facade crate; depend on that
 //! rather than this crate directly. Protocol-specific service, handler, and RPC macros live in
 //! their protocol crates.
 //!
@@ -45,7 +45,7 @@
 //! # Implementation
 //!
 //! Each `#[proc_macro_*]` entry point here is a thin shim: it forwards its token streams to
-//! the matching `expand` function in [`overseerd_macros_core`], the ordinary library that
+//! the matching `expand` function in [`upwell_macros_core`], the ordinary library that
 //! holds all the parsing and codegen (a proc-macro crate can only export proc-macros, so the
 //! reusable machinery lives there). Errors are surfaced as `compile_error!` by the core, not
 //! by panicking.
@@ -99,7 +99,7 @@ use proc_macro::TokenStream;
 /// # Example
 ///
 /// ```ignore
-/// use overseerd::prelude::*;
+/// use upwell::prelude::*;
 /// use std::sync::Arc;
 ///
 /// #[component(default_factory = false)]
@@ -130,7 +130,7 @@ use proc_macro::TokenStream;
 /// for any component).
 #[proc_macro_attribute]
 pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
-    overseerd_macros_core::component(attr.into(), item.into()).into()
+    upwell_macros_core::component(attr.into(), item.into()).into()
 }
 
 /// Implements the `ConfigProperties` trait for a config `struct` or `enum`, making it
@@ -164,7 +164,7 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
-    overseerd_macros_core::config(attr.into(), item.into()).into()
+    upwell_macros_core::config(attr.into(), item.into()).into()
 }
 
 /// Registers a component's lifecycle methods from an inherent `impl` block.
@@ -194,7 +194,7 @@ pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
-    overseerd_macros_core::methods(attr.into(), item.into()).into()
+    upwell_macros_core::methods(attr.into(), item.into()).into()
 }
 
 /// Declares a reusable, protocol-parameterized application host.
@@ -202,10 +202,10 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// This is the authoritative reference for the named `app!` declaration. A complete expansion
 /// needs a real `ProtocolDefinition`, so the examples below that invoke the macro are not doctested;
 /// working end-to-end declarations live in
-/// [`examples/daemon`](https://github.com/retrokiller543/overseerd/tree/main/examples/daemon),
-/// [`examples/http`](https://github.com/retrokiller543/overseerd/blob/main/examples/http/src/main.rs),
+/// [`examples/daemon`](https://github.com/upwell-rs/upwell/tree/main/examples/daemon),
+/// [`examples/http`](https://github.com/upwell-rs/upwell/blob/main/examples/http/src/main.rs),
 /// and the
-/// [application tests](https://github.com/retrokiller543/overseerd/blob/main/tests/app_definition.rs).
+/// [application tests](https://github.com/upwell-rs/upwell/blob/main/tests/app_definition.rs).
 ///
 /// # Declaration envelope
 ///
@@ -251,7 +251,7 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// | `cli` | reserved-slot block | Customizes framework-owned Clap arguments and the generated serve command. |
 /// | `args` | `{ field: Type, ... }` | Flattens application-owned global `clap::Args` groups. |
 /// | `commands` | `{ name: Type, namespace: { ... }, ... }` | Declares typed leaf commands and nested command namespaces. |
-/// | `overseerd` | path | Overrides the generated core-framework path; normally omit it when using the `overseerd` facade. |
+/// | `upwell` | path | Overrides the generated core-framework path; normally omit it when using the `upwell` facade. |
 /// | `setup` | `= path` or `(context) { ... }` | Defines the setup callback. |
 /// | `configure` | `= path` or `(context, builder) { ... }` | Defines the first builder callback. |
 /// | `before_build` | `= path` or `(context, builder) { ... }` | Defines the final callback before preparation and validation. |
@@ -386,7 +386,7 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// argument and leaf-command types must therefore also be publicly usable.
 ///
 /// Every crate expanding a named app while `cli` is enabled needs a direct Clap dependency because
-/// generated code derives and names `::clap` types; a transitive Overseerd dependency is not enough:
+/// generated code derives and names `::clap` types; a transitive Upwell dependency is not enough:
 ///
 /// ```toml
 /// clap = { version = "4", features = ["derive"] }
@@ -467,10 +467,10 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// | Setting | Highest to lowest precedence |
 /// |---|---|
-/// | config location | explicit CLI, `OVERSEERD_CONFIG`, parser default, platform config directory |
-/// | profiles | explicit CLI, comma-separated `OVERSEERD_PROFILES`, parser defaults, empty list |
+/// | config location | explicit CLI, `UPWELL_CONFIG`, parser default, platform config directory |
+/// | profiles | explicit CLI, comma-separated `UPWELL_PROFILES`, parser defaults, empty list |
 /// | log filter | explicit CLI, `RUST_LOG`, `logging.level` config, parser default when config omits it, `LoggingConfig` default |
-/// | log format | explicit CLI, `OVERSEERD_LOG_FORMAT`, `logging.format` config, parser default when config omits it, `LoggingConfig` default (`full`) |
+/// | log format | explicit CLI, `UPWELL_LOG_FORMAT`, `logging.format` config, parser default when config omits it, `LoggingConfig` default (`full`) |
 /// | color | explicit CLI, `NO_COLOR`, nonzero `CLICOLOR_FORCE`, `logging.ansi` config, parser default, terminal-detected `auto` |
 ///
 /// `run()` recognizes the private tooling probe first when enabled, otherwise parses
@@ -504,13 +504,13 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Command identifiers normalize to lowercase kebab-case (`print_config` becomes `print-config`)
 /// and generate PascalCase Rust variants. A namespace creates a public enum named by its full path
 /// and contains its own single subcommand field. Empty command blocks/namespaces, normalized or Rust
-/// variant collisions, framework-reserved names/options, and names beginning `__overseerd` are
+/// variant collisions, framework-reserved names/options, and names beginning `__upwell` are
 /// rejected.
 ///
 /// Command entries accept doc attributes and a deliberately bounded set of non-structural Clap
 /// `#[command(...)]` settings: help/version/display metadata, aliases and command flags, help
 /// layout/styling, usage text, and local parser behavior. The
-/// [complete allowlist is maintained beside the parser](https://github.com/retrokiller543/overseerd/blob/main/crates/macros-core/src/app/command.rs#L315-L427).
+/// [complete allowlist is maintained beside the parser](https://github.com/upwell-rs/upwell/blob/main/crates/macros-core/src/app/command.rs#L315-L427).
 /// `name`, `ignore_errors`, `rename_all`, `rename_all_env`, `flatten`, `subcommand`,
 /// `external_subcommand`, `skip`, `allow_external_subcommands`, and `subcommand_required` are
 /// explicitly rejected because they can replace or bypass generated typed dispatch; settings
@@ -555,7 +555,7 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// With `tooling`, each named app gets a target-local `#[doc(hidden)] tooling_probe(target)` seam.
 /// With `cli + tooling`, `run()` also recognizes exactly one private process invocation containing
-/// only `--__overseerd-tooling-probe-v1`; this is not an end-user command. Tooling requires a
+/// only `--__upwell-tooling-probe-v1`; this is not an end-user command. Tooling requires a
 /// literal `name` even when CLI generation is disabled.
 ///
 /// The probe resolves static protocol/application plugins, composes and validates the effective
@@ -632,7 +632,7 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// callbacks, CLI tree, static parser-visible plugin boundary, runner, or private tooling entry.
 #[proc_macro]
 pub fn app(input: TokenStream) -> TokenStream {
-    overseerd_macros_core::app(input.into()).into()
+    upwell_macros_core::app(input.into()).into()
 }
 
 /// Marks a trait as injectable as `Arc<dyn Trait>` (providers register with
@@ -648,5 +648,5 @@ pub fn app(input: TokenStream) -> TokenStream {
 /// Sync` (state it as a supertrait) and object-safe.
 #[proc_macro_attribute]
 pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
-    overseerd_macros_core::injectable(attr.into(), item.into()).into()
+    upwell_macros_core::injectable(attr.into(), item.into()).into()
 }

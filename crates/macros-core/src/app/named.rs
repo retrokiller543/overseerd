@@ -31,7 +31,7 @@ pub(super) fn expand(input: NamedApp) -> TokenStream {
     let has_before_build_callback = phases.before_build.is_some();
     let has_after_build_callback = phases.after_build.is_some();
     let has_serve_callback = phases.serve.is_some();
-    let paths = Paths::overseerd().resolve(assembly.overseerd.take(), None);
+    let paths = Paths::upwell().resolve(assembly.upwell.take(), None);
     let protocol = &assembly.protocol.value;
     let protocol_associated_type = syn::Ident::new(
         "Protocol",

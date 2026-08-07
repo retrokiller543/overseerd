@@ -1,18 +1,18 @@
-//! Shared codegen library for the Overseerd proc-macros.
+//! Shared codegen library for the Upwell proc-macros.
 //!
 //! A proc-macro crate can only export proc-macros, so the reusable codegen lives here as an
 //! ordinary library that the macro crates build on:
 //!
 //! - **Core macros** — `#[component]`, `#[config]`, `#[methods]`, `#[injectable]` — are
-//!   expanded here and surfaced by [`overseerd-macros`] as thin shims.
+//!   expanded here and surfaced by [`upwell-macros`] as thin shims.
 //! - **Building blocks** — attribute parsing ([`attr`]), the extension seams ([`extend`]),
 //!   crate-path resolution ([`paths`]), field-injection ([`inject`]), hooks ([`hook`]), the
 //!   DI assertions ([`di`]), provider wiring ([`provide`]), the handle helper ([`handle`]),
 //!   and the base impl-macro state machine ([`methods`]) — are **public**, so a plugin's macro
-//!   crate (e.g. `overseerd-rpc-macros`) reuses them to build its own macros (`#[service]`,
+//!   crate (e.g. `upwell-rpc-macros`) reuses them to build its own macros (`#[service]`,
 //!   `#[handlers]`, …) without forking the codegen.
 //!
-//! [`overseerd-macros`]: https://docs.rs/overseerd-macros
+//! [`upwell-macros`]: https://docs.rs/upwell-macros
 
 pub mod attr;
 pub mod backend;
@@ -75,7 +75,7 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(e) => return e.into_compile_error(),
     };
 
-    let paths = args.paths(Paths::overseerd());
+    let paths = args.paths(Paths::upwell());
 
     run::<ItemStruct, _>(item, |item| component::expand(args, item, &paths))
 }
@@ -88,7 +88,7 @@ pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(e) => return e.into_compile_error(),
     };
 
-    let paths = args.paths(Paths::overseerd());
+    let paths = args.paths(Paths::upwell());
 
     run::<DeriveInput, _>(item, |item| config::expand(args, item, &paths))
 }
@@ -101,7 +101,7 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(e) => return e.into_compile_error(),
     };
 
-    let paths = args.paths(Paths::overseerd());
+    let paths = args.paths(Paths::upwell());
 
     run::<ItemImpl, _>(item, |item| methods::expand(args, item, &paths))
 }
@@ -113,7 +113,7 @@ pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         Err(e) => return e.into_compile_error(),
     };
-    let paths = args.paths(Paths::overseerd());
+    let paths = args.paths(Paths::upwell());
 
     run::<ItemTrait, _>(item, |item| Ok(injectable::expand(item, &paths)))
 }

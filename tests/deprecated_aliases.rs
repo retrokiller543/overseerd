@@ -5,7 +5,7 @@
 #![cfg(feature = "daemon")]
 #![allow(deprecated)]
 
-use overseerd::daemon::{Daemon, DaemonBuilder};
+use upwell::daemon::{Daemon, DaemonBuilder};
 
 #[tokio::test]
 async fn daemon_type_alias_builds() {

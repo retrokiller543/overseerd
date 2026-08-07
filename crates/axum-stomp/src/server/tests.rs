@@ -2,7 +2,7 @@
 
 use stomp_parser::client::ClientFrame;
 
-use overseerd_axum::{AxumAppBuilder, WebsocketProtocol};
+use upwell_axum::{AxumAppBuilder, WebsocketProtocol};
 
 use crate::Stomp;
 use crate::server::{
@@ -63,7 +63,7 @@ fn send_header_seed_carries_custom_headers_through() {
 
 #[test]
 fn stomp_registers_every_message_seed_at_the_message_destination() {
-    let mut registry = overseerd_axum::AppRegistry::default();
+    let mut registry = upwell_axum::AppRegistry::default();
 
     <Stomp as WebsocketProtocol>::register(&mut registry);
 
@@ -74,7 +74,7 @@ fn stomp_registers_every_message_seed_at_the_message_destination() {
     ] {
         assert_eq!(
             descriptor.scope.id(),
-            <overseerd_axum::WebsocketMessage as overseerd_axum::StaticScope>::ID
+            <upwell_axum::WebsocketMessage as upwell_axum::StaticScope>::ID
         );
         assert!(
             descriptor
@@ -93,7 +93,7 @@ fn stomp_registers_every_message_seed_at_the_message_destination() {
 
 #[tokio::test]
 async fn stomp_seed_descriptors_allow_app_validation() {
-    let app = overseerd_axum::App::builder("stomp-seed-validation")
+    let app = upwell_axum::App::builder("stomp-seed-validation")
         .register_ws::<Stomp>("/stomp")
         .build()
         .await;

@@ -28,7 +28,7 @@ pub(crate) struct AppAssembly {
     pub(super) guards: Vec<Expr>,
     pub(super) error_handler: Option<Expr>,
     pub(super) plugins: Vec<PluginDirective>,
-    pub(super) overseerd: Option<Path>,
+    pub(super) upwell: Option<Path>,
     pub(super) phases: AppPhases,
     pub(super) cli_policy: super::policy::CliPolicy,
     #[cfg_attr(not(feature = "cli"), allow(dead_code))]

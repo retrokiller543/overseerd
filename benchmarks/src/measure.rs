@@ -8,7 +8,7 @@
 //!
 //! ```ignore
 //! use criterion::{Criterion, criterion_group, criterion_main};
-//! use overseerd_benchmarks::{alloc::TrackingAllocator, measure::AllocBytes};
+//! use upwell_benchmarks::{alloc::TrackingAllocator, measure::AllocBytes};
 //!
 //! #[global_allocator]
 //! static GLOBAL: TrackingAllocator = TrackingAllocator;

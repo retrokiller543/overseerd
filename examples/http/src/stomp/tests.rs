@@ -1,11 +1,11 @@
 use std::time::Duration;
 
 use futures::StreamExt;
-use overseerd::axum::StompBody;
-use overseerd::axum::client::MessageRequest;
-use overseerd::axum::{StompClientTransport, StompConnectOptions};
-use overseerd::prelude::*;
-use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
+use upwell::axum::StompBody;
+use upwell::axum::client::MessageRequest;
+use upwell::axum::{StompClientTransport, StompConnectOptions};
+use upwell::prelude::*;
+use upwell_test_utils::{TestEnvironment, TestServer, deadline};
 
 use super::*;
 
@@ -13,13 +13,13 @@ app! {
     /// Generated host shared by the STOMP chat unit tests.
     app ChatTestApplication {
         name: "chat-test",
-        protocol: overseerd::axum::Axum,
+        protocol: upwell::axum::Axum,
     }
 }
 
 #[tokio::test]
 async fn chat_message_is_recorded_and_broadcast() {
-    let environment = TestEnvironment::new("overseerd-stomp-chat-");
+    let environment = TestEnvironment::new("upwell-stomp-chat-");
     let app = ChatTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())
@@ -71,7 +71,7 @@ async fn chat_message_is_recorded_and_broadcast() {
 
 #[tokio::test]
 async fn a_templated_room_subscription_gets_only_its_room() {
-    let environment = TestEnvironment::new("overseerd-stomp-room-");
+    let environment = TestEnvironment::new("upwell-stomp-room-");
     let app = ChatTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())
@@ -138,7 +138,7 @@ async fn a_templated_room_subscription_gets_only_its_room() {
 
 #[tokio::test]
 async fn a_request_message_awaits_a_correlated_reply() {
-    let environment = TestEnvironment::new("overseerd-stomp-request-");
+    let environment = TestEnvironment::new("upwell-stomp-request-");
     let app = ChatTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())
@@ -193,7 +193,7 @@ async fn a_request_message_awaits_a_correlated_reply() {
 
 #[tokio::test]
 async fn a_failing_request_message_resolves_err_not_hang() {
-    let environment = TestEnvironment::new("overseerd-stomp-failure-");
+    let environment = TestEnvironment::new("upwell-stomp-failure-");
     let app = ChatTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())
@@ -254,7 +254,7 @@ async fn a_failing_request_message_resolves_err_not_hang() {
 
 #[tokio::test]
 async fn a_request_without_a_reply_times_out() {
-    let environment = TestEnvironment::new("overseerd-stomp-timeout-");
+    let environment = TestEnvironment::new("upwell-stomp-timeout-");
     let app = ChatTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())

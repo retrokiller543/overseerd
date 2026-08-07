@@ -1,3 +1,3 @@
 fn main() {
-    overseerd_build::configure();
+    upwell_build::configure();
 }

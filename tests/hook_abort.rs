@@ -5,16 +5,16 @@
 
 use std::fs;
 
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{
+use serde::Deserialize;
+use tempfile::TempDir;
+use upwell::config::Toml;
+use upwell::daemon::App;
+use upwell::dirs::{Config, DirectoriesManager};
+use upwell::{
     Cfg, CfgNext, ConfigManager, ConfigReload, ConfigReloadError, HookOutcome, component, config,
     methods,
 };
-use overseerd_config::ResolverChain;
-use serde::Deserialize;
-use tempfile::TempDir;
+use upwell_config::ResolverChain;
 
 #[config(path = "svc")]
 #[derive(Deserialize)]
@@ -41,8 +41,8 @@ impl Rejector {
     async fn on_reload(
         &self,
         #[config("svc")] _next: CfgNext<SvcCfg>,
-    ) -> overseerd::daemon::Result<HookOutcome> {
-        Err(overseerd::daemon::Error::MissingComponent(
+    ) -> upwell::daemon::Result<HookOutcome> {
+        Err(upwell::daemon::Error::MissingComponent(
             "rejected by test hook",
         ))
     }
@@ -50,7 +50,7 @@ impl Rejector {
 
 fn temp_config_dir() -> TempDir {
     tempfile::Builder::new()
-        .prefix("overseerd-hook-abort-")
+        .prefix("upwell-hook-abort-")
         .tempdir()
         .expect("create temp config dir")
 }

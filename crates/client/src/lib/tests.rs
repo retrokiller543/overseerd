@@ -1,4 +1,4 @@
-use overseerd_transport::{CodecError, Decodes};
+use upwell_transport::{CodecError, Decodes};
 
 use super::ErrorBody;
 

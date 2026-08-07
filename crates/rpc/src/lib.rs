@@ -1,10 +1,10 @@
-//! The Overseerd native RPC protocol, built on the protocol-agnostic `overseerd-app` core.
+//! The Upwell native RPC protocol, built on the protocol-agnostic `upwell-app` core.
 //!
 //! This crate provides the first-class [`Rpc`] protocol definition, router, `FromContext`
 //! extractors, the tower middleware stack, the wire transports, and the serve loop on top
-//! of [`overseerd_app`]. Depend on it directly for a self-contained RPC framework
-//! (`overseerd` is always present for the core macros + vocabulary), or reach it through
-//! the `overseerd` facade's `daemon` feature.
+//! of [`upwell_app`]. Depend on it directly for a self-contained RPC framework
+//! (`upwell` is always present for the core macros + vocabulary), or reach it through
+//! the `upwell` facade's `daemon` feature.
 
 #[cfg(feature = "client")]
 pub mod client;
@@ -21,15 +21,15 @@ pub mod scope;
 pub use error::{Error, Result};
 pub use plugin::{PreparedRpc, Rpc, RpcAppBuilder};
 
-/// The RPC daemon macros (`#[service]`, `#[handlers]`, `#[rpc]`), owned by this protocol crate.
-/// Their generated code roots protocol types at this crate (`::overseerd_rpc::*`) by default, or
-/// at `::overseerd::daemon::*` under the `facade` feature — so they work whether `overseerd-rpc`
-/// is used directly or through the `overseerd` facade. The core macros (`app!`, `#[component]`,
-/// …) come from `overseerd` (the always-present core).
-pub use overseerd_rpc_macros::{handlers, rpc, service};
 pub use protocol::{RpcLimits, RpcRuntime};
 pub use router::RpcRouter;
 pub use routes::ResolvedService;
+/// The RPC daemon macros (`#[service]`, `#[handlers]`, `#[rpc]`), owned by this protocol crate.
+/// Their generated code roots protocol types at this crate (`::upwell_rpc::*`) by default, or
+/// at `::upwell::daemon::*` under the `facade` feature — so they work whether `upwell-rpc`
+/// is used directly or through the `upwell` facade. The core macros (`app!`, `#[component]`,
+/// …) come from `upwell` (the always-present core).
+pub use upwell_rpc_macros::{handlers, rpc, service};
 
 pub use descriptors::{
     Descriptor, OperationKind, ParameterDescriptor, ParameterKind, RpcCallContext, RpcDescriptor,
@@ -44,15 +44,15 @@ pub use middleware::{
     ErrorHandler, Guard, GuardLayer, GuardService, RouterService, RpcRequest, RpcService,
 };
 
-/// The RPC app type: an [`App`](overseerd_app::App) specialized to [`Rpc`].
+/// The RPC app type: an [`App`](upwell_app::App) specialized to [`Rpc`].
 /// `App::builder(name)` resolves through this alias without a turbofish.
-pub type App = overseerd_app::App<Rpc>;
+pub type App = upwell_app::App<Rpc>;
 
-/// The RPC app builder: [`AppBuilder`](overseerd_app::AppBuilder) specialized to [`Rpc`].
-pub type AppBuilder = overseerd_app::AppBuilder<Rpc>;
+/// The RPC app builder: [`AppBuilder`](upwell_app::AppBuilder) specialized to [`Rpc`].
+pub type AppBuilder = upwell_app::AppBuilder<Rpc>;
 
-// Re-export the agnostic app surface so a standalone `overseerd-rpc` user has one import.
-pub use overseerd_app::{
+// Re-export the agnostic app surface so a standalone `upwell-rpc` user has one import.
+pub use upwell_app::{
     AppRegistry, AppRuntime, LoggingConfig, Plugin, PreparedProtocol, ProtocolDefinition,
     ProtocolRuntime, Serve, ServerConfig, ShutdownHandle, ShutdownSignal,
 };
@@ -70,9 +70,9 @@ pub use inventory;
 /// Re-exported so middleware authors can implement `tower::Layer` / `tower::Service`.
 pub use tower;
 
-/// The RPC byte-stream [`ProtocolTransport`](overseerd_client::ProtocolTransport)
+/// The RPC byte-stream [`ProtocolTransport`](upwell_client::ProtocolTransport)
 /// implementation and its connect helpers. The agnostic client surface (`Client`,
-/// `ProtocolTransport`, …) lives in [`overseerd_client`]; this is the RPC carry that plugs
+/// `ProtocolTransport`, …) lives in [`upwell_client`]; this is the RPC carry that plugs
 /// into it. Gated behind the `client` feature.
 #[cfg(feature = "client")]
 pub use client::{RpcResponses, StreamClientTransport, connect_tcp};
@@ -82,7 +82,7 @@ pub use client::connect_unix;
 
 /// The transport substrate, re-exported for generated client code and custom transports.
 pub mod transport {
-    pub use overseerd_transport::*;
+    pub use upwell_transport::*;
 }
 
 /// Re-exported so a `#[rpc(stream)]` handler returning a concrete (un-introspectable) stream

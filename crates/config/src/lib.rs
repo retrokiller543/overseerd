@@ -1,4 +1,4 @@
-//! Configuration for the Overseerd framework.
+//! Configuration for the Upwell framework.
 //!
 //! Two layers live here. The **parser** is the format-agnostic core: a normalized
 //! [`ConfigValue`] tree, a placeholder grammar (`${KEY}` / `${KEY:default}`), a

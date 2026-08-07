@@ -7,8 +7,8 @@ mod common;
 
 use std::sync::Arc;
 
-use overseerd::daemon::{App, Inject, Payload, handlers, service};
-use overseerd::{CallResult, Cfg, component, config, methods};
+use upwell::daemon::{App, Inject, Payload, handlers, service};
+use upwell::{CallResult, Cfg, component, config, methods};
 
 use common::{MemoryServer, deadline};
 
@@ -41,10 +41,7 @@ struct FactorySvc {
 #[methods]
 impl FactorySvc {
     #[init]
-    async fn create(
-        counter: Arc<Counter>,
-        cfg: Cfg<FactoryCfg>,
-    ) -> overseerd::daemon::Result<Self> {
+    async fn create(counter: Arc<Counter>, cfg: Cfg<FactoryCfg>) -> upwell::daemon::Result<Self> {
         Ok(Self {
             total: counter.base + cfg.get().seed,
         })
@@ -82,7 +79,7 @@ impl FactorySvc {
 
 /// Built by an async, fallible `#[init]` returning
 /// `Result<Self, Box<dyn Error + Send + Sync>>`, proving an app-defined boxed error
-/// converts into `overseerd::daemon::Error` (via the catch-all `Error::Other`) and satisfies the
+/// converts into `upwell::daemon::Error` (via the catch-all `Error::Other`) and satisfies the
 /// factory's `E: Into<Error>` bound. The `?` on a `ParseIntError` exercises that path.
 #[component]
 struct BoxedErrComp {
@@ -128,9 +125,8 @@ struct Manual {
 }
 
 async fn start() -> MemoryServer {
-    let config =
-        overseerd::ConfigManager::<overseerd::config::Toml>::from_str("[factory]\nseed = 100\n")
-            .expect("parse config");
+    let config = upwell::ConfigManager::<upwell::config::Toml>::from_str("[factory]\nseed = 100\n")
+        .expect("parse config");
 
     let daemon = App::builder("test")
         .auto_discover()

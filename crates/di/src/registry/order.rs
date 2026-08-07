@@ -218,7 +218,7 @@ pub(super) fn build(
 mod tests {
     use super::*;
     use crate::descriptors::{BoxedComponent, ProviderOrder};
-    use overseerd_core::{Singleton, TypeDescriptor};
+    use upwell_core::{Singleton, TypeDescriptor};
 
     trait Trait: Send + Sync {}
     trait OtherTrait: Send + Sync {}

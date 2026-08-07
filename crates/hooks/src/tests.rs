@@ -3,7 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use overseerd_core::{DependencyDescriptor, ResolverCtx, ResolverSet, TypeDescriptor};
+use upwell_core::{DependencyDescriptor, ResolverCtx, ResolverSet, TypeDescriptor};
 
 use super::{Error, HookCall, HookDescriptor, HookKind, HookManager, Startup};
 

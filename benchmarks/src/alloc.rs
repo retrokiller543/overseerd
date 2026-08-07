@@ -10,8 +10,8 @@
 //!
 //! ```ignore
 //! #[global_allocator]
-//! static GLOBAL: overseerd_benchmarks::alloc::TrackingAllocator =
-//!     overseerd_benchmarks::alloc::TrackingAllocator;
+//! static GLOBAL: upwell_benchmarks::alloc::TrackingAllocator =
+//!     upwell_benchmarks::alloc::TrackingAllocator;
 //! ```
 //!
 //! Benches that measure only wall-clock time do **not** install it, so their timing is never

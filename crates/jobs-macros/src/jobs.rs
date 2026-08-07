@@ -4,7 +4,7 @@
 //! `Jobs` claims each `#[job]` method — building its erased call (which resolves the `&self`
 //! receiver and each injected parameter from the root scope) and its `JobDescriptor` — and on
 //! emission appends them to the global `JOBS` slice. The base
-//! [`MethodArgs`](overseerd_macros_core::methods::MethodArgs) handles `#[init]`/`#[hook]`, so a
+//! [`MethodArgs`](upwell_macros_core::methods::MethodArgs) handles `#[init]`/`#[hook]`, so a
 //! `#[jobs]` block supports those too. Because jobs contribute no client surface,
 //! [`ParseMethod::parse_method`] returns `Ok(None)`.
 //!
@@ -12,14 +12,14 @@
 //! types (`Dep<T>`, `Arc<T>`, `Cfg<T>`, …) resolved on each run — the shapes an `#[init]`
 //! constructor takes — rather than the `Inject<_>` wrapper handlers use.
 
-use overseerd_macros_core::attr;
-use overseerd_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod};
-use overseerd_macros_core::methods::self_ty_ident;
-use overseerd_macros_core::paths::Paths;
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::parse::ParseStream;
 use syn::{FnArg, Ident, ImplItemFn, ItemImpl, LitStr, Meta, Token, Type};
+use upwell_macros_core::attr;
+use upwell_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod};
+use upwell_macros_core::methods::self_ty_ident;
+use upwell_macros_core::paths::Paths;
 
 /// The jobs extension. Accumulates the impl's `#[job]` call/descriptor blocks and the captured
 /// impl context, then emits them inside one `const` block.
@@ -74,7 +74,7 @@ impl ParseMethod for Jobs {
     fn parse_method(
         &mut self,
         method: &mut ImplItemFn,
-    ) -> syn::Result<Option<overseerd_macros_core::client::ClientMethod>> {
+    ) -> syn::Result<Option<upwell_macros_core::client::ClientMethod>> {
         let Some(pos) = method.attrs.iter().position(|a| a.path().is_ident("job")) else {
             return Ok(None);
         };
@@ -114,7 +114,7 @@ impl ToTokens for Jobs {
 }
 
 /// Whether a parameter type is the per-run `JobRunContext`, matched by its final path segment
-/// (`JobRunContext`, `jobs::JobRunContext`, `overseerd::jobs::JobRunContext`, …). A context
+/// (`JobRunContext`, `jobs::JobRunContext`, `upwell::jobs::JobRunContext`, …). A context
 /// parameter is fed the threaded run context rather than resolved from the DI container.
 fn is_run_context(ty: &Type) -> bool {
     let Type::Path(path) = ty else {
@@ -349,8 +349,8 @@ fn generate_job(
     let method_ident = &method.sig.ident;
     let kind_variant = format_ident!("{}", kind.variant());
 
-    let call_fn = format_ident!("__overseerd_job_{index}_call");
-    let descriptor_static = format_ident!("__OVERSEERD_JOB_{index}");
+    let call_fn = format_ident!("__upwell_job_{index}_call");
+    let descriptor_static = format_ident!("__UPWELL_JOB_{index}");
 
     let job_name = LitStr::new(
         &format!("{}::{}", name.value(), method_ident),

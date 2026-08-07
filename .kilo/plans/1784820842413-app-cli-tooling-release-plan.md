@@ -26,7 +26,7 @@ Coordinate epics `#141` and `#149` without implementing them as one change. Land
 - Precedence is `CLI > environment > profile config > base config > defaults`.
 - Generated CLI is Clap-based, behind a default-on `cli` feature. No CLI abstraction layer.
 - One app supports one `ProtocolPlugin`.
-- `cargo overseerd init` initially uses `()` as a compiling protocol-neutral placeholder; it does not guess protocol dependencies.
+- `cargo upwell init` initially uses `()` as a compiling protocol-neutral placeholder; it does not guess protocol dependencies.
 - The generated host runner handles normal CLI and private tooling invocation.
 - Tooling must stop before component construction, hooks, watchers, protocol serving, or listener binding.
 - `#141` and `#149` share the integration branch because `#147`, `#150`, `#151`, and `#152` form one tooling contract.
@@ -53,7 +53,7 @@ Checkpoint: default serve dispatch, bootstrap options, typed phase-aware command
 
 Issues in order: `#150`, `#151`, `#147`, `#152`.
 
-Checkpoint: `cargo overseerd` can select a package/target, run its generated host in private tooling mode, and receive a deterministic protocol-neutral document without constructing or serving the app.
+Checkpoint: `cargo upwell` can select a package/target, run its generated host in private tooling mode, and receive a deterministic protocol-neutral document without constructing or serving the app.
 
 ### Wave 4: Cargo Tool Commands
 
@@ -90,8 +90,8 @@ PR 1 validation:
 
 ```text
 cargo fmt --all -- --check
-cargo test -p overseerd-macros-core
-cargo test -p overseerd-macros
+cargo test -p upwell-macros-core
+cargo test -p upwell-macros
 cargo check --workspace --all-features
 ```
 
@@ -106,7 +106,7 @@ Acceptance:
 
 Branch: `feat/143-app-lifecycle`
 
-1. Add public, documented runtime types in `overseerd-app`:
+1. Add public, documented runtime types in `upwell-app`:
    - execution mode (`Run` or `Tooling`);
    - lifecycle phase;
    - typed phase error preserving the source;
@@ -129,9 +129,9 @@ PR 2 validation:
 
 ```text
 cargo fmt --all -- --check
-cargo test -p overseerd-app
-cargo test -p overseerd-rpc
-cargo test -p overseerd-axum
+cargo test -p upwell-app
+cargo test -p upwell-rpc
+cargo test -p upwell-axum
 cargo clippy --workspace --all-targets --all-features
 cargo test --workspace --all-features
 ```

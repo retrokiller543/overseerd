@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 
 use axum::http::{HeaderMap, Method, Uri};
-use overseerd_core::TypeDescriptor;
-use overseerd_di::{ComponentDescriptor, Injectable};
+use upwell_core::TypeDescriptor;
+use upwell_di::{ComponentDescriptor, Injectable};
 
 use crate::scope::HttpRequest as HttpRequestScope;
 
@@ -70,7 +70,7 @@ impl Injectable for RequestMeta {
 }
 
 #[cfg(feature = "di-check")]
-impl overseerd_di::Provide<RequestMeta> for overseerd_di::Wiring {}
+impl upwell_di::Provide<RequestMeta> for upwell_di::Wiring {}
 
 /// The framework-provided request-scoped injectable for the incoming request's native data.
 ///
@@ -78,7 +78,7 @@ impl overseerd_di::Provide<RequestMeta> for overseerd_di::Wiring {}
 /// component can depend on it directly (e.g. to read a bearer token or a session cookie in
 /// its constructor).
 pub(crate) static REQUEST_META_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
-    "__overseerd_request_meta",
+    "__upwell_request_meta",
     "RequestMeta",
     TypeDescriptor::of::<RequestMeta>("RequestMeta"),
     &HttpRequestScope,

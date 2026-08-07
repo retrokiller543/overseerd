@@ -1,9 +1,9 @@
-//! The Overseerd **RPC daemon** macros: `#[service]`, `#[handlers]`, and `#[rpc]`. They are
-//! RPC-protocol-specific (they emit `::overseerd::daemon::*` types), so they live in their own
-//! crate rather than the core `overseerd-macros`, built on the shared [`overseerd_macros_core`]
+//! The Upwell **RPC daemon** macros: `#[service]`, `#[handlers]`, and `#[rpc]`. They are
+//! RPC-protocol-specific (they emit `::upwell::daemon::*` types), so they live in their own
+//! crate rather than the core `upwell-macros`, built on the shared [`upwell_macros_core`]
 //! codegen.
 //!
-//! Re-exported through the `overseerd` facade's `daemon` module; depend on the facade, not this
+//! Re-exported through the `upwell` facade's `daemon` module; depend on the facade, not this
 //! crate directly.
 //!
 //! - `#[service]` is a **router component**: a `#[component]` (field-injected singleton) plus a
@@ -14,7 +14,7 @@
 //! - `#[rpc]` marks a method inside a `#[handlers]` impl (a marker stripped by `#[handlers]`).
 //!
 //! `app!` is **not** here — it is the protocol-agnostic named application macro (in
-//! `overseerd-macros`), selecting a protocol via a required `protocol:` field.
+//! `upwell-macros`), selecting a protocol via a required `protocol:` field.
 
 extern crate proc_macro;
 
@@ -22,30 +22,27 @@ mod handlers;
 mod router;
 mod rpc;
 
-use overseerd_macros_core::expand_component;
-use overseerd_macros_core::methods::MethodArgs;
-use overseerd_macros_core::paths::Paths;
-use overseerd_macros_core::run;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use router::RouterComponent;
 use syn::{ItemFn, ItemImpl, ItemStruct};
+use upwell_macros_core::expand_component;
+use upwell_macros_core::methods::MethodArgs;
+use upwell_macros_core::paths::Paths;
+use upwell_macros_core::run;
 
-/// The default crate roots for the RPC macros. Core is always the `overseerd` facade; the
-/// plugin (own-types) root is `::overseerd::daemon` when consumed through the facade (the
-/// `facade` feature, set by the `overseerd` crate) and the standalone `::overseerd_rpc`
-/// otherwise — so a direct dependant on `overseerd-rpc` gets working codegen.
+/// The default crate roots for the RPC macros. Core is always the `upwell` facade; the
+/// plugin (own-types) root is `::upwell::daemon` when consumed through the facade (the
+/// `facade` feature, set by the `upwell` crate) and the standalone `::upwell_rpc`
+/// otherwise — so a direct dependant on `upwell-rpc` gets working codegen.
 fn rpc_paths() -> Paths {
     if cfg!(feature = "facade") {
         Paths::new(
-            syn::parse_quote!(::overseerd),
-            syn::parse_quote!(::overseerd::daemon),
+            syn::parse_quote!(::upwell),
+            syn::parse_quote!(::upwell::daemon),
         )
     } else {
-        Paths::new(
-            syn::parse_quote!(::overseerd),
-            syn::parse_quote!(::overseerd_rpc),
-        )
+        Paths::new(syn::parse_quote!(::upwell), syn::parse_quote!(::upwell_rpc))
     }
 }
 
@@ -88,7 +85,7 @@ pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
             let paths = args.paths(rpc_paths());
 
             run::<ItemImpl, _>(item.into(), |item| {
-                overseerd_macros_core::methods::expand(args, item, &paths)
+                upwell_macros_core::methods::expand(args, item, &paths)
             })
         }
 

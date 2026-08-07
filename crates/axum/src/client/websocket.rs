@@ -4,8 +4,8 @@
 //! Downstream protocols implement [`WebsocketClientProtocol`] without changing generated
 //! `#[message]` clients.
 
-use overseerd_client::ClientError;
-use overseerd_transport::{CodecError, Error as TransportError};
+use upwell_client::ClientError;
+use upwell_transport::{CodecError, Error as TransportError};
 
 #[cfg(feature = "tungstenite")]
 mod tungstenite;

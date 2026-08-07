@@ -5,22 +5,22 @@
 //! real server on an ephemeral port, so a route that classified wrong (no client method, or one that
 //! silently drops an input) fails to compile or round-trips wrong here.
 
-use overseerd::axum::Multipart;
-use overseerd::axum::axum::Json;
-use overseerd::axum::axum::body::Bytes;
-use overseerd::axum::axum::extract::{FromRequestParts, Query, RawForm, RawQuery};
-use overseerd::axum::axum::http::header::{HeaderMap, HeaderValue};
-use overseerd::axum::axum::http::request::Parts;
-use overseerd::axum::client::{Multipart as ClientMultipart, ReqwestClient};
-use overseerd::axum::prelude::*;
-use overseerd::prelude::*;
-use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
+use upwell::axum::Multipart;
+use upwell::axum::axum::Json;
+use upwell::axum::axum::body::Bytes;
+use upwell::axum::axum::extract::{FromRequestParts, Query, RawForm, RawQuery};
+use upwell::axum::axum::http::header::{HeaderMap, HeaderValue};
+use upwell::axum::axum::http::request::Parts;
+use upwell::axum::client::{Multipart as ClientMultipart, ReqwestClient};
+use upwell::axum::prelude::*;
+use upwell::prelude::*;
+use upwell_test_utils::{TestEnvironment, TestServer, deadline};
 
 app! {
     /// Generated host for extractor integration tests.
     app ExtractorsTestApplication {
         name: "extractors-test",
-        protocol: overseerd::axum::Axum,
+        protocol: upwell::axum::Axum,
     }
 }
 
@@ -207,7 +207,7 @@ impl Extras {
 
 #[tokio::test]
 async fn generated_client_covers_every_extractor() {
-    let environment = TestEnvironment::new("overseerd-http-extractors-");
+    let environment = TestEnvironment::new("upwell-http-extractors-");
     let app = ExtractorsTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())
@@ -374,12 +374,12 @@ async fn generated_client_covers_every_extractor() {
 
 #[tokio::test]
 async fn extension_extractor_is_public_and_client_treats_it_as_server_context() {
-    let environment = TestEnvironment::new("overseerd-http-extension-");
+    let environment = TestEnvironment::new("upwell-http-extension-");
     let app = ExtractorsTestApplication::builder()
         .expect("app builder")
         .config_source(environment.config())
         .directories(environment.directories())
-        .layer(overseerd::axum::axum::Extension(String::from(
+        .layer(upwell::axum::axum::Extension(String::from(
             "from-extension",
         )))
         .build()

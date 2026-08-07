@@ -5,8 +5,8 @@
 //! upgraded socket opens one [`WebsocketConnection`] scope below the root and each inbound
 //! application message opens a [`WebsocketMessage`] child below that connection.
 
-use overseerd_app::{ScopeBoundary, ScopeParent, ScopeTopology};
-use overseerd_core::{ScopeId, StaticScope};
+use upwell_app::{ScopeBoundary, ScopeParent, ScopeTopology};
+use upwell_core::{ScopeId, StaticScope};
 
 /// One inbound HTTP request.
 pub struct HttpRequest;
@@ -20,22 +20,21 @@ pub struct WebsocketConnection;
 pub struct WebsocketMessage;
 
 impl StaticScope for HttpRequest {
-    const ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-http-request");
+    const ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "upwell/axum-http-request");
     const RANK: u8 = 100;
     const NAME: &'static str = "HttpRequest";
 }
 
 #[cfg(feature = "ws")]
 impl StaticScope for WebsocketConnection {
-    const ID: ScopeId =
-        overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-websocket-connection");
+    const ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "upwell/axum-websocket-connection");
     const RANK: u8 = 200;
     const NAME: &'static str = "WebsocketConnection";
 }
 
 #[cfg(feature = "ws")]
 impl StaticScope for WebsocketMessage {
-    const ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "overseerd/axum-websocket-message");
+    const ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "upwell/axum-websocket-message");
     const RANK: u8 = 100;
     const NAME: &'static str = "WebsocketMessage";
 }

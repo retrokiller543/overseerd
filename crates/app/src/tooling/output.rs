@@ -3,8 +3,8 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use overseerd_tooling_schema::{ProbeEnvelope, TOOLING_PROBE_OUTPUT_ENV};
 use thiserror::Error;
+use upwell_tooling_schema::{ProbeEnvelope, TOOLING_PROBE_OUTPUT_ENV};
 
 const TEMP_CREATE_ATTEMPTS: u16 = 128;
 static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
@@ -42,7 +42,7 @@ pub enum ToolingProbeOutputError {
     MissingOutputPath,
     /// The envelope could not be validated or serialized before file-system work began.
     #[error("failed to validate or serialize the tooling probe envelope")]
-    Serialize(#[source] overseerd_tooling_schema::ProbeEmitError),
+    Serialize(#[source] upwell_tooling_schema::ProbeEmitError),
     /// The invoker-selected final response target violates the output contract.
     #[error("invalid tooling probe response target: {reason}")]
     InvalidTarget {
@@ -330,7 +330,7 @@ impl TemporaryResponse {
 
         for attempt in 0..TEMP_CREATE_ATTEMPTS {
             let path = parent.join(format!(
-                ".overseerd-tooling-probe-{}-{sequence}-{attempt}.tmp",
+                ".upwell-tooling-probe-{}-{sequence}-{attempt}.tmp",
                 std::process::id()
             ));
 

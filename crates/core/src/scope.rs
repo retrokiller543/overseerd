@@ -98,13 +98,13 @@ pub struct Singleton;
 pub struct Transient;
 
 impl StaticScope for Singleton {
-    const ID: ScopeId = crate::namespaced_id!(ScopeId, "overseerd/singleton");
+    const ID: ScopeId = crate::namespaced_id!(ScopeId, "upwell/singleton");
     const RANK: u8 = u8::MAX;
     const NAME: &'static str = "Singleton";
 }
 
 impl StaticScope for Transient {
-    const ID: ScopeId = crate::namespaced_id!(ScopeId, "overseerd/transient");
+    const ID: ScopeId = crate::namespaced_id!(ScopeId, "upwell/transient");
     const RANK: u8 = u8::MIN;
     const NAME: &'static str = "Transient";
     const IS_TRANSIENT: bool = true;

@@ -6,20 +6,20 @@
 use std::fs;
 use std::time::Duration;
 
-use overseerd::ConfigManager;
-use overseerd::config::Toml;
-#[cfg(any(feature = "daemon", feature = "watch"))]
-use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd_config::ResolverChain;
-use overseerd_test_utils::AbortOnDropTask;
 use tempfile::TempDir;
+use upwell::ConfigManager;
+use upwell::config::Toml;
+#[cfg(any(feature = "daemon", feature = "watch"))]
+use upwell::dirs::{Config, DirectoriesManager};
+use upwell_config::ResolverChain;
+use upwell_test_utils::AbortOnDropTask;
 
 #[cfg(feature = "watch")]
-use overseerd::App;
+use upwell::App;
 
 fn temp_dir(tag: &str) -> TempDir {
     tempfile::Builder::new()
-        .prefix(&format!("overseerd-triggers-{tag}-"))
+        .prefix(&format!("upwell-triggers-{tag}-"))
         .tempdir()
         .expect("create temp dir")
 }
@@ -41,14 +41,14 @@ fn config_manager_carries_its_triggers() {
 
 #[tokio::test]
 #[cfg(feature = "daemon")]
-async fn app_builder_builds_with_a_configured_manager() -> overseerd::daemon::Result<()> {
+async fn app_builder_builds_with_a_configured_manager() -> upwell::daemon::Result<()> {
     let root = temp_dir("macro");
     let dirs = DirectoriesManager::from_path(root.path().to_path_buf());
 
     fs::create_dir_all(dirs.dir::<Config>().path()).expect("create config dir");
     fs::write(dirs.dir::<Config>().join("application.toml"), "").expect("write config");
 
-    let config = ConfigManager::<overseerd::config::Dynamic>::load_from_with_resolvers(
+    let config = ConfigManager::<upwell::config::Dynamic>::load_from_with_resolvers(
         &dirs,
         &[],
         ResolverChain::empty(),
@@ -56,7 +56,7 @@ async fn app_builder_builds_with_a_configured_manager() -> overseerd::daemon::Re
     .reload_on_sighup()
     .config_reload_debounce(Duration::from_millis(50));
 
-    let built = overseerd::App::<overseerd::daemon::Rpc>::builder("trigger-builder-test")
+    let built = upwell::App::<upwell::daemon::Rpc>::builder("trigger-builder-test")
         .auto_discover()
         .directories(dirs)
         .config_source(config)

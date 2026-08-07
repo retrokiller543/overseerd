@@ -4,11 +4,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(feature = "tooling")]
-use overseerd_app::tooling_schema::RelationshipKind;
-use overseerd_app::{App, ProtocolDefinition, ScopeParent};
-use overseerd_config::{ConfigManager, Dynamic};
-use overseerd_core::{StaticScope, TypeDescriptor};
-use overseerd_di::{
+use upwell_app::tooling_schema::RelationshipKind;
+use upwell_app::{App, ProtocolDefinition, ScopeParent};
+use upwell_config::{ConfigManager, Dynamic};
+use upwell_core::{StaticScope, TypeDescriptor};
+use upwell_di::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
     ComponentFactoryDescriptor, Injectable, Singleton,
 };
@@ -35,7 +35,7 @@ impl Component for SentinelComponent {
 
 fn construct_sentinel(
     _context: &mut ComponentConstructionContext,
-) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + '_>> {
+) -> Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + '_>> {
     Box::pin(async {
         FACTORY_CALLS.fetch_add(1, Ordering::SeqCst);
 
@@ -46,7 +46,7 @@ fn construct_sentinel(
     })
 }
 
-fn no_dependencies() -> Vec<overseerd_core::DependencyDescriptor> {
+fn no_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
     Vec::new()
 }
 
@@ -66,7 +66,7 @@ static SENTINEL_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     ty: TypeDescriptor::of::<SentinelComponent>(SentinelComponent::NAME),
     scope: &Singleton,
     factories: sentinel_factories,
-    hooks: overseerd_hooks::no_hooks,
+    hooks: upwell_hooks::no_hooks,
 };
 
 struct EmptyService;
@@ -129,13 +129,13 @@ fn prepared_rpc_projects_only_retained_service_and_route_facts() {
     let protocol = document
         .resources
         .iter()
-        .find(|resource| resource.id == "protocol:overseerd/rpc")
+        .find(|resource| resource.id == "protocol:upwell/rpc")
         .expect("RPC protocol resource exists");
-    let summary = &protocol.facets["protocol:overseerd/rpc/tooling/summary"].value;
+    let summary = &protocol.facets["protocol:upwell/rpc/tooling/summary"].value;
     let peer = document
         .resources
         .iter()
-        .find(|resource| resource.id == "component:__overseerd_peer_info")
+        .find(|resource| resource.id == "component:__upwell_peer_info")
         .expect("peer seed projects");
 
     assert_eq!(summary["service_count"], 0);
@@ -162,10 +162,8 @@ fn prepared_rpc_projects_only_retained_service_and_route_facts() {
             .relationships
             .iter()
             .filter(|relationship| {
-                relationship.from == "protocol:overseerd/rpc"
-                    && relationship
-                        .to
-                        .starts_with("protocol:overseerd/rpc/tooling/")
+                relationship.from == "protocol:upwell/rpc"
+                    && relationship.to.starts_with("protocol:upwell/rpc/tooling/")
             })
             .all(|relationship| relationship.kind == RelationshipKind::Contains)
     );
@@ -179,7 +177,7 @@ async fn peer_info_seed_opens_only_at_connection_destination() {
         .await
         .expect("RPC app builds");
     let runtime = app.runtime();
-    let peer = overseerd_transport::PeerInfo {
+    let peer = upwell_transport::PeerInfo {
         addr: Some("127.0.0.1:1234".parse().expect("valid test address")),
     };
     let connection = runtime
@@ -187,14 +185,14 @@ async fn peer_info_seed_opens_only_at_connection_destination() {
             &ConnectionScope,
             Arc::clone(runtime.root()),
             vec![BoxedComponent {
-                ty: TypeDescriptor::of::<overseerd_transport::PeerInfo>("PeerInfo"),
+                ty: TypeDescriptor::of::<upwell_transport::PeerInfo>("PeerInfo"),
                 value: Box::new(peer.clone()),
             }],
         )
         .await
         .expect("registered peer seed opens the connection scope");
     let resolved = connection
-        .resolve::<overseerd_transport::PeerInfo>()
+        .resolve::<upwell_transport::PeerInfo>()
         .await
         .expect("peer resolution succeeds")
         .expect("peer is seeded");
@@ -206,7 +204,7 @@ async fn peer_info_seed_opens_only_at_connection_destination() {
             &RequestScope,
             Arc::clone(&connection),
             vec![BoxedComponent {
-                ty: TypeDescriptor::of::<overseerd_transport::PeerInfo>("PeerInfo"),
+                ty: TypeDescriptor::of::<upwell_transport::PeerInfo>("PeerInfo"),
                 value: Box::new(peer),
             }],
         )
@@ -218,7 +216,7 @@ async fn peer_info_seed_opens_only_at_connection_destination() {
 
     assert!(matches!(
         error,
-        overseerd_app::Error::InvalidSeedDestination {
+        upwell_app::Error::InvalidSeedDestination {
             expected: <ConnectionScope as StaticScope>::ID,
             actual: <RequestScope as StaticScope>::ID,
             ..

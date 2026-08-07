@@ -1,5 +1,5 @@
-use overseerd_macros_core::attr::{first_type_arg, type_name};
 use syn::{Ident, Type};
+use upwell_macros_core::attr::{first_type_arg, type_name};
 
 pub(super) fn classify(ty: &Type) -> (&'static str, Type) {
     let ty = peel_combinator(ty);

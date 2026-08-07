@@ -39,7 +39,7 @@ pub trait AppHost {
     /// Generated implementations apply the app name, protocol, discovered services and
     /// components, explicit config bindings, manager overrides, middleware, guards, and error
     /// handler declared in `app!`.
-    fn builder() -> Result<AppBuilder<Self::Protocol>, overseerd_config::ConfigError>;
+    fn builder() -> Result<AppBuilder<Self::Protocol>, upwell_config::ConfigError>;
 
     /// Declares parser-visible application plugins and protocol-default slot directives.
     ///
@@ -353,10 +353,10 @@ pub async fn serve_host<H: AppHost>(
 pub fn resolve_host_dependency<P, H>(
     app: &App<P>,
     consumer: &str,
-) -> impl Future<Output = Result<H, overseerd_di::Error>> + Send
+) -> impl Future<Output = Result<H, upwell_di::Error>> + Send
 where
     P: ProtocolDefinition,
-    H: overseerd_di::Injectable,
+    H: upwell_di::Injectable,
 {
     let container = std::sync::Arc::clone(app.container());
     let consumer = consumer.to_string();
@@ -365,7 +365,7 @@ where
         container
             .resolve::<H>()
             .await?
-            .ok_or_else(|| overseerd_di::Error::MissingDependency {
+            .ok_or_else(|| upwell_di::Error::MissingDependency {
                 component: consumer.clone(),
                 component_id: consumer,
                 dependency: std::any::type_name::<H>().to_string(),

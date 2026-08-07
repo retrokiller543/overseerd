@@ -12,7 +12,7 @@ static INSTALL_SANITIZED_HOOK: Once = Once::new();
 pub fn install_process_probe_panic_hook() {
     INSTALL_SANITIZED_HOOK.call_once(|| {
         std::panic::set_hook(Box::new(|_| {
-            eprintln!("overseerd tooling probe panicked; panic payload suppressed");
+            eprintln!("upwell tooling probe panicked; panic payload suppressed");
         }));
     });
 }

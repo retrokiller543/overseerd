@@ -146,11 +146,11 @@ cargo fmt --all -- --check
 cargo nextest run --workspace --all-features
 cargo clippy --workspace --all-targets --all-features
 cargo check --workspace --no-default-features
-cargo check -p overseerd-app --no-default-features
-cargo check -p overseerd-axum --no-default-features
-cargo check -p overseerd-axum --no-default-features --features ws
-cargo check -p overseerd-axum-json-ws --all-features
-cargo check -p overseerd-axum-stomp --all-features
+cargo check -p upwell-app --no-default-features
+cargo check -p upwell-axum --no-default-features
+cargo check -p upwell-axum --no-default-features --features ws
+cargo check -p upwell-axum-json-ws --all-features
+cargo check -p upwell-axum-stomp --all-features
 ```
 
 Retain all existing CI Wasm checks because server scope contracts remain feature-gated out of Wasm

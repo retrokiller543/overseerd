@@ -1,8 +1,8 @@
 #[cfg(feature = "tooling")]
 #[test]
 fn prepared_axum_projects_only_retained_controller_and_middleware_facts() {
-    let document = overseerd_app::App::<super::Axum>::builder("axum-tooling")
-        .config_source(overseerd_config::ConfigManager::<overseerd_config::Dynamic>::empty())
+    let document = upwell_app::App::<super::Axum>::builder("axum-tooling")
+        .config_source(upwell_config::ConfigManager::<upwell_config::Dynamic>::empty())
         .prepare()
         .expect("Axum prepares")
         .tooling_document()
@@ -10,9 +10,9 @@ fn prepared_axum_projects_only_retained_controller_and_middleware_facts() {
     let protocol = document
         .resources
         .iter()
-        .find(|resource| resource.id == "protocol:overseerd/axum")
+        .find(|resource| resource.id == "protocol:upwell/axum")
         .expect("Axum protocol resource exists");
-    let summary = &protocol.facets["protocol:overseerd/axum/tooling/summary"].value;
+    let summary = &protocol.facets["protocol:upwell/axum/tooling/summary"].value;
 
     assert_eq!(summary["controller_count"], 0);
     assert_eq!(summary["middleware_count"], 0);
@@ -35,13 +35,11 @@ fn prepared_axum_projects_only_retained_controller_and_middleware_facts() {
             .relationships
             .iter()
             .filter(|relationship| {
-                relationship.from == "protocol:overseerd/axum"
-                    && relationship
-                        .to
-                        .starts_with("protocol:overseerd/axum/tooling/")
+                relationship.from == "protocol:upwell/axum"
+                    && relationship.to.starts_with("protocol:upwell/axum/tooling/")
             })
             .all(|relationship| {
-                relationship.kind == overseerd_app::tooling_schema::RelationshipKind::Contains
+                relationship.kind == upwell_app::tooling_schema::RelationshipKind::Contains
             })
     );
 }
@@ -60,7 +58,7 @@ fn prepared_axum_projects_static_http_routes_without_building_runtime() {
                 path_parameters: &[],
                 inputs: &[],
                 output: crate::HttpOutputDescriptor {
-                    ty: Some(overseerd_core::TypeDescriptor::of::<()>("()")),
+                    ty: Some(upwell_core::TypeDescriptor::of::<()>("()")),
                     declared: "()",
                     shape: crate::HttpOutputShape::Unary,
                     responses: &[],
@@ -73,7 +71,7 @@ fn prepared_axum_projects_static_http_routes_without_building_runtime() {
                 path_parameters: &[],
                 inputs: &[],
                 output: crate::HttpOutputDescriptor {
-                    ty: Some(overseerd_core::TypeDescriptor::of::<()>("()")),
+                    ty: Some(upwell_core::TypeDescriptor::of::<()>("()")),
                     declared: "()",
                     shape: crate::HttpOutputShape::Unary,
                     responses: &[],
@@ -85,7 +83,7 @@ fn prepared_axum_projects_static_http_routes_without_building_runtime() {
     let controller = crate::ControllerDescriptor {
         id: "tooling-controller",
         name: "ToolingController",
-        ty: overseerd_core::TypeDescriptor::of::<ToolingController>("ToolingController"),
+        ty: upwell_core::TypeDescriptor::of::<ToolingController>("ToolingController"),
         base: "/api",
         router: |_| panic!("tooling must not build controller router"),
         routes,
@@ -94,8 +92,8 @@ fn prepared_axum_projects_static_http_routes_without_building_runtime() {
 
     let controller = Box::leak(Box::new(controller));
 
-    let document = overseerd_app::App::<super::Axum>::builder("axum-route-tooling")
-        .config_source(overseerd_config::ConfigManager::<overseerd_config::Dynamic>::empty())
+    let document = upwell_app::App::<super::Axum>::builder("axum-route-tooling")
+        .config_source(upwell_config::ConfigManager::<upwell_config::Dynamic>::empty())
         .controller_descriptor(controller)
         .prepare()
         .expect("Axum prepares")
@@ -135,8 +133,8 @@ fn prepared_axum_projects_websocket_path_and_protocol_identity() {
     use std::sync::Arc;
 
     use axum::extract::ws::WebSocket;
-    use overseerd_app::AppRuntime;
-    use overseerd_di::ScopeContainer;
+    use upwell_app::AppRuntime;
+    use upwell_di::ScopeContainer;
 
     /// WebSocket protocol used only to retain endpoint metadata.
     struct ToolingWsProtocol;
@@ -166,8 +164,8 @@ fn prepared_axum_projects_websocket_path_and_protocol_identity() {
 
     use super::AxumAppBuilder as _;
 
-    let document = overseerd_app::App::<super::Axum>::builder("axum-websocket-tooling")
-        .config_source(overseerd_config::ConfigManager::<overseerd_config::Dynamic>::empty())
+    let document = upwell_app::App::<super::Axum>::builder("axum-websocket-tooling")
+        .config_source(upwell_config::ConfigManager::<upwell_config::Dynamic>::empty())
         .register_ws::<ToolingWsProtocol>("/events")
         .prepare()
         .expect("Axum websocket prepares")
@@ -192,8 +190,8 @@ fn prepared_axum_projects_websocket_path_and_protocol_identity() {
         "prepared endpoint retains stable protocol type identity"
     );
     assert!(document.relationships.iter().any(|relationship| {
-        relationship.kind == overseerd_app::tooling_schema::RelationshipKind::Contains
-            && relationship.from == "protocol:overseerd/axum"
+        relationship.kind == upwell_app::tooling_schema::RelationshipKind::Contains
+            && relationship.from == "protocol:upwell/axum"
             && relationship.to == endpoint.id
     }));
 }

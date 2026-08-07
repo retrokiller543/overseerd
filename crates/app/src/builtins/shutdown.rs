@@ -9,10 +9,10 @@
 //! [`ShutdownSignal`]: crate::lifecycle::ShutdownSignal
 
 use crate::lifecycle::ShutdownHandle;
-use overseerd_di::{Component, Injectable};
+use upwell_di::{Component, Injectable};
 
 /// The stable component id of the seeded [`ShutdownHandle`] singleton.
-pub const SHUTDOWN_HANDLE_ID: &str = "overseerd:shutdown-handle";
+pub const SHUTDOWN_HANDLE_ID: &str = "upwell:shutdown-handle";
 
 /// The display name of the seeded [`ShutdownHandle`] singleton.
 pub const SHUTDOWN_HANDLE_NAME: &str = "ShutdownHandle";
@@ -43,4 +43,4 @@ impl Injectable for ShutdownHandle {
 
 /// Under `di-check`, the handle is framework-seeded, so it is always provided.
 #[cfg(feature = "di-check")]
-impl overseerd_di::Provide<ShutdownHandle> for overseerd_di::Wiring {}
+impl upwell_di::Provide<ShutdownHandle> for upwell_di::Wiring {}

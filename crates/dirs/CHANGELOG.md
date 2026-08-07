@@ -7,20 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.16.0](https://github.com/retrokiller543/overseerd/compare/overseerd-dirs-v0.15.0...overseerd-dirs-v0.16.0) - 2026-07-17
+## [0.16.0](https://github.com/upwell-rs/upwell/compare/upwell-dirs-v0.15.0...upwell-dirs-v0.16.0) - 2026-07-17
 
 ### Fixed
 
-- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/retrokiller543/overseerd/pull/85))
+- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/upwell-rs/upwell/pull/85))
 
-## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-dirs-v0.11.2...overseerd-dirs-v0.12.0) - 2026-07-08
+## [0.12.0](https://github.com/upwell-rs/upwell/compare/upwell-dirs-v0.11.2...upwell-dirs-v0.12.0) - 2026-07-08
 
 ### Other
 
 - Added docs to all crates
 
-## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-dirs-v0.6.0...overseerd-dirs-v0.7.0) - 2026-06-30
+## [0.7.0](https://github.com/upwell-rs/upwell/compare/upwell-dirs-v0.6.0...upwell-dirs-v0.7.0) - 2026-06-30
 
 ### Other
 
-- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/overseerd/pull/20))
+- Feature/protocol agnostic ([#20](https://github.com/upwell-rs/upwell/pull/20))

@@ -142,12 +142,12 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
     /// Resolves one placeholder to its raw string, applying cycle detection, the
     /// namespace (`@`) / dotted-path / uppercase-heuristic precedence, the inline
     /// default, and finally a missing-value error.
-    #[tracing::instrument(target = "overseerd::config", level = "trace", skip_all, fields(key = %p.key))]
+    #[tracing::instrument(target = "upwell::config", level = "trace", skip_all, fields(key = %p.key))]
     pub(crate) fn resolve_placeholder(&mut self, p: &Placeholder) -> Result<String, TemplateError> {
         self.consume_step()?;
 
         if self.in_flight.len() >= MAX_RESOLUTION_DEPTH {
-            tracing::trace!(target: "overseerd::config", limit = MAX_RESOLUTION_DEPTH, "resolution depth exceeded");
+            tracing::trace!(target: "upwell::config", limit = MAX_RESOLUTION_DEPTH, "resolution depth exceeded");
 
             return Err(TemplateErrorKind::ResolutionDepthExceeded {
                 limit: MAX_RESOLUTION_DEPTH,
@@ -156,7 +156,7 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
         }
 
         if self.in_flight.iter().any(|key| key == &p.key) {
-            tracing::trace!(target: "overseerd::config", chain = ?self.in_flight, "resolution cycle detected");
+            tracing::trace!(target: "upwell::config", chain = ?self.in_flight, "resolution cycle detected");
 
             return Err(TemplateErrorKind::ResolutionCycle {
                 chain: self.in_flight.clone(),
@@ -178,26 +178,26 @@ impl<'cfg, 'r> ResolveCtx<'cfg, 'r> {
         };
 
         if let Some(value) = resolved {
-            tracing::trace!(target: "overseerd::config", "placeholder resolved");
+            tracing::trace!(target: "upwell::config", "placeholder resolved");
             self.record_resolved(p, &value);
 
             return Ok(value);
         }
 
         if let Some(default) = &p.default {
-            tracing::trace!(target: "overseerd::config", "placeholder fell back to inline default");
+            tracing::trace!(target: "upwell::config", "placeholder fell back to inline default");
             self.record_resolved(p, default);
 
             return Ok(default.clone());
         }
 
         if is_namespace {
-            tracing::trace!(target: "overseerd::config", "no resolver answered namespace placeholder");
+            tracing::trace!(target: "upwell::config", "no resolver answered namespace placeholder");
 
             return Err(TemplateErrorKind::UnknownNamespaceKey { key: p.key.clone() }.into());
         }
 
-        tracing::trace!(target: "overseerd::config", "no value for placeholder");
+        tracing::trace!(target: "upwell::config", "no value for placeholder");
 
         Err(TemplateErrorKind::MissingPlaceholder { key: p.key.clone() }.into())
     }

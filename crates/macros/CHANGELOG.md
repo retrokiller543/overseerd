@@ -7,67 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.20.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.19.1...overseerd-macros-v0.20.0) - 2026-07-22
+## [0.20.0](https://github.com/upwell-rs/upwell/compare/upwell-macros-v0.19.1...upwell-macros-v0.20.0) - 2026-07-22
 
 ### Added
 
 - *(di)* dual linkme/inventory registration backend for factories & hooks
 
-## [0.19.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.18.0...overseerd-macros-v0.19.0) - 2026-07-21
+## [0.19.0](https://github.com/upwell-rs/upwell/compare/upwell-macros-v0.18.0...upwell-macros-v0.19.0) - 2026-07-21
 
 ### Added
 
 - *(di)* add provider ordering and deferred primitives
 
-## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.11.2...overseerd-macros-v0.12.0) - 2026-07-08
+## [0.12.0](https://github.com/upwell-rs/upwell/compare/upwell-macros-v0.11.2...upwell-macros-v0.12.0) - 2026-07-08
 
 ### Other
 
 - Added docs to all crates
 
-## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.6.0...overseerd-macros-v0.7.0) - 2026-06-30
+## [0.7.0](https://github.com/upwell-rs/upwell/compare/upwell-macros-v0.6.0...upwell-macros-v0.7.0) - 2026-06-30
 
 ### Other
 
-- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/overseerd/pull/20))
+- Feature/protocol agnostic ([#20](https://github.com/upwell-rs/upwell/pull/20))
 
-## [0.6.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.5.0...overseerd-macros-v0.6.0) - 2026-06-26
-
-### Other
-
-- Config hot-reloading: Live/Dep, mutable Cfg, two-phase reload, hooks, and triggers ([#14](https://github.com/retrokiller543/overseerd/pull/14))
-
-## [0.5.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.4.0...overseerd-macros-v0.5.0) - 2026-06-25
+## [0.6.0](https://github.com/upwell-rs/upwell/compare/upwell-macros-v0.5.0...upwell-macros-v0.6.0) - 2026-06-26
 
 ### Other
 
-- manager owns the config registry and seeds all defaults (fixes cross-path default references) ([#12](https://github.com/retrokiller543/overseerd/pull/12))
+- Config hot-reloading: Live/Dep, mutable Cfg, two-phase reload, hooks, and triggers ([#14](https://github.com/upwell-rs/upwell/pull/14))
 
-## [0.4.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.3.0...overseerd-macros-v0.4.0) - 2026-06-25
+## [0.5.0](https://github.com/upwell-rs/upwell/compare/upwell-macros-v0.4.0...upwell-macros-v0.5.0) - 2026-06-25
 
 ### Other
 
-- directory-namespace ergonomics + tagged-enum defaults ([#10](https://github.com/retrokiller543/overseerd/pull/10))
+- manager owns the config registry and seeds all defaults (fixes cross-path default references) ([#12](https://github.com/upwell-rs/upwell/pull/12))
 
-## [0.3.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.2.0...overseerd-macros-v0.3.0) - 2026-06-25
+## [0.4.0](https://github.com/upwell-rs/upwell/compare/upwell-macros-v0.3.0...upwell-macros-v0.4.0) - 2026-06-25
+
+### Other
+
+- directory-namespace ergonomics + tagged-enum defaults ([#10](https://github.com/upwell-rs/upwell/pull/10))
+
+## [0.3.0](https://github.com/upwell-rs/upwell/compare/upwell-macros-v0.2.0...upwell-macros-v0.3.0) - 2026-06-25
 
 ### Added
 
-- *(config)* select a default enum variant with #[default] ([#8](https://github.com/retrokiller543/overseerd/pull/8))
+- *(config)* select a default enum variant with #[default] ([#8](https://github.com/upwell-rs/upwell/pull/8))
 
-## [0.2.0](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.1.1...overseerd-macros-v0.2.0) - 2026-06-25
+## [0.2.0](https://github.com/upwell-rs/upwell/compare/upwell-macros-v0.1.1...upwell-macros-v0.2.0) - 2026-06-25
 
 ### Other
 
-- directory namespace, templated field defaults, enum support, app errors & unified logging ([#6](https://github.com/retrokiller543/overseerd/pull/6))
+- directory namespace, templated field defaults, enum support, app errors & unified logging ([#6](https://github.com/upwell-rs/upwell/pull/6))
 
-## [0.1.1](https://github.com/retrokiller543/overseerd/compare/overseerd-macros-v0.1.0...overseerd-macros-v0.1.1) - 2026-06-24
+## [0.1.1](https://github.com/upwell-rs/upwell/compare/upwell-macros-v0.1.0...upwell-macros-v0.1.1) - 2026-06-24
 
 ### Other
 
 - release v0.1.0
 
-## [0.1.0](https://github.com/retrokiller543/overseerd/releases/tag/overseerd-macros-v0.1.0) - 2026-06-24
+## [0.1.0](https://github.com/upwell-rs/upwell/releases/tag/upwell-macros-v0.1.0) - 2026-06-24
 
 ### Added
 
@@ -87,7 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - formatted code
 - add crate metadata and internal dep versions for publishing
-- renamed the project to overseerd
+- renamed the project to upwell
 - Add configuration system and application directories
 - Implement scoped dependencies with connection, request, and transient scopes
 - Add support for streaming with custom codecs and enhance client call handling

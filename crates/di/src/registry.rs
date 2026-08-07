@@ -9,7 +9,7 @@ pub use selection::{
     SelectedDependency,
 };
 
-use overseerd_core::{Cardinality, ResolutionMode, Scope, ScopeId, Singleton};
+use upwell_core::{Cardinality, ResolutionMode, Scope, ScopeId, Singleton};
 
 use crate::descriptors::{COMPONENTS, ComponentDescriptor, PROVIDERS, ProviderDescriptor};
 use crate::error::Error;
@@ -244,7 +244,7 @@ impl ComponentRegistry {
     pub fn selected_dependencies_with_scope_reachability(
         &self,
         consumer: &ComponentDescriptor,
-        dependency: &overseerd_core::DependencyDescriptor,
+        dependency: &upwell_core::DependencyDescriptor,
         components: &[ComponentDescriptor],
         can_reach: impl Fn(ScopeId, ScopeId) -> bool,
     ) -> crate::Result<Vec<SelectedDependency>> {
@@ -338,7 +338,7 @@ impl ComponentRegistry {
     fn scope_unreachable_dependency(
         model: &selection::ProviderSelectionModel,
         consumer: &ComponentDescriptor,
-        dependency: &overseerd_core::DependencyDescriptor,
+        dependency: &upwell_core::DependencyDescriptor,
     ) -> Error {
         let providers = model
             .matching_providers(dependency.ty.type_id, dependency.qualifier)
@@ -608,7 +608,7 @@ impl ComponentRegistry {
         &self,
         model: &selection::ProviderSelectionModel,
         consumer: &ComponentDescriptor,
-        dependency: &overseerd_core::DependencyDescriptor,
+        dependency: &upwell_core::DependencyDescriptor,
         by_type: &HashMap<TypeId, ComponentDescriptor>,
         can_access: &impl Fn(&dyn Scope, &dyn Scope) -> bool,
     ) -> crate::Result<Vec<ComponentDescriptor>> {
@@ -645,7 +645,7 @@ impl ComponentRegistry {
         &self,
         model: &selection::ProviderSelectionModel,
         consumer: &ComponentDescriptor,
-        dependency: &overseerd_core::DependencyDescriptor,
+        dependency: &upwell_core::DependencyDescriptor,
         components: &[ComponentDescriptor],
         can_access: &impl Fn(&dyn Scope, &dyn Scope) -> bool,
     ) -> crate::Result<Vec<(&'static dyn Scope, &'static str)>> {
@@ -739,9 +739,7 @@ mod tests {
         BoxedComponent, ComponentConstructionContext, ComponentDescriptor,
         ComponentFactoryDescriptor,
     };
-    use overseerd_core::{
-        Cardinality, DependencyDescriptor, StaticScope, Transient, TypeDescriptor,
-    };
+    use upwell_core::{Cardinality, DependencyDescriptor, StaticScope, Transient, TypeDescriptor};
 
     /// Local stand-in intermediate scopes (the captive rule only cares about rank
     /// ordering): `Connection` outranks `Request`, both between singleton and transient.
@@ -786,13 +784,13 @@ mod tests {
     struct SiblingB;
 
     impl StaticScope for SiblingA {
-        const ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/sibling-a");
+        const ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/sibling-a");
         const RANK: u8 = 3;
         const NAME: &'static str = "SiblingA";
     }
 
     impl StaticScope for SiblingB {
-        const ID: ScopeId = overseerd_core::namespaced_id!(ScopeId, "test/sibling-b");
+        const ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/sibling-b");
         const RANK: u8 = 3;
         const NAME: &'static str = "SiblingB";
     }
@@ -825,7 +823,7 @@ mod tests {
                 ty: $ty,
                 scope: $scope,
                 factories,
-                hooks: ::overseerd_hooks::no_hooks,
+                hooks: ::upwell_hooks::no_hooks,
             }
         }};
     }
@@ -850,7 +848,7 @@ mod tests {
         ty: TypeDescriptor::of::<u16>("PgPool"),
         scope: &Singleton,
         factories: pg_pool_factories,
-        hooks: overseerd_hooks::no_hooks,
+        hooks: upwell_hooks::no_hooks,
     };
 
     fn backup_repo_deps() -> Vec<DependencyDescriptor> {
@@ -882,7 +880,7 @@ mod tests {
         ty: TypeDescriptor::of::<u8>("BackupRepository"),
         scope: &Singleton,
         factories: backup_repo_factories,
-        hooks: overseerd_hooks::no_hooks,
+        hooks: upwell_hooks::no_hooks,
     };
 
     #[test]

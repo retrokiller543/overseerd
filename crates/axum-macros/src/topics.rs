@@ -19,7 +19,7 @@ use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{Fields, Generics, Ident, ItemEnum, LitStr, Path, Token, Type, parse_quote};
 
-use overseerd_macros_core::paths::Paths;
+use upwell_macros_core::paths::Paths;
 
 /// One segment of a parsed destination template.
 #[derive(Debug, PartialEq, Eq)]
@@ -789,7 +789,7 @@ fn transport_param_ident(generics: &Generics) -> Ident {
         return format_ident!("C");
     }
 
-    let base = "__OverseerdClientTransport";
+    let base = "__UpwellClientTransport";
 
     if !declared.contains(base) {
         return format_ident!("{base}");

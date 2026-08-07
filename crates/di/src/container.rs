@@ -4,10 +4,10 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use overseerd_core::{
+use tracing::{debug, error, info, instrument, trace};
+use upwell_core::{
     ResolutionMode, Resolver, ResolverCtx, ResolverSet, Scope, ScopeId, Singleton, Transient,
 };
-use tracing::{debug, error, info, instrument, trace};
 
 use crate::descriptors::BoxedComponent;
 use crate::registry::selection::ProviderSelectionModel;
@@ -877,7 +877,7 @@ impl WaitExpansion<'_> {
     fn expand_dependency(
         &mut self,
         consumer: &'static dyn Scope,
-        dependency: &overseerd_core::DependencyDescriptor,
+        dependency: &upwell_core::DependencyDescriptor,
         waits: &mut HashSet<TypeId>,
     ) {
         if let Some(component) = self.selection.component(dependency.ty.type_id) {

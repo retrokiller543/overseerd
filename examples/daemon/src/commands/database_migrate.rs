@@ -1,7 +1,7 @@
 use crate::DaemonApplication;
 use crate::components::Database;
 use crate::lifecycle::BuildReadiness;
-use overseerd::{Built, CliCommand, CommandContext, DiError};
+use upwell::{Built, CliCommand, CommandContext, DiError};
 
 const LATEST_SCHEMA_VERSION: u64 = 3;
 

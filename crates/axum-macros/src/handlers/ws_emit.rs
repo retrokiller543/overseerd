@@ -74,30 +74,30 @@ pub(super) fn emit(handlers: &AxumHandlers, cx: &HandlerContext, out: &mut Token
             )
         }
     });
-    let register = overseerd_macros_core::backend::dual_backend(
+    let register = upwell_macros_core::backend::dual_backend(
         quote! {
             #inventory::submit! {
                 #descriptor_for::<#self_ty, #controller_ws_route<#self_ty, #protocol>>::new(
-                    #controller_ws_route::new(__overseerd_ws_route_group)
+                    #controller_ws_route::new(__upwell_ws_route_group)
                 )
             }
         },
         quote! {
             #[#distributed_slice(#ws_routes_slice)]
             #[linkme(crate = #linkme_crate)]
-            static __OVERSEERD_WS_ROUTE_GROUP: #controller_ws_route<#self_ty, #protocol> =
-                #controller_ws_route::new(__overseerd_ws_route_group);
+            static __UPWELL_WS_ROUTE_GROUP: #controller_ws_route<#self_ty, #protocol> =
+                #controller_ws_route::new(__upwell_ws_route_group);
         },
     );
 
     out.extend(quote! {
         const _: () = {
-            fn __overseerd_assert_ws_controller<
+            fn __upwell_assert_ws_controller<
                 T: #ws_controller_trait<Protocol = #protocol>,
             >() {}
-            let _ = __overseerd_assert_ws_controller::<#self_ty>;
+            let _ = __upwell_assert_ws_controller::<#self_ty>;
 
-            fn __overseerd_ws_route_group() -> ::std::vec::Vec<#ws_route_descriptor> {
+            fn __upwell_ws_route_group() -> ::std::vec::Vec<#ws_route_descriptor> {
                 ::std::vec![ #(#descriptors),* ]
             }
 
