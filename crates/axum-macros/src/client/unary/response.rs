@@ -50,7 +50,7 @@ pub(super) fn response_plan(input: ResponsePlanInput<'_>) -> ResponsePlan {
         .unwrap_or_else(|| response_type(output));
     let alternatives = &contract.alternatives;
     let raw: Type = syn::parse_quote!(::std::vec::Vec<u8>);
-    let common = common_body(alternatives);
+    let common = common_shape(alternatives);
 
     let (ty, declaration, constructors) = if let Some(user_response) = &route.response {
         let constructors = alternatives
@@ -58,6 +58,12 @@ pub(super) fn response_plan(input: ResponsePlanInput<'_>) -> ResponsePlan {
             .map(|response| match response.body {
                 ResponseBody::Typed(_) => {
                     quote!(::core::convert::Into::<#user_response>::into(__decoded))
+                }
+                ResponseBody::Empty if response.redirect.is_some() => {
+                    let redirect = paths.plugin("client::RedirectResponse");
+                    quote!(::core::convert::Into::<#user_response>::into(
+                        #redirect::from_parts(__status, &__headers)
+                    ))
                 }
                 ResponseBody::Empty => quote!(::core::convert::Into::<#user_response>::into(())),
                 ResponseBody::Opaque => {
@@ -67,10 +73,10 @@ pub(super) fn response_plan(input: ResponsePlanInput<'_>) -> ResponsePlan {
             .collect();
 
         (user_response.clone(), quote!(), constructors)
-    } else if let Some(common) = common {
+    } else if let Some((common, redirecting)) = common {
         let constructor = match &common {
             ResponseBody::Typed(_) => quote!(__decoded),
-            ResponseBody::Empty if alternatives[0].redirect.is_some() => {
+            ResponseBody::Empty if redirecting => {
                 let redirect = paths.plugin("client::RedirectResponse");
                 quote!(#redirect::from_parts(__status, &__headers))
             }
@@ -79,7 +85,7 @@ pub(super) fn response_plan(input: ResponsePlanInput<'_>) -> ResponsePlan {
         };
         let ty = match common {
             ResponseBody::Typed(ty) => *ty,
-            ResponseBody::Empty if alternatives[0].redirect.is_some() => {
+            ResponseBody::Empty if redirecting => {
                 let redirect = paths.plugin("client::RedirectResponse");
                 syn::parse_quote!(#redirect)
             }
@@ -113,6 +119,10 @@ pub(super) fn response_plan(input: ResponsePlanInput<'_>) -> ResponsePlan {
 
             match &response.body {
                 ResponseBody::Typed(body) => quote!(#variant(#body)),
+                ResponseBody::Empty if response.redirect.is_some() => {
+                    let redirect = paths.plugin("client::RedirectResponse");
+                    quote!(#variant(#redirect))
+                }
                 ResponseBody::Empty => quote!(#variant),
                 ResponseBody::Opaque => quote!(#variant(::std::vec::Vec<u8>)),
             }
@@ -124,6 +134,10 @@ pub(super) fn response_plan(input: ResponsePlanInput<'_>) -> ResponsePlan {
 
                 match response.body {
                     ResponseBody::Typed(_) => quote!(#ident::#variant(__decoded)),
+                    ResponseBody::Empty if response.redirect.is_some() => {
+                        let redirect = paths.plugin("client::RedirectResponse");
+                        quote!(#ident::#variant(#redirect::from_parts(__status, &__headers)))
+                    }
                     ResponseBody::Empty => quote!(#ident::#variant),
                     ResponseBody::Opaque => quote!(#ident::#variant(__bytes)),
                 }
@@ -157,6 +171,10 @@ pub(super) fn response_plan(input: ResponsePlanInput<'_>) -> ResponsePlan {
                 .iter()
                 .map(move |alternative| match &alternative.body {
                     ResponseBody::Typed(body) => quote!(#response: ::core::convert::From<#body>),
+                    ResponseBody::Empty if alternative.redirect.is_some() => {
+                        let redirect = paths.plugin("client::RedirectResponse");
+                        quote!(#response: ::core::convert::From<#redirect>)
+                    }
                     ResponseBody::Empty => quote!(#response: ::core::convert::From<()>),
                     ResponseBody::Opaque => {
                         quote!(#response: ::core::convert::From<::std::vec::Vec<u8>>)
@@ -236,13 +254,19 @@ pub(super) fn response_plan(input: ResponsePlanInput<'_>) -> ResponsePlan {
     }
 }
 
-fn common_body(alternatives: &[crate::http_analysis::ResponseAlternative]) -> Option<ResponseBody> {
-    let first = alternatives.first()?.body.clone();
+fn common_shape(
+    alternatives: &[crate::http_analysis::ResponseAlternative],
+) -> Option<(ResponseBody, bool)> {
+    let first = alternatives.first()?;
+    let body = first.body.clone();
+    let redirecting = first.redirect.is_some();
 
     alternatives
         .iter()
-        .all(|alternative| same_body(&first, &alternative.body))
-        .then_some(first)
+        .all(|alternative| {
+            same_body(&body, &alternative.body) && redirecting == alternative.redirect.is_some()
+        })
+        .then_some((body, redirecting))
 }
 
 fn same_body(left: &ResponseBody, right: &ResponseBody) -> bool {

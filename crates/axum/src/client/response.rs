@@ -6,6 +6,7 @@ use http::{HeaderMap, StatusCode};
 
 /// Redirect control-flow information exposed as a generated route response body.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[cfg_attr(
     target_family = "wasm",
     wasm_bindgen::prelude::wasm_bindgen(getter_with_clone)
