@@ -44,7 +44,7 @@ pub struct HttpRouteDescriptor {
 }
 
 /// One named placeholder in an HTTP route template.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct HttpPathParameterDescriptor {
     /// Placeholder name without the catch-all marker.
     pub name: &'static str,
@@ -53,7 +53,7 @@ pub struct HttpPathParameterDescriptor {
 }
 
 /// The transport or server-side source of one HTTP handler input.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 #[non_exhaustive]
 pub enum HttpInputSource {
     Path,
@@ -104,13 +104,21 @@ pub struct HttpOutputDescriptor {
     pub responses: &'static [HttpResponseDescriptor],
 }
 
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub enum HttpResponseBodyDescriptor {
+    Empty,
+    Typed(TypeDescriptor),
+    Opaque,
+}
+
 /// One known status-specific response alternative.
 #[derive(Clone, Copy, Debug)]
 pub struct HttpResponseDescriptor {
     /// Concrete HTTP status.
     pub status: u16,
     /// Decoded body type when declared or cheaply inferred.
-    pub body: Option<TypeDescriptor>,
+    pub body: HttpResponseBodyDescriptor,
     /// Literal redirect target when cheaply inferred or explicitly declared.
     pub redirect: Option<&'static str>,
 }

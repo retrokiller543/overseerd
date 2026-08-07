@@ -74,7 +74,7 @@ pub use openapi::{
 pub use controller::{
     CONTROLLERS, Controller, ControllerDescriptor, ControllerRoute, HttpInputDescriptor,
     HttpInputSource, HttpOutputDescriptor, HttpOutputShape, HttpPathParameterDescriptor,
-    HttpResponseDescriptor, HttpRouteDescriptor,
+    HttpResponseBodyDescriptor, HttpResponseDescriptor, HttpRouteDescriptor,
 };
 #[cfg(not(target_family = "wasm"))]
 pub use error::{Error, Result};

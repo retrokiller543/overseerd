@@ -46,13 +46,35 @@ pub use interceptor::WasmClientInterceptor;
 pub use interceptor::{ClientInterceptor, DefaultClientInterceptor};
 #[cfg(all(feature = "ws", feature = "client"))]
 pub use messaging::*;
-pub use response::HttpResponse;
+pub use response::{HttpResponse, RedirectResponse};
 pub use streaming::{HttpClientStreaming, HttpStreaming, StreamDecode, encode_stream};
 #[cfg(all(feature = "ws", feature = "client"))]
 pub use websocket::*;
 
 /// Re-exported so generated streaming-client code names the codec without a separate dep.
 pub use overseerd_transport::{Decodes, Encodes};
+
+/// Raw unary HTTP exchange used by generated status-aware route clients.
+pub trait HttpExchange: overseerd_client::Transport<Status = http::StatusCode> {
+    /// Performs one request without classifying statuses or decoding the body.
+    fn exchange<B>(
+        &self,
+        request: http::Request<B>,
+    ) -> impl std::future::Future<
+        Output = Result<HttpResponse<Vec<u8>>, overseerd_client::ClientError<http::StatusCode>>,
+    > + overseerd_client::MaybeSend
+    where
+        Self: Encodes<B>,
+        B: overseerd_client::MaybeSend;
+
+    /// Decodes one already-buffered response body using this backend's codec.
+    fn decode_response<T>(
+        &self,
+        body: Vec<u8>,
+    ) -> Result<T, overseerd_client::ClientError<http::StatusCode>>
+    where
+        Self: Decodes<T>;
+}
 
 /// Percent-encodes one URI path segment according to RFC 3986. Generated clients call this for
 /// every route `Path<T>` substitution before building the request URI.
@@ -124,6 +146,26 @@ pub(crate) fn redirect_error<E>(
             .map(str::to_owned),
         body,
     }
+}
+
+/// Converts a raw response whose status is absent from a generated route contract into an error.
+pub fn unexpected_response<E>(
+    response: HttpResponse<Vec<u8>>,
+) -> overseerd_client::ClientError<http::StatusCode, E> {
+    let (status, headers, body) = response.into_parts();
+
+    if status.is_redirection() {
+        return overseerd_client::ClientError::Redirect {
+            status,
+            location: headers
+                .get(http::header::LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned),
+            body,
+        };
+    }
+
+    overseerd_client::ClientError::Remote(overseerd_client::ErrorBody::new(status, body))
 }
 
 #[cfg(all(feature = "hyper", not(target_family = "wasm")))]

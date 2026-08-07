@@ -54,6 +54,61 @@ fn inferred_redirect_and_declared_error_responses_are_documented() {
 
     assert!(login.responses.responses.contains_key("303"));
     assert!(callback.responses.responses.contains_key("403"));
+    assert!(!callback.responses.responses.contains_key("200"));
+
+    let utoipa::openapi::RefOr::T(forbidden) = &callback.responses.responses["403"] else {
+        panic!("403 response should be inline")
+    };
+
+    assert!(forbidden.content.contains_key("application/json"));
+}
+
+#[test]
+fn response_contract_examples_document_only_real_statuses() {
+    let doc = doc();
+    let generated = doc.paths.paths["/responses/generated/{accepted}"]
+        .get
+        .as_ref()
+        .expect("generated response route");
+    let manual = doc.paths.paths["/responses/manual/{accepted}"]
+        .get
+        .as_ref()
+        .expect("manual response route");
+    let authoritative = doc.paths.paths["/responses/authoritative"]
+        .get
+        .as_ref()
+        .expect("authoritative response route");
+    let empty = doc.paths.paths["/responses/empty"]
+        .delete
+        .as_ref()
+        .expect("empty response route");
+
+    assert_eq!(
+        generated.responses.responses.keys().collect::<Vec<_>>(),
+        ["202", "422"]
+    );
+    assert_eq!(
+        manual.responses.responses.keys().collect::<Vec<_>>(),
+        ["202", "422"]
+    );
+    assert_eq!(
+        authoritative.responses.responses.keys().collect::<Vec<_>>(),
+        ["418"]
+    );
+    assert_eq!(
+        empty.responses.responses.keys().collect::<Vec<_>>(),
+        ["204"]
+    );
+
+    for operation in [generated, manual] {
+        for status in ["202", "422"] {
+            let utoipa::openapi::RefOr::T(response) = &operation.responses.responses[status] else {
+                panic!("{status} response should be inline")
+            };
+
+            assert!(response.content.contains_key("application/json"));
+        }
+    }
 }
 
 #[test]
@@ -220,21 +275,22 @@ fn custom_responses_replace_the_generated_default() {
 fn opaque_returns_are_documented_bodyless_not_schema_ified() {
     let doc = docs_doc();
 
-    // A raw `Response` and an `impl IntoResponse` are both valid handlers: documented with a `200`
-    // and no body schema, rather than a (nonexistent) `Response`/opaque component ref.
+    // A raw `Response` and an `impl IntoResponse` with no inferable leaves remain explicit default
+    // responses. Inventing 200 would misdocument a handler whose hidden implementation may only
+    // return errors or redirects.
     for path in ["/docs-demo/raw", "/docs-demo/opaque"] {
         let op = doc.paths.paths[path]
             .get
             .as_ref()
             .unwrap_or_else(|| panic!("GET {path} is documented"));
-        let ok = op
+        let opaque = op
             .responses
             .responses
-            .get("200")
-            .unwrap_or_else(|| panic!("{path} has a 200"));
+            .get("default")
+            .unwrap_or_else(|| panic!("{path} has a default response"));
 
-        let utoipa::openapi::RefOr::T(response) = ok else {
-            panic!("{path} 200 is inline");
+        let utoipa::openapi::RefOr::T(response) = opaque else {
+            panic!("{path} default response is inline");
         };
 
         assert!(

@@ -246,6 +246,48 @@ where
     }
 }
 
+impl<W, I> super::HttpExchange for HyperClient<W, I>
+where
+    W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
+{
+    async fn exchange<B>(
+        &self,
+        request: Request<B>,
+    ) -> Result<HttpResponse<Vec<u8>>, ClientError<http::StatusCode>>
+    where
+        Self: Encodes<B>,
+        B: Send,
+    {
+        let request = self.build_request(request)?;
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|error| self.fail(net_err(error)))?;
+        let (mut parts, body) = response.into_parts();
+
+        self.interceptor.on_response(&mut parts);
+
+        let body = body
+            .collect()
+            .await
+            .map_err(|error| self.fail(net_err(error)))?
+            .to_bytes()
+            .to_vec();
+
+        Ok(HttpResponse::new(parts.status, parts.headers, body))
+    }
+
+    fn decode_response<T>(&self, body: Vec<u8>) -> Result<T, ClientError<http::StatusCode>>
+    where
+        Self: Decodes<T>,
+    {
+        self.decode(body)
+            .map_err(|error| self.fail(ClientError::Decode(error.to_string())))
+    }
+}
+
 impl<W, I> HttpStreaming for HyperClient<W, I>
 where
     W: Send + Sync,
