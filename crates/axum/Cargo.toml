@@ -18,6 +18,7 @@ client = [
     "dep:overseerd-client",
     "dep:http",
     "dep:serde_urlencoded",
+    "dep:wasm-bindgen",
     "overseerd-axum-macros/client",
 ]
 # Client backends — independent so a user picks one (or both). Each pulls in only its stack.
@@ -27,7 +28,6 @@ client = [
 reqwest = [
     "client",
     "dep:reqwest",
-    "dep:wasm-bindgen",
     "dep:wasm-bindgen-futures",
     "dep:js-sys",
     "dep:web-sys",
