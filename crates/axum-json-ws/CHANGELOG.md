@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.18.0](https://github.com/upwell-rs/upwell/compare/upwell-axum-json-ws-v0.17.2...upwell-axum-json-ws-v0.18.0) - 2026-07-19
+## 0.18.0 - 2026-07-19
 
 ### Added
 
