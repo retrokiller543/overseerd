@@ -93,6 +93,21 @@ impl Responses {
     async fn empty(&self) -> StatusCode {
         StatusCode::NO_CONTENT
     }
+
+    #[get(
+        "/empty-or-redirect/{redirect}",
+        responses = [
+            (status = 204),
+            (status = 303, redirect = "/responses/empty"),
+        ]
+    )]
+    async fn empty_or_redirect(&self, Path(redirect): Path<bool>) -> Response {
+        if redirect {
+            overseerd::axum::axum::response::Redirect::to("/responses/empty").into_response()
+        } else {
+            StatusCode::NO_CONTENT.into_response()
+        }
+    }
 }
 
 #[tokio::test]
@@ -139,6 +154,23 @@ async fn generated_clients_decode_every_status_contract() {
         .expect("empty response");
     assert_eq!(empty.status(), StatusCode::NO_CONTENT);
     assert_eq!(*empty.body(), ());
+
+    let redirect = deadline("mixed redirect", reqwest.empty_or_redirect(true))
+        .await
+        .expect("mixed redirect response");
+    assert!(matches!(
+        redirect.body(),
+        ResponsesEmptyOrRedirectResponse::Status303(redirect)
+            if redirect.location.as_deref() == Some("/responses/empty")
+    ));
+
+    let no_content = deadline("mixed empty", reqwest.empty_or_redirect(false))
+        .await
+        .expect("mixed empty response");
+    assert!(matches!(
+        no_content.body(),
+        ResponsesEmptyOrRedirectResponse::Status204
+    ));
 
     server.shutdown().await;
 }

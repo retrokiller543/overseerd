@@ -88,6 +88,18 @@ impl ResponseController {
     async fn empty(&self) -> overseerd::axum::http::StatusCode {
         overseerd::axum::http::StatusCode::NO_CONTENT
     }
+
+    /// Empty and redirect outcomes are distinct generated response variants.
+    #[get(
+        "/empty-or-redirect",
+        responses = [
+            (status = 204),
+            (status = 303, redirect = "/responses/empty"),
+        ]
+    )]
+    async fn empty_or_redirect(&self) -> Response {
+        opaque_teapot_response()
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
