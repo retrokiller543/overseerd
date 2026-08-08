@@ -1,7 +1,6 @@
 use std::io::Read as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use semver::Version;
@@ -36,6 +35,10 @@ pub struct ComponentLimits {
     pub fuel: u64,
     /// Wall-clock execution deadline enforced through Wasmtime epochs.
     pub deadline: Duration,
+    /// Wall-clock deadline for isolated component validation and native compilation.
+    pub compiler_deadline: Duration,
+    /// Maximum address space for the isolated component compiler process.
+    pub compiler_memory_bytes: usize,
     /// Maximum bytes per guest linear memory.
     pub memory_bytes: usize,
     /// Maximum number of guest linear memories.
@@ -58,6 +61,8 @@ impl Default for ComponentLimits {
             output_bytes: 4 * 1024 * 1024,
             fuel: 10_000_000,
             deadline: Duration::from_secs(2),
+            compiler_deadline: Duration::from_secs(10),
+            compiler_memory_bytes: 8 * 1024 * 1024 * 1024,
             memory_bytes: 32 * 1024 * 1024,
             memories: 4,
             table_elements: 10_000,
@@ -90,12 +95,7 @@ pub struct ComponentRenderRequest<'a> {
 impl ComponentRendererHost {
     /// Creates a component host with fuel and epoch interruption enabled.
     pub fn new(limits: ComponentLimits) -> Result<Self, ComponentRenderError> {
-        let mut config = Config::new();
-        config
-            .consume_fuel(true)
-            .epoch_interruption(true)
-            .max_wasm_stack(512 * 1024);
-        let engine = Engine::new(&config).map_err(ComponentRenderError::Engine)?;
+        let engine = renderer_engine()?;
         let ticker = engine.clone();
         let stop_epoch = Arc::new(AtomicBool::new(false));
         let ticker_stop = Arc::clone(&stop_epoch);
@@ -145,7 +145,7 @@ impl ComponentRendererHost {
         }
 
         let bytes = read_bounded(renderer.path(), self.limits.component_bytes)?;
-        let component = compiled_component(&self.engine, renderer.path(), &bytes)?;
+        let component = compile_component(&self.engine, &bytes, self.limits)?;
         let component_type = component.component_type();
 
         if let Some((name, _)) = component_type.imports(&self.engine).next() {
@@ -244,50 +244,236 @@ impl ComponentRendererHost {
     }
 }
 
-fn compiled_component(
-    engine: &Engine,
-    path: &std::path::Path,
-    bytes: &[u8],
-) -> Result<Component, ComponentRenderError> {
-    static COMPONENTS: OnceLock<
-        Mutex<std::collections::BTreeMap<std::path::PathBuf, CachedComponent>>,
-    > = OnceLock::new();
-    let components = COMPONENTS.get_or_init(|| Mutex::new(std::collections::BTreeMap::new()));
-    let modified = std::fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .map_err(|source| ComponentRenderError::Read {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    let mut components = components
-        .lock()
-        .map_err(|_| ComponentRenderError::CachePoisoned)?;
+fn renderer_engine() -> Result<Engine, ComponentRenderError> {
+    let mut config = Config::new();
+    config
+        .consume_fuel(true)
+        .epoch_interruption(true)
+        .max_wasm_stack(512 * 1024);
 
-    if let Some(cached) = components.get(path)
-        && cached.modified == modified
-        && cached.size == bytes.len()
-    {
-        return Ok(cached.component.clone());
-    }
-
-    let component =
-        Component::from_binary(engine, bytes).map_err(ComponentRenderError::InvalidComponent)?;
-    components.insert(
-        path.to_path_buf(),
-        CachedComponent {
-            modified,
-            size: bytes.len(),
-            component: component.clone(),
-        },
-    );
-
-    Ok(component)
+    Engine::new(&config).map_err(ComponentRenderError::Engine)
 }
 
-struct CachedComponent {
-    modified: std::time::SystemTime,
-    size: usize,
-    component: Component,
+#[cfg(unix)]
+fn configure_compiler_limits(
+    _command: &mut std::process::Command,
+    _memory_bytes: usize,
+) -> Result<(), ComponentRenderError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn constrain_compiler_process(
+    _child: &std::process::Child,
+    _memory_bytes: usize,
+) -> Result<(), ComponentRenderError> {
+    Ok(())
+}
+
+#[cfg(windows)]
+fn constrain_compiler_process(
+    child: &std::process::Child,
+    memory_bytes: usize,
+) -> Result<CompilerProcessGuard, ComponentRenderError> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectExtendedLimitInformation, SetInformationJobObject,
+    };
+
+    // SAFETY: null security attributes and name request one private job object.
+    let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job.is_null() {
+        return Err(ComponentRenderError::CompilerIo(
+            std::io::Error::last_os_error(),
+        ));
+    }
+    let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    information.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    information.ProcessMemoryLimit = memory_bytes;
+    // SAFETY: job is valid and information points to a correctly sized initialized structure.
+    let configured = unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            (&raw const information).cast(),
+            std::mem::size_of_val(&information) as u32,
+        )
+    };
+    // SAFETY: child owns a valid live process handle until this call returns.
+    let assigned = unsafe { AssignProcessToJobObject(job, child.as_raw_handle()) };
+    if configured == 0 || assigned == 0 {
+        // SAFETY: job was created above and has not yet been closed.
+        unsafe { CloseHandle(job) };
+        return Err(ComponentRenderError::CompilerIo(
+            std::io::Error::last_os_error(),
+        ));
+    }
+
+    Ok(CompilerProcessGuard(job))
+}
+
+#[cfg(windows)]
+struct CompilerProcessGuard(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl Drop for CompilerProcessGuard {
+    fn drop(&mut self) {
+        // SAFETY: this guard uniquely owns the valid job handle.
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+    }
+}
+
+#[cfg(windows)]
+fn configure_compiler_limits(
+    _command: &mut std::process::Command,
+    _memory_bytes: usize,
+) -> Result<(), ComponentRenderError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn apply_worker_memory_limit() -> Result<(), ComponentRenderError> {
+    #[cfg(test)]
+    return Ok(());
+
+    #[cfg(not(test))]
+    {
+        #[cfg(not(target_os = "macos"))]
+        let memory = worker_memory_limit()?;
+        #[cfg(not(target_os = "macos"))]
+        let limit = libc::rlimit {
+            rlim_cur: memory as libc::rlim_t,
+            rlim_max: memory as libc::rlim_t,
+        };
+
+        let cpu = libc::rlimit {
+            rlim_cur: 2,
+            rlim_max: 2,
+        };
+
+        // macOS does not expose a reliable enforceable memory rlimit for JIT-capable processes;
+        // process isolation and the parent deadline still make the worker killable there.
+        #[cfg(not(target_os = "macos"))]
+        // SAFETY: the worker applies the address-space limit to itself with a valid pointer.
+        if unsafe { libc::setrlimit(libc::RLIMIT_AS, &limit) } != 0 {
+            return Err(ComponentRenderError::CompilerIo(
+                std::io::Error::last_os_error(),
+            ));
+        }
+        // SAFETY: the worker applies the CPU limit to itself with a valid pointer.
+        if unsafe { libc::setrlimit(libc::RLIMIT_CPU, &cpu) } != 0 {
+            return Err(ComponentRenderError::CompilerIo(
+                std::io::Error::last_os_error(),
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+fn apply_worker_memory_limit() -> Result<(), ComponentRenderError> {
+    Ok(())
+}
+
+#[cfg(any(windows, all(unix, not(target_os = "macos"), not(test))))]
+fn worker_memory_limit() -> Result<usize, ComponentRenderError> {
+    std::env::var("UPWELL_RENDERER_COMPILE_MEMORY")
+        .map_err(|error| ComponentRenderError::CompilerFailed(error.to_string()))?
+        .parse()
+        .map_err(|error: std::num::ParseIntError| {
+            ComponentRenderError::CompilerFailed(error.to_string())
+        })
+}
+
+fn compile_component(
+    engine: &Engine,
+    bytes: &[u8],
+    limits: ComponentLimits,
+) -> Result<Component, ComponentRenderError> {
+    let directory = tempfile::Builder::new()
+        .prefix("upwell-renderer-compile")
+        .tempdir()
+        .map_err(ComponentRenderError::CompilerIo)?;
+    let input = directory.path().join("component.wasm");
+    let output = directory.path().join("component.cwasm");
+
+    std::fs::write(&input, bytes).map_err(ComponentRenderError::CompilerIo)?;
+    let executable = std::env::current_exe().map_err(ComponentRenderError::CompilerIo)?;
+    let mut command = std::process::Command::new(executable);
+
+    command
+        .env("UPWELL_RENDERER_COMPILE_INPUT", &input)
+        .env("UPWELL_RENDERER_COMPILE_OUTPUT", &output)
+        .env(
+            "UPWELL_RENDERER_COMPILE_MEMORY",
+            limits.compiler_memory_bytes.to_string(),
+        )
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(test)]
+    command.args([
+        "--exact",
+        "renderer::component::tests::compiler_worker_entry",
+        "--nocapture",
+    ]);
+    configure_compiler_limits(&mut command, limits.compiler_memory_bytes)?;
+    let mut child = command.spawn().map_err(ComponentRenderError::CompilerIo)?;
+    #[cfg(unix)]
+    constrain_compiler_process(&child, limits.compiler_memory_bytes)?;
+    #[cfg(windows)]
+    let _compiler_guard = constrain_compiler_process(&child, limits.compiler_memory_bytes)?;
+    let deadline = std::time::Instant::now() + limits.compiler_deadline;
+
+    loop {
+        if let Some(status) = child.try_wait().map_err(ComponentRenderError::CompilerIo)? {
+            if !status.success() {
+                let stderr = child
+                    .wait_with_output()
+                    .map_err(ComponentRenderError::CompilerIo)?
+                    .stderr;
+
+                return Err(ComponentRenderError::CompilerFailed(
+                    String::from_utf8_lossy(&stderr).into_owned(),
+                ));
+            }
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().map_err(ComponentRenderError::CompilerIo)?;
+            let _ = child.wait();
+
+            return Err(ComponentRenderError::CompilerDeadline);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // SAFETY: this exact binary's bounded worker produced the artifact in a private temporary
+    // directory using the same engine configuration, and no untrusted process can modify it.
+    unsafe { Component::deserialize_file(engine, output) }
+        .map_err(ComponentRenderError::InvalidComponent)
+}
+
+#[doc(hidden)]
+pub fn run_component_compiler_worker() -> Option<Result<(), ComponentRenderError>> {
+    let input = std::env::var_os("UPWELL_RENDERER_COMPILE_INPUT")?;
+    let output = std::env::var_os("UPWELL_RENDERER_COMPILE_OUTPUT")?;
+
+    Some((|| {
+        apply_worker_memory_limit()?;
+        let bytes = std::fs::read(input).map_err(ComponentRenderError::CompilerIo)?;
+        let engine = renderer_engine()?;
+        let artifact = engine
+            .precompile_component(&bytes)
+            .map_err(ComponentRenderError::InvalidComponent)?;
+
+        std::fs::write(output, artifact).map_err(ComponentRenderError::CompilerIo)
+    })())
 }
 
 impl Drop for ComponentRendererHost {
@@ -324,8 +510,12 @@ pub enum ComponentRenderError {
     },
     #[error("renderer component is invalid or does not export the Upwell renderer world")]
     InvalidComponent(#[source] anyhow::Error),
-    #[error("renderer component compilation cache is unavailable")]
-    CachePoisoned,
+    #[error("renderer compiler process I/O failed")]
+    CompilerIo(#[source] std::io::Error),
+    #[error("renderer compilation exceeded its deadline")]
+    CompilerDeadline,
+    #[error("renderer compiler process failed: {0}")]
+    CompilerFailed(String),
     #[error("renderer component imports forbidden host capability `{name}`")]
     HostImport { name: String },
     #[error("renderer requires ABI `{required}`, but the host provides `{host}`")]
