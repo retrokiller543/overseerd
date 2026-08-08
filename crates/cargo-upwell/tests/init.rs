@@ -227,10 +227,14 @@ where
 }
 
 fn configure_nested_cargo(command: &mut Command) {
-    command.env("CARGO_NET_OFFLINE", "true").env(
-        "CARGO_TARGET_DIR",
-        workspace_root().join("target/init-tests"),
-    );
+    command
+        .env("CARGO_NET_OFFLINE", "true")
+        .env(
+            "CARGO_TARGET_DIR",
+            workspace_root().join("target/init-tests"),
+        )
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS");
 }
 
 fn dependencies_available(project: &Path) -> bool {
