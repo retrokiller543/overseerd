@@ -276,7 +276,12 @@ utf8 = true
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(output.stdout, b"fixture output");
+    assert_eq!(
+        output.stdout,
+        b"fixture output",
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
 }
 

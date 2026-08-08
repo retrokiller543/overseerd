@@ -55,11 +55,7 @@ pub(crate) fn render_selected(
                     .map_err(|error| error.to_string())
             });
             match rendered {
-                Ok(rendered)
-                    if terminal
-                        && component.utf8()
-                        && selected.format().media_type().starts_with("text/") =>
-                {
+                Ok(rendered) if terminal && component.utf8() => {
                     write_terminal_safe(&rendered, request.color, output)
                 }
                 Ok(rendered) => output.write_all(&rendered),

@@ -11,6 +11,7 @@ mod component;
 
 pub use component::{
     ComponentLimits, ComponentRenderError, ComponentRenderRequest, ComponentRendererHost,
+    run_component_compiler_worker,
 };
 
 /// Version requirement for the host/component renderer ABI.

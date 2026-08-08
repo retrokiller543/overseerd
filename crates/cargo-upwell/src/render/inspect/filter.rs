@@ -36,33 +36,16 @@ pub(crate) fn project_inspection(
         .collect::<BTreeSet<_>>();
     let mut projection = document.clone();
 
-    projection
-        .resources
-        .retain(|resource| selected.contains(resource.id.as_str()));
-    for resource in &mut projection.resources {
-        if resource
-            .provenance
-            .as_ref()
-            .and_then(|provenance| provenance.owner.as_deref())
-            .is_some_and(|owner| !selected.contains(owner))
-            && let Some(provenance) = &mut resource.provenance
-        {
-            provenance.owner = None;
-        }
-    }
     projection.relationships.retain(|relationship| {
         selected.contains(relationship.from.as_str()) || selected.contains(relationship.to.as_str())
     });
-    let connected = projection
+    let mut included = projection
         .relationships
         .iter()
         .flat_map(|relationship| [&relationship.from, &relationship.to])
+        .cloned()
+        .chain(selected.iter().map(|id| (*id).to_owned()))
         .collect::<BTreeSet<_>>();
-    for resource in document.resources.iter().filter(|resource| {
-        connected.contains(&resource.id) && !selected.contains(resource.id.as_str())
-    }) {
-        projection.resources.push(resource.clone());
-    }
     projection.diagnostics.retain_mut(|diagnostic| {
         if diagnostic.resources.is_empty() {
             return true;
@@ -76,17 +59,25 @@ pub(crate) fn project_inspection(
     projection
         .facets
         .retain(|namespace, _| filters.facets.is_empty() || filters.facets.contains(namespace));
-    let cli_resources = project_cli(document, &mut projection, filters);
-    let projected_ids = projection
-        .resources
-        .iter()
-        .map(|resource| resource.id.clone())
-        .collect::<BTreeSet<_>>();
-    for resource in document.resources.iter().filter(|resource| {
-        cli_resources.contains(&resource.id) && !projected_ids.contains(&resource.id)
-    }) {
-        projection.resources.push(resource.clone());
+    included.extend(project_cli(document, &mut projection, filters));
+
+    loop {
+        let owners = document
+            .resources
+            .iter()
+            .filter(|resource| included.contains(&resource.id))
+            .filter_map(|resource| resource.provenance.as_ref()?.owner.clone())
+            .collect::<Vec<_>>();
+        let previous = included.len();
+
+        included.extend(owners);
+        if included.len() == previous {
+            break;
+        }
     }
+    projection
+        .resources
+        .retain(|resource| included.contains(&resource.id));
     projection.canonicalize();
     projection.validate().map_err(std::io::Error::other)?;
 

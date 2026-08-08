@@ -40,7 +40,7 @@ pub use renderer::{
     BuiltInRenderer, ComponentLimits, ComponentRenderError, ComponentRenderRequest,
     ComponentRenderer, ComponentRendererHost, RENDERER_ABI_REQUIREMENT, RendererCapabilities,
     RendererCommand, RendererDescriptor, RendererFormat, RendererImplementation, RendererRegistry,
-    RendererRegistryError, ResolvedRenderer,
+    RendererRegistryError, ResolvedRenderer, run_component_compiler_worker,
 };
 pub use selection::{
     BinaryCandidate, FeatureSelection, PackageCandidate, SelectedTarget, SelectionError,
