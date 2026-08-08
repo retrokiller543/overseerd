@@ -91,12 +91,14 @@ cargo upwell completions generate fish
 For Fish, install the registration with:
 
 ```fish
-cargo upwell completions generate fish > ~/.config/fish/completions/cargo-upwell.fish
-source ~/.config/fish/completions/cargo-upwell.fish
+cargo upwell completions generate fish > ~/.config/fish/conf.d/cargo-upwell.fish
+source ~/.config/fish/conf.d/cargo-upwell.fish
 ```
 
-The Fish registration supports both `cargo-upwell …` and `cargo upwell …`. Regenerate shell
-registration after upgrading `cargo-upwell` because Clap's dynamic shell protocol may change.
+Fish must source the registration at startup because completing `cargo upwell` autoloads Cargo's
+completion file, not `cargo-upwell.fish`. The `conf.d` location supports both `cargo-upwell …` and
+`cargo upwell …` in every new shell. Regenerate shell registration after upgrading `cargo-upwell`
+because Clap's dynamic shell protocol may change.
 
 Completions include the static command tree plus cached workspace packages, binaries, features,
 resources, contributors, plugins, scopes, and facets. Successful `inspect`, `export`, `graph`, and
