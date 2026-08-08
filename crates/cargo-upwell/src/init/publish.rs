@@ -12,7 +12,11 @@ pub(super) fn commit(staging: TempDir, destination: &Path) -> Result<PathBuf, In
     })?;
 
     match rename_no_replace(staging.path(), destination) {
-        Ok(()) => Ok(destination.to_path_buf()),
+        Ok(()) => {
+            let _ = staging.keep();
+
+            Ok(destination.to_path_buf())
+        }
         Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {
             Err(InitError::DestinationExists(destination.to_path_buf()))
         }
@@ -26,15 +30,13 @@ pub(super) fn commit(staging: TempDir, destination: &Path) -> Result<PathBuf, In
 #[cfg(unix)]
 fn prepare_permissions(staging: &Path) -> io::Result<()> {
     let parent = staging.parent().unwrap_or_else(|| Path::new("."));
-    let probe = tempfile::Builder::new()
+    let probe_root = tempfile::Builder::new()
         .prefix(".cargo-upwell-mode-")
-        .tempdir_in(parent)?
-        .keep();
+        .tempdir_in(parent)?;
+    let probe = probe_root.path().join("directory");
 
-    std::fs::remove_dir(&probe)?;
     std::fs::create_dir(&probe)?;
     let permissions = std::fs::metadata(&probe)?.permissions();
-    std::fs::remove_dir(&probe)?;
     std::fs::set_permissions(staging, permissions)
 }
 
