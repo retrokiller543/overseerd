@@ -54,7 +54,9 @@ enum Command {
     /// `~/Library/Caches/org.upwell-rs.Upwell/completions/v1/`. They intentionally do not use
     /// Cargo `OUT_DIR`, whose hashed path changes across packages, features, targets, and profiles.
     /// `UPWELL_COMPLETION_CACHE_DIR` may override the platform cache root with an absolute path.
-    /// Regenerate shell registration after upgrading `cargo-upwell`.
+    /// Fish users should install the script under `~/.config/fish/conf.d/` so both direct and
+    /// `cargo upwell` completion definitions load at shell startup. Regenerate registration after
+    /// upgrading `cargo-upwell`.
     Completions(CompletionsArgs),
     /// Generates an Upwell application, plugin, or protocol project.
     Init(InitArgs),
