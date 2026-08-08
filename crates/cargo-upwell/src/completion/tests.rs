@@ -59,6 +59,32 @@ fn nested_member_reads_the_outer_workspace_snapshot() {
 }
 
 #[test]
+fn stale_nested_package_snapshot_does_not_shadow_outer_workspace() {
+    let fixture = TempFixture::new("cargo-upwell-completion-stale-nested-cache");
+    let member = fixture.child("crates/member");
+    let cache = fixture.child("cache");
+
+    fixture.write("Cargo.toml", "[workspace]\nmembers = [\"crates/member\"]\n");
+    std::fs::create_dir_all(&member).expect("member directory exists");
+    std::fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"member\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("member manifest is written");
+    write_snapshot(&cache, &member, &member, "component:stale");
+    write_snapshot(&cache, fixture.path(), fixture.path(), "component:active");
+
+    assert_eq!(
+        read_candidates_from(CandidateKind::Resource, &member, &cache)
+            .expect("outer workspace snapshot reads"),
+        [Candidate {
+            value: String::from("component:active"),
+            help: None,
+        }]
+    );
+}
+
+#[test]
 fn mismatched_workspace_identity_is_ignored() {
     let fixture = TempFixture::new("cargo-upwell-completion-identity");
     let cache = fixture.child("cache");
