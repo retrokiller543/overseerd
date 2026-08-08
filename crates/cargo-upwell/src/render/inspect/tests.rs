@@ -6,7 +6,7 @@ use upwell_tooling_schema::{
     Provenance, Relationship, RelationshipKind, Resource, ResourceKind, ToolingDocument,
 };
 
-use super::write_inspection;
+use super::{project_inspection, write_inspection};
 use crate::cli::{InspectFilters, InspectResourceKind};
 
 #[test]
@@ -164,6 +164,83 @@ fn plugin_filter_excludes_non_plugin_cli_contributors() {
 
     assert!(output.contains("CLI\n  none"));
     assert!(!output.contains("provider cli-provider:plugin:test/worker:test/worker-cli"));
+}
+
+#[test]
+fn component_projection_preserves_filtered_relationship_context() {
+    let mut document = fixture();
+    document.resources[2].facets.clear();
+    let filters = InspectFilters {
+        resources: vec![String::from("Worker")],
+        ..InspectFilters::default()
+    };
+
+    let projection = project_inspection(&document, &filters).expect("projection is valid");
+
+    assert!(
+        projection
+            .resources
+            .iter()
+            .any(|resource| resource.id == "scope:test/request")
+    );
+    assert_eq!(projection.relationships, document.relationships);
+}
+
+#[test]
+fn component_projection_filters_document_facets() {
+    let mut document = fixture();
+    document.resources[2].facets.clear();
+    document.facets = BTreeMap::from([
+        (
+            String::from("component:worker/routes"),
+            Facet {
+                schema_version: 1,
+                value: json!({}),
+            },
+        ),
+        (
+            String::from("component:worker/jobs"),
+            Facet {
+                schema_version: 1,
+                value: json!({}),
+            },
+        ),
+    ]);
+    let filters = InspectFilters {
+        facets: vec![String::from("component:worker/routes")],
+        ..InspectFilters::default()
+    };
+
+    let projection = project_inspection(&document, &filters).expect("projection is valid");
+
+    assert_eq!(
+        projection
+            .facets
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["component:worker/routes"]
+    );
+}
+
+#[test]
+fn component_projection_preserves_matching_cli_provider_metadata() {
+    let document = cli_fixture(ResourceKind::Plugin);
+    let filters = InspectFilters {
+        resources: vec![String::from("Worker CLI Contribution")],
+        ..InspectFilters::default()
+    };
+
+    let projection = project_inspection(&document, &filters).expect("projection is valid");
+    let cli = projection.cli.expect("CLI metadata remains available");
+
+    assert_eq!(cli.providers.len(), 1);
+    assert!(
+        projection
+            .resources
+            .iter()
+            .any(|resource| { resource.id == "contribution:plugin:test/worker:test/worker-cli" })
+    );
 }
 
 fn fixture() -> ToolingDocument {

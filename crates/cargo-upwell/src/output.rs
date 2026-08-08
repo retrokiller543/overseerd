@@ -37,6 +37,10 @@ pub(crate) fn write_text(
     }
 }
 
+pub(crate) fn terminal_output_enabled() -> bool {
+    io::stdout().is_terminal()
+}
+
 pub(crate) fn write_export(
     output: Option<&Path>,
     write: impl FnOnce(&mut dyn io::Write) -> io::Result<()>,

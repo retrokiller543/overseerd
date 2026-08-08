@@ -240,6 +240,7 @@ fn configured_component_format_executes_end_to_end() {
     let fixture = TempFixture::new("cargo-upwell-component-command");
     let component =
         workspace.join("crates/cargo-upwell/tests/fixtures/renderer/no-claims.component.wasm");
+    let component = toml::Value::String(component.display().to_string()).to_string();
     fixture.write(
         "catalog.toml",
         format!(
@@ -248,13 +249,12 @@ fn configured_component_format_executes_end_to_end() {
 [[entries]]
 type = "renderer"
 id = "test/custom"
-component = "{}"
+component = {component}
 commands = ["inspect"]
 format = "custom"
 media-type = "text/plain"
 utf8 = true
-"#,
-            component.display()
+"#
         ),
     );
     let output = run_command(
@@ -286,6 +286,7 @@ fn component_failure_falls_back_to_the_native_command_default() {
     let fixture = TempFixture::new("cargo-upwell-component-fallback");
     let component = workspace
         .join("crates/cargo-upwell/tests/fixtures/renderer/forbidden-import.component.wasm");
+    let component = toml::Value::String(component.display().to_string()).to_string();
     fixture.write(
         "catalog.toml",
         format!(
@@ -294,13 +295,12 @@ fn component_failure_falls_back_to_the_native_command_default() {
 [[entries]]
 type = "renderer"
 id = "test/forbidden"
-component = "{}"
+component = {component}
 commands = ["inspect"]
 format = "forbidden"
 media-type = "text/plain"
 utf8 = true
-"#,
-            component.display()
+"#
         ),
     );
     let output = run_command(

@@ -4,7 +4,6 @@ mod render;
 mod render_runtime;
 mod version;
 
-use std::collections::BTreeSet;
 use std::io::{self, IsTerminal as _};
 use std::path::Path;
 use std::process::ExitCode;
@@ -18,7 +17,7 @@ use cargo_upwell::{
 use upwell_tooling_schema::{Diagnostic, ProbeEnvelope, ProbeOutcome, ToolingDocument};
 
 use crate::cli::{Cli, CommandRequest, ExplainFormat, GraphFormat, InspectFilters, TerminalPolicy};
-use crate::output::{write_export, write_text};
+use crate::output::{terminal_output_enabled, write_export, write_text};
 use crate::render_runtime::{registry as renderer_registry, render_selected};
 
 fn main() -> ExitCode {
@@ -123,6 +122,7 @@ fn execute(request: CommandRequest) -> ExitCode {
                 &report.schema,
                 &[],
                 false,
+                terminal_output_enabled(),
                 payload,
                 |native, output| match native {
                     BuiltInRenderer::ReportTerminal => {
@@ -493,7 +493,9 @@ fn inspect(
         .into_iter()
         .map(|resource| resource.id.clone())
         .collect::<Vec<_>>();
-    let payload = inspect_component_payload(&document, &resources, filters.is_empty());
+    let payload = render::project_inspection(&document, &filters)
+        .and_then(|document| document.to_canonical_json().map_err(io::Error::other))
+        .map(String::into_bytes);
     let write = |color, output: &mut dyn io::Write| {
         render_selected(
             selected,
@@ -501,6 +503,7 @@ fn inspect(
             &document.schema,
             &resources,
             color,
+            terminal_output_enabled(),
             payload,
             |native, output| match native {
                 BuiltInRenderer::InspectText => {
@@ -520,57 +523,6 @@ fn inspect(
     let result = write_text(color, pager, write);
 
     finish_output(result, exit_code, "inspection")
-}
-
-fn inspect_component_payload(
-    document: &ToolingDocument,
-    resources: &[String],
-    unfiltered: bool,
-) -> io::Result<Vec<u8>> {
-    if unfiltered {
-        return document
-            .to_canonical_json()
-            .map(String::into_bytes)
-            .map_err(io::Error::other);
-    }
-
-    let selected = resources.iter().collect::<BTreeSet<_>>();
-    let mut projection = document.clone();
-
-    projection.canonicalize();
-    projection
-        .resources
-        .retain(|resource| selected.contains(&resource.id));
-    for resource in &mut projection.resources {
-        if resource
-            .provenance
-            .as_ref()
-            .and_then(|provenance| provenance.owner.as_ref())
-            .is_some_and(|owner| !selected.contains(owner))
-            && let Some(provenance) = &mut resource.provenance
-        {
-            provenance.owner = None;
-        }
-    }
-    projection.relationships.retain(|relationship| {
-        selected.contains(&relationship.from) && selected.contains(&relationship.to)
-    });
-    projection.diagnostics.retain_mut(|diagnostic| {
-        if diagnostic.resources.is_empty() {
-            return true;
-        }
-
-        diagnostic
-            .resources
-            .retain(|resource| selected.contains(resource));
-        !diagnostic.resources.is_empty()
-    });
-    projection.cli = None;
-
-    projection
-        .to_canonical_json()
-        .map(String::into_bytes)
-        .map_err(io::Error::other)
 }
 
 fn graph(
@@ -624,6 +576,7 @@ fn graph(
             &view.schema,
             &resources,
             color,
+            terminal_output_enabled(),
             payload,
             |native, output| {
                 let format = graph_format(native);
@@ -681,6 +634,7 @@ fn explain(
             &explanation.schema,
             &resources,
             color,
+            terminal_output_enabled(),
             payload,
             |native, output| {
                 let format = match native {
@@ -751,6 +705,7 @@ fn export(envelope: ProbeEnvelope, format: &str, output: Option<&Path>) -> ExitC
             fallback,
             &schema,
             &resources,
+            false,
             false,
             payload,
             |native, output| match native {
