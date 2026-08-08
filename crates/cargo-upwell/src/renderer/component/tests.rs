@@ -3,12 +3,6 @@ use upwell_test_utils::TempFixture;
 use super::*;
 use crate::renderer::component_descriptor;
 
-#[test]
-fn compiler_worker_entry() {
-    if let Some(result) = run_component_compiler_worker() {
-        result.expect("compiler worker succeeds");
-    }
-}
 use crate::{RendererCapabilities, RendererDescriptor, RendererImplementation};
 
 const VALID_COMPONENT: &[u8] = include_bytes!(concat!(

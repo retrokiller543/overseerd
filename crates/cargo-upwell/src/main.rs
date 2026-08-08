@@ -21,16 +21,6 @@ use crate::output::{terminal_output_enabled, write_export, write_text};
 use crate::render_runtime::{registry as renderer_registry, render_selected};
 
 fn main() -> ExitCode {
-    if let Some(result) = cargo_upwell::run_component_compiler_worker() {
-        return match result {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(error) => {
-                eprintln!("{error}");
-                ExitCode::FAILURE
-            }
-        };
-    }
-
     clap_complete::CompleteEnv::with_factory(cli::completion_command)
         .bin("cargo-upwell")
         .completer("cargo-upwell")
