@@ -220,6 +220,9 @@ impl Catalog {
                 } => {
                     validate_id(&id)?;
                     insert_unique(&mut seen, &id, "tool")?;
+                    if catalog.templates.contains_key(&id) {
+                        return Err(CatalogError::DuplicateId { id });
+                    }
                     catalog.tools.insert(
                         id.clone(),
                         ToolEntry {
@@ -330,6 +333,13 @@ pub enum CatalogError {
     ConflictingGitReferences { id: String },
     #[error("template `{id}` must specify exactly one of `git` or `path`")]
     InvalidTemplateSource { id: String },
+    #[error("template `{id}` has an empty `{field}` value")]
+    EmptyTemplateValue {
+        /// Template whose value is empty.
+        id: String,
+        /// Empty field name.
+        field: &'static str,
+    },
     #[error("unknown template `{id}`; available templates: {available}", available = available.join(", "))]
     UnknownTemplate { id: String, available: Vec<String> },
 }
@@ -343,6 +353,20 @@ fn resolve_source(
     tag: Option<String>,
     revision: Option<String>,
 ) -> Result<TemplateSource, CatalogError> {
+    if path
+        .as_ref()
+        .is_some_and(|path| path.as_os_str().is_empty())
+    {
+        return Err(CatalogError::EmptyTemplateValue {
+            id: id.to_owned(),
+            field: "path",
+        });
+    }
+    validate_non_empty(id, "git", git.as_deref())?;
+    validate_non_empty(id, "branch", branch.as_deref())?;
+    validate_non_empty(id, "tag", tag.as_deref())?;
+    validate_non_empty(id, "revision", revision.as_deref())?;
+
     match (git, path) {
         (None, Some(path)) if branch.is_none() && tag.is_none() && revision.is_none() => {
             Ok(TemplateSource::Local(if path.is_absolute() {
@@ -369,6 +393,21 @@ fn resolve_source(
             })
         }
         _ => Err(CatalogError::InvalidTemplateSource { id: id.to_owned() }),
+    }
+}
+
+fn validate_non_empty(
+    id: &str,
+    field: &'static str,
+    value: Option<&str>,
+) -> Result<(), CatalogError> {
+    if value.is_some_and(|value| value.trim().is_empty()) {
+        Err(CatalogError::EmptyTemplateValue {
+            id: id.to_owned(),
+            field,
+        })
+    } else {
+        Ok(())
     }
 }
 

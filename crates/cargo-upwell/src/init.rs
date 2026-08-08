@@ -295,22 +295,59 @@ fn create_staging_destination(path: &Path) -> Result<TempDir, InitError> {
 }
 
 fn commit_staging(staging: TempDir, destination: &Path) -> Result<PathBuf, InitError> {
-    let staging_path = staging.keep();
+    reserve_destination(destination)?;
+    let mut moved = Vec::new();
+    let result = move_staged_entries(staging.path(), destination, &mut moved);
 
-    match std::fs::rename(&staging_path, destination) {
-        Ok(()) => Ok(destination.to_path_buf()),
-        Err(source) => {
-            let _ = std::fs::remove_dir_all(&staging_path);
-
-            if source.kind() == std::io::ErrorKind::AlreadyExists {
-                Err(InitError::DestinationExists(destination.to_path_buf()))
-            } else {
-                Err(InitError::CreateDestination {
-                    path: destination.to_path_buf(),
-                    source,
-                })
-            }
+    if let Err(source) = result {
+        for path in moved.into_iter().rev() {
+            let _ = remove_entry(&path);
         }
+        let _ = std::fs::remove_dir(destination);
+
+        return Err(InitError::CreateDestination {
+            path: destination.to_path_buf(),
+            source,
+        });
+    }
+
+    Ok(destination.to_path_buf())
+}
+
+fn reserve_destination(path: &Path) -> Result<(), InitError> {
+    match std::fs::create_dir(path) {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(InitError::DestinationExists(path.to_path_buf()))
+        }
+        Err(source) => Err(InitError::CreateDestination {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn move_staged_entries(
+    staging: &Path,
+    destination: &Path,
+    moved: &mut Vec<PathBuf>,
+) -> Result<(), std::io::Error> {
+    for entry in std::fs::read_dir(staging)? {
+        let entry = entry?;
+        let destination = destination.join(entry.file_name());
+
+        std::fs::rename(entry.path(), &destination)?;
+        moved.push(destination);
+    }
+
+    Ok(())
+}
+
+fn remove_entry(path: &Path) -> Result<(), std::io::Error> {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
     }
 }
 

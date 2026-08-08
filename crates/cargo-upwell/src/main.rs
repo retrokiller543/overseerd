@@ -57,11 +57,11 @@ fn execute(request: CommandRequest) -> ExitCode {
         }
         CommandRequest::Templates { catalog_path } => {
             match Catalog::load(catalog_path.as_deref()) {
-                Ok(catalog) => {
-                    print_templates(&catalog);
-
-                    ExitCode::SUCCESS
-                }
+                Ok(catalog) => finish_output(
+                    write_templates(&catalog, &mut io::stdout().lock()),
+                    ExitCode::SUCCESS,
+                    "template catalog",
+                ),
                 Err(error) => init_error(InitError::Catalog(error)),
             }
         }
@@ -201,12 +201,6 @@ fn select_template(path: Option<&Path>) -> Result<String, InitError> {
         .ok_or(InitError::MissingTemplate)?;
 
     Ok(templates[selection].id().to_owned())
-}
-
-fn print_templates(catalog: &Catalog) {
-    if let Err(error) = write_templates(catalog, &mut io::stdout().lock()) {
-        eprintln!("cargo upwell could not write the template catalog: {error}");
-    }
 }
 
 fn write_templates(catalog: &Catalog, output: &mut dyn io::Write) -> io::Result<()> {
@@ -386,6 +380,9 @@ fn document_exit_code(document: &ToolingDocument) -> ExitCode {
         validation_failure()
     }
 }
+
+#[cfg(test)]
+mod tests;
 
 fn probe_error(error: ProbeRequestError) -> ExitCode {
     let exit_code = probe_request_exit_code(&error);
