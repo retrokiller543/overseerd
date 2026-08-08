@@ -5,6 +5,7 @@
 
 mod build;
 mod command;
+pub mod completion;
 mod discovery;
 pub mod graph;
 mod init;
@@ -140,12 +141,14 @@ pub fn run_probe_with_options(
         source: Box::new(source),
     })?;
 
-    Ok(ToolingProbe {
+    let probe = ToolingProbe {
         workspace,
         target,
         build,
         probe,
-    })
+    };
+
+    Ok(probe)
 }
 
 struct InvocationLock {
