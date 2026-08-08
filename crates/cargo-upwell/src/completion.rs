@@ -149,15 +149,13 @@ fn read_candidates_from(
     root: &Path,
 ) -> Result<Vec<Candidate>, CacheError> {
     reject_symlink(root)?;
-    let (workspace, directory, path) = workspace_candidates(current_dir)
-        .into_iter()
-        .find_map(|workspace| {
-            let directory = root.join(workspace_key(&workspace));
-            let path = directory.join("active.json");
+    let workspace = active_workspace(current_dir).ok_or(CacheError::Unavailable)?;
+    let directory = root.join(workspace_key(&workspace));
+    let path = directory.join("active.json");
 
-            path.is_file().then_some((workspace, directory, path))
-        })
-        .ok_or(CacheError::Unavailable)?;
+    if !path.is_file() {
+        return Err(CacheError::Unavailable);
+    }
     reject_symlink(&directory)?;
     let metadata = std::fs::symlink_metadata(&path)?;
 
@@ -415,12 +413,43 @@ fn workspace_key(workspace: &Path) -> String {
     format!("{hash:016x}")
 }
 
-fn workspace_candidates(start: &Path) -> Vec<PathBuf> {
-    start
+fn active_workspace(start: &Path) -> Option<PathBuf> {
+    let manifests = start
         .ancestors()
         .filter(|directory| directory.join("Cargo.toml").is_file())
         .map(Path::to_path_buf)
-        .collect()
+        .collect::<Vec<_>>();
+
+    manifests
+        .iter()
+        .find(|directory| manifest_declares_workspace(&directory.join("Cargo.toml")))
+        .cloned()
+        .or_else(|| manifests.into_iter().next())
+}
+
+fn manifest_declares_workspace(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() > MAX_CACHE_BYTES {
+        return false;
+    }
+    let Ok(file) = OpenOptions::new().read(true).open(path) else {
+        return false;
+    };
+    let mut source = String::new();
+
+    if file
+        .take(MAX_CACHE_BYTES + 1)
+        .read_to_string(&mut source)
+        .is_err()
+    {
+        return false;
+    }
+
+    toml::from_str::<toml::Value>(&source)
+        .ok()
+        .is_some_and(|manifest| manifest.get("workspace").is_some())
 }
 
 fn canonical_or_original(path: &Path) -> PathBuf {

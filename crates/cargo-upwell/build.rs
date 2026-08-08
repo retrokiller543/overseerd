@@ -79,6 +79,6 @@ fn watch_tracked_files() {
     };
 
     for file in files.lines() {
-        println!("cargo:rerun-if-changed=../../{file}");
+        println!("cargo:rerun-if-changed={file}");
     }
 }
