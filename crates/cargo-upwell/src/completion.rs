@@ -505,15 +505,11 @@ fn read_manifest(path: &Path) -> Option<toml::Value> {
 }
 
 fn path_pattern_matches(pattern: &str, relative: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix("/*") {
-        relative
-            .strip_prefix(prefix)
-            .is_some_and(|suffix| suffix.starts_with('/') && !suffix[1..].contains('/'))
-    } else if let Some(prefix) = pattern.strip_suffix("/**") {
-        relative == prefix || relative.starts_with(&format!("{prefix}/"))
-    } else {
-        relative == pattern
-    }
+    globset::GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()
+        .ok()
+        .is_some_and(|pattern| pattern.compile_matcher().is_match(relative))
 }
 
 fn canonical_or_original(path: &Path) -> PathBuf {
