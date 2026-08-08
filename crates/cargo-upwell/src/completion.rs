@@ -420,22 +420,76 @@ fn active_workspace(start: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
         .collect::<Vec<_>>();
 
+    let package = manifests.first()?.clone();
+    let explicit_workspace = package_workspace(&package.join("Cargo.toml"))
+        .map(|workspace| canonical_or_original(&package.join(workspace)));
+
+    if let Some(workspace) = explicit_workspace {
+        return workspace.join("Cargo.toml").is_file().then_some(workspace);
+    }
+
     manifests
         .iter()
-        .find(|directory| manifest_declares_workspace(&directory.join("Cargo.toml")))
+        .skip(1)
+        .find(|workspace| workspace_includes_package(workspace, &package))
         .cloned()
-        .or_else(|| manifests.into_iter().next())
+        .or(Some(package))
 }
 
-fn manifest_declares_workspace(path: &Path) -> bool {
-    let Ok(metadata) = std::fs::metadata(path) else {
+fn package_workspace(path: &Path) -> Option<PathBuf> {
+    read_manifest(path)?
+        .get("package")?
+        .get("workspace")?
+        .as_str()
+        .map(PathBuf::from)
+}
+
+fn workspace_includes_package(workspace: &Path, package: &Path) -> bool {
+    let manifest = match read_manifest(&workspace.join("Cargo.toml")) {
+        Some(manifest) => manifest,
+        None => return false,
+    };
+    let Some(table) = manifest.get("workspace").and_then(toml::Value::as_table) else {
         return false;
     };
-    if !metadata.is_file() || metadata.len() > MAX_CACHE_BYTES {
+    let Ok(relative) = package.strip_prefix(workspace) else {
+        return false;
+    };
+    let relative = relative.to_string_lossy();
+    let excluded = table
+        .get("exclude")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|patterns| {
+            patterns
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .any(|pattern| path_pattern_matches(pattern, &relative))
+        });
+
+    if excluded {
         return false;
     }
+
+    table
+        .get("members")
+        .and_then(toml::Value::as_array)
+        .is_some_and(|patterns| {
+            patterns
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .any(|pattern| path_pattern_matches(pattern, &relative))
+        })
+}
+
+fn read_manifest(path: &Path) -> Option<toml::Value> {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return None;
+    };
+    if !metadata.is_file() || metadata.len() > MAX_CACHE_BYTES {
+        return None;
+    }
     let Ok(file) = OpenOptions::new().read(true).open(path) else {
-        return false;
+        return None;
     };
     let mut source = String::new();
 
@@ -444,12 +498,22 @@ fn manifest_declares_workspace(path: &Path) -> bool {
         .read_to_string(&mut source)
         .is_err()
     {
-        return false;
+        return None;
     }
 
-    toml::from_str::<toml::Value>(&source)
-        .ok()
-        .is_some_and(|manifest| manifest.get("workspace").is_some())
+    toml::from_str(&source).ok()
+}
+
+fn path_pattern_matches(pattern: &str, relative: &str) -> bool {
+    if let Some(prefix) = pattern.strip_suffix("/*") {
+        relative
+            .strip_prefix(prefix)
+            .is_some_and(|suffix| suffix.starts_with('/') && !suffix[1..].contains('/'))
+    } else if let Some(prefix) = pattern.strip_suffix("/**") {
+        relative == prefix || relative.starts_with(&format!("{prefix}/"))
+    } else {
+        relative == pattern
+    }
 }
 
 fn canonical_or_original(path: &Path) -> PathBuf {
