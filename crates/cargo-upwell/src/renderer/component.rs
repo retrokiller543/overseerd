@@ -422,8 +422,16 @@ fn apply_worker_memory_limit() -> Result<(), ComponentRenderError> {
 }
 
 #[cfg(all(unix, not(test)))]
+#[cfg(target_os = "linux")]
+type RlimitResource = libc::__rlimit_resource_t;
+
+#[cfg(all(unix, not(test)))]
+#[cfg(not(target_os = "linux"))]
+type RlimitResource = libc::c_int;
+
+#[cfg(all(unix, not(test)))]
 fn clamped_limit(
-    resource: libc::c_int,
+    resource: RlimitResource,
     requested: libc::rlim_t,
 ) -> Result<libc::rlimit, ComponentRenderError> {
     let mut inherited = libc::rlimit {
