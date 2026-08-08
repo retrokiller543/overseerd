@@ -21,6 +21,7 @@ command-group = { workspace = true }
 directories = { workspace = true }
 dialoguer = { workspace = true }
 fs2 = { workspace = true }
+globset = { workspace = true }
 upwell-tooling-schema = { workspace = true }
 semver = { workspace = true, features = ["serde"] }
 serde = { workspace = true }

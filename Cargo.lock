@@ -378,6 +378,7 @@ dependencies = [
  "dialoguer",
  "directories",
  "fs2",
+ "globset",
  "libc",
  "semver",
  "serde",

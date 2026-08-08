@@ -114,6 +114,51 @@ fn excluded_nested_package_uses_its_own_snapshot() {
 }
 
 #[test]
+fn nested_workspace_globs_select_and_exclude_packages() {
+    let fixture = TempFixture::new("cargo-upwell-completion-workspace-globs");
+    let member = fixture.child("crates/backend/apps/server");
+    let excluded = fixture.child("crates/legacy/apps/server");
+    let cache = fixture.child("cache");
+
+    fixture.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/*/apps/**\"]\nexclude = [\"crates/legacy/**\"]\n",
+    );
+    for package in [&member, &excluded] {
+        std::fs::create_dir_all(package).expect("package directory exists");
+        std::fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"server\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("package manifest is written");
+    }
+    write_snapshot(
+        &cache,
+        fixture.path(),
+        fixture.path(),
+        "component:workspace",
+    );
+    write_snapshot(&cache, &excluded, &excluded, "component:excluded");
+
+    assert_eq!(
+        read_candidates_from(CandidateKind::Resource, &member, &cache)
+            .expect("nested member uses workspace snapshot"),
+        [Candidate {
+            value: String::from("component:workspace"),
+            help: None,
+        }]
+    );
+    assert_eq!(
+        read_candidates_from(CandidateKind::Resource, &excluded, &cache)
+            .expect("excluded package uses own snapshot"),
+        [Candidate {
+            value: String::from("component:excluded"),
+            help: None,
+        }]
+    );
+}
+
+#[test]
 fn mismatched_workspace_identity_is_ignored() {
     let fixture = TempFixture::new("cargo-upwell-completion-identity");
     let cache = fixture.child("cache");
