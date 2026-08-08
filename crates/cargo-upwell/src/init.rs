@@ -1,6 +1,7 @@
 //! Catalog-backed project generation through cargo-generate.
 
 mod catalog;
+mod publish;
 
 use std::path::{Path, PathBuf};
 
@@ -192,7 +193,7 @@ pub fn init_project(request: InitRequest) -> Result<InitResult, InitError> {
         source,
     })?;
     debug_assert_eq!(generated, staging.path());
-    let path = commit_staging(staging, &request.destination)?;
+    let path = publish::commit(staging, &request.destination)?;
     if request.workspace
         && let Err(error) = add_to_parent_workspace(&path)
     {
@@ -292,63 +293,6 @@ fn create_staging_destination(path: &Path) -> Result<TempDir, InitError> {
             path: path.to_path_buf(),
             source,
         })
-}
-
-fn commit_staging(staging: TempDir, destination: &Path) -> Result<PathBuf, InitError> {
-    reserve_destination(destination)?;
-    let mut moved = Vec::new();
-    let result = move_staged_entries(staging.path(), destination, &mut moved);
-
-    if let Err(source) = result {
-        for path in moved.into_iter().rev() {
-            let _ = remove_entry(&path);
-        }
-        let _ = std::fs::remove_dir(destination);
-
-        return Err(InitError::CreateDestination {
-            path: destination.to_path_buf(),
-            source,
-        });
-    }
-
-    Ok(destination.to_path_buf())
-}
-
-fn reserve_destination(path: &Path) -> Result<(), InitError> {
-    match std::fs::create_dir(path) {
-        Ok(()) => Ok(()),
-        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
-            Err(InitError::DestinationExists(path.to_path_buf()))
-        }
-        Err(source) => Err(InitError::CreateDestination {
-            path: path.to_path_buf(),
-            source,
-        }),
-    }
-}
-
-fn move_staged_entries(
-    staging: &Path,
-    destination: &Path,
-    moved: &mut Vec<PathBuf>,
-) -> Result<(), std::io::Error> {
-    for entry in std::fs::read_dir(staging)? {
-        let entry = entry?;
-        let destination = destination.join(entry.file_name());
-
-        std::fs::rename(entry.path(), &destination)?;
-        moved.push(destination);
-    }
-
-    Ok(())
-}
-
-fn remove_entry(path: &Path) -> Result<(), std::io::Error> {
-    if path.is_dir() {
-        std::fs::remove_dir_all(path)
-    } else {
-        std::fs::remove_file(path)
-    }
 }
 
 fn reject_reserved_values(values: &[String]) -> Result<(), InitError> {
