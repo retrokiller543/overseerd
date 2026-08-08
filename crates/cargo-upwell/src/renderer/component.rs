@@ -277,11 +277,15 @@ fn constrain_compiler_process(
 ) -> Result<CompilerProcessGuard, ComponentRenderError> {
     use std::os::windows::io::AsRawHandle as _;
     use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JobObjectExtendedLimitInformation, SetInformationJobObject,
     };
+    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
 
     // SAFETY: null security attributes and name request one private job object.
     let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
@@ -312,6 +316,41 @@ fn constrain_compiler_process(
             std::io::Error::last_os_error(),
         ));
     }
+    // SAFETY: snapshot is closed below and entry is initialized with its required size.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+        unsafe { CloseHandle(job) };
+        return Err(ComponentRenderError::CompilerIo(
+            std::io::Error::last_os_error(),
+        ));
+    }
+    let mut entry = THREADENTRY32::default();
+    entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+    let mut found = false;
+    // SAFETY: snapshot and entry are valid for ToolHelp iteration.
+    let mut has_entry = unsafe { Thread32First(snapshot, &mut entry) } != 0;
+    while has_entry {
+        if entry.th32OwnerProcessID == child.id() {
+            // SAFETY: this thread belongs to the suspended child process.
+            let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+            if !thread.is_null() {
+                // SAFETY: thread is a valid suspended thread handle.
+                found = unsafe { ResumeThread(thread) } != u32::MAX;
+                unsafe { CloseHandle(thread) };
+                break;
+            }
+        }
+        // SAFETY: snapshot and entry remain valid for the next record.
+        has_entry = unsafe { Thread32Next(snapshot, &mut entry) } != 0;
+    }
+    // SAFETY: snapshot is no longer needed.
+    unsafe { CloseHandle(snapshot) };
+    if !found {
+        unsafe { CloseHandle(job) };
+        return Err(ComponentRenderError::CompilerIo(
+            std::io::Error::last_os_error(),
+        ));
+    }
 
     Ok(CompilerProcessGuard(job))
 }
@@ -329,9 +368,13 @@ impl Drop for CompilerProcessGuard {
 
 #[cfg(windows)]
 fn configure_compiler_limits(
-    _command: &mut std::process::Command,
+    command: &mut std::process::Command,
     _memory_bytes: usize,
 ) -> Result<(), ComponentRenderError> {
+    use std::os::windows::process::CommandExt as _;
+
+    command.creation_flags(windows_sys::Win32::System::Threading::CREATE_SUSPENDED);
+
     Ok(())
 }
 
@@ -343,27 +386,25 @@ fn apply_worker_memory_limit() -> Result<(), ComponentRenderError> {
     #[cfg(not(test))]
     {
         #[cfg(not(target_os = "macos"))]
-        let memory = worker_memory_limit()?;
+        let memory = clamped_limit(libc::RLIMIT_AS, worker_memory_limit()? as libc::rlim_t)?;
         #[cfg(not(target_os = "macos"))]
-        let limit = libc::rlimit {
-            rlim_cur: memory as libc::rlim_t,
-            rlim_max: memory as libc::rlim_t,
-        };
-
-        let cpu = libc::rlimit {
-            rlim_cur: 2,
-            rlim_max: 2,
-        };
+        let cpu_seconds = std::env::var("UPWELL_RENDERER_COMPILE_CPU_SECONDS")
+            .map_err(|error| ComponentRenderError::CompilerFailed(error.to_string()))?
+            .parse::<libc::rlim_t>()
+            .map_err(|error| ComponentRenderError::CompilerFailed(error.to_string()))?;
+        #[cfg(not(target_os = "macos"))]
+        let cpu = clamped_limit(libc::RLIMIT_CPU, cpu_seconds)?;
 
         // macOS does not expose a reliable enforceable memory rlimit for JIT-capable processes;
         // process isolation and the parent deadline still make the worker killable there.
         #[cfg(not(target_os = "macos"))]
         // SAFETY: the worker applies the address-space limit to itself with a valid pointer.
-        if unsafe { libc::setrlimit(libc::RLIMIT_AS, &limit) } != 0 {
+        if unsafe { libc::setrlimit(libc::RLIMIT_AS, &memory) } != 0 {
             return Err(ComponentRenderError::CompilerIo(
                 std::io::Error::last_os_error(),
             ));
         }
+        #[cfg(not(target_os = "macos"))]
         // SAFETY: the worker applies the CPU limit to itself with a valid pointer.
         if unsafe { libc::setrlimit(libc::RLIMIT_CPU, &cpu) } != 0 {
             return Err(ComponentRenderError::CompilerIo(
@@ -373,6 +414,34 @@ fn apply_worker_memory_limit() -> Result<(), ComponentRenderError> {
 
         Ok(())
     }
+}
+
+#[cfg(all(unix, not(target_os = "macos"), not(test)))]
+fn clamped_limit(
+    resource: libc::__rlimit_resource_t,
+    requested: libc::rlim_t,
+) -> Result<libc::rlimit, ComponentRenderError> {
+    let mut inherited = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+
+    // SAFETY: inherited points to initialized writable storage for this process's limit.
+    if unsafe { libc::getrlimit(resource, &mut inherited) } != 0 {
+        return Err(ComponentRenderError::CompilerIo(
+            std::io::Error::last_os_error(),
+        ));
+    }
+    let hard = if inherited.rlim_max == libc::RLIM_INFINITY {
+        requested
+    } else {
+        inherited.rlim_max.min(requested)
+    };
+
+    Ok(libc::rlimit {
+        rlim_cur: inherited.rlim_cur.min(hard),
+        rlim_max: hard,
+    })
 }
 
 #[cfg(windows)]
@@ -403,7 +472,7 @@ fn compile_component(
     let output = directory.path().join("component.cwasm");
 
     std::fs::write(&input, bytes).map_err(ComponentRenderError::CompilerIo)?;
-    let executable = std::env::current_exe().map_err(ComponentRenderError::CompilerIo)?;
+    let executable = compiler_executable()?;
     let mut command = std::process::Command::new(executable);
 
     command
@@ -413,15 +482,13 @@ fn compile_component(
             "UPWELL_RENDERER_COMPILE_MEMORY",
             limits.compiler_memory_bytes.to_string(),
         )
+        .env(
+            "UPWELL_RENDERER_COMPILE_CPU_SECONDS",
+            limits.compiler_deadline.as_secs().max(1).to_string(),
+        )
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
-    #[cfg(test)]
-    command.args([
-        "--exact",
-        "renderer::component::tests::compiler_worker_entry",
-        "--nocapture",
-    ]);
     configure_compiler_limits(&mut command, limits.compiler_memory_bytes)?;
     let mut child = command.spawn().map_err(ComponentRenderError::CompilerIo)?;
     #[cfg(unix)]
@@ -450,6 +517,13 @@ fn compile_component(
 
             return Err(ComponentRenderError::CompilerDeadline);
         }
+        #[cfg(target_os = "macos")]
+        if compiler_resident_bytes(child.id())? > limits.compiler_memory_bytes {
+            child.kill().map_err(ComponentRenderError::CompilerIo)?;
+            let _ = child.wait();
+
+            return Err(ComponentRenderError::CompilerMemory);
+        }
         std::thread::sleep(Duration::from_millis(10));
     }
 
@@ -457,6 +531,56 @@ fn compile_component(
     // directory using the same engine configuration, and no untrusted process can modify it.
     unsafe { Component::deserialize_file(engine, output) }
         .map_err(ComponentRenderError::InvalidComponent)
+}
+
+fn compiler_executable() -> Result<std::path::PathBuf, ComponentRenderError> {
+    if let Some(path) = std::env::var_os("CARGO_BIN_EXE_cargo-upwell-renderer-compiler") {
+        return Ok(path.into());
+    }
+    let current = std::env::current_exe().map_err(ComponentRenderError::CompilerIo)?;
+    let name = if cfg!(windows) {
+        "cargo-upwell-renderer-compiler.exe"
+    } else {
+        "cargo-upwell-renderer-compiler"
+    };
+
+    let directory = current
+        .parent()
+        .ok_or(ComponentRenderError::CompilerMissing)?;
+
+    [
+        directory.join(name),
+        directory
+            .parent()
+            .map_or_else(|| directory.join(name), |parent| parent.join(name)),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .ok_or(ComponentRenderError::CompilerMissing)
+}
+
+#[cfg(target_os = "macos")]
+fn compiler_resident_bytes(pid: u32) -> Result<usize, ComponentRenderError> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
+    // SAFETY: info is correctly sized writable storage and pid is the live compiler child.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid as i32,
+            libc::PROC_PIDTASKINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            std::mem::size_of::<libc::proc_taskinfo>() as i32,
+        )
+    };
+    if written != std::mem::size_of::<libc::proc_taskinfo>() as i32 {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(0);
+        }
+        return Err(ComponentRenderError::CompilerIo(error));
+    }
+
+    Ok(unsafe { info.assume_init() }.pti_resident_size as usize)
 }
 
 #[doc(hidden)]
@@ -514,6 +638,10 @@ pub enum ComponentRenderError {
     CompilerIo(#[source] std::io::Error),
     #[error("renderer compilation exceeded its deadline")]
     CompilerDeadline,
+    #[error("renderer compilation exceeded its memory limit")]
+    CompilerMemory,
+    #[error("renderer compiler executable is not installed beside cargo-upwell")]
+    CompilerMissing,
     #[error("renderer compiler process failed: {0}")]
     CompilerFailed(String),
     #[error("renderer component imports forbidden host capability `{name}`")]
