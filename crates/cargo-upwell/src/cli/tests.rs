@@ -2,10 +2,8 @@ use std::ffi::OsString;
 
 use clap::{CommandFactory as _, Parser};
 
-use super::{
-    Cli, CommandRequest, ExplainFormat, ExportFormat, GraphFormat, InspectFormat,
-    InspectResourceKind, ReportFormat, TerminalPolicy, normalized_arguments,
-};
+use super::format::{Graph, Inspect, format_candidates};
+use super::{Cli, CommandRequest, InspectResourceKind, TerminalPolicy, normalized_arguments};
 use cargo_upwell::{CommandKind, GraphDirection, GraphRelationFamily};
 
 #[test]
@@ -180,7 +178,7 @@ fn cargo_external_subcommand_name_is_removed_before_parsing() {
     };
 
     assert_eq!(command, CommandKind::Check);
-    assert_eq!(format, ReportFormat::Json);
+    assert_eq!(format, "json");
 }
 
 #[test]
@@ -209,7 +207,7 @@ fn direct_binary_arguments_remain_supported() {
     assert_eq!(request.package.as_deref(), Some("fixture"));
     assert_eq!(request.binary.as_deref(), Some("fixture-bin"));
     assert_eq!(request.features.features, ["tooling", "cli"]);
-    assert_eq!(format, ReportFormat::Terminal);
+    assert_eq!(format, "terminal");
 }
 
 #[test]
@@ -240,7 +238,7 @@ fn inspect_parses_filters_and_terminal_policy() {
         panic!("inspect produces an inspect request");
     };
 
-    assert_eq!(format, InspectFormat::Text);
+    assert_eq!(format, "text");
     assert_eq!(
         filters.kinds,
         [
@@ -268,7 +266,7 @@ fn export_parses_payload_and_output_path() {
         panic!("export produces an export request");
     };
 
-    assert_eq!(format, ExportFormat::Envelope);
+    assert_eq!(format, "envelope");
     assert_eq!(
         output.as_deref(),
         Some(std::path::Path::new("inspection.json"))
@@ -300,7 +298,7 @@ fn graph_preserves_repeated_whole_value_selectors() {
         panic!("graph produces a graph request");
     };
 
-    assert_eq!(format, GraphFormat::Mermaid);
+    assert_eq!(format, "mermaid");
     assert_eq!(query.family, GraphRelationFamily::Composition);
     assert_eq!(query.direction, GraphDirection::Upstream);
     assert_eq!(query.resources, ["component:a,b", "Comma, Name"]);
@@ -330,7 +328,7 @@ fn explain_preserves_one_complete_resource_value() {
         panic!("explain produces an explanation request");
     };
 
-    assert_eq!(format, ExplainFormat::Json);
+    assert_eq!(format, "json");
     assert_eq!(resource, "Resource, With, Commas");
     assert_eq!(color, TerminalPolicy::Never);
 }
@@ -350,9 +348,38 @@ fn cargo_help_uses_external_subcommand_invocation_name() {
 }
 
 #[test]
+fn graph_help_lists_registry_formats() {
+    let mut command = Cli::command();
+    let graph = command
+        .find_subcommand_mut("graph")
+        .expect("graph command exists");
+    let mut output = Vec::new();
+
+    graph.write_long_help(&mut output).expect("help writes");
+    let output = String::from_utf8(output).expect("help is UTF-8");
+
+    assert!(output.contains("[possible values: dot, json, mermaid, text]"));
+}
+
+#[test]
 fn cargo_help_uses_colored_cargo_style_headings_and_literals() {
     let styles = Cli::command().get_styles().clone();
 
     assert_eq!(styles.get_header().to_string(), "\u{1b}[1m\u{1b}[92m");
     assert_eq!(styles.get_literal().to_string(), "\u{1b}[1m\u{1b}[96m");
+}
+
+#[test]
+fn format_completion_is_scoped_by_the_generic_command_type() {
+    let inspect = format_candidates::<Inspect>(std::ffi::OsStr::new(""))
+        .into_iter()
+        .map(|candidate| candidate.get_value().to_owned())
+        .collect::<Vec<_>>();
+    let graph = format_candidates::<Graph>(std::ffi::OsStr::new(""))
+        .into_iter()
+        .map(|candidate| candidate.get_value().to_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(inspect, ["json", "text"]);
+    assert_eq!(graph, ["dot", "json", "mermaid", "text"]);
 }

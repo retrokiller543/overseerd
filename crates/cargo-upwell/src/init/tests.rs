@@ -6,6 +6,7 @@ use super::{
     Catalog, CatalogError, GitReference, InitError, InitRequest, TemplateSelection, TemplateSource,
     init_project,
 };
+use crate::{RendererCommand, RendererImplementation};
 
 #[test]
 fn builtins_reference_tagged_canonical_repositories() {
@@ -69,6 +70,69 @@ protocols = ["upwell/axum"]
     assert_eq!(tool.command(), "cargo-upwell-axum");
     assert_eq!(tool.package(), Some("cargo-upwell-axum"));
     assert_eq!(tool.protocols(), ["upwell/axum"]);
+}
+
+#[test]
+fn user_catalog_retains_command_scoped_component_renderers() {
+    let fixture = TempFixture::new("cargo-upwell-renderer-catalog");
+    let catalog_path = fixture.child("catalog.toml");
+
+    fixture.write(
+        "catalog.toml",
+        r#"schema = "1"
+
+[[entries]]
+type = "renderer"
+id = "team/architecture"
+component = "renderers/architecture.component.wasm"
+commands = ["inspect", "graph"]
+format = "architecture"
+media-type = "text/plain"
+extension = "txt"
+pager = true
+priority = 42
+abi = "^0.1"
+tooling-schema = "^0.20"
+"#,
+    );
+
+    let catalog = Catalog::load(Some(&catalog_path)).expect("renderer catalog loads");
+    let renderer = catalog.renderers().next().expect("renderer is retained");
+
+    assert_eq!(renderer.id(), "team/architecture");
+    assert_eq!(renderer.priority(), 42);
+    assert_eq!(
+        renderer
+            .formats()
+            .iter()
+            .map(|format| (format.command(), format.id()))
+            .collect::<Vec<_>>(),
+        [
+            (RendererCommand::Inspect, "architecture"),
+            (RendererCommand::Graph, "architecture")
+        ]
+    );
+    assert!(
+        renderer
+            .formats()
+            .iter()
+            .all(|format| format.capabilities().pager)
+    );
+    let RendererImplementation::Component(component) = renderer.implementation() else {
+        panic!("catalog renderer uses a component");
+    };
+    assert_eq!(
+        component.path(),
+        fixture.child("renderers/architecture.component.wasm")
+    );
+    assert!(component.utf8());
+}
+
+#[test]
+fn shipped_catalog_example_matches_the_catalog_schema() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("catalog.example.toml");
+
+    Catalog::load(Some(&path)).expect("shipped example catalog parses");
 }
 
 #[test]
