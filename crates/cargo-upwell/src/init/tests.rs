@@ -28,7 +28,7 @@ fn builtins_reference_tagged_canonical_repositories() {
         TemplateSource::Git {
             reference: Some(GitReference::Tag(tag)),
             ..
-        } if tag == "v0.20.3"
+        } if tag == "v0.20.4"
     )));
 }
 
