@@ -122,6 +122,7 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput, paths: &Paths) -> syn::Re
             const _: () = {
                 #[#distributed_slice(#config_bindings)]
                 #[linkme(crate = #linkme_crate)]
+                #[allow(unsafe_code)]
                 static __UPWELL_CONFIG_BINDING: #config_binding_descriptor =
                     <#ident as #descriptor<#config_binding_descriptor>>::DESCRIPTOR;
             };

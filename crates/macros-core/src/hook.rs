@@ -200,6 +200,7 @@ pub fn generate_hook(
         quote! {
             #[#distributed_slice(#registrations_slice)]
             #[linkme(crate = #linkme_crate)]
+            #[allow(unsafe_code)]
             static #descriptor_static: #registration = #registration::Hook(#hook_literal);
         },
     );

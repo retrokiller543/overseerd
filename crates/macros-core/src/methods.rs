@@ -300,6 +300,7 @@ fn generate_init(
         quote! {
             #[#distributed_slice(#registrations_slice)]
             #[linkme(crate = #linkme_crate)]
+            #[allow(unsafe_code)]
             static __UPWELL_INIT_FACTORY: #registration =
                 #registration::Factory(#factory_literal);
         },

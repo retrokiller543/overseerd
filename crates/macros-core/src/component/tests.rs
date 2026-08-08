@@ -48,3 +48,21 @@ fn component_impl_items_follow_trait_order() {
         ["type Handle", "const ID", "const NAME", "fn into_handle"]
     );
 }
+
+#[test]
+fn linkme_registration_items_allow_their_required_unsafe_attributes() {
+    let tokens = expand(
+        ComponentArgs::<NoExt>::default(),
+        syn::parse_quote!(
+            struct Example;
+        ),
+        &Paths::upwell(),
+    )
+    .expect("component expands")
+    .to_string();
+
+    assert!(
+        tokens.contains("allow (unsafe_code)"),
+        "component linkme registration scopes its unsafe lint allowance: {tokens}"
+    );
+}
