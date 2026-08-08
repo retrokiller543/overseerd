@@ -385,6 +385,12 @@ fn apply_worker_memory_limit() -> Result<(), ComponentRenderError> {
 
     #[cfg(not(test))]
     {
+        #[cfg(target_os = "macos")]
+        let memory = clamped_limit(
+            libc::RLIMIT_AS,
+            macos_process_virtual_bytes()?.saturating_add(worker_memory_limit()? as u64)
+                as libc::rlim_t,
+        )?;
         #[cfg(not(target_os = "macos"))]
         let memory = clamped_limit(libc::RLIMIT_AS, worker_memory_limit()? as libc::rlim_t)?;
         #[cfg(not(target_os = "macos"))]
@@ -397,7 +403,6 @@ fn apply_worker_memory_limit() -> Result<(), ComponentRenderError> {
 
         // macOS does not expose a reliable enforceable memory rlimit for JIT-capable processes;
         // process isolation and the parent deadline still make the worker killable there.
-        #[cfg(not(target_os = "macos"))]
         // SAFETY: the worker applies the address-space limit to itself with a valid pointer.
         if unsafe { libc::setrlimit(libc::RLIMIT_AS, &memory) } != 0 {
             return Err(ComponentRenderError::CompilerIo(
@@ -416,9 +421,9 @@ fn apply_worker_memory_limit() -> Result<(), ComponentRenderError> {
     }
 }
 
-#[cfg(all(unix, not(target_os = "macos"), not(test)))]
+#[cfg(all(unix, not(test)))]
 fn clamped_limit(
-    resource: libc::__rlimit_resource_t,
+    resource: libc::c_int,
     requested: libc::rlim_t,
 ) -> Result<libc::rlimit, ComponentRenderError> {
     let mut inherited = libc::rlimit {
@@ -449,7 +454,7 @@ fn apply_worker_memory_limit() -> Result<(), ComponentRenderError> {
     Ok(())
 }
 
-#[cfg(any(windows, all(unix, not(target_os = "macos"), not(test))))]
+#[cfg(any(windows, all(unix, not(test))))]
 fn worker_memory_limit() -> Result<usize, ComponentRenderError> {
     std::env::var("UPWELL_RENDERER_COMPILE_MEMORY")
         .map_err(|error| ComponentRenderError::CompilerFailed(error.to_string()))?
@@ -494,7 +499,15 @@ fn compile_component(
     #[cfg(unix)]
     constrain_compiler_process(&child, limits.compiler_memory_bytes)?;
     #[cfg(windows)]
-    let _compiler_guard = constrain_compiler_process(&child, limits.compiler_memory_bytes)?;
+    let _compiler_guard = match constrain_compiler_process(&child, limits.compiler_memory_bytes) {
+        Ok(guard) => guard,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+
+            return Err(error);
+        }
+    };
     let deadline = std::time::Instant::now() + limits.compiler_deadline;
 
     loop {
@@ -516,13 +529,6 @@ fn compile_component(
             let _ = child.wait();
 
             return Err(ComponentRenderError::CompilerDeadline);
-        }
-        #[cfg(target_os = "macos")]
-        if compiler_resident_bytes(child.id())? > limits.compiler_memory_bytes {
-            child.kill().map_err(ComponentRenderError::CompilerIo)?;
-            let _ = child.wait();
-
-            return Err(ComponentRenderError::CompilerMemory);
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -559,13 +565,13 @@ fn compiler_executable() -> Result<std::path::PathBuf, ComponentRenderError> {
     .ok_or(ComponentRenderError::CompilerMissing)
 }
 
-#[cfg(target_os = "macos")]
-fn compiler_resident_bytes(pid: u32) -> Result<usize, ComponentRenderError> {
+#[cfg(all(target_os = "macos", not(test)))]
+fn macos_process_virtual_bytes() -> Result<u64, ComponentRenderError> {
     let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::uninit();
-    // SAFETY: info is correctly sized writable storage and pid is the live compiler child.
+    // SAFETY: info is correctly sized writable storage and getpid identifies this worker.
     let written = unsafe {
         libc::proc_pidinfo(
-            pid as i32,
+            libc::getpid(),
             libc::PROC_PIDTASKINFO,
             0,
             info.as_mut_ptr().cast(),
@@ -573,14 +579,12 @@ fn compiler_resident_bytes(pid: u32) -> Result<usize, ComponentRenderError> {
         )
     };
     if written != std::mem::size_of::<libc::proc_taskinfo>() as i32 {
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ESRCH) {
-            return Ok(0);
-        }
-        return Err(ComponentRenderError::CompilerIo(error));
+        return Err(ComponentRenderError::CompilerIo(
+            std::io::Error::last_os_error(),
+        ));
     }
 
-    Ok(unsafe { info.assume_init() }.pti_resident_size as usize)
+    Ok(unsafe { info.assume_init() }.pti_virtual_size)
 }
 
 #[doc(hidden)]
@@ -638,8 +642,6 @@ pub enum ComponentRenderError {
     CompilerIo(#[source] std::io::Error),
     #[error("renderer compilation exceeded its deadline")]
     CompilerDeadline,
-    #[error("renderer compilation exceeded its memory limit")]
-    CompilerMemory,
     #[error("renderer compiler executable is not installed beside cargo-upwell")]
     CompilerMissing,
     #[error("renderer compiler process failed: {0}")]
