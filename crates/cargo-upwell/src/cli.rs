@@ -2,11 +2,14 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use cargo_upwell::{
-    CargoExecutable, CommandKind, DiscoveryRequest, FeatureSelection, GraphQuery, InitRequest,
-    TemplateSelection,
+    CargoExecutable, Catalog, CommandKind, DiscoveryRequest, FeatureSelection, GraphQuery,
+    InitRequest, TemplateSelection, completion,
 };
 use clap::builder::styling::{AnsiColor, Effects, Styles};
-use clap::{Args, ColorChoice, CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
+use clap::{
+    Args, ColorChoice, CommandFactory as _, FromArgMatches as _, Parser, Subcommand, ValueHint,
+};
+use clap_complete::{ArgValueCompleter, CompletionCandidate};
 
 mod format;
 
@@ -27,7 +30,7 @@ const CARGO_HELP_STYLES: Styles = Styles::styled()
 #[command(
     name = "cargo upwell",
     bin_name = "cargo upwell",
-    version,
+    version = crate::version::version(),
     about,
     styles = CARGO_HELP_STYLES,
     color = ColorChoice::Auto
@@ -40,9 +43,28 @@ pub(crate) struct Cli {
 /// Available Cargo Upwell commands.
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Generates shell integration or refreshes workspace-aware candidates.
+    ///
+    /// Registration targets the installed `cargo-upwell` executable directly. Source the emitted
+    /// script from the shell startup file. Dynamic value completion reads only a private cache;
+    /// pressing Tab never invokes Cargo or application code. Successful `inspect`, `export`,
+    /// `graph`, and `explain` probes refresh the latest selected target on a best-effort basis;
+    /// `refresh` updates it explicitly and reports cache failures.
+    /// On macOS snapshots live under
+    /// `~/Library/Caches/org.upwell-rs.Upwell/completions/v1/`. They intentionally do not use
+    /// Cargo `OUT_DIR`, whose hashed path changes across packages, features, targets, and profiles.
+    /// `UPWELL_COMPLETION_CACHE_DIR` may override the platform cache root with an absolute path.
+    /// Regenerate shell registration after upgrading `cargo-upwell`.
+    Completions(CompletionsArgs),
     /// Generates an Upwell application, plugin, or protocol project.
     Init(InitArgs),
     /// Lists built-in and user-configured project templates.
+    ///
+    /// Overlays the optional user catalog onto built-ins by stable ID. The default catalog is
+    /// optional; an explicitly supplied `--catalog` path must exist and validate. On macOS the
+    /// default is `~/Library/Application Support/org.upwell-rs.Upwell/catalog.toml`. Relative
+    /// template paths are resolved from the catalog file. Tool entries are metadata-only and are
+    /// never installed or executed.
     Templates(TemplatesArgs),
     /// Builds and validates one selected application without serving it.
     Check(ReportArgs),
@@ -58,11 +80,34 @@ enum Command {
     Explain(ExplainArgs),
 }
 
+/// Shell completion management.
+#[derive(Clone, Debug, Args)]
+struct CompletionsArgs {
+    #[command(subcommand)]
+    command: CompletionsCommand,
+}
+
+/// Shell completion operations.
+#[derive(Clone, Debug, Subcommand)]
+enum CompletionsCommand {
+    /// Emits shell registration code that calls cargo-upwell for dynamic candidates.
+    Generate {
+        /// Shell whose startup file will source the emitted code.
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Builds and probes the selected app, then caches workspace-aware candidates.
+    Refresh {
+        #[command(flatten)]
+        target: TargetArgs,
+    },
+}
+
 /// Arguments for effective catalog template listing.
 #[derive(Clone, Debug, Args)]
 struct TemplatesArgs {
     /// Explicit Upwell catalog file.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     catalog: Option<PathBuf>,
 }
 
@@ -70,18 +115,19 @@ struct TemplatesArgs {
 #[derive(Clone, Debug, Args)]
 struct InitArgs {
     /// Exact project directory to populate.
+    #[arg(value_hint = ValueHint::DirPath)]
     path: PathBuf,
     /// Cargo package/project name. Defaults to the destination directory name.
     #[arg(long)]
     name: Option<String>,
     /// Catalog template ID.
-    #[arg(long, conflicts_with = "template_path")]
+    #[arg(long, conflicts_with = "template_path", add = ArgValueCompleter::new(complete_templates))]
     template: Option<String>,
     /// Direct local cargo-generate template directory.
-    #[arg(long, conflicts_with_all = ["template", "catalog"])]
+    #[arg(long, conflicts_with_all = ["template", "catalog"], value_hint = ValueHint::DirPath)]
     template_path: Option<PathBuf>,
     /// Explicit Upwell catalog file.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     catalog: Option<PathBuf>,
     /// Add the generated crate to an immediate parent Cargo workspace.
     #[arg(long)]
@@ -93,7 +139,7 @@ struct InitArgs {
     #[arg(short = 'd', long = "define", action = clap::ArgAction::Append)]
     define: Vec<String>,
     /// Use a local Upwell repository dependency in built-in templates.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::DirPath)]
     upwell_path: Option<PathBuf>,
 }
 
@@ -101,16 +147,16 @@ struct InitArgs {
 #[derive(Clone, Debug, Args)]
 struct TargetArgs {
     /// Path to Cargo.toml.
-    #[arg(long)]
+    #[arg(long, value_hint = ValueHint::FilePath)]
     manifest_path: Option<PathBuf>,
     /// Workspace package containing the application.
-    #[arg(short = 'p', long)]
+    #[arg(short = 'p', long, add = ArgValueCompleter::new(complete_packages))]
     package: Option<String>,
     /// Binary target containing the application.
-    #[arg(long = "bin")]
+    #[arg(long = "bin", add = ArgValueCompleter::new(complete_binaries))]
     binary: Option<String>,
     /// Package features enabled for discovery and build.
-    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long, value_delimiter = ',', action = clap::ArgAction::Append, add = ArgValueCompleter::new(complete_features))]
     features: Vec<String>,
     /// Enable every package feature.
     #[arg(long, conflicts_with = "features")]
@@ -156,7 +202,7 @@ struct ExportArgs {
     #[arg(long, value_enum, default_value_t = ExportFormat::Document)]
     format: ExportFormat,
     /// Write to a file instead of stdout.
-    #[arg(short, long)]
+    #[arg(short, long, value_hint = ValueHint::FilePath)]
     output: Option<PathBuf>,
 }
 
@@ -175,13 +221,13 @@ struct GraphArgs {
     #[arg(long, value_enum, default_value_t = GraphTraversalDirection::Both)]
     direction: GraphTraversalDirection,
     /// Select an exact stable resource ID or exact unique name.
-    #[arg(long = "resource", action = clap::ArgAction::Append)]
+    #[arg(long = "resource", action = clap::ArgAction::Append, add = ArgValueCompleter::new(complete_resources))]
     resources: Vec<String>,
     /// Select an exact contributor stable ID or exact unique name.
-    #[arg(long = "contributor", action = clap::ArgAction::Append)]
+    #[arg(long = "contributor", action = clap::ArgAction::Append, add = ArgValueCompleter::new(complete_contributors))]
     contributors: Vec<String>,
     /// Select an exact plugin stable ID or exact unique name.
-    #[arg(long = "plugin", action = clap::ArgAction::Append)]
+    #[arg(long = "plugin", action = clap::ArgAction::Append, add = ArgValueCompleter::new(complete_plugins))]
     plugins: Vec<String>,
     #[command(flatten)]
     terminal: TerminalArgs,
@@ -191,6 +237,7 @@ struct GraphArgs {
 #[derive(Clone, Debug, Args)]
 struct ExplainArgs {
     /// Exact stable resource ID or exact unique name.
+    #[arg(add = ArgValueCompleter::new(complete_resources))]
     resource: String,
     #[command(flatten)]
     target: TargetArgs,
@@ -208,19 +255,19 @@ pub(crate) struct InspectFilters {
     #[arg(long = "kind", value_enum, value_delimiter = ',', action = clap::ArgAction::Append)]
     pub(crate) kinds: Vec<InspectResourceKind>,
     /// Include resources with these exact stable IDs or names.
-    #[arg(long = "resource", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long = "resource", value_delimiter = ',', action = clap::ArgAction::Append, add = ArgValueCompleter::new(complete_resources))]
     pub(crate) resources: Vec<String>,
     /// Include resources owned by these contributor IDs or names.
-    #[arg(long = "contributor", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long = "contributor", value_delimiter = ',', action = clap::ArgAction::Append, add = ArgValueCompleter::new(complete_contributors))]
     pub(crate) contributors: Vec<String>,
     /// Include these plugin IDs or names and their owned resources.
-    #[arg(long = "plugin", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long = "plugin", value_delimiter = ',', action = clap::ArgAction::Append, add = ArgValueCompleter::new(complete_plugins))]
     pub(crate) plugins: Vec<String>,
     /// Include resources carrying these facet namespaces.
-    #[arg(long = "facet", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long = "facet", value_delimiter = ',', action = clap::ArgAction::Append, add = ArgValueCompleter::new(complete_facets))]
     pub(crate) facets: Vec<String>,
     /// Include these scope IDs or names and resources assigned to them.
-    #[arg(long = "scope", value_delimiter = ',', action = clap::ArgAction::Append)]
+    #[arg(long = "scope", value_delimiter = ',', action = clap::ArgAction::Append, add = ArgValueCompleter::new(complete_scopes))]
     pub(crate) scopes: Vec<String>,
     /// Include these plugin CLI provider categories.
     #[arg(long = "cli-provider-kind", value_enum, value_delimiter = ',', action = clap::ArgAction::Append)]
@@ -253,6 +300,10 @@ struct TerminalArgs {
 /// Parsed Cargo Upwell command request.
 #[derive(Debug)]
 pub(crate) enum CommandRequest {
+    /// Emit dynamic completion registration for one shell.
+    GenerateCompletions(clap_complete::Shell),
+    /// Explicitly refresh workspace-aware completion candidates.
+    RefreshCompletions(DiscoveryRequest),
     /// Generate a project from a catalog or direct local template.
     Init(InitRequest),
     /// List effective project templates.
@@ -310,6 +361,14 @@ impl Cli {
 
     pub(crate) fn into_request(self) -> CommandRequest {
         match self.command {
+            Command::Completions(arguments) => match arguments.command {
+                CompletionsCommand::Generate { shell } => {
+                    CommandRequest::GenerateCompletions(shell)
+                }
+                CompletionsCommand::Refresh { target } => {
+                    CommandRequest::RefreshCompletions(discovery_request(target))
+                }
+            },
             Command::Init(arguments) => {
                 let template = arguments.template_path.map_or_else(
                     || TemplateSelection::Catalog {
@@ -376,6 +435,80 @@ impl Cli {
             },
         }
     }
+}
+
+pub(crate) fn completion_command() -> clap::Command {
+    Cli::command().bin_name("cargo-upwell")
+}
+
+fn complete_templates(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    let prefix = current.to_string_lossy();
+    let mut candidates = Catalog::builtins()
+        .templates()
+        .filter(|template| template.id().starts_with(prefix.as_ref()))
+        .map(|template| {
+            CompletionCandidate::new(template.id())
+                .help(Some(template.description().to_owned().into()))
+        })
+        .collect::<Vec<_>>();
+
+    candidates.extend(complete_cached(
+        completion::CandidateKind::Template,
+        current,
+    ));
+    candidates.sort_by(|left, right| left.get_value().cmp(right.get_value()));
+    candidates.dedup_by(|left, right| left.get_value() == right.get_value());
+    candidates
+}
+
+fn complete_packages(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    complete_cached(completion::CandidateKind::Package, current)
+}
+
+fn complete_binaries(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    complete_cached(completion::CandidateKind::Binary, current)
+}
+
+fn complete_features(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    complete_cached(completion::CandidateKind::Feature, current)
+}
+
+fn complete_resources(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    complete_cached(completion::CandidateKind::Resource, current)
+}
+
+fn complete_contributors(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    complete_cached(completion::CandidateKind::Contributor, current)
+}
+
+fn complete_plugins(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    complete_cached(completion::CandidateKind::Plugin, current)
+}
+
+fn complete_scopes(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    complete_cached(completion::CandidateKind::Scope, current)
+}
+
+fn complete_facets(current: &std::ffi::OsStr) -> Vec<CompletionCandidate> {
+    complete_cached(completion::CandidateKind::Facet, current)
+}
+
+fn complete_cached(
+    kind: completion::CandidateKind,
+    current: &std::ffi::OsStr,
+) -> Vec<CompletionCandidate> {
+    let Ok(directory) = std::env::current_dir() else {
+        return Vec::new();
+    };
+    let prefix = current.to_string_lossy();
+
+    completion::candidates(kind, &directory)
+        .into_iter()
+        .filter(|candidate| candidate.value.starts_with(prefix.as_ref()))
+        .map(|candidate| {
+            CompletionCandidate::new(candidate.value).help(candidate.help.map(Into::into))
+        })
+        .collect()
 }
 
 fn help_color_policy() -> ColorChoice {

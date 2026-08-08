@@ -1,0 +1,34 @@
+# Upwell user catalog schema. Copy this file to the platform catalog path:
+#
+# macOS:  ~/Library/Application Support/org.upwell-rs.Upwell/catalog.toml
+# Linux:  $XDG_CONFIG_HOME/upwell/catalog.toml, or ~/.config/upwell/catalog.toml
+# Windows: %APPDATA%\upwell-rs\Upwell\config\catalog.toml
+schema = "1"
+
+# Entries are merged over cargo-upwell's built-ins by stable ID. A user template may override a
+# built-in template ID. A tool may not use the same ID as an effective template.
+[[entries]]
+type = "template"
+id = "team/application"
+description = "Team application template"
+path = "templates/application"
+
+# Relative paths are resolved from this catalog file's parent directory.
+[[entries]]
+type = "template"
+id = "team/protocol"
+description = "Pinned team protocol template"
+git = "https://github.com/example/upwell-template-protocol.git"
+tag = "v1.2.3"
+
+# Git templates accept at most one of branch, tag, or revision. Pin a tag or revision when
+# reproducibility matters.
+[[entries]]
+type = "tool"
+id = "team/axum"
+command = "cargo-upwell-axum"
+description = "Axum-specific Upwell development tooling"
+package = "cargo-upwell-axum"
+protocols = ["upwell/axum"]
+
+# Tool entries are metadata only. cargo-upwell does not install or execute them yet.

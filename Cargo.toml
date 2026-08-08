@@ -89,6 +89,7 @@ uuid = "1"
 bytes = "1"
 cargo_metadata = "0.23.1"
 cargo-generate = { version = "=0.23.14", features = ["vendored-openssl"] }
+clap_complete = { version = "=4.6.9", features = ["unstable-dynamic"] }
 command-group = "5.0.1"
 fs2 = "0.4.3"
 notify = "6"

@@ -69,6 +69,53 @@ Pick what you need with features (`cli` and `di-check` are enabled by default):
 | `wasm-ts` | opt into the newer `tsify` `Ts<T>` wasm ABI for the browser client |
 | `di-check` *(default)* | compile-time DI graph validation |
 
+## Cargo tooling
+
+Install `cargo-upwell` to initialize projects and inspect tooling-enabled applications:
+
+```sh
+cargo install cargo-upwell
+cargo upwell init my-service
+cargo upwell check
+cargo upwell inspect
+```
+
+Generate dynamic shell registration and source the output from the shell startup file:
+
+```sh
+cargo upwell completions generate zsh
+cargo upwell completions generate bash
+cargo upwell completions generate fish
+```
+
+For Fish, install the registration with:
+
+```fish
+cargo upwell completions generate fish > ~/.config/fish/completions/cargo-upwell.fish
+source ~/.config/fish/completions/cargo-upwell.fish
+```
+
+The Fish registration supports both `cargo-upwell …` and `cargo upwell …`. Regenerate shell
+registration after upgrading `cargo-upwell` because Clap's dynamic shell protocol may change.
+
+Completions include the static command tree plus cached workspace packages, binaries, features,
+resources, contributors, plugins, scopes, and facets. Successful `inspect`, `export`, `graph`, and
+`explain` probes refresh the latest selected target on a best-effort basis;
+`cargo upwell completions refresh` refreshes it explicitly and reports cache failures. Pressing Tab
+never builds the workspace or executes application code. On macOS snapshots live under
+`~/Library/Caches/org.upwell-rs.Upwell/completions/v1/`; Cargo `OUT_DIR` is deliberately avoided
+because its hashed path changes across packages, features, targets, and profiles.
+
+`cargo upwell templates` merges built-ins with an optional user catalog. On macOS the default file
+is `~/Library/Application Support/org.upwell-rs.Upwell/catalog.toml`. A missing default file is
+treated as an empty user catalog; an explicit `--catalog` path must exist and validate. User
+templates override built-ins by stable ID, relative paths resolve from the catalog file, and Git
+sources accept at most one branch, tag, or revision. Tool entries are metadata-only. See
+`crates/cargo-upwell/catalog.example.toml` for the schema.
+
+`cargo upwell --version` reports the binary and tooling-schema versions, Git commit and dirty state
+when available, build target/profile, and Rust compiler version.
+
 ## An HTTP service
 
 Put your controllers and components in the library (`lib.rs`) so the crate can also compile to a

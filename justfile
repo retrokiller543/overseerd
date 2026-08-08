@@ -2,6 +2,7 @@ critical_filter := '''
   binary_id(=upwell)
   | binary_id(=cargo-upwell)
   | binary_id(=cargo-upwell::command)
+  | binary_id(=cargo-upwell::completions)
   | binary_id(=cargo-upwell::init)
   | binary_id(=cargo-upwell::probe)
   | binary_id(=cargo-upwell::bin/cargo-upwell)

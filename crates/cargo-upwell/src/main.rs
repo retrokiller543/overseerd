@@ -1,6 +1,7 @@
 mod cli;
 mod output;
 mod render;
+mod version;
 
 use std::io::{self, IsTerminal as _};
 use std::path::Path;
@@ -9,7 +10,7 @@ use std::process::ExitCode;
 use cargo_upwell::{
     CancellationToken, Catalog, CommandExitCode, GraphQuery, GraphQueryError, InitError,
     ProbeOptions, ProbeRequestError, ResourceExplanation, TemplateSelection, TemplateSource,
-    ToolingProbe, init_project, probe_request_exit_code, run_command_with_options,
+    ToolingProbe, completion, init_project, probe_request_exit_code, run_command_with_options,
     run_probe_with_options,
 };
 use upwell_tooling_schema::{Diagnostic, ProbeEnvelope, ProbeOutcome, ToolingDocument};
@@ -21,6 +22,11 @@ use crate::cli::{
 use crate::output::{write_export, write_text};
 
 fn main() -> ExitCode {
+    clap_complete::CompleteEnv::with_factory(cli::completion_command)
+        .bin("cargo-upwell")
+        .completer("cargo-upwell")
+        .complete();
+
     execute(Cli::parse_cargo().into_request())
 }
 
@@ -29,6 +35,29 @@ fn execute(request: CommandRequest) -> ExitCode {
     let interactive = io::stderr().is_terminal();
 
     match request {
+        CommandRequest::GenerateCompletions(shell) => generate_completions(shell),
+        CommandRequest::RefreshCompletions(discovery) => {
+            let options = ProbeOptions {
+                show_cargo_output: interactive,
+            };
+
+            match run_probe_with_options(&discovery, &cancellation, options) {
+                Ok(probe) => match refresh_completion_cache(&probe, &discovery) {
+                    Ok(()) => {
+                        println!(
+                            "Refreshed completions for {} ({})",
+                            probe.target.package_name, probe.target.binary_name
+                        );
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => {
+                        eprintln!("cargo upwell could not cache completion candidates: {error}");
+                        operational_failure()
+                    }
+                },
+                Err(error) => probe_error(error),
+            }
+        }
         CommandRequest::Init(mut request) => {
             if let TemplateSelection::Catalog {
                 template: None,
@@ -94,12 +123,13 @@ fn execute(request: CommandRequest) -> ExitCode {
                 return ExitCode::from(CommandExitCode::Misuse.code());
             }
 
-            let options = ProbeOptions {
-                show_cargo_output: interactive,
-            };
+            let options = completion_probe_options(interactive);
 
             match run_probe_with_options(&discovery, &cancellation, options) {
-                Ok(probe) => inspect(probe, format, filters, color, pager),
+                Ok(probe) => {
+                    let _ = refresh_completion_cache(&probe, &discovery);
+                    inspect(probe, format, filters, color, pager)
+                }
                 Err(error) => probe_error(error),
             }
         }
@@ -114,7 +144,10 @@ fn execute(request: CommandRequest) -> ExitCode {
                 show_cargo_output: interactive,
             },
         ) {
-            Ok(probe) => export(probe.probe.envelope, format, output.as_deref()),
+            Ok(probe) => {
+                let _ = refresh_completion_cache(&probe, &discovery);
+                export(probe.probe.envelope, format, output.as_deref())
+            }
             Err(error) => probe_error(error),
         },
         CommandRequest::Graph {
@@ -130,7 +163,10 @@ fn execute(request: CommandRequest) -> ExitCode {
                 show_cargo_output: interactive,
             },
         ) {
-            Ok(probe) => graph(probe, format, query, color, pager),
+            Ok(probe) => {
+                let _ = refresh_completion_cache(&probe, &discovery);
+                graph(probe, format, query, color, pager)
+            }
             Err(error) => probe_error(error),
         },
         CommandRequest::Explain {
@@ -146,10 +182,141 @@ fn execute(request: CommandRequest) -> ExitCode {
                 show_cargo_output: interactive,
             },
         ) {
-            Ok(probe) => explain(probe, format, &resource, color, pager),
+            Ok(probe) => {
+                let _ = refresh_completion_cache(&probe, &discovery);
+                explain(probe, format, &resource, color, pager)
+            }
             Err(error) => probe_error(error),
         },
     }
+}
+
+fn completion_probe_options(interactive: bool) -> ProbeOptions {
+    ProbeOptions {
+        show_cargo_output: interactive,
+    }
+}
+
+fn generate_completions(shell: clap_complete::Shell) -> ExitCode {
+    if shell == clap_complete::Shell::Fish {
+        return finish_output(
+            write_fish_completions(&mut io::stdout().lock()),
+            ExitCode::SUCCESS,
+            "completion registration",
+        );
+    }
+    if shell == clap_complete::Shell::PowerShell {
+        return finish_output(
+            write_powershell_completions(&mut io::stdout().lock()),
+            ExitCode::SUCCESS,
+            "completion registration",
+        );
+    }
+
+    let completer: &dyn clap_complete::env::EnvCompleter = match shell {
+        clap_complete::Shell::Bash => &clap_complete::env::Bash,
+        clap_complete::Shell::Elvish => &clap_complete::env::Elvish,
+        clap_complete::Shell::Fish => &clap_complete::env::Fish,
+        clap_complete::Shell::PowerShell => &clap_complete::env::Powershell,
+        clap_complete::Shell::Zsh => &clap_complete::env::Zsh,
+        _ => {
+            eprintln!("cargo upwell does not support completion generation for {shell}");
+            return ExitCode::from(CommandExitCode::Misuse.code());
+        }
+    };
+    let result = completer.write_registration(
+        "COMPLETE",
+        "cargo-upwell",
+        "cargo-upwell",
+        "cargo-upwell",
+        &mut io::stdout().lock(),
+    );
+
+    finish_output(result, ExitCode::SUCCESS, "completion registration")
+}
+
+fn write_powershell_completions(output: &mut dyn io::Write) -> io::Result<()> {
+    writeln!(
+        output,
+        r#"Register-ArgumentCompleter -Native -CommandName cargo-upwell -ScriptBlock {{
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $previousComplete = $env:COMPLETE
+    $previousIndex = $env:_CLAP_COMPLETE_INDEX
+    $env:COMPLETE = "powershell"
+    try {{
+        $elements = @($commandAst.CommandElements | Where-Object {{
+            $_.Extent.StartOffset -lt $cursorPosition
+        }})
+        $tokens = @($elements | ForEach-Object {{
+            if ($_ -is [System.Management.Automation.Language.StringConstantExpressionAst]) {{
+                $_.Value
+            }} else {{
+                $_.Extent.Text
+            }}
+        }})
+        $current = $elements | Select-Object -Last 1
+        if ($null -eq $current -or $current.Extent.EndOffset -lt $cursorPosition) {{
+            $tokens += $wordToComplete
+        }} elseif ($tokens.Count -gt 0) {{
+            $tokens[$tokens.Count - 1] = $wordToComplete
+        }}
+        $env:_CLAP_COMPLETE_INDEX = [string]($tokens.Count - 1)
+        & cargo-upwell -- @tokens | ForEach-Object {{
+            $parts = $_ -split "`t", 2
+            $help = if ($parts.Count -eq 2) {{ $parts[1] }} else {{ $parts[0] }}
+            [System.Management.Automation.CompletionResult]::new(
+                $parts[0], $parts[0], 'ParameterValue', $help
+            )
+        }}
+    }} finally {{
+        if ($null -eq $previousComplete) {{ Remove-Item Env:\COMPLETE -ErrorAction SilentlyContinue }}
+        else {{ $env:COMPLETE = $previousComplete }}
+        if ($null -eq $previousIndex) {{ Remove-Item Env:\_CLAP_COMPLETE_INDEX -ErrorAction SilentlyContinue }}
+        else {{ $env:_CLAP_COMPLETE_INDEX = $previousIndex }}
+    }}
+}}"#
+    )
+}
+
+fn write_fish_completions(output: &mut dyn io::Write) -> io::Result<()> {
+    use clap_complete::env::EnvCompleter as _;
+
+    clap_complete::env::Fish.write_registration(
+        "COMPLETE",
+        "cargo-upwell",
+        "cargo-upwell",
+        "cargo-upwell",
+        output,
+    )?;
+    writeln!(
+        output,
+        r#"
+function __cargo_upwell_complete
+    set --local tokens (commandline --current-process --tokenize --cut-at-cursor)
+    if test (count $tokens) -ge 2
+        set --erase tokens[1..2]
+    end
+    COMPLETE=fish cargo-upwell -- cargo-upwell $tokens (commandline --current-token)
+end
+
+function __cargo_upwell_using_subcommand
+    set --local tokens (commandline --current-process --tokenize --cut-at-cursor)
+    test (count $tokens) -ge 2; and test "$tokens[1]" = cargo; and test "$tokens[2]" = upwell
+end
+
+complete --keep-order --exclusive --command cargo \
+    --condition '__cargo_upwell_using_subcommand' \
+    --arguments '(__cargo_upwell_complete)'
+"#
+    )
+}
+
+fn refresh_completion_cache(
+    probe: &ToolingProbe,
+    discovery: &cargo_upwell::DiscoveryRequest,
+) -> Result<(), completion::CacheError> {
+    completion::refresh(probe, &discovery.features, discovery.target.as_deref())
 }
 
 fn init_error(error: InitError) -> ExitCode {

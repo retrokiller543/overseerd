@@ -9,11 +9,13 @@ repository.workspace = true
 homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
+build = "build.rs"
 
 [dependencies]
 anyhow = { workspace = true }
 cargo_metadata = { workspace = true }
 cargo-generate = { workspace = true }
+clap_complete = { workspace = true }
 clap = { workspace = true }
 command-group = { workspace = true }
 directories = { workspace = true }
