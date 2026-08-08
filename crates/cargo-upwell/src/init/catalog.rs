@@ -7,7 +7,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 const CATALOG_SCHEMA: &str = "1";
-const TEMPLATE_TAG: &str = "v0.20.3";
+const TEMPLATE_TAG: &str = "v0.20.4";
 
 /// Source of one cargo-generate template.
 #[derive(Clone, Debug, Eq, PartialEq)]
