@@ -31,6 +31,7 @@ pub(crate) fn render_selected(
     tooling_schema: &semver::Version,
     resources: &[String],
     color: bool,
+    terminal: bool,
     payload: io::Result<Vec<u8>>,
     native: impl FnOnce(BuiltInRenderer, &mut dyn io::Write) -> io::Result<()>,
     output: &mut dyn io::Write,
@@ -54,8 +55,14 @@ pub(crate) fn render_selected(
                     .map_err(|error| error.to_string())
             });
             match rendered {
-                Ok(rendered) if !component.utf8() => output.write_all(&rendered),
-                Ok(rendered) => write_terminal_safe(&rendered, request.color, output),
+                Ok(rendered)
+                    if terminal
+                        && component.utf8()
+                        && selected.format().media_type().starts_with("text/") =>
+                {
+                    write_terminal_safe(&rendered, request.color, output)
+                }
+                Ok(rendered) => output.write_all(&rendered),
                 Err(error) => {
                     let error = terminal_safe_text(&error.to_string(), 2048);
                     eprintln!(
@@ -179,6 +186,23 @@ fn component_host() -> Result<&'static ComponentRendererHost, String> {
     })
     .as_ref()
     .map_err(Clone::clone)
+}
+
+#[cfg(test)]
+pub(crate) fn write_component_output_for_test(
+    rendered: &[u8],
+    terminal: bool,
+    color: bool,
+) -> Vec<u8> {
+    let mut output = Vec::new();
+
+    if terminal {
+        write_terminal_safe(rendered, color, &mut output).expect("vector writes cannot fail");
+    } else {
+        output.extend_from_slice(rendered);
+    }
+
+    output
 }
 
 #[cfg(test)]

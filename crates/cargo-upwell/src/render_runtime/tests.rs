@@ -1,4 +1,4 @@
-use super::write_terminal_safe;
+use super::{write_component_output_for_test, write_terminal_safe};
 
 #[test]
 fn component_output_without_color_escapes_terminal_controls() {
@@ -49,4 +49,14 @@ fn overlong_sgr_sequence_is_escaped() {
     write_terminal_safe(rendered.as_bytes(), true, &mut output).expect("output writes");
 
     assert!(output.starts_with(b"\\x1b["));
+}
+
+#[test]
+fn non_terminal_component_output_is_byte_preserving() {
+    let rendered = "json \u{202e}\r\u{009b}".as_bytes();
+
+    assert_eq!(
+        write_component_output_for_test(rendered, false, false),
+        rendered
+    );
 }

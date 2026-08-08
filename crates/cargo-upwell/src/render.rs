@@ -15,6 +15,7 @@ mod name;
 pub(crate) use detail::{terminal_text, write_diagnostics};
 pub(crate) use explain::write_explanation;
 pub(crate) use graph::write_graph;
+pub(crate) use inspect::project_inspection;
 pub(crate) use inspect::selected_resources;
 pub(crate) use inspect::write_inspection;
 

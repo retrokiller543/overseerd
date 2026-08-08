@@ -1,6 +1,7 @@
 use std::io::Read as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use semver::Version;
@@ -144,8 +145,7 @@ impl ComponentRendererHost {
         }
 
         let bytes = read_bounded(renderer.path(), self.limits.component_bytes)?;
-        let component = Component::from_binary(&self.engine, &bytes)
-            .map_err(ComponentRenderError::InvalidComponent)?;
+        let component = compiled_component(&self.engine, renderer.path(), &bytes)?;
         let component_type = component.component_type();
 
         if let Some((name, _)) = component_type.imports(&self.engine).next() {
@@ -244,6 +244,52 @@ impl ComponentRendererHost {
     }
 }
 
+fn compiled_component(
+    engine: &Engine,
+    path: &std::path::Path,
+    bytes: &[u8],
+) -> Result<Component, ComponentRenderError> {
+    static COMPONENTS: OnceLock<
+        Mutex<std::collections::BTreeMap<std::path::PathBuf, CachedComponent>>,
+    > = OnceLock::new();
+    let components = COMPONENTS.get_or_init(|| Mutex::new(std::collections::BTreeMap::new()));
+    let modified = std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|source| ComponentRenderError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    let mut components = components
+        .lock()
+        .map_err(|_| ComponentRenderError::CachePoisoned)?;
+
+    if let Some(cached) = components.get(path)
+        && cached.modified == modified
+        && cached.size == bytes.len()
+    {
+        return Ok(cached.component.clone());
+    }
+
+    let component =
+        Component::from_binary(engine, bytes).map_err(ComponentRenderError::InvalidComponent)?;
+    components.insert(
+        path.to_path_buf(),
+        CachedComponent {
+            modified,
+            size: bytes.len(),
+            component: component.clone(),
+        },
+    );
+
+    Ok(component)
+}
+
+struct CachedComponent {
+    modified: std::time::SystemTime,
+    size: usize,
+    component: Component,
+}
+
 impl Drop for ComponentRendererHost {
     fn drop(&mut self) {
         self.stop_epoch.store(true, Ordering::Relaxed);
@@ -278,6 +324,8 @@ pub enum ComponentRenderError {
     },
     #[error("renderer component is invalid or does not export the Upwell renderer world")]
     InvalidComponent(#[source] anyhow::Error),
+    #[error("renderer component compilation cache is unavailable")]
+    CachePoisoned,
     #[error("renderer component imports forbidden host capability `{name}`")]
     HostImport { name: String },
     #[error("renderer requires ABI `{required}`, but the host provides `{host}`")]

@@ -15,7 +15,7 @@ use super::name::{
     cli_owner_name, cli_provider_kind_matches, cli_provider_kind_name, relationship_kind_name,
     resource_kind_name,
 };
-pub(crate) use filter::selected_resources;
+pub(crate) use filter::{project_inspection, selected_resources};
 
 pub(crate) fn write_inspection(
     document: &ToolingDocument,
@@ -221,7 +221,7 @@ fn write_cli(
     write_cli_command(&cli.root, 1, &provider_ids, filters.is_empty(), output)
 }
 
-fn matches_cli_provider(
+pub(super) fn matches_cli_provider(
     document: &ToolingDocument,
     provider: &upwell_tooling_schema::CliProvider,
     filters: &InspectFilters,
