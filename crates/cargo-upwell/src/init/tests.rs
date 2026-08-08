@@ -141,6 +141,26 @@ command = "cargo-team"
 }
 
 #[test]
+fn tool_ids_cannot_collide_with_builtin_templates() {
+    let fixture = TempFixture::new("cargo-upwell-catalog-builtin-collision");
+    fixture.write(
+        "catalog.toml",
+        r#"schema = "1"
+
+[[entries]]
+type = "tool"
+id = "upwell/application"
+command = "cargo-upwell-application"
+"#,
+    );
+
+    assert!(matches!(
+        Catalog::load(Some(&fixture.child("catalog.toml"))),
+        Err(CatalogError::DuplicateId { id }) if id == "upwell/application"
+    ));
+}
+
+#[test]
 fn git_templates_retain_one_explicit_reference() {
     let fixture = TempFixture::new("cargo-upwell-git-catalog");
     fixture.write(
@@ -195,6 +215,49 @@ tag = "v1"
 }
 
 #[test]
+fn templates_reject_empty_sources_and_git_references() {
+    let fixture = TempFixture::new("cargo-upwell-empty-template-values");
+    let entries = [
+        ("path = \"\"", "path"),
+        ("git = \" \"", "git"),
+        (
+            "git = \"https://example.invalid/template.git\"\nbranch = \" \"",
+            "branch",
+        ),
+        (
+            "git = \"https://example.invalid/template.git\"\ntag = \"\"",
+            "tag",
+        ),
+        (
+            "git = \"https://example.invalid/template.git\"\nrevision = \" \"",
+            "revision",
+        ),
+    ];
+
+    for (source, expected_field) in entries {
+        fixture.write(
+            "catalog.toml",
+            format!(
+                r#"schema = "1"
+
+[[entries]]
+type = "template"
+id = "team/application"
+description = "Team application"
+{source}
+"#
+            ),
+        );
+
+        assert!(matches!(
+            Catalog::load(Some(&fixture.child("catalog.toml"))),
+            Err(CatalogError::EmptyTemplateValue { id, field })
+                if id == "team/application" && field == expected_field
+        ));
+    }
+}
+
+#[test]
 fn direct_local_template_is_expanded_by_cargo_generate() {
     let fixture = TempFixture::new("cargo-upwell-local-template");
     let template = fixture.child("template");
@@ -233,6 +296,77 @@ prompt = "Flavor"
             .expect("generated file is readable"),
         "sample-app:local"
     );
+}
+
+#[test]
+fn existing_destination_is_preserved() {
+    let fixture = TempFixture::new("cargo-upwell-existing-destination");
+    let template = fixture.child("template");
+    let destination = fixture.child("generated");
+
+    std::fs::create_dir_all(&template).expect("template directory exists");
+    std::fs::write(template.join("generated.txt"), "generated").expect("template file is written");
+    std::fs::create_dir(&destination).expect("destination is reserved by another actor");
+    std::fs::write(destination.join("owner.txt"), "existing")
+        .expect("existing destination marker is written");
+
+    let error = init_project(InitRequest {
+        destination: destination.clone(),
+        name: Some(String::from("sample-app")),
+        template: TemplateSelection::Local(template),
+        workspace: false,
+        no_vcs: true,
+        define: Vec::new(),
+        upwell_path: None,
+    })
+    .expect_err("existing destination is rejected");
+
+    assert!(matches!(error, InitError::DestinationExists(path) if path == destination));
+    assert_eq!(
+        std::fs::read_to_string(destination.join("owner.txt"))
+            .expect("existing marker remains readable"),
+        "existing"
+    );
+    assert!(!destination.join("generated.txt").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn generated_destination_uses_normal_directory_permissions() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fixture = TempFixture::new("cargo-upwell-destination-permissions");
+    let template = fixture.child("template");
+    let destination = fixture.child("generated");
+    let control = fixture.child("control");
+
+    std::fs::create_dir_all(&template).expect("template directory exists");
+    std::fs::write(template.join("generated.txt"), "generated").expect("template file is written");
+    std::fs::create_dir(&control).expect("control directory is created through normal mkdir");
+
+    init_project(InitRequest {
+        destination: destination.clone(),
+        name: Some(String::from("sample-app")),
+        template: TemplateSelection::Local(template),
+        workspace: false,
+        no_vcs: true,
+        define: Vec::new(),
+        upwell_path: None,
+    })
+    .expect("local template generates");
+
+    let destination_mode = std::fs::metadata(destination)
+        .expect("generated destination metadata is readable")
+        .permissions()
+        .mode()
+        & 0o777;
+    let control_mode = std::fs::metadata(control)
+        .expect("control directory metadata is readable")
+        .permissions()
+        .mode()
+        & 0o777;
+
+    assert_eq!(destination_mode, control_mode);
 }
 
 #[test]
