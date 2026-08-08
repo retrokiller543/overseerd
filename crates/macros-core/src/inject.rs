@@ -106,6 +106,7 @@ pub fn registrations_infrastructure(
     let linkme_tokens = quote! {
         #[#distributed_slice]
         #[linkme(crate = #linkme_crate)]
+        #[allow(unsafe_code)]
         #[allow(non_upper_case_globals)]
         pub static #slice: [#registration];
 
@@ -263,6 +264,7 @@ pub fn field_injection_component(
             quote! {
                 #[#distributed_slice(#registrations_slice)]
                 #[linkme(crate = #linkme_crate)]
+                #[allow(unsafe_code)]
                 static __UPWELL_DEFAULT_FACTORY: #registration =
                     #registration::Factory(#factory_literal);
             },
@@ -332,6 +334,7 @@ pub fn field_injection_component(
 
         #[#distributed_slice(#components_slice)]
         #[linkme(crate = #linkme_crate)]
+        #[allow(unsafe_code)]
         static __UPWELL_COMPONENT: #component_descriptor = __UPWELL_COMPONENT_DESCRIPTOR;
     }
 }
@@ -376,6 +379,7 @@ pub fn explicit_factory(
         quote! {
             #[#distributed_slice(#registrations_slice)]
             #[linkme(crate = #linkme_crate)]
+            #[allow(unsafe_code)]
             static __UPWELL_EXPLICIT_FACTORY: #registration =
                 #registration::Factory(#factory_literal);
         },

@@ -183,6 +183,7 @@ pub fn generate_providers<Ext: ParseKeyed>(
         statics.push(quote! {
             #[#distributed_slice(#providers_slice)]
             #[linkme(crate = #linkme_crate)]
+            #[allow(unsafe_code)]
             static #provider_ident: #provider_descriptor =
                 <#self_ident as #descriptor<&'static [#provider_descriptor]>>::DESCRIPTOR[#i];
         });
