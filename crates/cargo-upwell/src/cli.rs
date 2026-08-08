@@ -13,11 +13,13 @@ use clap_complete::{ArgValueCompleter, CompletionCandidate};
 
 mod format;
 
-pub(crate) use format::{
-    ExplainFormat, ExportFormat, GraphFormat, InspectCliProviderKind, InspectFormat,
-    InspectResourceKind, ReportFormat, TerminalPolicy,
+use format::{
+    Check, Doctor, Explain, Export, Format, Graph, GraphFamily, GraphTraversalDirection, Inspect,
 };
-use format::{GraphFamily, GraphTraversalDirection};
+pub(crate) use format::{
+    ExplainFormat, GraphFormat, InspectCliProviderKind, InspectResourceKind, ReportFormat,
+    TerminalPolicy,
+};
 
 const CARGO_HELP_STYLES: Styles = Styles::styled()
     .header(AnsiColor::BrightGreen.on_default().effects(Effects::BOLD))
@@ -69,9 +71,9 @@ enum Command {
     /// never installed or executed.
     Templates(TemplatesArgs),
     /// Builds and validates one selected application without serving it.
-    Check(ReportArgs),
+    Check(CheckReportArgs),
     /// Diagnoses Cargo selection, build, probe, and application preparation.
-    Doctor(ReportArgs),
+    Doctor(DoctorReportArgs),
     /// Displays the selected application's prepared tooling document.
     Inspect(InspectArgs),
     /// Emits the canonical tooling document or probe envelope.
@@ -173,12 +175,20 @@ struct TargetArgs {
 
 /// Arguments for check and doctor reports.
 #[derive(Clone, Debug, Args)]
-struct ReportArgs {
+struct CheckReportArgs {
     #[command(flatten)]
     target: TargetArgs,
-    /// Output representation.
-    #[arg(long, value_enum, default_value_t = ReportFormat::Terminal)]
-    format: ReportFormat,
+    #[command(flatten)]
+    format: Format<Check>,
+}
+
+/// Arguments for doctor reports.
+#[derive(Clone, Debug, Args)]
+struct DoctorReportArgs {
+    #[command(flatten)]
+    target: TargetArgs,
+    #[command(flatten)]
+    format: Format<Doctor>,
 }
 
 /// Arguments for generic application inspection.
@@ -186,9 +196,8 @@ struct ReportArgs {
 struct InspectArgs {
     #[command(flatten)]
     target: TargetArgs,
-    /// Output representation.
-    #[arg(long, value_enum, default_value_t = InspectFormat::Text)]
-    format: InspectFormat,
+    #[command(flatten)]
+    format: Format<Inspect>,
     #[command(flatten)]
     filters: InspectFilters,
     #[command(flatten)]
@@ -200,9 +209,8 @@ struct InspectArgs {
 struct ExportArgs {
     #[command(flatten)]
     target: TargetArgs,
-    /// Canonical payload to emit.
-    #[arg(long, value_enum, default_value_t = ExportFormat::Document)]
-    format: ExportFormat,
+    #[command(flatten)]
+    format: Format<Export>,
     /// Write to a file instead of stdout.
     #[arg(short, long, value_hint = ValueHint::FilePath)]
     output: Option<PathBuf>,
@@ -213,9 +221,8 @@ struct ExportArgs {
 struct GraphArgs {
     #[command(flatten)]
     target: TargetArgs,
-    /// Output representation.
-    #[arg(long, value_enum, default_value_t = GraphFormat::Text)]
-    format: GraphFormat,
+    #[command(flatten)]
+    format: Format<Graph>,
     /// Semantic relationship family to include.
     #[arg(long, value_enum, default_value_t = GraphFamily::All)]
     family: GraphFamily,
@@ -243,9 +250,8 @@ struct ExplainArgs {
     resource: String,
     #[command(flatten)]
     target: TargetArgs,
-    /// Output representation.
-    #[arg(long, value_enum, default_value_t = ExplainFormat::Text)]
-    format: ExplainFormat,
+    #[command(flatten)]
+    format: Format<Explain>,
     #[command(flatten)]
     terminal: TerminalArgs,
 }
@@ -317,12 +323,12 @@ pub(crate) enum CommandRequest {
     Report {
         command: CommandKind,
         discovery: DiscoveryRequest,
-        format: ReportFormat,
+        format: String,
     },
     /// Human or canonical JSON inspection.
     Inspect {
         discovery: DiscoveryRequest,
-        format: InspectFormat,
+        format: String,
         filters: InspectFilters,
         color: TerminalPolicy,
         pager: TerminalPolicy,
@@ -330,13 +336,13 @@ pub(crate) enum CommandRequest {
     /// Canonical document or envelope export.
     Export {
         discovery: DiscoveryRequest,
-        format: ExportFormat,
+        format: String,
         output: Option<PathBuf>,
     },
     /// Deterministic graph projection.
     Graph {
         discovery: DiscoveryRequest,
-        format: GraphFormat,
+        format: String,
         query: GraphQuery,
         color: TerminalPolicy,
         pager: TerminalPolicy,
@@ -344,7 +350,7 @@ pub(crate) enum CommandRequest {
     /// One deterministic resource explanation.
     Explain {
         discovery: DiscoveryRequest,
-        format: ExplainFormat,
+        format: String,
         resource: String,
         color: TerminalPolicy,
         pager: TerminalPolicy,
@@ -396,28 +402,28 @@ impl Cli {
             Command::Check(arguments) => CommandRequest::Report {
                 command: CommandKind::Check,
                 discovery: discovery_request(arguments.target),
-                format: arguments.format,
+                format: arguments.format.into_value(),
             },
             Command::Doctor(arguments) => CommandRequest::Report {
                 command: CommandKind::Doctor,
                 discovery: discovery_request(arguments.target),
-                format: arguments.format,
+                format: arguments.format.into_value(),
             },
             Command::Inspect(arguments) => CommandRequest::Inspect {
                 discovery: discovery_request(arguments.target),
-                format: arguments.format,
+                format: arguments.format.into_value(),
                 filters: arguments.filters,
                 color: arguments.terminal.color,
                 pager: arguments.terminal.pager,
             },
             Command::Export(arguments) => CommandRequest::Export {
                 discovery: discovery_request(arguments.target),
-                format: arguments.format,
+                format: arguments.format.into_value(),
                 output: arguments.output,
             },
             Command::Graph(arguments) => CommandRequest::Graph {
                 discovery: discovery_request(arguments.target),
-                format: arguments.format,
+                format: arguments.format.into_value(),
                 query: GraphQuery {
                     resources: arguments.resources,
                     contributors: arguments.contributors,
@@ -430,7 +436,7 @@ impl Cli {
             },
             Command::Explain(arguments) => CommandRequest::Explain {
                 discovery: discovery_request(arguments.target),
-                format: arguments.format,
+                format: arguments.format.into_value(),
                 resource: arguments.resource,
                 color: arguments.terminal.color,
                 pager: arguments.terminal.pager,

@@ -15,12 +15,13 @@ mod name;
 pub(crate) use detail::{terminal_text, write_diagnostics};
 pub(crate) use explain::write_explanation;
 pub(crate) use graph::write_graph;
+pub(crate) use inspect::selected_resources;
 pub(crate) use inspect::write_inspection;
 
 pub(crate) fn write_report(
     report: &CommandReport,
     format: ReportFormat,
-    stdout: &mut impl io::Write,
+    stdout: &mut dyn io::Write,
 ) -> io::Result<()> {
     match format {
         ReportFormat::Terminal => write_terminal(report, stdout),
@@ -32,7 +33,7 @@ pub(crate) fn write_report(
     }
 }
 
-fn write_terminal(report: &CommandReport, output: &mut impl io::Write) -> io::Result<()> {
+fn write_terminal(report: &CommandReport, output: &mut dyn io::Write) -> io::Result<()> {
     if let Some(application) = &report.application {
         write!(
             output,

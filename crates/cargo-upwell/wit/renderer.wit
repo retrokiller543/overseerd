@@ -1,0 +1,31 @@
+package upwell:renderer@0.1.0;
+
+/// Capability-free presentation contract implemented by user renderer components.
+///
+/// Components must import nothing from the host and export the typed `render`
+/// function below. Guest projects should generate bindings from this WIT world
+/// instead of naming canonical-ABI core Wasm symbols directly.
+world renderer {
+    /// Bounded canonical command projection selected and validated by the host.
+    record render-request {
+        abi-version: string,
+        command: string,
+        format: string,
+        media-type: string,
+        tooling-schema: string,
+        resources: list<string>,
+        color: bool,
+        payload: list<u8>,
+    }
+
+    /// Presentation bytes plus claims the host verifies against the request.
+    record render-response {
+        format: string,
+        media-type: string,
+        resources: list<string>,
+        body: list<u8>,
+    }
+
+    /// Required component-level export. An error triggers the native fallback.
+    export render: func(request: render-request) -> result<render-response, string>;
+}

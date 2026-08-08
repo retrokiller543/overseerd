@@ -24,7 +24,11 @@ fn cargo_subcommand_reports_the_live_homeledger_application() {
             .current_dir(&workspace),
     );
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8(output.stdout).expect("command output is UTF-8");
 
@@ -231,6 +235,100 @@ fn graph_renders_every_format_from_homeledger_without_stderr_noise() {
 }
 
 #[test]
+fn configured_component_format_executes_end_to_end() {
+    let workspace = workspace_root();
+    let fixture = TempFixture::new("cargo-upwell-component-command");
+    let component =
+        workspace.join("crates/cargo-upwell/tests/fixtures/renderer/no-claims.component.wasm");
+    fixture.write(
+        "catalog.toml",
+        format!(
+            r#"schema = "1"
+
+[[entries]]
+type = "renderer"
+id = "test/custom"
+component = "{}"
+commands = ["inspect"]
+format = "custom"
+media-type = "text/plain"
+utf8 = true
+"#,
+            component.display()
+        ),
+    );
+    let output = run_command(
+        "cargo-upwell component renderer",
+        Command::new(cargo_upwell_binary())
+            .args(["inspect", "--format", "custom"])
+            .arg("--manifest-path")
+            .arg(workspace.join("examples/daemon/Cargo.toml"))
+            .arg("--package")
+            .arg("upwell-example-daemon")
+            .arg("--bin")
+            .arg("upwell-example-daemon")
+            .env("UPWELL_CATALOG_PATH", fixture.child("catalog.toml"))
+            .current_dir(&workspace),
+    );
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"fixture output");
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn component_failure_falls_back_to_the_native_command_default() {
+    let workspace = workspace_root();
+    let fixture = TempFixture::new("cargo-upwell-component-fallback");
+    let component = workspace
+        .join("crates/cargo-upwell/tests/fixtures/renderer/forbidden-import.component.wasm");
+    fixture.write(
+        "catalog.toml",
+        format!(
+            r#"schema = "1"
+
+[[entries]]
+type = "renderer"
+id = "test/forbidden"
+component = "{}"
+commands = ["inspect"]
+format = "forbidden"
+media-type = "text/plain"
+utf8 = true
+"#,
+            component.display()
+        ),
+    );
+    let output = run_command(
+        "cargo-upwell component fallback",
+        Command::new(cargo_upwell_binary())
+            .args(["inspect", "--format", "forbidden"])
+            .arg("--manifest-path")
+            .arg(workspace.join("examples/daemon/Cargo.toml"))
+            .arg("--package")
+            .arg("upwell-example-daemon")
+            .arg("--bin")
+            .arg("upwell-example-daemon")
+            .env("UPWELL_CATALOG_PATH", fixture.child("catalog.toml"))
+            .current_dir(&workspace),
+    );
+
+    assert!(output.status.success());
+    assert!(
+        std::str::from_utf8(&output.stdout)
+            .expect("fallback is UTF-8")
+            .contains("Application")
+    );
+    let stderr = std::str::from_utf8(&output.stderr).expect("diagnostic is UTF-8");
+    assert!(stderr.contains("imports forbidden host capability"));
+    assert!(stderr.contains("falling back to `upwell/inspect-text`"));
+}
+
+#[test]
 fn graph_selectors_filter_homeledger_and_preserve_repeated_values() {
     let workspace = workspace_root();
     let output = run_homeledger(
@@ -341,7 +439,7 @@ fn graph_resource_selector_with_commas_is_not_split() {
 }
 
 #[test]
-fn machine_graph_ignores_forced_color_and_pager() {
+fn machine_graph_rejects_forced_color_and_pager() {
     let workspace = workspace_root();
     let output = run_homeledger(
         &workspace,
@@ -350,10 +448,9 @@ fn machine_graph_ignores_forced_color_and_pager() {
         ],
     );
 
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("stdout is pure JSON");
-    assert!(!output.stdout.windows(2).any(|bytes| bytes == b"\x1b["));
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("does not support `--color always`"));
 }
 
 #[test]

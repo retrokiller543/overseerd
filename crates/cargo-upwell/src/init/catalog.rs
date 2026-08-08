@@ -6,6 +6,11 @@ use directories::ProjectDirs;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::renderer::{
+    RENDERER_ABI_REQUIREMENT, RendererCapabilities, RendererCommand, RendererDescriptor,
+    component_descriptor,
+};
+
 const CATALOG_SCHEMA: &str = "1";
 const TEMPLATE_TAG: &str = "v0.20.4";
 
@@ -133,6 +138,32 @@ enum CatalogEntry {
         #[serde(default)]
         protocols: Vec<String>,
     },
+    Renderer {
+        id: String,
+        component: PathBuf,
+        commands: Vec<RendererCommand>,
+        format: String,
+        #[serde(rename = "media-type")]
+        media_type: String,
+        #[serde(default)]
+        extension: Option<String>,
+        #[serde(default)]
+        color: bool,
+        #[serde(default)]
+        pager: bool,
+        #[serde(default)]
+        #[serde(rename = "output-file")]
+        output_file: bool,
+        #[serde(default = "default_renderer_priority")]
+        priority: i32,
+        #[serde(default = "default_renderer_abi")]
+        abi: String,
+        #[serde(default = "default_tooling_schema")]
+        #[serde(rename = "tooling-schema")]
+        tooling_schema: String,
+        #[serde(default = "default_true")]
+        utf8: bool,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,14 +179,19 @@ struct CatalogDocument {
 pub struct Catalog {
     templates: BTreeMap<String, TemplateEntry>,
     tools: BTreeMap<String, ToolEntry>,
+    renderers: BTreeMap<String, RendererDescriptor>,
 }
 
 impl Catalog {
     /// Loads built-ins and overlays an explicit or platform-default user catalog by stable ID.
     pub fn load(path: Option<&Path>) -> Result<Self, CatalogError> {
         let mut catalog = Self::builtins();
-        let explicit = path.is_some();
-        let path = path.map(Path::to_path_buf).or_else(default_catalog_path);
+        let environment_path = environment_catalog_path();
+        let explicit = path.is_some() || environment_path.is_some();
+        let path = path
+            .map(Path::to_path_buf)
+            .or(environment_path)
+            .or_else(default_catalog_path);
         let Some(path) = path else {
             return Ok(catalog);
         };
@@ -234,6 +270,49 @@ impl Catalog {
                         },
                     );
                 }
+                CatalogEntry::Renderer {
+                    id,
+                    component,
+                    commands,
+                    format,
+                    media_type,
+                    extension,
+                    color,
+                    pager,
+                    output_file,
+                    priority,
+                    abi,
+                    tooling_schema,
+                    utf8,
+                } => {
+                    validate_id(&id)?;
+                    insert_unique(&mut seen, &id, "renderer")?;
+                    if catalog.templates.contains_key(&id) {
+                        return Err(CatalogError::DuplicateId { id });
+                    }
+                    let component = resolve_relative_path(base, &id, "component", component)?;
+                    let abi = parse_requirement(&id, "abi", &abi)?;
+                    let tooling_schema = parse_requirement(&id, "tooling-schema", &tooling_schema)?;
+                    let descriptor = component_descriptor(
+                        id.clone(),
+                        component,
+                        commands,
+                        format,
+                        media_type,
+                        extension,
+                        RendererCapabilities {
+                            color,
+                            pager,
+                            output_file,
+                        },
+                        priority,
+                        abi,
+                        tooling_schema,
+                        utf8,
+                    );
+
+                    catalog.renderers.insert(id, descriptor);
+                }
             }
         }
 
@@ -278,6 +357,7 @@ impl Catalog {
         Self {
             templates,
             tools: BTreeMap::new(),
+            renderers: BTreeMap::new(),
         }
     }
 
@@ -289,6 +369,11 @@ impl Catalog {
     /// Returns all configured developer tools in deterministic ID order.
     pub fn tools(&self) -> impl Iterator<Item = &ToolEntry> {
         self.tools.values()
+    }
+
+    /// Returns all explicitly configured component renderers in deterministic ID order.
+    pub fn renderers(&self) -> impl Iterator<Item = &RendererDescriptor> {
+        self.renderers.values()
     }
 
     pub(crate) fn template(&self, id: &str) -> Result<&TemplateEntry, CatalogError> {
@@ -305,6 +390,10 @@ impl Catalog {
 pub fn default_catalog_path() -> Option<PathBuf> {
     ProjectDirs::from("org", "upwell-rs", "Upwell")
         .map(|directories| directories.config_dir().join("catalog.toml"))
+}
+
+fn environment_catalog_path() -> Option<PathBuf> {
+    std::env::var_os("UPWELL_CATALOG_PATH").map(PathBuf::from)
 }
 
 /// Catalog read, schema, or selection failure.
@@ -340,8 +429,73 @@ pub enum CatalogError {
         /// Empty field name.
         field: &'static str,
     },
+    #[error("catalog entry `{id}` has an empty `{field}` value")]
+    EmptyValue { id: String, field: &'static str },
+    #[error("renderer `{id}` has an invalid `{field}` version requirement `{value}`")]
+    InvalidVersionRequirement {
+        id: String,
+        field: &'static str,
+        value: String,
+        #[source]
+        source: semver::Error,
+    },
     #[error("unknown template `{id}`; available templates: {available}", available = available.join(", "))]
     UnknownTemplate { id: String, available: Vec<String> },
+}
+
+fn default_renderer_priority() -> i32 {
+    100
+}
+
+fn default_renderer_abi() -> String {
+    RENDERER_ABI_REQUIREMENT.to_owned()
+}
+
+fn default_tooling_schema() -> String {
+    format!(
+        "^{}.{}",
+        crate::TOOLING_SCHEMA_VERSION.major,
+        crate::TOOLING_SCHEMA_VERSION.minor
+    )
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+fn resolve_relative_path(
+    base: &Path,
+    id: &str,
+    field: &'static str,
+    path: PathBuf,
+) -> Result<PathBuf, CatalogError> {
+    if path.as_os_str().is_empty() {
+        return Err(CatalogError::EmptyValue {
+            id: id.to_owned(),
+            field,
+        });
+    }
+
+    Ok(if path.is_absolute() {
+        path
+    } else {
+        base.join(path)
+    })
+}
+
+fn parse_requirement(
+    id: &str,
+    field: &'static str,
+    value: &str,
+) -> Result<semver::VersionReq, CatalogError> {
+    value
+        .parse()
+        .map_err(|source| CatalogError::InvalidVersionRequirement {
+            id: id.to_owned(),
+            field,
+            value: value.to_owned(),
+            source,
+        })
 }
 
 fn resolve_source(

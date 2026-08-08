@@ -1,25 +1,25 @@
 mod cli;
 mod output;
 mod render;
+mod render_runtime;
 mod version;
 
+use std::collections::BTreeSet;
 use std::io::{self, IsTerminal as _};
 use std::path::Path;
 use std::process::ExitCode;
 
 use cargo_upwell::{
-    CancellationToken, Catalog, CommandExitCode, GraphQuery, GraphQueryError, InitError,
-    ProbeOptions, ProbeRequestError, ResourceExplanation, TemplateSelection, TemplateSource,
-    ToolingProbe, completion, init_project, probe_request_exit_code, run_command_with_options,
-    run_probe_with_options,
+    BuiltInRenderer, CancellationToken, Catalog, CommandExitCode, GraphQuery, GraphQueryError,
+    InitError, ProbeOptions, ProbeRequestError, RendererCommand, ResourceExplanation,
+    TemplateSelection, TemplateSource, ToolingProbe, completion, init_project,
+    probe_request_exit_code, run_command_with_options, run_probe_with_options,
 };
 use upwell_tooling_schema::{Diagnostic, ProbeEnvelope, ProbeOutcome, ToolingDocument};
 
-use crate::cli::{
-    Cli, CommandRequest, ExplainFormat, ExportFormat, GraphFormat, InspectFilters, InspectFormat,
-    TerminalPolicy,
-};
+use crate::cli::{Cli, CommandRequest, ExplainFormat, GraphFormat, InspectFilters, TerminalPolicy};
 use crate::output::{write_export, write_text};
+use crate::render_runtime::{registry as renderer_registry, render_selected};
 
 fn main() -> ExitCode {
     clap_complete::CompleteEnv::with_factory(cli::completion_command)
@@ -104,7 +104,37 @@ fn execute(request: CommandRequest) -> ExitCode {
             };
             let report = run_command_with_options(command, &discovery, &cancellation, options);
             let exit_code = report.exit_code().code();
-            let result = render::write_report(&report, format, &mut std::io::stdout().lock());
+            let command = match command {
+                cargo_upwell::CommandKind::Check => RendererCommand::Check,
+                cargo_upwell::CommandKind::Doctor => RendererCommand::Doctor,
+            };
+            let registry = renderer_registry();
+            let Some(selected) = registry.resolve(command, &format) else {
+                return unknown_renderer(command, &format);
+            };
+            let fallback = Some(registry.command_fallback(command));
+            let payload = report
+                .to_json()
+                .map(String::into_bytes)
+                .map_err(io::Error::other);
+            let result = render_selected(
+                selected,
+                fallback,
+                &report.schema,
+                &[],
+                false,
+                payload,
+                |native, output| match native {
+                    BuiltInRenderer::ReportTerminal => {
+                        render::write_report(&report, crate::cli::ReportFormat::Terminal, output)
+                    }
+                    BuiltInRenderer::ReportJson => {
+                        render::write_report(&report, crate::cli::ReportFormat::Json, output)
+                    }
+                    _ => unreachable!("report registry selected a report renderer"),
+                },
+                &mut io::stdout().lock(),
+            );
 
             finish_output(result, ExitCode::from(exit_code), "command report")
         }
@@ -115,7 +145,14 @@ fn execute(request: CommandRequest) -> ExitCode {
             color,
             pager,
         } => {
-            if format == InspectFormat::Json && !filters.is_empty() {
+            let registry = renderer_registry();
+            let Some(selected) = registry.resolve(RendererCommand::Inspect, &format) else {
+                return unknown_renderer(RendererCommand::Inspect, &format);
+            };
+            if let Err(exit) = validate_terminal_options(selected, color, pager) {
+                return exit;
+            }
+            if format == "json" && !filters.is_empty() {
                 eprintln!(
                     "cargo upwell inspect filters require text output; canonical JSON is always the complete document"
                 );
@@ -128,7 +165,7 @@ fn execute(request: CommandRequest) -> ExitCode {
             match run_probe_with_options(&discovery, &cancellation, options) {
                 Ok(probe) => {
                     let _ = refresh_completion_cache(&probe, &discovery);
-                    inspect(probe, format, filters, color, pager)
+                    inspect(probe, &format, filters, color, pager)
                 }
                 Err(error) => probe_error(error),
             }
@@ -137,57 +174,91 @@ fn execute(request: CommandRequest) -> ExitCode {
             discovery,
             format,
             output,
-        } => match run_probe_with_options(
-            &discovery,
-            &cancellation,
-            ProbeOptions {
-                show_cargo_output: interactive,
-            },
-        ) {
-            Ok(probe) => {
-                let _ = refresh_completion_cache(&probe, &discovery);
-                export(probe.probe.envelope, format, output.as_deref())
+        } => {
+            let registry = renderer_registry();
+            let Some(selected) = registry.resolve(RendererCommand::Export, &format) else {
+                return unknown_renderer(RendererCommand::Export, &format);
+            };
+            if output.is_some() && !selected.format().capabilities().output_file {
+                eprintln!("cargo upwell export format `{format}` does not support `--output`");
+                return ExitCode::from(CommandExitCode::Misuse.code());
             }
-            Err(error) => probe_error(error),
-        },
+            if matches!(selected.descriptor().implementation(), cargo_upwell::RendererImplementation::Component(component) if !component.utf8())
+                && output.is_none()
+            {
+                eprintln!("cargo upwell binary export format `{format}` requires `--output`");
+                return ExitCode::from(CommandExitCode::Misuse.code());
+            }
+            match run_probe_with_options(
+                &discovery,
+                &cancellation,
+                ProbeOptions {
+                    show_cargo_output: interactive,
+                },
+            ) {
+                Ok(probe) => {
+                    let _ = refresh_completion_cache(&probe, &discovery);
+                    export(probe.probe.envelope, &format, output.as_deref())
+                }
+                Err(error) => probe_error(error),
+            }
+        }
         CommandRequest::Graph {
             discovery,
             format,
             query,
             color,
             pager,
-        } => match run_probe_with_options(
-            &discovery,
-            &cancellation,
-            ProbeOptions {
-                show_cargo_output: interactive,
-            },
-        ) {
-            Ok(probe) => {
-                let _ = refresh_completion_cache(&probe, &discovery);
-                graph(probe, format, query, color, pager)
+        } => {
+            let registry = renderer_registry();
+            let Some(selected) = registry.resolve(RendererCommand::Graph, &format) else {
+                return unknown_renderer(RendererCommand::Graph, &format);
+            };
+            if let Err(exit) = validate_terminal_options(selected, color, pager) {
+                return exit;
             }
-            Err(error) => probe_error(error),
-        },
+            match run_probe_with_options(
+                &discovery,
+                &cancellation,
+                ProbeOptions {
+                    show_cargo_output: interactive,
+                },
+            ) {
+                Ok(probe) => {
+                    let _ = refresh_completion_cache(&probe, &discovery);
+                    graph(probe, &format, query, color, pager)
+                }
+                Err(error) => probe_error(error),
+            }
+        }
         CommandRequest::Explain {
             discovery,
             format,
             resource,
             color,
             pager,
-        } => match run_probe_with_options(
-            &discovery,
-            &cancellation,
-            ProbeOptions {
-                show_cargo_output: interactive,
-            },
-        ) {
-            Ok(probe) => {
-                let _ = refresh_completion_cache(&probe, &discovery);
-                explain(probe, format, &resource, color, pager)
+        } => {
+            let registry = renderer_registry();
+            let Some(selected) = registry.resolve(RendererCommand::Explain, &format) else {
+                return unknown_renderer(RendererCommand::Explain, &format);
+            };
+            if let Err(exit) = validate_terminal_options(selected, color, pager) {
+                return exit;
             }
-            Err(error) => probe_error(error),
-        },
+            match run_probe_with_options(
+                &discovery,
+                &cancellation,
+                ProbeOptions {
+                    show_cargo_output: interactive,
+                },
+            ) {
+                Ok(probe) => {
+                    let _ = refresh_completion_cache(&probe, &discovery);
+                    explain(probe, &format, &resource, color, pager)
+                }
+                Err(error) => probe_error(error),
+            }
+        }
     }
 }
 
@@ -397,7 +468,7 @@ fn write_templates(catalog: &Catalog, output: &mut dyn io::Write) -> io::Result<
 
 fn inspect(
     probe: ToolingProbe,
-    format: InspectFormat,
+    format: &str,
     filters: InspectFilters,
     color: TerminalPolicy,
     pager: TerminalPolicy,
@@ -410,19 +481,101 @@ fn inspect(
         }
     };
     let exit_code = document_exit_code(&document);
-    let result = match format {
-        InspectFormat::Text => write_text(color, pager, |color, output| {
-            render::write_inspection(&document, &filters, color, output)
-        }),
-        InspectFormat::Json => write_document_json(&document, &mut io::stdout().lock()),
+    let registry = renderer_registry();
+    let Some(selected) = registry.resolve(RendererCommand::Inspect, format) else {
+        return unknown_renderer(RendererCommand::Inspect, format);
     };
+    if let Err(exit) = validate_terminal_options(selected, color, pager) {
+        return exit;
+    }
+    let fallback = Some(registry.command_fallback(RendererCommand::Inspect));
+    let resources = render::selected_resources(&document, &filters)
+        .into_iter()
+        .map(|resource| resource.id.clone())
+        .collect::<Vec<_>>();
+    let payload = inspect_component_payload(&document, &resources, filters.is_empty());
+    let write = |color, output: &mut dyn io::Write| {
+        render_selected(
+            selected,
+            fallback,
+            &document.schema,
+            &resources,
+            color,
+            payload,
+            |native, output| match native {
+                BuiltInRenderer::InspectText => {
+                    render::write_inspection(&document, &filters, color, output)
+                }
+                BuiltInRenderer::InspectJson => write_document_json(&document, output),
+                _ => unreachable!("inspect registry selected an inspect renderer"),
+            },
+            output,
+        )
+    };
+    let pager = if selected.format().capabilities().pager {
+        pager
+    } else {
+        TerminalPolicy::Never
+    };
+    let result = write_text(color, pager, write);
 
     finish_output(result, exit_code, "inspection")
 }
 
+fn inspect_component_payload(
+    document: &ToolingDocument,
+    resources: &[String],
+    unfiltered: bool,
+) -> io::Result<Vec<u8>> {
+    if unfiltered {
+        return document
+            .to_canonical_json()
+            .map(String::into_bytes)
+            .map_err(io::Error::other);
+    }
+
+    let selected = resources.iter().collect::<BTreeSet<_>>();
+    let mut projection = document.clone();
+
+    projection.canonicalize();
+    projection
+        .resources
+        .retain(|resource| selected.contains(&resource.id));
+    for resource in &mut projection.resources {
+        if resource
+            .provenance
+            .as_ref()
+            .and_then(|provenance| provenance.owner.as_ref())
+            .is_some_and(|owner| !selected.contains(owner))
+            && let Some(provenance) = &mut resource.provenance
+        {
+            provenance.owner = None;
+        }
+    }
+    projection.relationships.retain(|relationship| {
+        selected.contains(&relationship.from) && selected.contains(&relationship.to)
+    });
+    projection.diagnostics.retain_mut(|diagnostic| {
+        if diagnostic.resources.is_empty() {
+            return true;
+        }
+
+        diagnostic
+            .resources
+            .retain(|resource| selected.contains(resource));
+        !diagnostic.resources.is_empty()
+    });
+    projection.cli = None;
+
+    projection
+        .to_canonical_json()
+        .map(String::into_bytes)
+        .map_err(io::Error::other)
+}
+
 fn graph(
     probe: ToolingProbe,
-    format: GraphFormat,
+    format: &str,
     query: GraphQuery,
     color: TerminalPolicy,
     pager: TerminalPolicy,
@@ -447,20 +600,51 @@ fn graph(
             (view, validation_failure())
         }
     };
-    let result = if format == GraphFormat::Text {
-        write_text(color, pager, |color, output| {
-            render::write_graph(&view, format, color, output)
-        })
-    } else {
-        render::write_graph(&view, format, false, &mut io::stdout().lock())
+    let registry = renderer_registry();
+    let Some(selected) = registry.resolve(RendererCommand::Graph, format) else {
+        return unknown_renderer(RendererCommand::Graph, format);
     };
+    if let Err(exit) = validate_terminal_options(selected, color, pager) {
+        return exit;
+    }
+    let fallback = Some(registry.command_fallback(RendererCommand::Graph));
+    let resources = view
+        .nodes
+        .iter()
+        .map(|resource| resource.id.clone())
+        .collect::<Vec<_>>();
+    let payload = view
+        .to_canonical_json()
+        .map(String::into_bytes)
+        .map_err(io::Error::other);
+    let write = |color, output: &mut dyn io::Write| {
+        render_selected(
+            selected,
+            fallback,
+            &view.schema,
+            &resources,
+            color,
+            payload,
+            |native, output| {
+                let format = graph_format(native);
+                render::write_graph(&view, format, color, output)
+            },
+            output,
+        )
+    };
+    let pager = if selected.format().capabilities().pager {
+        pager
+    } else {
+        TerminalPolicy::Never
+    };
+    let result = write_text(color, pager, write);
 
     finish_output(result, exit_code, "graph")
 }
 
 fn explain(
     probe: ToolingProbe,
-    format: ExplainFormat,
+    format: &str,
     resource: &str,
     color: TerminalPolicy,
     pager: TerminalPolicy,
@@ -477,18 +661,49 @@ fn explain(
         Err(error) => return graph_query_error("explain", error),
     };
     let exit_code = document_exit_code(&document);
-    let result = if format == ExplainFormat::Text {
-        write_text(color, pager, |color, output| {
-            render::write_explanation(&explanation, format, color, output)
-        })
-    } else {
-        render::write_explanation(&explanation, format, false, &mut io::stdout().lock())
+    let registry = renderer_registry();
+    let Some(selected) = registry.resolve(RendererCommand::Explain, format) else {
+        return unknown_renderer(RendererCommand::Explain, format);
     };
+    if let Err(exit) = validate_terminal_options(selected, color, pager) {
+        return exit;
+    }
+    let fallback = Some(registry.command_fallback(RendererCommand::Explain));
+    let resources = vec![explanation.resource.id.clone()];
+    let payload = explanation
+        .to_canonical_json()
+        .map(String::into_bytes)
+        .map_err(io::Error::other);
+    let write = |color, output: &mut dyn io::Write| {
+        render_selected(
+            selected,
+            fallback,
+            &explanation.schema,
+            &resources,
+            color,
+            payload,
+            |native, output| {
+                let format = match native {
+                    BuiltInRenderer::ExplainText => ExplainFormat::Text,
+                    BuiltInRenderer::ExplainJson => ExplainFormat::Json,
+                    _ => unreachable!("explain registry selected an explain renderer"),
+                };
+                render::write_explanation(&explanation, format, color, output)
+            },
+            output,
+        )
+    };
+    let pager = if selected.format().capabilities().pager {
+        pager
+    } else {
+        TerminalPolicy::Never
+    };
+    let result = write_text(color, pager, write);
 
     finish_output(result, exit_code, "explanation")
 }
 
-fn export(envelope: ProbeEnvelope, format: ExportFormat, output: Option<&Path>) -> ExitCode {
+fn export(envelope: ProbeEnvelope, format: &str, output: Option<&Path>) -> ExitCode {
     let exit_code = if envelope.is_success() {
         envelope_document(&envelope)
             .map(document_exit_code)
@@ -496,23 +711,103 @@ fn export(envelope: ProbeEnvelope, format: ExportFormat, output: Option<&Path>) 
     } else {
         validation_failure()
     };
-    let result = match format {
-        ExportFormat::Document => match envelope_document(&envelope) {
-            Some(document) => write_export(output, |writer| write_document_json(document, writer)),
-            None => {
-                eprintln!("cargo upwell export cannot emit a document from a failed probe");
+    if format == "document" && !envelope.is_success() {
+        eprintln!("cargo upwell export cannot emit a document from a failed probe");
 
-                return validation_failure();
-            }
-        },
-        ExportFormat::Envelope => write_export(output, |writer| {
-            let json = envelope.to_json().map_err(io::Error::other)?;
-
-            writeln!(writer, "{json}")
-        }),
+        return validation_failure();
+    }
+    let registry = renderer_registry();
+    let Some(selected) = registry.resolve(RendererCommand::Export, format) else {
+        return unknown_renderer(RendererCommand::Export, format);
     };
+    if output.is_some() && !selected.format().capabilities().output_file {
+        eprintln!("cargo upwell export format `{format}` does not support `--output`");
+        return ExitCode::from(CommandExitCode::Misuse.code());
+    }
+    let fallback = Some(if envelope.is_success() {
+        registry.command_fallback(RendererCommand::Export)
+    } else {
+        registry
+            .native_fallback(RendererCommand::Export, "envelope")
+            .expect("failed probes have a native envelope fallback")
+    });
+    let schema = envelope.schema.clone();
+    let resources = envelope_document(&envelope)
+        .map(|document| {
+            document
+                .resources
+                .iter()
+                .map(|resource| resource.id.clone())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let payload = envelope
+        .to_json()
+        .map(String::into_bytes)
+        .map_err(io::Error::other);
+    let result = write_export(output, |writer| {
+        render_selected(
+            selected,
+            fallback,
+            &schema,
+            &resources,
+            false,
+            payload,
+            |native, output| match native {
+                BuiltInRenderer::ExportDocument => match envelope_document(&envelope) {
+                    Some(document) => write_document_json(document, output),
+                    None => Err(io::Error::other(
+                        "a failed probe has no canonical tooling document",
+                    )),
+                },
+                BuiltInRenderer::ExportEnvelope => {
+                    let json = envelope.to_json().map_err(io::Error::other)?;
+                    writeln!(output, "{json}")
+                }
+                _ => unreachable!("export registry selected an export renderer"),
+            },
+            writer,
+        )
+    });
 
     finish_output(result, exit_code, "export")
+}
+
+fn graph_format(renderer: BuiltInRenderer) -> GraphFormat {
+    match renderer {
+        BuiltInRenderer::GraphText => GraphFormat::Text,
+        BuiltInRenderer::GraphMermaid => GraphFormat::Mermaid,
+        BuiltInRenderer::GraphDot => GraphFormat::Dot,
+        BuiltInRenderer::GraphJson => GraphFormat::Json,
+        _ => unreachable!("graph registry selected a graph renderer"),
+    }
+}
+
+fn unknown_renderer(command: RendererCommand, format: &str) -> ExitCode {
+    eprintln!("cargo upwell could not resolve {command} renderer format `{format}`");
+
+    ExitCode::from(CommandExitCode::Misuse.code())
+}
+
+fn validate_terminal_options(
+    selected: cargo_upwell::ResolvedRenderer<'_>,
+    color: TerminalPolicy,
+    pager: TerminalPolicy,
+) -> Result<(), ExitCode> {
+    for (option, policy, supported) in [
+        ("--color", color, selected.format().capabilities().color),
+        ("--pager", pager, selected.format().capabilities().pager),
+    ] {
+        if policy == TerminalPolicy::Always && !supported {
+            eprintln!(
+                "cargo upwell format `{}` does not support `{option} always`",
+                selected.format().id()
+            );
+            return Err(ExitCode::from(CommandExitCode::Misuse.code()));
+        }
+    }
+
+    Ok(())
 }
 
 fn finish_output(result: io::Result<()>, exit_code: ExitCode, output: &str) -> ExitCode {

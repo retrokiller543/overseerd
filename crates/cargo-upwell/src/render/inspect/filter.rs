@@ -4,7 +4,7 @@ use upwell_tooling_schema::{Resource, ResourceKind, ToolingDocument};
 
 use crate::cli::{InspectFilters, InspectResourceKind};
 
-pub(super) fn selected_resources<'a>(
+pub(crate) fn selected_resources<'a>(
     document: &'a ToolingDocument,
     filters: &InspectFilters,
 ) -> Vec<&'a Resource> {

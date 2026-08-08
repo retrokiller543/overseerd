@@ -11,6 +11,7 @@ pub mod graph;
 mod init;
 mod probe;
 mod process;
+mod renderer;
 mod selection;
 
 use std::fs::OpenOptions;
@@ -35,6 +36,12 @@ pub use init::{
 use probe::execute_probe;
 pub use probe::{ProbeError, ProbeEvidence, ProbeResult};
 pub use process::{CancellationToken, ProcessStatus};
+pub use renderer::{
+    BuiltInRenderer, ComponentLimits, ComponentRenderError, ComponentRenderRequest,
+    ComponentRenderer, ComponentRendererHost, RENDERER_ABI_REQUIREMENT, RendererCapabilities,
+    RendererCommand, RendererDescriptor, RendererFormat, RendererImplementation, RendererRegistry,
+    RendererRegistryError, ResolvedRenderer,
+};
 pub use selection::{
     BinaryCandidate, FeatureSelection, PackageCandidate, SelectedTarget, SelectionError,
     WorkspaceCatalog,

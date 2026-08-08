@@ -15,7 +15,7 @@ use super::name::{
     cli_owner_name, cli_provider_kind_matches, cli_provider_kind_name, relationship_kind_name,
     resource_kind_name,
 };
-use filter::selected_resources;
+pub(crate) use filter::selected_resources;
 
 pub(crate) fn write_inspection(
     document: &ToolingDocument,
