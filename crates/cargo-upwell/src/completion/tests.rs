@@ -85,6 +85,35 @@ fn stale_nested_package_snapshot_does_not_shadow_outer_workspace() {
 }
 
 #[test]
+fn excluded_nested_package_uses_its_own_snapshot() {
+    let fixture = TempFixture::new("cargo-upwell-completion-excluded-package");
+    let nested = fixture.child("tools/standalone");
+    let cache = fixture.child("cache");
+
+    fixture.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"tools/standalone\"]\n",
+    );
+    std::fs::create_dir_all(&nested).expect("nested package directory exists");
+    std::fs::write(
+        nested.join("Cargo.toml"),
+        "[package]\nname = \"standalone\"\nversion = \"0.1.0\"\n",
+    )
+    .expect("nested package manifest is written");
+    write_snapshot(&cache, fixture.path(), fixture.path(), "component:outer");
+    write_snapshot(&cache, &nested, &nested, "component:standalone");
+
+    assert_eq!(
+        read_candidates_from(CandidateKind::Resource, &nested, &cache)
+            .expect("standalone package snapshot reads"),
+        [Candidate {
+            value: String::from("component:standalone"),
+            help: None,
+        }]
+    );
+}
+
+#[test]
 fn mismatched_workspace_identity_is_ignored() {
     let fixture = TempFixture::new("cargo-upwell-completion-identity");
     let cache = fixture.child("cache");
