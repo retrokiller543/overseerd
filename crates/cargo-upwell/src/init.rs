@@ -475,22 +475,43 @@ fn add_to_parent_workspace_with(
         let replacement = toml::to_string_pretty(&document)?;
 
         before_replace();
-        std::io::Seek::rewind(&mut manifest_file)?;
-        let mut current = String::new();
-        std::io::Read::read_to_string(&mut manifest_file, &mut current)?;
-        if current != source || !path_still_names_file(&manifest_file, &manifest)? {
-            return Ok(false);
+
+        #[cfg(unix)]
+        {
+            let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+            std::io::Write::write_all(&mut temporary, replacement.as_bytes())?;
+            temporary.as_file().sync_all()?;
+
+            atomic_exchange(temporary.path(), &manifest)?;
+            let displaced = std::fs::read_to_string(temporary.path())?;
+            if displaced != source {
+                atomic_exchange(temporary.path(), &manifest)?;
+                return Ok(false);
+            }
+
+            std::fs::File::open(parent)?.sync_all()?;
+            Ok(true)
         }
 
-        // Write through the locked handle rather than renaming stale bytes over `manifest`.
-        // If a non-cooperating editor atomically replaces the path after the identity check,
-        // this handle refers to the unlinked old file and the editor's replacement wins.
-        manifest_file.set_len(0)?;
-        std::io::Seek::rewind(&mut manifest_file)?;
-        std::io::Write::write_all(&mut manifest_file, replacement.as_bytes())?;
-        manifest_file.sync_all()?;
+        #[cfg(not(unix))]
+        {
+            std::io::Seek::rewind(&mut manifest_file)?;
+            let mut current = String::new();
+            std::io::Read::read_to_string(&mut manifest_file, &mut current)?;
+            if current != source || !path_still_names_file(&manifest_file, &manifest)? {
+                return Ok(false);
+            }
 
-        Ok(true)
+            // Write through the locked handle rather than renaming stale bytes over `manifest`.
+            // If a non-cooperating editor atomically replaces the path after the identity check,
+            // this handle refers to the unlinked old file and the editor's replacement wins.
+            manifest_file.set_len(0)?;
+            std::io::Seek::rewind(&mut manifest_file)?;
+            std::io::Write::write_all(&mut manifest_file, replacement.as_bytes())?;
+            manifest_file.sync_all()?;
+
+            Ok(true)
+        }
     })();
     drop(manifest_file);
     drop(lock);
@@ -510,49 +531,98 @@ fn add_to_parent_workspace_with(
 }
 
 #[cfg(unix)]
+fn atomic_exchange(left: &Path, right: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let left = CString::new(left.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
+    let right = CString::new(right.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    // SAFETY: both pointers reference valid NUL-terminated path bytes for the duration of the
+    // syscall. `RENAME_EXCHANGE` atomically swaps the two directory entries.
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            left.as_ptr(),
+            libc::AT_FDCWD,
+            right.as_ptr(),
+            libc::RENAME_EXCHANGE,
+        )
+    };
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // SAFETY: both pointers reference valid NUL-terminated path bytes for the duration of the
+    // call. `RENAME_SWAP` atomically swaps the two directory entries.
+    let result = unsafe {
+        libc::renameatx_np(
+            libc::AT_FDCWD,
+            left.as_ptr(),
+            libc::AT_FDCWD,
+            right.as_ptr(),
+            libc::RENAME_SWAP,
+        )
+    };
+
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios"
+    )))]
+    compile_error!("atomic workspace manifest exchange is unsupported on this Unix target");
+
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(unix))]
 fn path_still_names_file(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
-    use std::os::unix::fs::MetadataExt as _;
+    #[cfg(windows)]
+    {
+        return windows_file_identity(file)
+            .and_then(|opened| {
+                OpenOptions::new()
+                    .read(true)
+                    .open(path)
+                    .map(|current| (opened, current))
+            })
+            .and_then(|(opened, current)| {
+                windows_file_identity(&current).map(|identity| opened == identity)
+            });
+    }
 
-    let opened = file.metadata()?;
-    let current = std::fs::metadata(path)?;
-
-    Ok(opened.dev() == current.dev() && opened.ino() == current.ino())
+    #[cfg(not(windows))]
+    Ok(true)
 }
 
 #[cfg(windows)]
-fn path_still_names_file(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
+fn windows_file_identity(file: &std::fs::File) -> std::io::Result<(u32, u64)> {
     use std::mem::MaybeUninit;
     use std::os::windows::io::AsRawHandle as _;
     use windows_sys::Win32::Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
     };
 
-    fn identity(file: &std::fs::File) -> std::io::Result<(u32, u64)> {
-        let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-        // SAFETY: `file` owns a valid Windows handle and the API initializes `information` when
-        // it returns nonzero. The borrowed handle remains valid for the duration of the call.
-        let succeeded = unsafe {
-            GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr())
-        };
-        if succeeded == 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: a nonzero return guarantees that the structure was initialized.
-        let information = unsafe { information.assume_init() };
-        let index =
-            (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
-
-        Ok((information.dwVolumeSerialNumber, index))
+    let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: `file` owns a valid Windows handle and the API initializes `information` when
+    // it returns nonzero. The borrowed handle remains valid for the duration of the call.
+    let succeeded =
+        unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) };
+    if succeeded == 0 {
+        return Err(std::io::Error::last_os_error());
     }
+    // SAFETY: a nonzero return guarantees that the structure was initialized.
+    let information = unsafe { information.assume_init() };
+    let index =
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
 
-    let current = OpenOptions::new().read(true).open(path)?;
-
-    Ok(identity(file)? == identity(&current)?)
-}
-
-#[cfg(not(any(unix, windows)))]
-fn path_still_names_file(_file: &std::fs::File, _path: &Path) -> std::io::Result<bool> {
-    Ok(true)
+    Ok((information.dwVolumeSerialNumber, index))
 }
 
 #[cfg(test)]

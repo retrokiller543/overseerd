@@ -454,6 +454,7 @@ fn reserved_generator_values_cannot_be_overridden() {
 }
 
 #[test]
+#[cfg(unix)]
 fn workspace_registration_preserves_a_concurrent_manifest_edit() {
     let fixture = TempFixture::new("cargo-upwell-workspace-conflict");
     let project = fixture.child("generated");
@@ -477,6 +478,7 @@ fn workspace_registration_preserves_a_concurrent_manifest_edit() {
 }
 
 #[test]
+#[cfg(unix)]
 fn workspace_registration_preserves_an_atomic_manifest_replacement() {
     let fixture = TempFixture::new("cargo-upwell-workspace-replacement");
     let project = fixture.child("generated");
