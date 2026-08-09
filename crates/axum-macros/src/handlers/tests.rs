@@ -41,6 +41,8 @@ fn result_success_normalization_maps_application_errors() {
     assert_eq!(output(quote!(#value_ty)), "Reply");
     assert!(unit_tokens.contains("WsDispatchError :: Application"));
     assert!(value_tokens.contains("WsDispatchError :: Application"));
+    assert!(!unit_tokens.contains("ToString"));
+    assert!(!value_tokens.contains("ToString"));
     assert!(value_tokens.ends_with(". 0"));
     assert!(!unit_tokens.contains("WsDispatchError :: Encode"));
 }

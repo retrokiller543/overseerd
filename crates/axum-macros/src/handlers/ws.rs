@@ -201,7 +201,7 @@ pub(super) fn message_success_value(
     };
     let mut expr = quote!(__resp);
     let inner = if let Some(ok) = first_type_arg(&ty, "Result") {
-        expr = quote!((#expr).map_err(|__e| #dispatch_error::Application(::std::string::ToString::to_string(&__e)))?);
+        expr = quote!((#expr).map_err(|_| #dispatch_error::Application)?);
         ok
     } else {
         ty

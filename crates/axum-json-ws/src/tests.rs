@@ -21,30 +21,17 @@ fn ok_result_renders_an_ok_frame_echoing_the_id() {
 #[test]
 fn uncorrelated_send_success_and_error_emit_no_reply() {
     assert!(render_reply("send", None, Ok(WsReply(None))).is_none());
-    assert!(
-        render_reply(
-            "send",
-            None,
-            Err(WsDispatchError::Application("visible".to_owned())),
-        )
-        .is_none()
-    );
+    assert!(render_reply("send", None, Err(WsDispatchError::Application),).is_none());
 }
 
 #[test]
-fn application_error_text_is_redacted_when_correlated() {
-    let reply = render_reply(
-        "request",
-        Some(9),
-        Err(WsDispatchError::Application(
-            "database password was invalid".to_owned(),
-        )),
-    )
-    .expect("correlated error reply");
+fn application_error_is_rendered_as_a_fixed_safe_message() {
+    let reply = render_reply("request", Some(9), Err(WsDispatchError::Application))
+        .expect("correlated error reply");
     let value: WsValue = serde_json::from_str(&reply).expect("valid json reply");
 
     assert_eq!(value["error"], "request failed");
-    assert!(!reply.contains("database password"));
+    assert!(!reply.contains("ws application error"));
 }
 
 #[test]

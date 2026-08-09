@@ -488,7 +488,7 @@ impl ComponentRegistry {
     }
 
     /// Validates that forced-fresh targets have factories and can resolve their eager
-    /// dependencies from the consumer's scope.
+    /// dependencies from the target's construction scope.
     pub fn validate_fresh_dependencies(
         &self,
         components: &[ComponentDescriptor],
@@ -561,7 +561,7 @@ impl ComponentRegistry {
                             None => self
                                 .selected_dependency_scopes(
                                     model,
-                                    consumer,
+                                    &target,
                                     &target_dependency,
                                     can_access,
                                 )?
@@ -724,7 +724,7 @@ fn scope_allows_with(
 
 #[cfg(test)]
 mod tests {
-    use std::{future::Future, pin::Pin};
+    use std::{cell::Cell, future::Future, pin::Pin};
 
     use super::*;
     use crate::descriptors::{
@@ -1017,6 +1017,28 @@ mod tests {
         resolution: ResolutionMode::Fresh,
     }];
 
+    static REQUEST_FRESH_CONNECTION_TARGET: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "ConnectionFreshTarget",
+        ty: TypeDescriptor::of::<i128>("ConnectionFreshTarget"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+        config: false,
+        resolution: ResolutionMode::Fresh,
+    }];
+
+    static CONNECTION_TARGET_DEP_ON_SHARED: [DependencyDescriptor; 1] = [DependencyDescriptor {
+        name: "SharedTrait",
+        ty: TypeDescriptor::of::<dyn Send>("SharedTrait"),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic: false,
+        qualifier: None,
+        config: false,
+        resolution: ResolutionMode::Eager,
+    }];
+
     #[test]
     fn validate_rejects_fresh_target_with_shorter_lived_scope() {
         let request = scoped!(
@@ -1040,6 +1062,57 @@ mod tests {
             registry.validate(),
             Err(Error::InvalidFreshDependency(_))
         ));
+    }
+
+    #[test]
+    fn validate_selects_nested_fresh_dependencies_from_target_scope() {
+        let provider = scoped!(
+            "ConnectionProvider",
+            &Connection,
+            &[],
+            TypeDescriptor::of::<usize>("ConnectionProvider"),
+        );
+        let target = scoped!(
+            "ConnectionFreshTarget",
+            &Connection,
+            &CONNECTION_TARGET_DEP_ON_SHARED,
+            TypeDescriptor::of::<i128>("ConnectionFreshTarget"),
+        );
+        let consumer = scoped!(
+            "RequestFreshConsumer",
+            &Request,
+            &REQUEST_FRESH_CONNECTION_TARGET,
+            TypeDescriptor::of::<isize>("RequestFreshConsumer"),
+        );
+        let registry = ComponentRegistry {
+            components: vec![consumer, target, provider],
+            providers: vec![trait_provider(provider.ty, "connection", false)],
+        };
+        let selection = registry
+            .provider_selection_model(&registry.components)
+            .expect("provider selection model validates");
+        let selected_from_target_scope = Cell::new(false);
+
+        registry
+            .validate_fresh_dependencies_with(
+                &registry.components,
+                &selection,
+                &|consumer_scope, dependency_scope| {
+                    if consumer_scope.id() == Connection.id()
+                        && dependency_scope.id() == Connection.id()
+                    {
+                        selected_from_target_scope.set(true);
+                    }
+
+                    scope_allows_by_rank(consumer_scope, dependency_scope)
+                },
+            )
+            .expect("nested fresh dependency validates");
+
+        assert!(
+            selected_from_target_scope.get(),
+            "nested dependencies must be selected from the fresh target's scope"
+        );
     }
 
     #[test]

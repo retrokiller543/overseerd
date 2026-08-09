@@ -69,22 +69,25 @@ pub enum WsDispatchError {
     #[error("encoding ws response: {0}")]
     Encode(String),
 
-    /// The handler returned an application-level error. The detail is retained for server-side
-    /// diagnostics but is never exposed to an untrusted peer.
-    #[error("ws application error: {0}")]
-    Application(String),
+    /// The handler returned an application-level error.
+    ///
+    /// Application error text is deliberately discarded at the generated handler boundary. Its
+    /// [`Display`](std::fmt::Display) output may contain credentials or other request-specific
+    /// secrets, and retaining it here would make those details available to protocol logging.
+    #[error("ws application error")]
+    Application,
 }
 
 impl WsDispatchError {
-    /// A stable, client-safe summary for a directed error reply. The detailed [`Display`] — which
-    /// can carry provider names (`Inject`) or decoder/encoder internals (`Decode`/`Encode`) — stays
-    /// in the server logs; an untrusted peer only learns the error category, never internal wiring.
+    /// A stable, client-safe summary for a directed error reply. Framework diagnostics for
+    /// `Inject`, `Decode`, and `Encode` remain available to server logs; application error details
+    /// are discarded before reaching the protocol layer.
     pub fn public_message(&self) -> &str {
         match self {
             Self::NotFound(_) => "no handler for destination",
             Self::Decode(_) => "invalid request payload",
             Self::Inject(_) | Self::Encode(_) => "internal error",
-            Self::Application(_) => "request failed",
+            Self::Application => "request failed",
         }
     }
 }

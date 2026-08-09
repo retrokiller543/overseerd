@@ -24,13 +24,20 @@ pub fn query_failure_graph(
     let selected = resolve_query_roots(&nodes, query)?;
 
     if query.has_selectors() {
-        nodes.retain(|node| selected.contains(&node.id));
         diagnostics.retain(|diagnostic| {
             diagnostic
                 .resources
                 .iter()
                 .any(|resource| selected.contains(resource))
         });
+        let mut visible = selected.clone();
+
+        visible.extend(
+            diagnostics
+                .iter()
+                .flat_map(|diagnostic| diagnostic.resources.iter().cloned()),
+        );
+        nodes.retain(|node| visible.contains(&node.id));
     }
 
     nodes.sort_by(|left, right| left.id.cmp(&right.id));

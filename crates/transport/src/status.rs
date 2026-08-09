@@ -29,11 +29,20 @@ bitflags! {
 /// wire it packs losslessly into a single `u32` (flags in bits 24–31, predefined
 /// in bits 16–23, custom in bits 0–15); that packing lives entirely in the
 /// `Serialize`/`Deserialize` impls and never surfaces in the API.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StatusCode {
     flags: Flags,
     predefined: PredefinedCode,
+    // Keep the wire byte separately because `PredefinedCode` intentionally maps
+    // values this version does not recognize to `UnknownErrorCode`.
+    predefined_byte: u8,
     custom: u16,
+}
+
+impl Default for StatusCode {
+    fn default() -> Self {
+        Self::new(PredefinedCode::default(), Flags::empty())
+    }
 }
 
 impl StatusCode {
@@ -43,6 +52,7 @@ impl StatusCode {
         Self {
             flags,
             predefined,
+            predefined_byte: predefined.to_byte(),
             custom: 0,
         }
     }
@@ -53,6 +63,7 @@ impl StatusCode {
         Self {
             flags,
             predefined,
+            predefined_byte: predefined.to_byte(),
             custom,
         }
     }
@@ -80,17 +91,20 @@ impl StatusCode {
     /// Packs the three sections into the wire `u32`.
     pub const fn raw(self) -> u32 {
         ((self.flags.bits() as u32) << FLAGS_SHIFT)
-            | ((self.predefined.to_byte() as u32) << PREDEFINED_SHIFT)
+            | ((self.predefined_byte as u32) << PREDEFINED_SHIFT)
             | self.custom as u32
     }
 
     /// Unpacks a wire `u32`. Total — any value decodes, with unknown flag bits
-    /// retained for forward compatibility and unrecognized predefined bytes
-    /// mapped to `UnknownErrorCode`.
+    /// retained for forward compatibility. Unrecognized predefined bytes are
+    /// exposed as `UnknownErrorCode` while their original wire value is retained.
     pub const fn from_raw(raw: u32) -> Self {
+        let predefined_byte = (raw >> PREDEFINED_SHIFT) as u8;
+
         Self {
             flags: Flags::from_bits_retain((raw >> FLAGS_SHIFT) as u8),
-            predefined: PredefinedCode::from_byte((raw >> PREDEFINED_SHIFT) as u8),
+            predefined: PredefinedCode::from_byte(predefined_byte),
+            predefined_byte,
             custom: raw as u16,
         }
     }
@@ -174,9 +188,37 @@ mod tests {
     fn unknown_predefined_byte_decodes_totally() {
         // FR-009: decoding an unrecognized predefined byte is total, never a
         // parse error — an unknown category falls back to UnknownErrorCode.
-        let code = StatusCode::from_raw(0x00FF_0000);
+        let code = StatusCode::from_raw(0x007E_0000);
 
         assert_eq!(code.predefined(), PredefinedCode::UnknownErrorCode);
+    }
+
+    #[test]
+    fn unknown_predefined_byte_round_trips_through_raw_form() {
+        let raw = 0xA57E_CDEF;
+        let code = StatusCode::from_raw(raw);
+
+        assert_eq!(code.predefined(), PredefinedCode::UnknownErrorCode);
+        assert_eq!(code.raw(), raw);
+        assert_eq!(StatusCode::from_raw(code.raw()), code);
+    }
+
+    #[test]
+    fn unknown_predefined_byte_round_trips_through_serde() {
+        let raw = 0xA57E_CDEF;
+        let encoded = postcard::to_allocvec(&StatusCode::from_raw(raw)).unwrap();
+        let decoded: StatusCode = postcard::from_bytes(&encoded).unwrap();
+
+        assert_eq!(decoded.predefined(), PredefinedCode::UnknownErrorCode);
+        assert_eq!(decoded.raw(), raw);
+    }
+
+    #[test]
+    fn default_status_uses_the_default_predefined_wire_byte() {
+        let code = StatusCode::default();
+
+        assert_eq!(code.predefined(), PredefinedCode::Empty);
+        assert_eq!(code.raw(), 0);
     }
 
     #[test]

@@ -23,11 +23,11 @@ use crate::AxumAppBuilder;
 static TEST_PROTOCOL_BUILDS: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
-fn application_error_details_are_not_public() {
-    let error = WsDispatchError::Application("postgres://user:secret@host/db".to_owned());
+fn application_error_has_no_storage_for_sensitive_details() {
+    let error = WsDispatchError::Application;
 
     assert_eq!(error.public_message(), "request failed");
-    assert!(!error.public_message().contains("secret"));
+    assert_eq!(error.to_string(), "ws application error");
 }
 
 struct TestProtocol;

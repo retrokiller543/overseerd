@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use super::{JobProgress, JobRunContext, jitter_delay};
+use super::{JobProgress, JobRunContext, jitter_delay, wait_for_jitter};
 use crate::registry::{JobId, JobRunId};
 
 #[tokio::test]
@@ -45,4 +45,12 @@ fn jitter_is_bounded_by_the_configured_span() {
 
         assert!(delay < jitter, "jitter {delay:?} exceeded span {jitter:?}");
     }
+}
+
+#[tokio::test]
+async fn cancelled_run_does_not_wait_for_or_complete_jitter() {
+    let token = tokio_util::sync::CancellationToken::new();
+    token.cancel();
+
+    assert!(!wait_for_jitter(Duration::from_secs(60), &token).await);
 }

@@ -331,9 +331,10 @@ async fn execute_run(
     if let Some(jitter) = options.jitter {
         let delay = jitter_delay(jitter, run_id);
 
-        tokio::select! {
-            _ = run_token.cancelled() => {}
-            _ = tokio::time::sleep(delay) => {}
+        if !wait_for_jitter(delay, &run_token).await {
+            finish_run_task(entry, run_id);
+
+            return;
         }
     }
 
@@ -350,6 +351,18 @@ async fn execute_run(
     let outcome = run_body(&entry, cx, &run_token, trigger).await;
 
     entry.record_finish(run_id, SystemTime::now(), outcome);
+    finish_run_task(entry, run_id);
+}
+
+async fn wait_for_jitter(delay: Duration, run_token: &CancellationToken) -> bool {
+    tokio::select! {
+        biased;
+        _ = run_token.cancelled() => false,
+        _ = tokio::time::sleep(delay) => true,
+    }
+}
+
+fn finish_run_task(entry: Arc<JobEntry>, run_id: JobRunId) {
     entry.clear_run_token(run_id);
 
     // A QueueOne firing deferred while this run was active is started now, keeping the run id

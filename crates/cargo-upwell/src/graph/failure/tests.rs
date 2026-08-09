@@ -366,6 +366,45 @@ fn exact_selectors_filter_nodes_and_report_typed_misuse() {
     ));
 }
 
+#[test]
+fn selector_filtering_retains_every_resource_of_relevant_diagnostics() {
+    let failure = failure(
+        Some("prepare"),
+        vec![
+            diagnostic(
+                "fixture/selected",
+                "selected diagnostic",
+                ["component:worker", "type:worker"],
+            ),
+            diagnostic(
+                "fixture/unrelated",
+                "unrelated diagnostic",
+                ["plugin:unrelated", "type:unrelated"],
+            ),
+        ],
+    );
+    let view = failure_graph(
+        &failure,
+        &GraphQuery {
+            resources: vec![String::from("component:worker")],
+            ..GraphQuery::default()
+        },
+    )
+    .expect("selected failure graph resolves");
+    let ids = node_ids(&view);
+
+    assert_eq!(view.roots, ["component:worker"]);
+    assert_eq!(ids, BTreeSet::from(["component:worker", "type:worker"]));
+    assert_eq!(view.diagnostics.len(), 1);
+    assert_eq!(view.diagnostics[0].code, "fixture/selected");
+    assert!(
+        view.diagnostics[0]
+            .resources
+            .iter()
+            .all(|resource| ids.contains(resource.as_str()))
+    );
+}
+
 fn failure(phase: Option<&str>, diagnostics: Vec<Diagnostic>) -> ProbeFailure {
     ProbeFailure {
         phase: phase.map(str::to_string),

@@ -694,10 +694,9 @@ impl IntoStompOutcome for Vec<Publish> {
 impl<T, E> IntoStompOutcome for Result<T, E>
 where
     T: IntoStompOutcome,
-    E: std::fmt::Display,
 {
     fn into_outcome(self) -> Result<StompOutcome, WsDispatchError> {
-        self.map_err(|e| WsDispatchError::Application(e.to_string()))?
+        self.map_err(|_| WsDispatchError::Application)?
             .into_outcome()
     }
 }
