@@ -108,7 +108,7 @@ pub enum BootstrapError {
     #[error(transparent)]
     Config(#[from] upwell_config::ConfigError),
     /// An environment-provided log format was not recognized.
-    #[error("unknown log format '{value}', expected one of: full, compact, pretty, json")]
+    #[error("unknown log format '{value}', {}", crate::ParseLogFormatError)]
     LogFormat { value: String },
     /// An explicit config path did not identify an existing file or directory.
     #[error("explicit config path '{}' does not exist", .path.display())]

@@ -74,6 +74,12 @@ pub trait HttpExchange: upwell_client::Transport<Status = http::StatusCode> {
     ) -> Result<T, upwell_client::ClientError<http::StatusCode>>
     where
         Self: Decodes<T>;
+
+    /// Classifies an undeclared response status and reports it through this backend's interceptor.
+    fn fail_unexpected<E>(
+        &self,
+        response: HttpResponse<Vec<u8>>,
+    ) -> upwell_client::ClientError<http::StatusCode, E>;
 }
 
 /// Percent-encodes one URI path segment according to RFC 3986. Generated clients call this for
@@ -148,8 +154,7 @@ pub(crate) fn redirect_error<E>(
     }
 }
 
-/// Converts a raw response whose status is absent from a generated route contract into an error.
-pub fn unexpected_response<E>(
+fn unexpected_response<E>(
     response: HttpResponse<Vec<u8>>,
 ) -> upwell_client::ClientError<http::StatusCode, E> {
     let (status, headers, body) = response.into_parts();

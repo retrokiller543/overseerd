@@ -93,7 +93,7 @@ pub(crate) fn expand(
         policy
             .log_format
             .as_ref()
-            .map(|value| (&value.key, &value.value.argument)),
+            .map(|value| (&value.key, &value.value)),
         "log-format",
         None,
         "Tracing output formatter.",

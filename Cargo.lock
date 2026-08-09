@@ -4345,6 +4345,7 @@ dependencies = [
  "futures",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
  "tracing",
@@ -4355,7 +4356,6 @@ dependencies = [
  "upwell-dirs",
  "upwell-hooks",
  "upwell-macros",
- "upwell-test-utils",
  "upwell-tooling-schema",
 ]
 

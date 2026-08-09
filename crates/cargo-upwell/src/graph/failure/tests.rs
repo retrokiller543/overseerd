@@ -246,8 +246,27 @@ fn diagnostic_without_resources_gets_stable_attached_placeholder() {
 
     assert_eq!(view.nodes.len(), 1);
     assert_eq!(view.nodes[0].id, "diagnostic:unattributed:0000");
-    assert_eq!(view.nodes[0].kind, ResourceKind::Type);
+    assert_eq!(view.nodes[0].kind, ResourceKind::Unknown);
     assert_eq!(view.diagnostics[0].resources, [view.nodes[0].id.clone()]);
+}
+
+#[test]
+fn unknown_cli_diagnostic_resources_are_not_coerced_to_types() {
+    let failure = failure(
+        Some("configure"),
+        vec![diagnostic(
+            "upwell/tooling-cli-definition",
+            "CLI definition failed",
+            ["cli-command:serve", "cli-definition:long:port"],
+        )],
+    );
+    let view = failure_graph(&failure, &GraphQuery::default()).expect("failure graph resolves");
+
+    assert!(
+        view.nodes
+            .iter()
+            .all(|node| node.kind == ResourceKind::Unknown)
+    );
 }
 
 #[test]

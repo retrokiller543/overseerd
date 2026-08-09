@@ -6,6 +6,7 @@ use crate::cli::InspectCliProviderKind;
 
 pub(crate) fn resource_kind_name(kind: &ResourceKind) -> &'static str {
     match kind {
+        ResourceKind::Unknown => "unknown",
         ResourceKind::Application => "application",
         ResourceKind::Protocol => "protocol",
         ResourceKind::Plugin => "plugin",

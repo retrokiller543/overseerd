@@ -23,14 +23,18 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
         to: &str,
         labels: BTreeMap<String, String>,
     ) {
-        if let Some(relationship) = self.document.relationships.iter_mut().find(|relationship| {
-            relationship.kind == kind && relationship.from == from && relationship.to == to
-        }) {
+        let identity = (kind.clone(), from.to_string(), to.to_string());
+
+        if let Some(index) = self.relationship_indexes.get(&identity).copied() {
+            let relationship = &mut self.document.relationships[index];
+
             merge_relationship_labels(&kind, &mut relationship.labels, labels);
 
             return;
         }
 
+        self.relationship_indexes
+            .insert(identity, self.document.relationships.len());
         self.document.relationships.push(Relationship {
             kind,
             from: from.to_string(),

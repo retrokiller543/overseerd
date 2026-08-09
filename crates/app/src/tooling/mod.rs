@@ -1,6 +1,6 @@
 //! Read-only projection of prepared application plans into the tooling schema.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::error::Error as _;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
@@ -11,8 +11,8 @@ use thiserror::Error;
 use upwell_di::ProviderDescriptor;
 use upwell_tooling_schema::{
     BinaryTargetIdentity, Diagnostic, DiagnosticSeverity, DocumentIdentity, PackageIdentity,
-    ProbeEnvelope, ProbeFailure, ProbeTargetIdentity, Provenance, Resource, ResourceKind,
-    ToolingDocument,
+    ProbeEnvelope, ProbeFailure, ProbeTargetIdentity, Provenance, RelationshipKind, Resource,
+    ResourceKind, ToolingDocument,
 };
 
 use crate::{
@@ -49,9 +49,6 @@ pub enum ToolingProjectionError {
     /// A prepared protocol or plugin supplied invalid owner-scoped metadata.
     #[error(transparent)]
     Contribution(#[from] ToolingContributionError),
-    /// The projected document violates the public schema.
-    #[error(transparent)]
-    Schema(#[from] upwell_tooling_schema::ValidationError),
 }
 
 /// A typed failure while preparing and projecting a generated application target.
@@ -141,7 +138,7 @@ impl ToolingProbeError {
             #[cfg(feature = "cli")]
             Self::CliParse(_) => (
                 "upwell/tooling-cli-bootstrap",
-                "The generated framework parser rejected its own bootstrap defaults.",
+                "The generated composed parser rejected its tooling bootstrap arguments.",
                 None,
                 Vec::new(),
                 Vec::new(),
@@ -221,20 +218,14 @@ pub async fn probe_host<H: AppHost>(identity: DocumentIdentity) -> ProbeEnvelope
 pub async fn probe_bootstrapped_host<H: AppHost>(
     identity: DocumentIdentity,
     context: Result<BootstrapContext, crate::CliError>,
-    plugins: Result<crate::EarlyPluginCatalog, crate::CliError>,
 ) -> ProbeEnvelope {
-    let result = match (context, plugins) {
-        (Ok(context), Ok(plugins)) => try_probe_host_with_plugins::<H>(context, plugins).await,
-        (Err(crate::CliError::Bootstrap(error)), _) => Err(ToolingProbeError::Bootstrap(error)),
-        (Err(crate::CliError::Clap(error)), _) => Err(ToolingProbeError::CliParse(error)),
-        (Err(error), _) => unreachable!("tooling bootstrap returned unrelated failure: {error}"),
-        (_, Err(crate::CliError::PluginCatalog(error))) => {
-            Err(ToolingProbeError::PluginCatalog(error))
-        }
-        (_, Err(crate::CliError::Definition(error))) => {
-            Err(ToolingProbeError::CliDefinition(error))
-        }
-        (_, Err(error)) => unreachable!("CLI composition returned unrelated failure: {error}"),
+    let result = match context {
+        Ok(context) => try_probe_bootstrapped_host::<H>(context).await,
+        Err(crate::CliError::Bootstrap(error)) => Err(ToolingProbeError::Bootstrap(error)),
+        Err(crate::CliError::Clap(error)) => Err(ToolingProbeError::CliParse(error)),
+        Err(crate::CliError::PluginCatalog(error)) => Err(ToolingProbeError::PluginCatalog(error)),
+        Err(crate::CliError::Definition(error)) => Err(ToolingProbeError::CliDefinition(error)),
+        Err(error) => unreachable!("tooling CLI preparation returned unrelated failure: {error}"),
     };
 
     probe_envelope(identity, result)
@@ -348,7 +339,7 @@ fn bootstrap_failure(error: &crate::BootstrapError) -> FailureDetails {
             None,
             Vec::new(),
             Vec::new(),
-            Some("Use one of: full, compact, pretty, or json."),
+            Some("Use a formatter listed by the generated --log-format help."),
         ),
         crate::BootstrapError::MissingConfigPath { .. } => (
             "upwell/tooling-config-path-missing",
@@ -562,6 +553,15 @@ async fn try_probe_host_with_plugins<H: AppHost>(
     Ok(prepared.tooling_document()?)
 }
 
+#[cfg(feature = "cli")]
+async fn try_probe_bootstrapped_host<H: AppHost>(
+    context: BootstrapContext,
+) -> Result<ToolingDocument, ToolingProbeError> {
+    let (_, prepared) = crate::prepare_host_context::<H>(context).await?;
+
+    Ok(prepared.tooling_document()?)
+}
+
 fn lifecycle_failure_code(phase: LifecyclePhase) -> &'static str {
     match phase {
         LifecyclePhase::Setup => "upwell/tooling-setup",
@@ -589,6 +589,7 @@ struct Projection<'a, D: ProtocolDefinition> {
     app: &'a PreparedApp<D>,
     document: ToolingDocument,
     type_resources: BTreeSet<String>,
+    relationship_indexes: HashMap<(RelationshipKind, String, String), usize>,
 }
 
 impl<'a, D: ProtocolDefinition> Projection<'a, D> {
@@ -606,6 +607,7 @@ impl<'a, D: ProtocolDefinition> Projection<'a, D> {
                 app.protocol_id().as_str(),
             ),
             type_resources: BTreeSet::new(),
+            relationship_indexes: HashMap::new(),
         }
     }
 
@@ -619,9 +621,6 @@ impl<'a, D: ProtocolDefinition> Projection<'a, D> {
         self.project_plugins();
         self.project_cli();
         self.project_tooling_contributions()?;
-
-        self.document.canonicalize();
-        self.document.validate()?;
 
         Ok(())
     }
@@ -735,10 +734,9 @@ fn contributor_id(contributor: Contributor) -> String {
 }
 
 fn contribution_id(provenance: ContributionProvenance) -> String {
-    format!(
-        "contribution:{}:{}",
-        contributor_id(provenance.contributor()),
-        provenance.contribution().as_str()
+    upwell_tooling_schema::contribution_id(
+        &contributor_id(provenance.contributor()),
+        provenance.contribution().as_str(),
     )
 }
 

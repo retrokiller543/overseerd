@@ -15,6 +15,7 @@
 
 use serde::Deserialize;
 use std::fmt;
+use std::str::FromStr;
 
 use upwell_macros::config;
 
@@ -117,9 +118,7 @@ impl LoggingConfig {
 }
 
 /// Formatter used for tracing output.
-#[derive(Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum LogFormat {
     /// Standard human-readable event output.
@@ -133,16 +132,101 @@ pub enum LogFormat {
     Json,
 }
 
-impl fmt::Display for LogFormat {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
+impl LogFormat {
+    /// All accepted formatter values in stable display order.
+    pub const VALUES: &'static [Self] = &[Self::Full, Self::Compact, Self::Pretty, Self::Json];
+
+    /// Returns the stable configuration and command-line name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
             Self::Full => "full",
             Self::Compact => "compact",
             Self::Pretty => "pretty",
             Self::Json => "json",
+        }
+    }
+
+    /// Returns all accepted formatter names in stable display order.
+    pub fn names() -> impl Iterator<Item = &'static str> {
+        Self::VALUES.iter().copied().map(Self::as_str)
+    }
+}
+
+impl fmt::Display for LogFormat {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for LogFormat {
+    type Err = ParseLogFormatError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::VALUES
+            .iter()
+            .copied()
+            .find(|format| format.as_str() == value)
+            .ok_or(ParseLogFormatError)
+    }
+}
+
+impl<'de> Deserialize<'de> for LogFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(feature = "cli")]
+impl clap::ValueEnum for LogFormat {
+    fn value_variants<'a>() -> &'a [Self] {
+        Self::VALUES
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let help = match self {
+            Self::Full => "Standard human-readable event output",
+            Self::Compact => "Condensed human-readable event output",
+            Self::Pretty => "Multi-line human-readable event output",
+            Self::Json => "Structured JSON event output",
         };
 
-        formatter.write_str(value)
+        Some(clap::builder::PossibleValue::new(self.as_str()).help(help))
+    }
+}
+
+/// A string did not identify a supported tracing formatter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParseLogFormatError;
+
+impl fmt::Display for ParseLogFormatError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("expected one of: ")?;
+
+        for (index, name) in LogFormat::names().enumerate() {
+            if index > 0 {
+                formatter.write_str(", ")?;
+            }
+
+            formatter.write_str(name)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl std::error::Error for ParseLogFormatError {}
+
+#[cfg(feature = "cli")]
+impl clap::builder::ValueParserFactory for LogFormat {
+    type Parser = clap::builder::EnumValueParser<Self>;
+
+    fn value_parser() -> Self::Parser {
+        clap::builder::EnumValueParser::new()
     }
 }
 

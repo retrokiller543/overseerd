@@ -32,16 +32,19 @@ fn uncorrelated_send_success_and_error_emit_no_reply() {
 }
 
 #[test]
-fn application_error_text_is_visible_when_correlated() {
+fn application_error_text_is_redacted_when_correlated() {
     let reply = render_reply(
         "request",
         Some(9),
-        Err(WsDispatchError::Application("safe message".to_owned())),
+        Err(WsDispatchError::Application(
+            "database password was invalid".to_owned(),
+        )),
     )
     .expect("correlated error reply");
     let value: WsValue = serde_json::from_str(&reply).expect("valid json reply");
 
-    assert_eq!(value["error"], "safe message");
+    assert_eq!(value["error"], "request failed");
+    assert!(!reply.contains("database password"));
 }
 
 #[test]

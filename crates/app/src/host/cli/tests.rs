@@ -2,8 +2,8 @@ use super::{
     BootstrapEnvironment, BootstrapOptions, BootstrapPolicy, ColorChoice,
     bootstrap_application_with_env,
 };
+use crate::test_support::TempFixture;
 use crate::{BootstrapContext, ExecutionMode, LogFormat};
-use upwell_test_utils::TempFixture;
 
 fn options(config: impl Into<std::path::PathBuf>) -> BootstrapOptions {
     BootstrapOptions::from_parts(

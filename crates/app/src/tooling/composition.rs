@@ -222,9 +222,9 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
             .unwrap_or_default();
 
         for provider in providers {
-            let id = format!(
-                "contribution:{}:{}",
-                provider.contributor, provider.contribution
+            let id = upwell_tooling_schema::contribution_id(
+                &provider.contributor,
+                &provider.contribution,
             );
 
             if !self
@@ -298,9 +298,15 @@ impl<D: ProtocolDefinition> Projection<'_, D> {
 
         owner.display = contributions.owner_display;
         self.document.resources.extend(contributions.resources);
-        self.document
-            .relationships
-            .extend(contributions.relationships);
+
+        for relationship in contributions.relationships {
+            self.relationship_map(
+                relationship.kind,
+                &relationship.from,
+                &relationship.to,
+                relationship.labels,
+            );
+        }
 
         Ok(())
     }

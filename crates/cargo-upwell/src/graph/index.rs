@@ -251,9 +251,9 @@ impl GraphIndex {
             .iter()
             .filter(|provider| {
                 selected.contains(&provider.contributor)
-                    || selected.contains(&format!(
-                        "contribution:{}:{}",
-                        provider.contributor, provider.contribution
+                    || selected.contains(&upwell_tooling_schema::contribution_id(
+                        &provider.contributor,
+                        &provider.contribution,
                     ))
             })
             .cloned()

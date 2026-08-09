@@ -13,14 +13,22 @@ use upwell_di::ScopeContainer;
 use upwell_test_utils::{TestEnvironment, TestServer, deadline};
 
 use super::{
-    WebsocketProtocol, WsAdmission, WsControllerDescriptor, WsControllerRegistration, WsFuture,
-    WsHandlerFn, WsIdle, WsShutdown,
+    WebsocketProtocol, WsAdmission, WsControllerDescriptor, WsControllerRegistration,
+    WsDispatchError, WsFuture, WsHandlerFn, WsIdle, WsShutdown,
 };
 #[cfg(feature = "tungstenite")]
 use super::{WebsocketUpgradeMeta, WsConnectionMeta};
 use crate::AxumAppBuilder;
 
 static TEST_PROTOCOL_BUILDS: AtomicUsize = AtomicUsize::new(0);
+
+#[test]
+fn application_error_details_are_not_public() {
+    let error = WsDispatchError::Application("postgres://user:secret@host/db".to_owned());
+
+    assert_eq!(error.public_message(), "request failed");
+    assert!(!error.public_message().contains("secret"));
+}
 
 struct TestProtocol;
 

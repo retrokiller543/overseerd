@@ -114,9 +114,9 @@ fn project_cli(
         .flat_map(|provider| {
             [
                 provider.contributor.clone(),
-                format!(
-                    "contribution:{}:{}",
-                    provider.contributor, provider.contribution
+                upwell_tooling_schema::contribution_id(
+                    &provider.contributor,
+                    &provider.contribution,
                 ),
             ]
         })

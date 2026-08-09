@@ -20,13 +20,15 @@ pub mod protocol;
 pub mod registry;
 pub mod runtime;
 pub mod scope;
+#[cfg(test)]
+mod test_support;
 #[cfg(feature = "tooling")]
 pub mod tooling;
 
 #[doc(hidden)]
 pub use app::HostLifecycleCapabilities;
 pub use app::{App, AppBuilder, PreparedApp};
-pub use builtins::{LogFormat, LoggingConfig, ServerConfig, SpanEvents};
+pub use builtins::{LogFormat, LoggingConfig, ParseLogFormatError, ServerConfig, SpanEvents};
 pub use composition::{
     CompositionDiagnostic, CompositionDiagnostics, CompositionDirective, CompositionEdge,
     CompositionPhase, CompositionTarget, ContributionId, ContributionProvenance, Contributor,

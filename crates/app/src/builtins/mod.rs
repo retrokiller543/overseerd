@@ -12,7 +12,7 @@ pub mod shutdown;
 #[cfg(feature = "tracing-subscriber")]
 pub mod logging;
 
-pub use config::{LogFormat, LoggingConfig, ServerConfig, SpanEvents};
+pub use config::{LogFormat, LoggingConfig, ParseLogFormatError, ServerConfig, SpanEvents};
 
 #[cfg(feature = "tracing-subscriber")]
 pub use logging::{BoxedLayer, InitTracingError, init_tracing, init_tracing_with_layers};
@@ -102,6 +102,36 @@ mod tests {
         let result = tree.get::<LoggingConfig>("logging");
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn log_format_catalog_drives_typed_parsing_and_display() {
+        let names = LogFormat::names().collect::<Vec<_>>();
+        let formats = names
+            .iter()
+            .map(|name| name.parse::<LogFormat>().expect("catalog entry parses"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            formats,
+            [
+                LogFormat::Full,
+                LogFormat::Compact,
+                LogFormat::Pretty,
+                LogFormat::Json,
+            ]
+        );
+        assert_eq!(
+            formats.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            names
+        );
+        let error = "yaml"
+            .parse::<LogFormat>()
+            .expect_err("unknown format fails")
+            .to_string();
+
+        assert!(error.starts_with("expected one of: "));
+        assert!(names.iter().all(|name| error.contains(name)));
     }
 
     #[test]

@@ -34,31 +34,12 @@ pub(super) fn diagnostic_resource_kinds(
     diagnostics
         .iter()
         .flat_map(|diagnostic| diagnostic.resources.iter())
-        .filter_map(|id| diagnostic_resource_kind(id).map(|kind| (id.clone(), kind)))
+        .filter_map(|id| {
+            let kind = upwell_tooling_schema::diagnostic_resource_kind(id);
+
+            (kind != upwell_tooling_schema::ResourceKind::Unknown).then(|| (id.clone(), kind))
+        })
         .collect()
-}
-
-fn diagnostic_resource_kind(id: &str) -> Option<upwell_tooling_schema::ResourceKind> {
-    use upwell_tooling_schema::ResourceKind;
-
-    let kind = match id.split_once(':').map_or(id, |(prefix, _)| prefix) {
-        "application" => ResourceKind::Application,
-        "protocol" => ResourceKind::Protocol,
-        "plugin" => ResourceKind::Plugin,
-        "component" => ResourceKind::Component,
-        "provider" => ResourceKind::Provider,
-        "config-binding" => ResourceKind::ConfigBinding,
-        "hook" => ResourceKind::Hook,
-        "lifecycle" => ResourceKind::Lifecycle,
-        "scope" => ResourceKind::Scope,
-        "type" => ResourceKind::Type,
-        "contribution" => ResourceKind::Contribution,
-        "plugin-slot" => ResourceKind::PluginSlot,
-        "framework" => ResourceKind::Contributor,
-        _ => return None,
-    };
-
-    Some(kind)
 }
 
 fn composition_diagnostic(error: &crate::CompositionDiagnostic) -> Diagnostic {

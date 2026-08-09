@@ -105,7 +105,7 @@ fn diagnostic_nodes(
             let kind = resource_kinds
                 .get(id)
                 .cloned()
-                .unwrap_or_else(|| resource_kind(id));
+                .unwrap_or_else(|| upwell_tooling_schema::diagnostic_resource_kind(id));
 
             diagnostic_node(id.clone(), kind)
         })
@@ -130,27 +130,6 @@ fn diagnostic_node(id: String, kind: ResourceKind) -> Resource {
         .into_iter()
         .collect(),
         ..Resource::default()
-    }
-}
-
-fn resource_kind(id: &str) -> ResourceKind {
-    let prefix = id.split_once(':').map_or(id, |(prefix, _)| prefix);
-
-    match prefix {
-        "application" => ResourceKind::Application,
-        "protocol" => ResourceKind::Protocol,
-        "plugin" => ResourceKind::Plugin,
-        "component" => ResourceKind::Component,
-        "provider" => ResourceKind::Provider,
-        "config-binding" => ResourceKind::ConfigBinding,
-        "hook" => ResourceKind::Hook,
-        "lifecycle" => ResourceKind::Lifecycle,
-        "scope" => ResourceKind::Scope,
-        "type" => ResourceKind::Type,
-        "contribution" => ResourceKind::Contribution,
-        "plugin-slot" => ResourceKind::PluginSlot,
-        "framework" => ResourceKind::Contributor,
-        _ => ResourceKind::Type,
     }
 }
 

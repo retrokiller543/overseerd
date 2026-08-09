@@ -81,10 +81,7 @@ pub(crate) fn validate_literal_collisions(
     insert_argument_claims(
         &mut global,
         "log-format",
-        policy
-            .log_format
-            .as_ref()
-            .map(|value| &value.value.argument),
+        policy.log_format.as_ref().map(|value| &value.value),
         "log-format",
         None,
     )?;

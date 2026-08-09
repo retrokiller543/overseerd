@@ -8,8 +8,47 @@ use super::{
     CliProvider, CliProviderKind, Diagnostic, DiagnosticSeverity, DocumentIdentity, Facet,
     PackageIdentity, ProbeEnvelope, ProbeFailure, ProbeOutcome, ProbeValidationError, Provenance,
     Relationship, RelationshipKind, Resource, ResourceDisplay, ResourceKind, SourceLocation,
-    TOOLING_SCHEMA_VERSION, ToolingDocument, ValidationError, ValidationResult,
+    TOOLING_SCHEMA_VERSION, ToolingDocument, ValidationError, ValidationResult, cli_provider_id,
+    contribution_id, diagnostic_resource_kind, parse_cli_provider_id, parse_contribution_id,
 };
+
+#[test]
+fn contribution_and_cli_provider_identities_round_trip_canonically() {
+    let contributor = "plugin:test/worker";
+    let contribution = "test/worker-cli";
+    let resource = contribution_id(contributor, contribution);
+    let provider = cli_provider_id(contributor, contribution);
+
+    for (identity, parsed) in [
+        (resource.as_str(), parse_contribution_id(&resource)),
+        (provider.as_str(), parse_cli_provider_id(&provider)),
+    ] {
+        let parsed = parsed.expect("canonical identity parses");
+
+        assert_eq!(parsed.contributor(), contributor, "{identity}");
+        assert_eq!(parsed.contribution(), contribution, "{identity}");
+    }
+
+    assert!(parse_contribution_id(&provider).is_none());
+    assert!(parse_cli_provider_id(&resource).is_none());
+    assert!(parse_cli_provider_id("cli-provider:plugin:test/worker:").is_none());
+}
+
+#[test]
+fn diagnostic_resource_classification_preserves_unknown_identities() {
+    assert_eq!(
+        diagnostic_resource_kind("provider:fixture::Service"),
+        ResourceKind::Provider
+    );
+    assert_eq!(
+        diagnostic_resource_kind("cli-command:serve"),
+        ResourceKind::Unknown
+    );
+    assert_eq!(
+        diagnostic_resource_kind("diagnostic:unattributed:0000"),
+        ResourceKind::Unknown
+    );
+}
 
 #[test]
 fn declarative_resource_display_round_trips_and_validates_text() {

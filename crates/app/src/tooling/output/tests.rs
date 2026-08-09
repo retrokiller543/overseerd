@@ -1,8 +1,9 @@
-use upwell_test_utils::TempFixture;
 use upwell_tooling_schema::{
     BinaryTargetIdentity, Diagnostic, DiagnosticSeverity, DocumentIdentity, PackageIdentity,
     ProbeEnvelope, ProbeFailure, SourceLocation,
 };
+
+use crate::test_support::TempFixture;
 
 use super::{
     ToolingProbeOutputError, ToolingProbeOutputTargetError, emit_probe_envelope,

@@ -453,6 +453,25 @@ impl CliCommand<CommandApplication> for FailCommand {
 
 async fn setup(mut context: BootstrapContext) -> std::io::Result<BootstrapContext> {
     SETUP_CALLS.fetch_add(1, Ordering::SeqCst);
+
+    #[cfg(feature = "tooling")]
+    if context.mode().is_tooling() {
+        assert_eq!(
+            context
+                .get::<OutputArgs>()
+                .expect("tooling parses application globals")
+                .format,
+            "text"
+        );
+        assert_eq!(
+            context
+                .get::<ProtocolPluginArgs>()
+                .expect("tooling parses plugin globals")
+                .protocol_detail,
+            "summary"
+        );
+    }
+
     context.insert(Vec::<&'static str>::new());
 
     Ok(context)

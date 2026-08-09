@@ -12,12 +12,12 @@ use upwell_di::{
     ComponentFactoryDescriptor, Injectable, ProviderDescriptor, ProviderOrder,
     ProviderOrderDirection, Singleton,
 };
-use upwell_test_utils::TempFixture;
 use upwell_tooling_schema::{
     BinaryTargetIdentity, DocumentIdentity, PackageIdentity, ProbeEnvelope, RelationshipKind,
     SourceLocation,
 };
 
+use crate::test_support::TempFixture;
 use crate::{
     App, AppRegistry, CompositionDiagnostic, CompositionDiagnostics, InstallationOrigin,
     InstallationProvenance, Plugin, PluginContributions, PluginId, PluginRelation, PluginSlotId,
@@ -1941,6 +1941,7 @@ fn config_dependencies_target_exact_bindings_or_mark_type_ambiguity() {
         .find(|relationship| {
             relationship.kind == RelationshipKind::DependsOn
                 && relationship.from == "component:config-consumer"
+                && relationship.to.starts_with("config-binding:")
         })
         .expect("exact component config dependency exists");
     let ambiguous = document

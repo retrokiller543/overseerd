@@ -337,6 +337,13 @@ where
         self.decode(body)
             .map_err(|error| self.fail(ClientError::Decode(error.to_string())))
     }
+
+    fn fail_unexpected<E>(
+        &self,
+        response: HttpResponse<Vec<u8>>,
+    ) -> ClientError<http::StatusCode, E> {
+        self.fail(super::unexpected_response(response))
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]

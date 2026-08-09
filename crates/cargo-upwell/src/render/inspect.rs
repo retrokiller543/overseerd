@@ -235,10 +235,8 @@ pub(super) fn matches_cli_provider(
         .resources
         .iter()
         .find(|resource| resource.id == provider.contributor);
-    let contribution_id = format!(
-        "contribution:{}:{}",
-        provider.contributor, provider.contribution
-    );
+    let contribution_id =
+        upwell_tooling_schema::contribution_id(&provider.contributor, &provider.contribution);
     let contribution = document
         .resources
         .iter()

@@ -202,7 +202,7 @@ impl ProviderSelectionModel {
         consumer: &dyn Scope,
         can_access: &(impl Fn(&dyn Scope, &'static dyn Scope) -> bool + ?Sized),
     ) -> Vec<ProviderSelection> {
-        let matching = self.matching(dependency.ty.type_id, dependency.qualifier);
+        let providers = self.providers_for_trait(dependency.ty.type_id);
 
         match dependency.cardinality {
             Cardinality::One => self
@@ -210,17 +210,25 @@ impl ProviderSelectionModel {
                     dependency.resolution,
                     dependency.qualifier,
                     consumer,
-                    &matching,
+                    providers,
                     can_access,
                 )
                 .into_iter()
                 .collect(),
-            Cardinality::Collection => {
-                self.select_collection(dependency.resolution, consumer, &matching, can_access)
-            }
-            Cardinality::Keyed => {
-                self.select_keyed(dependency.resolution, consumer, &matching, can_access)
-            }
+            Cardinality::Collection => self.select_collection(
+                dependency.resolution,
+                dependency.qualifier,
+                consumer,
+                providers,
+                can_access,
+            ),
+            Cardinality::Keyed => self.select_keyed(
+                dependency.resolution,
+                dependency.qualifier,
+                consumer,
+                providers,
+                can_access,
+            ),
         }
     }
 
@@ -242,9 +250,9 @@ impl ProviderSelectionModel {
                 selection.stage == DependencySelectionStage::ScopePrecedence
             })
         {
-            let matching = self.matching(dependency.ty.type_id, dependency.qualifier);
-            let groups = self.visible_groups(consumer, &matching, can_access, |provider| {
-                !self.is_transient(provider)
+            let candidates = self.providers_for_trait(dependency.ty.type_id);
+            let groups = self.visible_groups(consumer, candidates, can_access, |provider| {
+                provider_matches(provider, dependency.qualifier) && !self.is_transient(provider)
             });
 
             for group in groups.values() {
@@ -275,9 +283,13 @@ impl ProviderSelectionModel {
         consumer: &dyn Scope,
         can_access: &impl Fn(&dyn Scope, &'static dyn Scope) -> bool,
     ) -> Option<ProviderSelection> {
-        let matching = self.matching(trait_id, qualifier);
-
-        self.select_one(resolution, qualifier, consumer, &matching, can_access)
+        self.select_one(
+            resolution,
+            qualifier,
+            consumer,
+            self.providers_for_trait(trait_id),
+            can_access,
+        )
     }
 
     pub(crate) fn select_runtime_collection(
@@ -287,9 +299,13 @@ impl ProviderSelectionModel {
         consumer: &dyn Scope,
         can_access: &impl Fn(&dyn Scope, &'static dyn Scope) -> bool,
     ) -> Vec<ProviderSelection> {
-        let matching = self.matching(trait_id, None);
-
-        self.select_collection(resolution, consumer, &matching, can_access)
+        self.select_collection(
+            resolution,
+            None,
+            consumer,
+            self.providers_for_trait(trait_id),
+            can_access,
+        )
     }
 
     pub(crate) fn select_runtime_keyed(
@@ -299,9 +315,13 @@ impl ProviderSelectionModel {
         consumer: &dyn Scope,
         can_access: &impl Fn(&dyn Scope, &'static dyn Scope) -> bool,
     ) -> Vec<ProviderSelection> {
-        let matching = self.matching(trait_id, None);
-
-        self.select_keyed(resolution, consumer, &matching, can_access)
+        self.select_keyed(
+            resolution,
+            None,
+            consumer,
+            self.providers_for_trait(trait_id),
+            can_access,
+        )
     }
 
     pub(crate) fn visible_groups(
@@ -370,11 +390,17 @@ impl ProviderSelectionModel {
         trait_id: TypeId,
         qualifier: Option<&str>,
     ) -> Vec<ProviderDescriptor> {
-        self.matching(trait_id, qualifier)
+        self.providers_for_trait(trait_id)
+            .iter()
+            .filter(|provider| provider_matches(provider, qualifier))
+            .copied()
+            .collect()
     }
 
     pub(crate) fn has_matching_provider(&self, trait_id: TypeId, qualifier: Option<&str>) -> bool {
-        !self.matching(trait_id, qualifier).is_empty()
+        self.providers_for_trait(trait_id)
+            .iter()
+            .any(|provider| provider_matches(provider, qualifier))
     }
 
     pub(crate) fn has_visible_provider(
@@ -384,17 +410,10 @@ impl ProviderSelectionModel {
         consumer: &dyn Scope,
         can_access: &impl Fn(&dyn Scope, &'static dyn Scope) -> bool,
     ) -> bool {
-        self.matching(trait_id, qualifier)
-            .iter()
-            .any(|provider| self.is_visible(consumer, provider, can_access))
-    }
-
-    fn matching(&self, trait_id: TypeId, qualifier: Option<&str>) -> Vec<ProviderDescriptor> {
         self.providers_for_trait(trait_id)
             .iter()
-            .filter(|provider| qualifier.is_none_or(|value| provider.qualifier == value))
-            .copied()
-            .collect()
+            .filter(|provider| provider_matches(provider, qualifier))
+            .any(|provider| self.is_visible(consumer, provider, can_access))
     }
 
     fn select_one(
@@ -406,33 +425,33 @@ impl ProviderSelectionModel {
         can_access: &(impl Fn(&dyn Scope, &'static dyn Scope) -> bool + ?Sized),
     ) -> Option<ProviderSelection> {
         if resolution == ResolutionMode::Fresh {
-            let groups = self.visible_groups(consumer, matching, can_access, |_| true);
-
-            return select_from_groups(
-                &groups,
+            return self.select_from_visible_groups(
+                consumer,
+                matching,
                 qualifier,
+                can_access,
+                &|provider| provider_matches(provider, qualifier),
                 DependencySelectionStage::FreshScopePrecedence,
             );
         }
 
         if resolution != ResolutionMode::Deferred
-            && let Some(provider) = select_provider(matching, qualifier)
+            && let Some((provider, reason)) = select_provider_where(matching, qualifier, &|_| true)
             && self.is_transient(&provider)
         {
             return Some(ProviderSelection {
                 provider,
-                reason: selection_reason(matching, qualifier),
+                reason,
                 stage: DependencySelectionStage::TransientPrecedence,
             });
         }
 
-        let groups = self.visible_groups(consumer, matching, can_access, |provider| {
-            !self.is_transient(provider)
-        });
-
-        if let Some(selected) = select_from_groups(
-            &groups,
+        if let Some(selected) = self.select_from_visible_groups(
+            consumer,
+            matching,
             qualifier,
+            can_access,
+            &|provider| !self.is_transient(provider),
             DependencySelectionStage::ScopePrecedence,
         ) {
             return Some(selected);
@@ -442,16 +461,12 @@ impl ProviderSelectionModel {
             return None;
         }
 
-        let transients = matching
-            .iter()
-            .filter(|provider| self.is_transient(provider))
-            .copied()
-            .collect::<Vec<_>>();
-        let provider = select_provider(&transients, qualifier)?;
+        let (provider, reason) =
+            select_provider_where(matching, qualifier, &|provider| self.is_transient(provider))?;
 
         Some(ProviderSelection {
             provider,
-            reason: selection_reason(&transients, qualifier),
+            reason,
             stage: DependencySelectionStage::TransientFallback,
         })
     }
@@ -459,12 +474,14 @@ impl ProviderSelectionModel {
     fn select_collection(
         &self,
         resolution: ResolutionMode,
+        qualifier: Option<&str>,
         consumer: &dyn Scope,
         matching: &[ProviderDescriptor],
         can_access: &(impl Fn(&dyn Scope, &'static dyn Scope) -> bool + ?Sized),
     ) -> Vec<ProviderSelection> {
         matching
             .iter()
+            .filter(|provider| provider_matches(provider, qualifier))
             .filter(|provider| {
                 if resolution == ResolutionMode::Fresh {
                     return self.is_visible(consumer, provider, can_access);
@@ -490,6 +507,7 @@ impl ProviderSelectionModel {
     fn select_keyed(
         &self,
         resolution: ResolutionMode,
+        qualifier: Option<&str>,
         consumer: &dyn Scope,
         matching: &[ProviderDescriptor],
         can_access: &(impl Fn(&dyn Scope, &'static dyn Scope) -> bool + ?Sized),
@@ -497,7 +515,9 @@ impl ProviderSelectionModel {
         let mut selected = BTreeMap::new();
 
         if resolution == ResolutionMode::Fresh {
-            let groups = self.visible_groups(consumer, matching, can_access, |_| true);
+            let groups = self.visible_groups(consumer, matching, can_access, |provider| {
+                provider_matches(provider, qualifier)
+            });
 
             for providers in groups.values().rev() {
                 for provider in providers {
@@ -509,7 +529,7 @@ impl ProviderSelectionModel {
         }
 
         let groups = self.visible_groups(consumer, matching, can_access, |provider| {
-            !self.is_transient(provider)
+            provider_matches(provider, qualifier) && !self.is_transient(provider)
         });
 
         for providers in groups.values().rev() {
@@ -519,15 +539,59 @@ impl ProviderSelectionModel {
         }
 
         if resolution != ResolutionMode::Deferred {
-            for provider in matching
-                .iter()
-                .filter(|provider| self.is_transient(provider))
-            {
+            for provider in matching.iter().filter(|provider| {
+                provider_matches(provider, qualifier) && self.is_transient(provider)
+            }) {
                 selected.insert(provider.qualifier, *provider);
             }
         }
 
         keyed_results(selected)
+    }
+
+    fn select_from_visible_groups(
+        &self,
+        consumer: &dyn Scope,
+        providers: &[ProviderDescriptor],
+        qualifier: Option<&str>,
+        can_access: &(impl Fn(&dyn Scope, &'static dyn Scope) -> bool + ?Sized),
+        include: &impl Fn(&ProviderDescriptor) -> bool,
+        stage: DependencySelectionStage,
+    ) -> Option<ProviderSelection> {
+        let mut after = None;
+
+        loop {
+            let key = providers
+                .iter()
+                .filter(|provider| include(provider))
+                .filter_map(|provider| {
+                    let scope = self.components[&provider.concrete_ty.type_id].scope;
+                    let key = (scope.rank(), scope.id());
+
+                    (can_access(consumer, scope) && after.is_none_or(|after| key > after))
+                        .then_some(key)
+                })
+                .min()?;
+
+            if let Some((provider, reason)) =
+                select_provider_where(providers, qualifier, &|provider| {
+                    if !include(provider) {
+                        return false;
+                    }
+
+                    let scope = self.components[&provider.concrete_ty.type_id].scope;
+                    can_access(consumer, scope) && (scope.rank(), scope.id()) == key
+                })
+            {
+                return Some(ProviderSelection {
+                    provider,
+                    reason,
+                    stage,
+                });
+            }
+
+            after = Some(key);
+        }
     }
 
     fn is_transient(&self, provider: &ProviderDescriptor) -> bool {
@@ -609,24 +673,6 @@ pub(crate) fn select_single_by<T>(items: &[T], is_primary: impl Fn(&T) -> bool) 
     Some(primary)
 }
 
-pub(crate) fn select_from_groups(
-    groups: &BTreeMap<(u8, ScopeId), Vec<ProviderDescriptor>>,
-    qualifier: Option<&str>,
-    stage: DependencySelectionStage,
-) -> Option<ProviderSelection> {
-    for providers in groups.values() {
-        if let Some(provider) = select_provider(providers, qualifier) {
-            return Some(ProviderSelection {
-                provider,
-                reason: selection_reason(providers, qualifier),
-                stage,
-            });
-        }
-    }
-
-    None
-}
-
 pub(crate) fn select_provider(
     providers: &[ProviderDescriptor],
     qualifier: Option<&str>,
@@ -640,6 +686,47 @@ pub(crate) fn select_provider(
     }
 }
 
+fn provider_matches(provider: &ProviderDescriptor, qualifier: Option<&str>) -> bool {
+    qualifier.is_none_or(|qualifier| provider.qualifier == qualifier)
+}
+
+fn select_provider_where(
+    providers: &[ProviderDescriptor],
+    qualifier: Option<&str>,
+    include: &impl Fn(&ProviderDescriptor) -> bool,
+) -> Option<(ProviderDescriptor, DependencySelectionReason)> {
+    let mut matching = providers
+        .iter()
+        .filter(|provider| provider_matches(provider, qualifier) && include(provider));
+    let first = *matching.next()?;
+
+    if qualifier.is_some() {
+        return Some((first, DependencySelectionReason::Qualified));
+    }
+
+    let second = matching.next();
+    if second.is_none() {
+        return Some((first, DependencySelectionReason::SoleProviderInWinningSet));
+    }
+
+    let mut primary = first.primary.then_some(first);
+    for provider in second.into_iter().chain(matching) {
+        if provider.primary {
+            if primary.is_some() {
+                return None;
+            }
+            primary = Some(*provider);
+        }
+    }
+
+    primary.map(|provider| {
+        (
+            provider,
+            DependencySelectionReason::PrimaryProviderInWinningSet,
+        )
+    })
+}
+
 fn keyed_results(selected: BTreeMap<&'static str, ProviderDescriptor>) -> Vec<ProviderSelection> {
     selected
         .into_values()
@@ -649,21 +736,6 @@ fn keyed_results(selected: BTreeMap<&'static str, ProviderDescriptor>) -> Vec<Pr
             stage: DependencySelectionStage::KeyedPrecedence,
         })
         .collect()
-}
-
-fn selection_reason(
-    providers: &[ProviderDescriptor],
-    qualifier: Option<&str>,
-) -> DependencySelectionReason {
-    if qualifier.is_some() {
-        return DependencySelectionReason::Qualified;
-    }
-
-    if providers.len() == 1 {
-        return DependencySelectionReason::SoleProviderInWinningSet;
-    }
-
-    DependencySelectionReason::PrimaryProviderInWinningSet
 }
 
 fn direct_component_is_selectable(

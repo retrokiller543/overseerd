@@ -117,9 +117,24 @@ pub fn run_probe_with_options(
     cancellation: &CancellationToken,
     options: ProbeOptions,
 ) -> Result<ToolingProbe, ProbeRequestError> {
-    let (workspace, _) = discover(request, cancellation)?;
-    let _lock = InvocationLock::acquire(&workspace.target_directory, cancellation)?;
-    let (workspace, target) = discover(request, cancellation)?;
+    let mut discovered = discover(request, cancellation)?;
+    let (workspace, target, _lock) = loop {
+        let lock = InvocationLock::acquire(&discovered.0.target_directory, cancellation)?;
+
+        if !lock.was_contended() {
+            break (discovered.0, discovered.1, lock);
+        }
+
+        let refreshed = discover(request, cancellation)?;
+
+        if refreshed.0.target_directory == discovered.0.target_directory {
+            break (refreshed.0, refreshed.1, lock);
+        }
+
+        drop(lock);
+        discovered = refreshed;
+    };
+
     let build = build_target(
         &BuildRequest {
             cargo: request.cargo.clone(),
@@ -160,12 +175,23 @@ pub fn run_probe_with_options(
 
 struct InvocationLock {
     file: std::fs::File,
+    contended: bool,
 }
 
 impl InvocationLock {
     fn acquire(
         workspace_target_directory: &std::path::Path,
         cancellation: &CancellationToken,
+    ) -> Result<Self, ProbeRequestError> {
+        Self::acquire_with_wait(workspace_target_directory, cancellation, || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        })
+    }
+
+    fn acquire_with_wait(
+        workspace_target_directory: &std::path::Path,
+        cancellation: &CancellationToken,
+        mut wait: impl FnMut(),
     ) -> Result<Self, ProbeRequestError> {
         let directory = workspace_target_directory.join("upwell");
         let path = directory.join("invocation.lock");
@@ -180,19 +206,26 @@ impl InvocationLock {
             .open(path)
             .map_err(ProbeRequestError::Lock)?;
 
+        let mut contended = false;
+
         loop {
             if cancellation.is_cancelled() {
                 return Err(ProbeRequestError::LockCancelled);
             }
 
             match file.try_lock_exclusive() {
-                Ok(()) => return Ok(Self { file }),
+                Ok(()) => return Ok(Self { file, contended }),
                 Err(error) if lock_is_contended(&error) => {
-                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    contended = true;
+                    wait();
                 }
                 Err(error) => return Err(ProbeRequestError::Lock(error)),
             }
         }
+    }
+
+    fn was_contended(&self) -> bool {
+        self.contended
     }
 }
 
@@ -207,3 +240,7 @@ impl Drop for InvocationLock {
         let _ = self.file.unlock();
     }
 }
+
+#[cfg(test)]
+#[path = "lib/tests.rs"]
+mod tests;

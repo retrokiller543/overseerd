@@ -190,9 +190,7 @@ impl ComponentRegistry {
 
                 let dep_scopes = match scope_of.get(&dep_id) {
                     Some(scope) => vec![(*scope, (dep.ty.type_name)())],
-                    None => {
-                        self.selected_dependency_scopes(selection, c, &dep, components, can_access)?
-                    }
+                    None => self.selected_dependency_scopes(selection, c, &dep, can_access)?,
                 };
 
                 for (dep_scope, dep_name) in dep_scopes {
@@ -565,7 +563,6 @@ impl ComponentRegistry {
                                     model,
                                     consumer,
                                     &target_dependency,
-                                    components,
                                     can_access,
                                 )?
                                 .into_iter()
@@ -646,13 +643,8 @@ impl ComponentRegistry {
         model: &selection::ProviderSelectionModel,
         consumer: &ComponentDescriptor,
         dependency: &upwell_core::DependencyDescriptor,
-        components: &[ComponentDescriptor],
         can_access: &impl Fn(&dyn Scope, &dyn Scope) -> bool,
     ) -> crate::Result<Vec<(&'static dyn Scope, &'static str)>> {
-        let by_type: HashMap<TypeId, ComponentDescriptor> = components
-            .iter()
-            .map(|component| (component.ty.type_id, *component))
-            .collect();
         let selected = match dependency.cardinality {
             Cardinality::One => model
                 .select_runtime_one(
@@ -681,7 +673,7 @@ impl ComponentRegistry {
         Ok(selected
             .into_iter()
             .filter_map(|selection| {
-                let component = by_type.get(&selection.provider.concrete_ty.type_id)?;
+                let component = model.component(selection.provider.concrete_ty.type_id)?;
 
                 Some((
                     component.scope,

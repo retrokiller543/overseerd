@@ -339,13 +339,7 @@ fn effective_color(
 }
 
 fn parse_log_format(value: &str) -> Result<LogFormat, BootstrapError> {
-    match value {
-        "full" => Ok(LogFormat::Full),
-        "compact" => Ok(LogFormat::Compact),
-        "pretty" => Ok(LogFormat::Pretty),
-        "json" => Ok(LogFormat::Json),
-        _ => Err(BootstrapError::LogFormat {
-            value: value.to_owned(),
-        }),
-    }
+    value.parse().map_err(|_| BootstrapError::LogFormat {
+        value: value.to_owned(),
+    })
 }

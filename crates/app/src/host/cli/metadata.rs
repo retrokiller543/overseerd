@@ -4,6 +4,7 @@ use std::fmt::Write as _;
 use clap::{Arg, ArgAction, Command};
 use upwell_tooling_schema::{
     CliArgument, CliCardinality, CliCommand, CliMetadata, CliOwner, CliProvider, CliProviderKind,
+    cli_provider_id as schema_cli_provider_id,
 };
 
 use crate::{
@@ -433,10 +434,9 @@ fn cli_provider(provider: PluginCliProviderMetadata) -> CliProvider {
 }
 
 fn cli_provider_id(provenance: ContributionProvenance) -> String {
-    format!(
-        "cli-provider:{}:{}",
-        contributor_id(provenance.contributor()),
-        provenance.contribution().as_str()
+    schema_cli_provider_id(
+        &contributor_id(provenance.contributor()),
+        provenance.contribution().as_str(),
     )
 }
 

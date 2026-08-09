@@ -543,10 +543,12 @@ pub struct Facet {
 }
 
 /// Generic resource categories understood without protocol knowledge.
-#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum ResourceKind {
+    /// A diagnostic-only identity whose generic category is not known.
+    Unknown,
     /// The configured application.
     Application,
     /// The selected protocol definition.
@@ -573,6 +575,31 @@ pub enum ResourceKind {
     Contributor,
     /// A plugin capability slot, including an unoccupied relation endpoint.
     PluginSlot,
+}
+
+/// Classifies a diagnostic resource identity by its canonical generic prefix.
+///
+/// Producers may override this classification in [`ProbeFailure::resource_kinds`] when an
+/// owner-qualified identity has more specific semantics.
+pub fn diagnostic_resource_kind(id: &str) -> ResourceKind {
+    let prefix = id.split_once(':').map_or(id, |(prefix, _)| prefix);
+
+    match prefix {
+        "application" => ResourceKind::Application,
+        "protocol" => ResourceKind::Protocol,
+        "plugin" => ResourceKind::Plugin,
+        "component" => ResourceKind::Component,
+        "provider" => ResourceKind::Provider,
+        "config-binding" => ResourceKind::ConfigBinding,
+        "hook" => ResourceKind::Hook,
+        "lifecycle" => ResourceKind::Lifecycle,
+        "scope" => ResourceKind::Scope,
+        "type" => ResourceKind::Type,
+        "contribution" => ResourceKind::Contribution,
+        "plugin-slot" => ResourceKind::PluginSlot,
+        "framework" => ResourceKind::Contributor,
+        _ => ResourceKind::Unknown,
+    }
 }
 
 /// Declarative owner-provided presentation for one resource.
@@ -640,7 +667,7 @@ impl Default for Resource {
 }
 
 /// Typed generic relationship semantics.
-#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
 #[non_exhaustive]
 pub enum RelationshipKind {
@@ -812,6 +839,58 @@ pub struct CliProvider {
     pub contribution: String,
     /// Parser-facing provider category.
     pub kind: CliProviderKind,
+}
+
+/// Borrowed contributor and owner-local contribution parsed from a canonical tooling identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ContributionIdentity<'a> {
+    contributor: &'a str,
+    contribution: &'a str,
+}
+
+impl<'a> ContributionIdentity<'a> {
+    /// Returns the canonical contributor resource identity.
+    pub const fn contributor(self) -> &'a str {
+        self.contributor
+    }
+
+    /// Returns the contributor-local contribution identity.
+    pub const fn contribution(self) -> &'a str {
+        self.contribution
+    }
+}
+
+/// Constructs the canonical document-local identity for one contribution resource.
+pub fn contribution_id(contributor: &str, contribution: &str) -> String {
+    format!("contribution:{contributor}:{contribution}")
+}
+
+/// Parses a canonical contribution resource identity.
+pub fn parse_contribution_id(id: &str) -> Option<ContributionIdentity<'_>> {
+    parse_contribution_identity(id, "contribution:")
+}
+
+/// Constructs the canonical identity for one effective CLI provider.
+pub fn cli_provider_id(contributor: &str, contribution: &str) -> String {
+    format!("cli-provider:{contributor}:{contribution}")
+}
+
+/// Parses a canonical effective CLI-provider identity.
+pub fn parse_cli_provider_id(id: &str) -> Option<ContributionIdentity<'_>> {
+    parse_contribution_identity(id, "cli-provider:")
+}
+
+fn parse_contribution_identity<'a>(id: &'a str, prefix: &str) -> Option<ContributionIdentity<'a>> {
+    let (contributor, contribution) = id.strip_prefix(prefix)?.rsplit_once(':')?;
+
+    if is_blank(contributor) || is_blank(contribution) {
+        return None;
+    }
+
+    Some(ContributionIdentity {
+        contributor,
+        contribution,
+    })
 }
 
 /// Parser-facing category of a plugin CLI provider.
@@ -1866,12 +1945,12 @@ fn validate_cli(
             });
         }
 
-        let expected = format!(
-            "cli-provider:{}:{}",
-            provider.contributor, provider.contribution
-        );
+        let identity = parse_cli_provider_id(&provider.id);
 
-        if provider.id != expected {
+        if identity.is_none_or(|identity| {
+            identity.contributor() != provider.contributor
+                || identity.contribution() != provider.contribution
+        }) {
             return Err(ValidationError::InvalidCliProviderIdentity {
                 id: provider.id.clone(),
                 contributor: provider.contributor.clone(),

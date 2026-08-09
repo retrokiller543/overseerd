@@ -706,20 +706,17 @@ fn parses_typed_framework_cli_customization() {
 
 #[test]
 fn rejects_invalid_framework_cli_customization() {
-    for (slot, value) in [
-        (format_ident!("log_format"), "yaml"),
-        (format_ident!("color"), "sometimes"),
-    ] {
-        let error = parse_error(quote! {
-            app InvalidDefault {
-                name: "invalid-default",
-                protocol: Protocol,
-                cli: { #slot: { default_value: #value } },
-            }
-        });
+    let slot = format_ident!("color");
+    let value = "sometimes";
+    let error = parse_error(quote! {
+        app InvalidDefault {
+            name: "invalid-default",
+            protocol: Protocol,
+            cli: { #slot: { default_value: #value } },
+        }
+    });
 
-        assert!(error.contains(&format!("unsupported application default `{value}`")));
-    }
+    assert!(error.contains(&format!("unsupported application default `{value}`")));
     assert!(
         parse_error(quote! {
             app DisabledDefaultServe {
@@ -1305,6 +1302,11 @@ fn named_app_generates_target_local_tooling_entry() {
     assert!(output.contains("file ! ()"));
     assert!(output.contains("__private :: probe_"));
     assert!(output.contains("__private :: catch_probe_panic"));
+    #[cfg(feature = "cli")]
+    {
+        assert!(output.contains("Self :: __upwell_parse_cli"));
+        assert!(output.contains("ExecutionMode :: Tooling"));
+    }
 }
 
 #[cfg(feature = "tooling")]

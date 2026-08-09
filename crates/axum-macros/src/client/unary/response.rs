@@ -43,7 +43,6 @@ pub(super) fn response_plan(input: ResponsePlanInput<'_>) -> ResponsePlan {
     let encodes = paths.plugin("client::Encodes");
     let decodes = paths.plugin("client::Decodes");
     let client_error = paths.core("client::ClientError");
-    let unexpected = paths.plugin("client::unexpected_response");
     let conventional = route
         .returns
         .clone()
@@ -240,7 +239,9 @@ pub(super) fn response_plan(input: ResponsePlanInput<'_>) -> ResponsePlan {
             let __response = <C as #http_exchange>::exchange(&self.0, #request).await?;
             match __response.status().as_u16() {
                 #(#decode_arms)*
-                _ => ::core::result::Result::Err(#unexpected(__response)),
+                _ => ::core::result::Result::Err(
+                    <C as #http_exchange>::fail_unexpected(&self.0, __response)
+                ),
             }
         }
     };

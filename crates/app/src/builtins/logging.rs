@@ -46,6 +46,7 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), InitTracingError> {
     init_tracing_with_layers(config, Vec::new())
 }
 
+#[cfg(feature = "cli")]
 pub(crate) fn init_tracing_resolved(
     config: &LoggingConfig,
     extra: Vec<BoxedLayer>,

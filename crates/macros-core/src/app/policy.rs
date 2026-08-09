@@ -20,7 +20,7 @@ pub(super) struct CliPolicy {
     pub(super) config: Option<Declared<ArgumentPolicy>>,
     pub(super) profile: Option<Declared<ArgumentPolicy>>,
     pub(super) log: Option<Declared<ArgumentPolicy>>,
-    pub(super) log_format: Option<Declared<ChoiceArgumentPolicy>>,
+    pub(super) log_format: Option<Declared<ArgumentPolicy>>,
     pub(super) color: Option<Declared<ChoiceArgumentPolicy>>,
     pub(super) serve: Option<Declared<ServePolicy>>,
 }
@@ -158,7 +158,7 @@ pub(super) fn parse(input: ParseStream) -> syn::Result<CliPolicy> {
             "log_format" => {
                 policy.log_format = Some(Declared {
                     key,
-                    value: parse_choice_argument(&content, &["full", "compact", "pretty", "json"])?,
+                    value: parse_argument(&content)?,
                 });
             }
             "color" => {

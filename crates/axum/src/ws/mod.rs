@@ -69,9 +69,8 @@ pub enum WsDispatchError {
     #[error("encoding ws response: {0}")]
     Encode(String),
 
-    /// The handler intentionally returned an application-level error. Unlike framework failures,
-    /// this message is public: handler authors control the error's `Display` representation and
-    /// therefore opt into exposing it to a correlated caller.
+    /// The handler returned an application-level error. The detail is retained for server-side
+    /// diagnostics but is never exposed to an untrusted peer.
     #[error("ws application error: {0}")]
     Application(String),
 }
@@ -85,7 +84,7 @@ impl WsDispatchError {
             Self::NotFound(_) => "no handler for destination",
             Self::Decode(_) => "invalid request payload",
             Self::Inject(_) | Self::Encode(_) => "internal error",
-            Self::Application(message) => message,
+            Self::Application(_) => "request failed",
         }
     }
 }

@@ -45,6 +45,8 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
         .filter(|attribute| attribute.path().is_ident("doc"));
     let cli_ident = format_ident!("{}Cli", ident, span = ident.span());
     let command_ident = format_ident!("{}Command", ident, span = ident.span());
+    let parsed_command_ident =
+        format_ident!("__{}SelectedApplicationCommand", ident, span = ident.span(),);
     let framework_cli_ident = format_ident!("__{}FrameworkCli", ident, span = ident.span());
     let framework_command_ident = format_ident!("__{}FrameworkCommand", ident, span = ident.span());
     let bootstrap_application_with_policy = input.paths.core("bootstrap_application_with_policy");
@@ -59,7 +61,6 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
     let initial = input.paths.core("Initial");
     let resolve_host_plugin_catalog = input.paths.core("resolve_host_plugin_catalog");
     let retain_host_plugin_catalog = input.paths.core("retain_host_plugin_catalog");
-    let parsed_plugin_args = input.paths.core("ParsedPluginArgs");
     let prepare_cli_context = input.paths.core("prepare_cli_context");
     let selected_plugin_command = input.paths.core("SelectedPluginCliCommand");
     let clap: syn::Path = syn::parse_quote!(::clap);
@@ -171,6 +172,11 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
             }
         }
     });
+    let parsed_command_type = if has_application_commands {
+        quote!(type #parsed_command_ident = #command_ident;)
+    } else {
+        quote!(type #parsed_command_ident = ();)
+    };
     let select_command = if input.policy.serve_default {
         quote!(command.or(::core::option::Option::Some(#command_ident::#serve_reference)))
     } else if has_application_commands {
@@ -180,7 +186,7 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
     };
     let command_destructure = has_application_commands.then(|| quote!(command,));
     let no_application_command = if has_application_commands {
-        quote!(cli.command.is_none())
+        quote!(command.is_none())
     } else {
         quote!(true)
     };
@@ -282,6 +288,8 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
 
         #command_type
 
+        #parsed_command_type
+
         #nested_command_types
 
         impl #ident<#initial> {
@@ -349,35 +357,35 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
                 I: ::core::iter::IntoIterator<Item = T>,
                 T: ::core::convert::Into<::std::ffi::OsString> + ::core::clone::Clone,
             {
-                let mut plugins = #resolve_host_plugin_catalog::<#ident<#initial>>()?;
-                let mut command = Self::__upwell_compose_cli(&mut plugins)?;
+                let (context, command, plugin_command) = Self::__upwell_parse_cli(
+                    args,
+                    #execution_mode::Run,
+                    true,
+                )?;
 
-                let mut matches = command.try_get_matches_from_mut(args)?;
+                Self::__dispatch_cli(command, plugin_command, context).await
+            }
+
+            fn __upwell_parse_cli<I, T>(
+                args: I,
+                mode: #execution_mode,
+                require_command: bool,
+            ) -> ::core::result::Result<(
+                #bootstrap_context,
+                ::core::option::Option<#parsed_command_ident>,
+                ::core::option::Option<#selected_plugin_command>,
+            ), #cli_error>
+            where
+                I: ::core::iter::IntoIterator<Item = T>,
+                T: ::core::convert::Into<::std::ffi::OsString> + ::core::clone::Clone,
+            {
+                let mut plugins = #resolve_host_plugin_catalog::<#ident<#initial>>()?;
+                let mut parser = Self::__upwell_compose_cli(&mut plugins)?;
+                let mut matches = parser.try_get_matches_from_mut(args)?;
                 let bootstrap_sources = #bootstrap_ident::__sources(&matches);
                 let plugin_args = plugins.parse_cli_args(&mut matches)?;
                 let plugin_command = plugins.parse_cli_command(&mut matches)?;
                 let cli = <#cli_ident as #clap::FromArgMatches>::from_arg_matches_mut(&mut matches)?;
-
-                Self::__run_cli(
-                    cli,
-                    plugins,
-                    plugin_args,
-                    plugin_command,
-                    bootstrap_sources,
-                ).await
-            }
-
-            async fn __run_cli(
-                cli: #cli_ident,
-                plugins: #early_plugin_catalog,
-                plugin_args: #parsed_plugin_args,
-                plugin_command: ::core::option::Option<#selected_plugin_command>,
-                bootstrap_sources: [
-                    ::core::option::Option<#clap::parser::ValueSource>;
-                    5
-                ],
-            ) -> ::core::result::Result<(), #cli_error> {
-                #missing_command_check
 
                 let #cli_ident {
                     bootstrap,
@@ -385,10 +393,15 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
                     #command_destructure
                 } = cli;
                 let command = #select_command;
+
+                if require_command {
+                    #missing_command_check
+                }
+
                 let bootstrap = bootstrap.__into_options(bootstrap_sources);
                 let mut context = #bootstrap_application_with_policy(
                     #cli_application_name,
-                    #execution_mode::Run,
+                    mode,
                     bootstrap,
                     #bootstrap_policy::new(
                         <#ident<#initial> as #app_host>::BOOTSTRAP_OWNS_DIRECTORIES,
@@ -399,6 +412,14 @@ pub(super) fn expand(input: CliInput<'_>) -> syn::Result<TokenStream> {
                 #(context.insert(#global_arg_names);)*
                 plugin_args.apply(&mut context);
 
+                Ok((context, command, plugin_command))
+            }
+
+            async fn __dispatch_cli(
+                command: ::core::option::Option<#parsed_command_ident>,
+                plugin_command: ::core::option::Option<#selected_plugin_command>,
+                context: #bootstrap_context,
+            ) -> ::core::result::Result<(), #cli_error> {
                 match plugin_command {
                     ::core::option::Option::Some(command) => command.run::<#ident<#initial>>(context).await?,
                     #application_dispatch
