@@ -465,9 +465,13 @@ fn workspace_registration_preserves_a_concurrent_manifest_edit() {
     std::fs::create_dir_all(&project).expect("project directory exists");
     std::fs::write(&manifest, original).expect("workspace manifest exists");
 
-    let error = add_to_parent_workspace_with(&project, || {
-        std::fs::write(&manifest, concurrent).expect("concurrent edit is written");
-    })
+    let error = add_to_parent_workspace_with(
+        &project,
+        || {
+            std::fs::write(&manifest, concurrent).expect("concurrent edit is written");
+        },
+        || {},
+    )
     .expect_err("concurrent manifest edit is rejected");
 
     assert!(matches!(error, InitError::WorkspaceManifestConflict { .. }));
@@ -491,14 +495,98 @@ fn workspace_registration_preserves_an_atomic_manifest_replacement() {
     std::fs::write(&manifest, original).expect("workspace manifest exists");
     std::fs::write(&replacement, concurrent).expect("editor replacement exists");
 
-    let error = add_to_parent_workspace_with(&project, || {
-        std::fs::rename(&replacement, &manifest).expect("editor atomically replaces manifest");
-    })
+    let error = add_to_parent_workspace_with(
+        &project,
+        || {
+            std::fs::rename(&replacement, &manifest).expect("editor atomically replaces manifest");
+        },
+        || {},
+    )
     .expect_err("atomic manifest replacement is rejected");
 
     assert!(matches!(error, InitError::WorkspaceManifestConflict { .. }));
     assert_eq!(
         std::fs::read_to_string(&manifest).expect("replacement remains readable"),
         concurrent
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn workspace_registration_retains_late_writes_to_the_displaced_inode() {
+    use std::io::{Seek as _, Write as _};
+
+    let fixture = TempFixture::new("cargo-upwell-workspace-late-writer");
+    let project = fixture.child("generated");
+    let manifest = fixture.child("Cargo.toml");
+    let original = "[workspace]\nmembers = []\n";
+    let concurrent = "[workspace]\nmembers = []\n\n[workspace.metadata.late]\nvalue = true\n";
+
+    std::fs::create_dir_all(&project).expect("project directory exists");
+    std::fs::write(&manifest, original).expect("workspace manifest exists");
+    let mut writer = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&manifest)
+        .expect("late writer opens original inode");
+
+    add_to_parent_workspace_with(
+        &project,
+        || {},
+        || {
+            writer.set_len(0).expect("late writer truncates old inode");
+            writer.rewind().expect("late writer rewinds old inode");
+            writer
+                .write_all(concurrent.as_bytes())
+                .expect("late writer updates old inode");
+            writer.sync_all().expect("late writer syncs old inode");
+        },
+    )
+    .expect("workspace registration succeeds");
+
+    let recovery = std::fs::read_dir(fixture.path())
+        .expect("fixture directory is readable")
+        .filter_map(Result::ok)
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".cargo-upwell-workspace-displaced-")
+        })
+        .expect("displaced inode remains named");
+    assert_eq!(
+        std::fs::read_to_string(recovery.path()).expect("recovery file remains readable"),
+        concurrent
+    );
+    assert!(
+        std::fs::read_to_string(&manifest)
+            .expect("active manifest remains readable")
+            .contains("generated")
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn workspace_registration_preserves_manifest_permissions() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fixture = TempFixture::new("cargo-upwell-workspace-permissions");
+    let project = fixture.child("generated");
+    let manifest = fixture.child("Cargo.toml");
+    let original = "[workspace]\nmembers = []\n";
+
+    std::fs::create_dir_all(&project).expect("project directory exists");
+    std::fs::write(&manifest, original).expect("workspace manifest exists");
+    std::fs::set_permissions(&manifest, std::fs::Permissions::from_mode(0o664))
+        .expect("manifest permissions are configured");
+
+    add_to_parent_workspace_with(&project, || {}, || {}).expect("workspace registration succeeds");
+
+    assert_eq!(
+        std::fs::metadata(&manifest)
+            .expect("manifest metadata remains readable")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o664
     );
 }

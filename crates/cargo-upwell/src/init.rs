@@ -405,12 +405,13 @@ fn upwell_base_dependency(path: Option<&Path>) -> Result<String, std::io::Error>
 }
 
 fn add_to_parent_workspace(project: &Path) -> Result<(), InitError> {
-    add_to_parent_workspace_with(project, || {})
+    add_to_parent_workspace_with(project, || {}, || {})
 }
 
 fn add_to_parent_workspace_with(
     project: &Path,
     before_replace: impl FnOnce(),
+    after_validation: impl FnOnce(),
 ) -> Result<(), InitError> {
     let manifest = project
         .parent()
@@ -478,17 +479,36 @@ fn add_to_parent_workspace_with(
 
         #[cfg(unix)]
         {
-            let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+            let mut temporary = tempfile::Builder::new()
+                .prefix(".cargo-upwell-workspace-displaced-")
+                .tempfile_in(parent)?;
             std::io::Write::write_all(&mut temporary, replacement.as_bytes())?;
+            temporary
+                .as_file()
+                .set_permissions(manifest_file.metadata()?.permissions())?;
             temporary.as_file().sync_all()?;
 
-            atomic_exchange(temporary.path(), &manifest)?;
+            if !atomic_exchange(temporary.path(), &manifest)? {
+                return Ok(false);
+            }
             let displaced = std::fs::read_to_string(temporary.path())?;
             if displaced != source {
-                atomic_exchange(temporary.path(), &manifest)?;
+                if !atomic_exchange(temporary.path(), &manifest)? {
+                    let (_, recovery) = temporary.keep()?;
+                    std::fs::File::open(parent)?.sync_all()?;
+                    anyhow::bail!(
+                        "workspace manifest rollback failed; concurrent contents were preserved at `{}`",
+                        recovery.display()
+                    );
+                }
+                std::fs::File::open(parent)?.sync_all()?;
                 return Ok(false);
             }
 
+            after_validation();
+            // A process may still hold the displaced inode and write after validation. Keep that
+            // inode named so those bytes remain recoverable instead of being deleted on drop.
+            let _ = temporary.keep()?;
             std::fs::File::open(parent)?.sync_all()?;
             Ok(true)
         }
@@ -530,8 +550,8 @@ fn add_to_parent_workspace_with(
     }
 }
 
-#[cfg(unix)]
-fn atomic_exchange(left: &Path, right: &Path) -> std::io::Result<()> {
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn atomic_exchange(left: &Path, right: &Path) -> std::io::Result<bool> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt as _;
 
@@ -540,7 +560,6 @@ fn atomic_exchange(left: &Path, right: &Path) -> std::io::Result<()> {
     let right = CString::new(right.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
 
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     // SAFETY: both pointers reference valid NUL-terminated path bytes for the duration of the
     // syscall. `RENAME_EXCHANGE` atomically swaps the two directory entries.
     let result = unsafe {
@@ -553,7 +572,23 @@ fn atomic_exchange(left: &Path, right: &Path) -> std::io::Result<()> {
         )
     };
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    if result == 0 {
+        Ok(true)
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn atomic_exchange(left: &Path, right: &Path) -> std::io::Result<bool> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let left = CString::new(left.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
+    let right = CString::new(right.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
+
     // SAFETY: both pointers reference valid NUL-terminated path bytes for the duration of the
     // call. `RENAME_SWAP` atomically swaps the two directory entries.
     let result = unsafe {
@@ -566,19 +601,24 @@ fn atomic_exchange(left: &Path, right: &Path) -> std::io::Result<()> {
         )
     };
 
-    #[cfg(not(any(
+    if result == 0 {
+        Ok(true)
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(all(
+    unix,
+    not(any(
         target_os = "linux",
         target_os = "android",
         target_os = "macos",
         target_os = "ios"
-    )))]
-    compile_error!("atomic workspace manifest exchange is unsupported on this Unix target");
-
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error())
-    }
+    ))
+))]
+fn atomic_exchange(_left: &Path, _right: &Path) -> std::io::Result<bool> {
+    Ok(false)
 }
 
 #[cfg(not(unix))]
