@@ -521,15 +521,33 @@ fn path_still_names_file(file: &std::fs::File, path: &Path) -> std::io::Result<b
 
 #[cfg(windows)]
 fn path_still_names_file(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
-    use std::os::windows::fs::MetadataExt as _;
+    use std::mem::MaybeUninit;
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
 
-    let opened = file.metadata()?;
-    let current = std::fs::metadata(path)?;
+    fn identity(file: &std::fs::File) -> std::io::Result<(u32, u64)> {
+        let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+        // SAFETY: `file` owns a valid Windows handle and the API initializes `information` when
+        // it returns nonzero. The borrowed handle remains valid for the duration of the call.
+        let succeeded = unsafe {
+            GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr())
+        };
+        if succeeded == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: a nonzero return guarantees that the structure was initialized.
+        let information = unsafe { information.assume_init() };
+        let index =
+            (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
 
-    Ok(
-        opened.volume_serial_number() == current.volume_serial_number()
-            && opened.file_index() == current.file_index(),
-    )
+        Ok((information.dwVolumeSerialNumber, index))
+    }
+
+    let current = OpenOptions::new().read(true).open(path)?;
+
+    Ok(identity(file)? == identity(&current)?)
 }
 
 #[cfg(not(any(unix, windows)))]
