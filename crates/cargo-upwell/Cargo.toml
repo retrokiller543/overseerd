@@ -48,3 +48,6 @@ windows-sys = { workspace = true, features = [
 
 [dev-dependencies]
 upwell-test-utils = { workspace = true }
+
+[target.'cfg(unix)'.dev-dependencies]
+xattr = { workspace = true }

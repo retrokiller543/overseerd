@@ -2,6 +2,7 @@ use std::path::Path;
 
 use upwell_test_utils::TempFixture;
 
+use super::cleanup_workspace_recoveries_at;
 use super::{
     Catalog, CatalogError, GitReference, InitError, InitRequest, TemplateSelection, TemplateSource,
     add_to_parent_workspace_with, init_project,
@@ -513,7 +514,7 @@ fn workspace_registration_preserves_an_atomic_manifest_replacement() {
 
 #[test]
 #[cfg(unix)]
-fn workspace_registration_retains_late_writes_to_the_displaced_inode() {
+fn workspace_registration_preserves_late_writes_and_recovery_bytes() {
     use std::io::{Seek as _, Write as _};
 
     let fixture = TempFixture::new("cargo-upwell-workspace-late-writer");
@@ -529,7 +530,7 @@ fn workspace_registration_retains_late_writes_to_the_displaced_inode() {
         .open(&manifest)
         .expect("late writer opens original inode");
 
-    add_to_parent_workspace_with(
+    let error = add_to_parent_workspace_with(
         &project,
         || {},
         || {
@@ -541,8 +542,13 @@ fn workspace_registration_retains_late_writes_to_the_displaced_inode() {
             writer.sync_all().expect("late writer syncs old inode");
         },
     )
-    .expect("workspace registration succeeds");
+    .expect_err("late manifest write is reported as a conflict");
 
+    assert!(matches!(error, InitError::WorkspaceManifestConflict { .. }));
+    assert_eq!(
+        std::fs::read_to_string(&manifest).expect("manifest remains readable"),
+        concurrent
+    );
     let recovery = std::fs::read_dir(fixture.path())
         .expect("fixture directory is readable")
         .filter_map(Result::ok)
@@ -550,17 +556,12 @@ fn workspace_registration_retains_late_writes_to_the_displaced_inode() {
             entry
                 .file_name()
                 .to_string_lossy()
-                .starts_with(".cargo-upwell-workspace-displaced-")
+                .starts_with(".cargo-upwell-workspace-recovery-")
         })
-        .expect("displaced inode remains named");
+        .expect("original bytes remain recoverable");
     assert_eq!(
-        std::fs::read_to_string(recovery.path()).expect("recovery file remains readable"),
-        concurrent
-    );
-    assert!(
-        std::fs::read_to_string(&manifest)
-            .expect("active manifest remains readable")
-            .contains("generated")
+        std::fs::read_to_string(recovery.path()).expect("recovery remains readable"),
+        original
     );
 }
 
@@ -589,4 +590,47 @@ fn workspace_registration_preserves_manifest_permissions() {
             & 0o777,
         0o664
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn workspace_registration_preserves_manifest_extended_attributes() {
+    let fixture = TempFixture::new("cargo-upwell-workspace-xattrs");
+    let project = fixture.child("generated");
+    let manifest = fixture.child("Cargo.toml");
+    let original = "[workspace]\nmembers = []\n";
+    let attribute = "user.cargo-upwell-test";
+
+    std::fs::create_dir_all(&project).expect("project directory exists");
+    std::fs::write(&manifest, original).expect("workspace manifest exists");
+    if let Err(error) = xattr::set(&manifest, attribute, b"preserved") {
+        if matches!(
+            error.raw_os_error(),
+            Some(libc::ENOTSUP | libc::EOPNOTSUPP | libc::EPERM)
+        ) {
+            return;
+        }
+        panic!("test xattr is configured: {error}");
+    }
+
+    add_to_parent_workspace_with(&project, || {}, || {}).expect("workspace registration succeeds");
+
+    assert_eq!(
+        xattr::get(&manifest, attribute).expect("manifest xattrs remain readable"),
+        Some(b"preserved".to_vec())
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn workspace_recovery_cleanup_removes_only_expired_unchanged_pairs() {
+    let fixture = TempFixture::new("cargo-upwell-workspace-recovery-cleanup");
+    let expired = fixture.child(".cargo-upwell-workspace-recovery-expired");
+
+    std::fs::write(&expired, b"original manifest").expect("expired recovery exists");
+
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(25 * 60 * 60);
+    cleanup_workspace_recoveries_at(fixture.path(), future).expect("recovery cleanup succeeds");
+
+    assert!(!expired.exists());
 }

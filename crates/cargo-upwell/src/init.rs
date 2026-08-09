@@ -11,6 +11,9 @@ use fs2::FileExt as _;
 use tempfile::TempDir;
 use thiserror::Error;
 
+const WORKSPACE_RECOVERY_PREFIX: &str = ".cargo-upwell-workspace-recovery-";
+const WORKSPACE_RECOVERY_RETENTION: std::time::Duration =
+    std::time::Duration::from_secs(24 * 60 * 60);
 pub use catalog::{
     Catalog, CatalogError, GitReference, TemplateEntry, TemplateSource, ToolEntry,
     default_catalog_path,
@@ -438,6 +441,12 @@ fn add_to_parent_workspace_with(
             manifest: manifest.clone(),
             source: source.into(),
         })?;
+    #[cfg(unix)]
+    cleanup_workspace_recoveries(parent).map_err(|source| InitError::Workspace {
+        project: project.to_path_buf(),
+        manifest: manifest.clone(),
+        source: source.into(),
+    })?;
     let mut manifest_file = OpenOptions::new()
         .read(true)
         .write(true)
@@ -477,61 +486,40 @@ fn add_to_parent_workspace_with(
 
         before_replace();
 
-        #[cfg(unix)]
+        let mut recovery = tempfile::Builder::new()
+            .prefix(WORKSPACE_RECOVERY_PREFIX)
+            .tempfile_in(parent)?;
+        std::io::Write::write_all(&mut recovery, source.as_bytes())?;
+        recovery.as_file().sync_all()?;
+
+        std::io::Seek::rewind(&mut manifest_file)?;
+        let mut current = String::new();
+        std::io::Read::read_to_string(&mut manifest_file, &mut current)?;
+        if current != source || !path_still_names_file(&manifest_file, &manifest)? {
+            return Ok(false);
+        }
+
+        // Preserve the inode so ownership, ACLs, xattrs, and security labels stay attached and
+        // every process that already opened the manifest continues to write the active file.
+        manifest_file.set_len(0)?;
+        std::io::Seek::rewind(&mut manifest_file)?;
+        std::io::Write::write_all(&mut manifest_file, replacement.as_bytes())?;
+        manifest_file.sync_all()?;
+
+        after_validation();
+        std::io::Seek::rewind(&mut manifest_file)?;
+        let mut published = Vec::new();
+        std::io::Read::read_to_end(&mut manifest_file, &mut published)?;
+        if published != replacement.as_bytes() || !path_still_names_file(&manifest_file, &manifest)?
         {
-            let mut temporary = tempfile::Builder::new()
-                .prefix(".cargo-upwell-workspace-displaced-")
-                .tempfile_in(parent)?;
-            std::io::Write::write_all(&mut temporary, replacement.as_bytes())?;
-            temporary
-                .as_file()
-                .set_permissions(manifest_file.metadata()?.permissions())?;
-            temporary.as_file().sync_all()?;
-
-            if !atomic_exchange(temporary.path(), &manifest)? {
-                return Ok(false);
-            }
-            let displaced = std::fs::read_to_string(temporary.path())?;
-            if displaced != source {
-                if !atomic_exchange(temporary.path(), &manifest)? {
-                    let (_, recovery) = temporary.keep()?;
-                    std::fs::File::open(parent)?.sync_all()?;
-                    anyhow::bail!(
-                        "workspace manifest rollback failed; concurrent contents were preserved at `{}`",
-                        recovery.display()
-                    );
-                }
-                std::fs::File::open(parent)?.sync_all()?;
-                return Ok(false);
-            }
-
-            after_validation();
-            // A process may still hold the displaced inode and write after validation. Keep that
-            // inode named so those bytes remain recoverable instead of being deleted on drop.
-            let _ = temporary.keep()?;
+            let _ = recovery.keep()?;
             std::fs::File::open(parent)?.sync_all()?;
-            Ok(true)
+            return Ok(false);
         }
 
-        #[cfg(not(unix))]
-        {
-            std::io::Seek::rewind(&mut manifest_file)?;
-            let mut current = String::new();
-            std::io::Read::read_to_string(&mut manifest_file, &mut current)?;
-            if current != source || !path_still_names_file(&manifest_file, &manifest)? {
-                return Ok(false);
-            }
-
-            // Write through the locked handle rather than renaming stale bytes over `manifest`.
-            // If a non-cooperating editor atomically replaces the path after the identity check,
-            // this handle refers to the unlinked old file and the editor's replacement wins.
-            manifest_file.set_len(0)?;
-            std::io::Seek::rewind(&mut manifest_file)?;
-            std::io::Write::write_all(&mut manifest_file, replacement.as_bytes())?;
-            manifest_file.sync_all()?;
-
-            Ok(true)
-        }
+        recovery.close()?;
+        std::fs::File::open(parent)?.sync_all()?;
+        Ok(true)
     })();
     drop(manifest_file);
     drop(lock);
@@ -550,78 +538,44 @@ fn add_to_parent_workspace_with(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn atomic_exchange(left: &Path, right: &Path) -> std::io::Result<bool> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt as _;
+fn cleanup_workspace_recoveries(parent: &Path) -> std::io::Result<()> {
+    cleanup_workspace_recoveries_at(parent, std::time::SystemTime::now())
+}
 
-    let left = CString::new(left.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
-    let right = CString::new(right.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
+fn cleanup_workspace_recoveries_at(
+    parent: &Path,
+    now: std::time::SystemTime,
+) -> std::io::Result<()> {
+    let mut changed = false;
 
-    // SAFETY: both pointers reference valid NUL-terminated path bytes for the duration of the
-    // syscall. `RENAME_EXCHANGE` atomically swaps the two directory entries.
-    let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            left.as_ptr(),
-            libc::AT_FDCWD,
-            right.as_ptr(),
-            libc::RENAME_EXCHANGE,
-        )
-    };
+    for entry in std::fs::read_dir(parent)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(WORKSPACE_RECOVERY_PREFIX) || !entry.file_type()?.is_file() {
+            continue;
+        }
 
-    if result == 0 {
-        Ok(true)
-    } else {
-        Err(std::io::Error::last_os_error())
+        let metadata = entry.metadata()?;
+        let age = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok());
+        if age.is_none_or(|age| age < WORKSPACE_RECOVERY_RETENTION) {
+            continue;
+        }
+
+        std::fs::remove_file(entry.path())?;
+        changed = true;
     }
-}
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-fn atomic_exchange(left: &Path, right: &Path) -> std::io::Result<bool> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt as _;
-
-    let left = CString::new(left.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
-    let right = CString::new(right.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains NUL"))?;
-
-    // SAFETY: both pointers reference valid NUL-terminated path bytes for the duration of the
-    // call. `RENAME_SWAP` atomically swaps the two directory entries.
-    let result = unsafe {
-        libc::renameatx_np(
-            libc::AT_FDCWD,
-            left.as_ptr(),
-            libc::AT_FDCWD,
-            right.as_ptr(),
-            libc::RENAME_SWAP,
-        )
-    };
-
-    if result == 0 {
-        Ok(true)
-    } else {
-        Err(std::io::Error::last_os_error())
+    if changed {
+        std::fs::File::open(parent)?.sync_all()?;
     }
+
+    Ok(())
 }
 
-#[cfg(all(
-    unix,
-    not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios"
-    ))
-))]
-fn atomic_exchange(_left: &Path, _right: &Path) -> std::io::Result<bool> {
-    Ok(false)
-}
-
-#[cfg(not(unix))]
 fn path_still_names_file(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
     #[cfg(windows)]
     {
@@ -637,7 +591,16 @@ fn path_still_names_file(file: &std::fs::File, path: &Path) -> std::io::Result<b
             });
     }
 
-    #[cfg(not(windows))]
+    #[cfg(all(unix, not(windows)))]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let opened = file.metadata()?;
+        let current = std::fs::metadata(path)?;
+        Ok(opened.dev() == current.dev() && opened.ino() == current.ino())
+    }
+
+    #[cfg(not(any(unix, windows)))]
     Ok(true)
 }
 
