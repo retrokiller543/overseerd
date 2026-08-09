@@ -2,7 +2,6 @@ use std::path::Path;
 
 use upwell_test_utils::TempFixture;
 
-use super::cleanup_workspace_recoveries_at;
 use super::{
     Catalog, CatalogError, GitReference, InitError, InitRequest, TemplateSelection, TemplateSource,
     add_to_parent_workspace_with, init_project,
@@ -530,7 +529,7 @@ fn workspace_registration_preserves_late_writes_and_recovery_bytes() {
         .open(&manifest)
         .expect("late writer opens original inode");
 
-    let error = add_to_parent_workspace_with(
+    add_to_parent_workspace_with(
         &project,
         || {},
         || {
@@ -542,26 +541,21 @@ fn workspace_registration_preserves_late_writes_and_recovery_bytes() {
             writer.sync_all().expect("late writer syncs old inode");
         },
     )
-    .expect_err("late manifest write is reported as a conflict");
+    .expect("atomic publication succeeds while preserving the displaced inode");
 
-    assert!(matches!(error, InitError::WorkspaceManifestConflict { .. }));
-    assert_eq!(
-        std::fs::read_to_string(&manifest).expect("manifest remains readable"),
-        concurrent
+    assert!(
+        std::fs::read_to_string(&manifest)
+            .expect("manifest remains readable")
+            .contains("generated")
     );
     let recovery = std::fs::read_dir(fixture.path())
         .expect("fixture directory is readable")
         .filter_map(Result::ok)
-        .find(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".cargo-upwell-workspace-recovery-")
-        })
-        .expect("original bytes remain recoverable");
+        .find(|entry| entry.file_name().to_string_lossy().ends_with(".displaced"))
+        .expect("late-writable displaced inode remains recoverable");
     assert_eq!(
         std::fs::read_to_string(recovery.path()).expect("recovery remains readable"),
-        original
+        concurrent
     );
 }
 
@@ -604,10 +598,11 @@ fn workspace_registration_preserves_manifest_extended_attributes() {
     std::fs::create_dir_all(&project).expect("project directory exists");
     std::fs::write(&manifest, original).expect("workspace manifest exists");
     if let Err(error) = xattr::set(&manifest, attribute, b"preserved") {
-        if matches!(
-            error.raw_os_error(),
-            Some(libc::ENOTSUP | libc::EOPNOTSUPP | libc::EPERM)
-        ) {
+        let code = error.raw_os_error();
+        if code == Some(libc::ENOTSUP)
+            || code == Some(libc::EOPNOTSUPP)
+            || code == Some(libc::EPERM)
+        {
             return;
         }
         panic!("test xattr is configured: {error}");
@@ -619,18 +614,4 @@ fn workspace_registration_preserves_manifest_extended_attributes() {
         xattr::get(&manifest, attribute).expect("manifest xattrs remain readable"),
         Some(b"preserved".to_vec())
     );
-}
-
-#[test]
-#[cfg(unix)]
-fn workspace_recovery_cleanup_removes_only_expired_unchanged_pairs() {
-    let fixture = TempFixture::new("cargo-upwell-workspace-recovery-cleanup");
-    let expired = fixture.child(".cargo-upwell-workspace-recovery-expired");
-
-    std::fs::write(&expired, b"original manifest").expect("expired recovery exists");
-
-    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(25 * 60 * 60);
-    cleanup_workspace_recoveries_at(fixture.path(), future).expect("recovery cleanup succeeds");
-
-    assert!(!expired.exists());
 }

@@ -2,22 +2,17 @@
 
 mod catalog;
 mod publish;
+mod workspace;
 
-use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
 use cargo_generate::{GenerateArgs, TemplatePath, Vcs};
-use fs2::FileExt as _;
-use tempfile::TempDir;
-use thiserror::Error;
-
-const WORKSPACE_RECOVERY_PREFIX: &str = ".cargo-upwell-workspace-recovery-";
-const WORKSPACE_RECOVERY_RETENTION: std::time::Duration =
-    std::time::Duration::from_secs(24 * 60 * 60);
 pub use catalog::{
     Catalog, CatalogError, GitReference, TemplateEntry, TemplateSource, ToolEntry,
     default_catalog_path,
 };
+use tempfile::TempDir;
+use thiserror::Error;
 
 /// Template source selected for one initialization.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -111,6 +106,35 @@ pub enum InitError {
         /// Parent workspace manifest that could not safely be replaced.
         manifest: PathBuf,
     },
+    /// The platform or workspace filesystem cannot perform the required safe publication.
+    #[error(
+        "workspace manifest `{manifest}` cannot be published safely on this platform or filesystem: {reason}"
+    )]
+    UnsupportedWorkspacePublication {
+        /// Generated project directory that was being registered.
+        project: PathBuf,
+        /// Parent workspace manifest that was not changed.
+        manifest: PathBuf,
+        /// Platform or filesystem limitation.
+        reason: String,
+    },
+    /// Publication may have changed the workspace and could not be verified or rolled back.
+    #[error(
+        "workspace publication for `{manifest}` is indeterminate; preserve `{project}` and recover using `{snapshot}` and `{displaced}`"
+    )]
+    WorkspacePublicationIndeterminate {
+        /// Generated project directory that must be preserved.
+        project: PathBuf,
+        /// Parent workspace manifest whose state is indeterminate.
+        manifest: PathBuf,
+        /// Durable immutable pre-publication byte snapshot.
+        snapshot: PathBuf,
+        /// Durable path holding the inode displaced by publication.
+        displaced: PathBuf,
+        /// Publication or rollback failure.
+        #[source]
+        source: anyhow::Error,
+    },
     /// Catalog loading or template selection failed.
     #[error(transparent)]
     Catalog(#[from] CatalogError),
@@ -132,6 +156,12 @@ pub enum InitError {
         #[source]
         source: anyhow::Error,
     },
+}
+
+impl InitError {
+    fn preserves_generated_project(&self) -> bool {
+        matches!(self, Self::WorkspacePublicationIndeterminate { .. })
+    }
 }
 
 /// Generates one Upwell project using cargo-generate.
@@ -212,7 +242,9 @@ pub fn init_project(request: InitRequest) -> Result<InitResult, InitError> {
     if request.workspace
         && let Err(error) = add_to_parent_workspace(&path)
     {
-        let _ = std::fs::remove_dir_all(&path);
+        if !error.preserves_generated_project() {
+            let _ = std::fs::remove_dir_all(&path);
+        }
 
         return Err(error);
     }
@@ -408,224 +440,16 @@ fn upwell_base_dependency(path: Option<&Path>) -> Result<String, std::io::Error>
 }
 
 fn add_to_parent_workspace(project: &Path) -> Result<(), InitError> {
-    add_to_parent_workspace_with(project, || {}, || {})
+    workspace::register(project)
 }
 
+#[cfg(test)]
 fn add_to_parent_workspace_with(
     project: &Path,
     before_replace: impl FnOnce(),
     after_validation: impl FnOnce(),
 ) -> Result<(), InitError> {
-    let manifest = project
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("Cargo.toml");
-    let parent = manifest.parent().ok_or_else(|| InitError::Workspace {
-        project: project.to_path_buf(),
-        manifest: manifest.clone(),
-        source: anyhow::anyhow!("workspace manifest has no parent"),
-    })?;
-    let lock_path = parent.join(".cargo-upwell-workspace.lock");
-    let lock = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&lock_path)
-        .and_then(|file| {
-            file.lock_exclusive()?;
-            Ok(file)
-        })
-        .map_err(|source| InitError::Workspace {
-            project: project.to_path_buf(),
-            manifest: manifest.clone(),
-            source: source.into(),
-        })?;
-    #[cfg(unix)]
-    cleanup_workspace_recoveries(parent).map_err(|source| InitError::Workspace {
-        project: project.to_path_buf(),
-        manifest: manifest.clone(),
-        source: source.into(),
-    })?;
-    let mut manifest_file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&manifest)
-        .and_then(|file| {
-            file.lock_exclusive()?;
-            Ok(file)
-        })
-        .map_err(|source| InitError::Workspace {
-            project: project.to_path_buf(),
-            manifest: manifest.clone(),
-            source: source.into(),
-        })?;
-    let result = (|| -> anyhow::Result<bool> {
-        let mut source = String::new();
-
-        std::io::Read::read_to_string(&mut manifest_file, &mut source)?;
-        let mut document = source.parse::<toml::Table>()?;
-        let members = document
-            .get_mut("workspace")
-            .and_then(toml::Value::as_table_mut)
-            .and_then(|workspace| workspace.get_mut("members"))
-            .and_then(toml::Value::as_array_mut)
-            .ok_or_else(|| anyhow::anyhow!("parent manifest has no workspace members array"))?;
-        let member = project
-            .file_name()
-            .ok_or_else(|| anyhow::anyhow!("project path has no final component"))?
-            .to_string_lossy()
-            .into_owned();
-
-        if !members.iter().any(|value| value.as_str() == Some(&member)) {
-            members.push(toml::Value::String(member));
-            members.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
-        }
-
-        let replacement = toml::to_string_pretty(&document)?;
-
-        before_replace();
-
-        let mut recovery = tempfile::Builder::new()
-            .prefix(WORKSPACE_RECOVERY_PREFIX)
-            .tempfile_in(parent)?;
-        std::io::Write::write_all(&mut recovery, source.as_bytes())?;
-        recovery.as_file().sync_all()?;
-
-        std::io::Seek::rewind(&mut manifest_file)?;
-        let mut current = String::new();
-        std::io::Read::read_to_string(&mut manifest_file, &mut current)?;
-        if current != source || !path_still_names_file(&manifest_file, &manifest)? {
-            return Ok(false);
-        }
-
-        // Preserve the inode so ownership, ACLs, xattrs, and security labels stay attached and
-        // every process that already opened the manifest continues to write the active file.
-        manifest_file.set_len(0)?;
-        std::io::Seek::rewind(&mut manifest_file)?;
-        std::io::Write::write_all(&mut manifest_file, replacement.as_bytes())?;
-        manifest_file.sync_all()?;
-
-        after_validation();
-        std::io::Seek::rewind(&mut manifest_file)?;
-        let mut published = Vec::new();
-        std::io::Read::read_to_end(&mut manifest_file, &mut published)?;
-        if published != replacement.as_bytes() || !path_still_names_file(&manifest_file, &manifest)?
-        {
-            let _ = recovery.keep()?;
-            std::fs::File::open(parent)?.sync_all()?;
-            return Ok(false);
-        }
-
-        recovery.close()?;
-        std::fs::File::open(parent)?.sync_all()?;
-        Ok(true)
-    })();
-    drop(manifest_file);
-    drop(lock);
-
-    match result {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(InitError::WorkspaceManifestConflict {
-            project: project.to_path_buf(),
-            manifest,
-        }),
-        Err(source) => Err(InitError::Workspace {
-            project: project.to_path_buf(),
-            manifest,
-            source,
-        }),
-    }
-}
-
-fn cleanup_workspace_recoveries(parent: &Path) -> std::io::Result<()> {
-    cleanup_workspace_recoveries_at(parent, std::time::SystemTime::now())
-}
-
-fn cleanup_workspace_recoveries_at(
-    parent: &Path,
-    now: std::time::SystemTime,
-) -> std::io::Result<()> {
-    let mut changed = false;
-
-    for entry in std::fs::read_dir(parent)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if !name.starts_with(WORKSPACE_RECOVERY_PREFIX) || !entry.file_type()?.is_file() {
-            continue;
-        }
-
-        let metadata = entry.metadata()?;
-        let age = metadata
-            .modified()
-            .ok()
-            .and_then(|modified| now.duration_since(modified).ok());
-        if age.is_none_or(|age| age < WORKSPACE_RECOVERY_RETENTION) {
-            continue;
-        }
-
-        std::fs::remove_file(entry.path())?;
-        changed = true;
-    }
-
-    if changed {
-        std::fs::File::open(parent)?.sync_all()?;
-    }
-
-    Ok(())
-}
-
-fn path_still_names_file(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
-    #[cfg(windows)]
-    {
-        return windows_file_identity(file)
-            .and_then(|opened| {
-                OpenOptions::new()
-                    .read(true)
-                    .open(path)
-                    .map(|current| (opened, current))
-            })
-            .and_then(|(opened, current)| {
-                windows_file_identity(&current).map(|identity| opened == identity)
-            });
-    }
-
-    #[cfg(all(unix, not(windows)))]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-
-        let opened = file.metadata()?;
-        let current = std::fs::metadata(path)?;
-        Ok(opened.dev() == current.dev() && opened.ino() == current.ino())
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    Ok(true)
-}
-
-#[cfg(windows)]
-fn windows_file_identity(file: &std::fs::File) -> std::io::Result<(u32, u64)> {
-    use std::mem::MaybeUninit;
-    use std::os::windows::io::AsRawHandle as _;
-    use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
-    };
-
-    let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-    // SAFETY: `file` owns a valid Windows handle and the API initializes `information` when
-    // it returns nonzero. The borrowed handle remains valid for the duration of the call.
-    let succeeded =
-        unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) };
-    if succeeded == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: a nonzero return guarantees that the structure was initialized.
-    let information = unsafe { information.assume_init() };
-    let index =
-        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
-
-    Ok((information.dwVolumeSerialNumber, index))
+    workspace::register_with(project, before_replace, after_validation)
 }
 
 #[cfg(test)]

@@ -37,9 +37,12 @@ wasmtime = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+xattr = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [
+    "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_JobObjects",
@@ -48,6 +51,3 @@ windows-sys = { workspace = true, features = [
 
 [dev-dependencies]
 upwell-test-utils = { workspace = true }
-
-[target.'cfg(unix)'.dev-dependencies]
-xattr = { workspace = true }
