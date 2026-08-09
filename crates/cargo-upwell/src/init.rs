@@ -437,8 +437,23 @@ fn add_to_parent_workspace_with(
             manifest: manifest.clone(),
             source: source.into(),
         })?;
+    let mut manifest_file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&manifest)
+        .and_then(|file| {
+            file.lock_exclusive()?;
+            Ok(file)
+        })
+        .map_err(|source| InitError::Workspace {
+            project: project.to_path_buf(),
+            manifest: manifest.clone(),
+            source: source.into(),
+        })?;
     let result = (|| -> anyhow::Result<bool> {
-        let source = std::fs::read_to_string(&manifest)?;
+        let mut source = String::new();
+
+        std::io::Read::read_to_string(&mut manifest_file, &mut source)?;
         let mut document = source.parse::<toml::Table>()?;
         let members = document
             .get_mut("workspace")
@@ -457,23 +472,27 @@ fn add_to_parent_workspace_with(
             members.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
         }
 
-        let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
-
-        std::io::Write::write_all(
-            &mut temporary,
-            toml::to_string_pretty(&document)?.as_bytes(),
-        )?;
-        temporary.as_file().sync_all()?;
+        let replacement = toml::to_string_pretty(&document)?;
 
         before_replace();
-        if std::fs::read_to_string(&manifest)? != source {
+        std::io::Seek::rewind(&mut manifest_file)?;
+        let mut current = String::new();
+        std::io::Read::read_to_string(&mut manifest_file, &mut current)?;
+        if current != source || !path_still_names_file(&manifest_file, &manifest)? {
             return Ok(false);
         }
 
-        temporary.persist(&manifest)?;
+        // Write through the locked handle rather than renaming stale bytes over `manifest`.
+        // If a non-cooperating editor atomically replaces the path after the identity check,
+        // this handle refers to the unlinked old file and the editor's replacement wins.
+        manifest_file.set_len(0)?;
+        std::io::Seek::rewind(&mut manifest_file)?;
+        std::io::Write::write_all(&mut manifest_file, replacement.as_bytes())?;
+        manifest_file.sync_all()?;
 
         Ok(true)
     })();
+    drop(manifest_file);
     drop(lock);
 
     match result {
@@ -488,6 +507,34 @@ fn add_to_parent_workspace_with(
             source,
         }),
     }
+}
+
+#[cfg(unix)]
+fn path_still_names_file(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let opened = file.metadata()?;
+    let current = std::fs::metadata(path)?;
+
+    Ok(opened.dev() == current.dev() && opened.ino() == current.ino())
+}
+
+#[cfg(windows)]
+fn path_still_names_file(file: &std::fs::File, path: &Path) -> std::io::Result<bool> {
+    use std::os::windows::fs::MetadataExt as _;
+
+    let opened = file.metadata()?;
+    let current = std::fs::metadata(path)?;
+
+    Ok(
+        opened.volume_serial_number() == current.volume_serial_number()
+            && opened.file_index() == current.file_index(),
+    )
+}
+
+#[cfg(not(any(unix, windows)))]
+fn path_still_names_file(_file: &std::fs::File, _path: &Path) -> std::io::Result<bool> {
+    Ok(true)
 }
 
 #[cfg(test)]

@@ -475,3 +475,28 @@ fn workspace_registration_preserves_a_concurrent_manifest_edit() {
         concurrent
     );
 }
+
+#[test]
+fn workspace_registration_preserves_an_atomic_manifest_replacement() {
+    let fixture = TempFixture::new("cargo-upwell-workspace-replacement");
+    let project = fixture.child("generated");
+    let manifest = fixture.child("Cargo.toml");
+    let replacement = fixture.child("Cargo.toml.editor");
+    let original = "[workspace]\nmembers = []\n";
+    let concurrent = "[workspace]\nmembers = []\n\n[workspace.metadata.editor]\nvalue = true\n";
+
+    std::fs::create_dir_all(&project).expect("project directory exists");
+    std::fs::write(&manifest, original).expect("workspace manifest exists");
+    std::fs::write(&replacement, concurrent).expect("editor replacement exists");
+
+    let error = add_to_parent_workspace_with(&project, || {
+        std::fs::rename(&replacement, &manifest).expect("editor atomically replaces manifest");
+    })
+    .expect_err("atomic manifest replacement is rejected");
+
+    assert!(matches!(error, InitError::WorkspaceManifestConflict { .. }));
+    assert_eq!(
+        std::fs::read_to_string(&manifest).expect("replacement remains readable"),
+        concurrent
+    );
+}
