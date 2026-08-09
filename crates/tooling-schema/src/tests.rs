@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use semver::VersionReq;
+use semver::{Version, VersionReq};
 use serde_json::json;
 
 use super::{
@@ -170,6 +170,65 @@ fn tooling_schema_compatibility_uses_semantic_version_requirements() {
     assert!(envelope.schema_matches(&compatible));
     assert!(!document.schema_matches(&incompatible));
     assert!(!envelope.schema_matches(&incompatible));
+}
+
+#[test]
+fn schema_validation_accepts_current_and_later_minor_versions() {
+    let compatible_versions = [
+        TOOLING_SCHEMA_VERSION.clone(),
+        Version::new(
+            TOOLING_SCHEMA_VERSION.major,
+            TOOLING_SCHEMA_VERSION.minor + 1,
+            0,
+        ),
+    ];
+
+    for version in compatible_versions {
+        let mut document = fixture();
+        let mut envelope = ProbeEnvelope::failure(probe_identity(), failure_fixture());
+
+        document.schema = version.clone();
+        envelope.schema = version.clone();
+
+        document
+            .validate()
+            .unwrap_or_else(|error| panic!("schema {version} should be compatible: {error}"));
+        envelope
+            .validate()
+            .unwrap_or_else(|error| panic!("schema {version} should be compatible: {error}"));
+    }
+}
+
+#[test]
+fn schema_validation_rejects_next_major_and_older_minor_versions() {
+    let incompatible_versions = [
+        Version::new(TOOLING_SCHEMA_VERSION.major + 1, 0, 0),
+        Version::new(
+            TOOLING_SCHEMA_VERSION.major,
+            TOOLING_SCHEMA_VERSION
+                .minor
+                .checked_sub(1)
+                .expect("the current schema has an older minor release"),
+            0,
+        ),
+    ];
+
+    for version in incompatible_versions {
+        let mut document = fixture();
+        let mut envelope = ProbeEnvelope::failure(probe_identity(), failure_fixture());
+
+        document.schema = version.clone();
+        envelope.schema = version.clone();
+
+        assert!(matches!(
+            document.validate(),
+            Err(ValidationError::IncompatibleSchema { actual, .. }) if actual == version
+        ));
+        assert!(matches!(
+            envelope.validate(),
+            Err(ProbeValidationError::IncompatibleSchema { actual, .. }) if actual == version
+        ));
+    }
 }
 
 #[test]

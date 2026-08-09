@@ -59,13 +59,18 @@ pub(super) fn relevant_diagnostics(
 ) -> Vec<Diagnostic> {
     diagnostics
         .iter()
-        .filter(|diagnostic| {
-            diagnostic.resources.is_empty()
-                || diagnostic
-                    .resources
-                    .iter()
-                    .any(|resource| selected.contains(resource))
+        .filter_map(|diagnostic| {
+            if diagnostic.resources.is_empty() {
+                return Some(diagnostic.clone());
+            }
+
+            let mut diagnostic = diagnostic.clone();
+
+            diagnostic
+                .resources
+                .retain(|resource| selected.contains(resource));
+
+            (!diagnostic.resources.is_empty()).then_some(diagnostic)
         })
-        .cloned()
         .collect()
 }

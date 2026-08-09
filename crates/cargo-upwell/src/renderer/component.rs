@@ -639,6 +639,8 @@ pub enum ComponentRenderError {
         #[source]
         source: std::io::Error,
     },
+    #[error("renderer component `{path}` is not a regular file")]
+    ComponentNotRegular { path: std::path::PathBuf },
     #[error("renderer component `{path}` exceeds the {limit}-byte file limit")]
     ComponentTooLarge {
         path: std::path::PathBuf,
@@ -699,26 +701,93 @@ pub enum ComponentRenderError {
 }
 
 fn read_bounded(path: &std::path::Path, limit: usize) -> Result<Vec<u8>, ComponentRenderError> {
-    let file = std::fs::File::open(path).map_err(|source| ComponentRenderError::Read {
-        path: path.to_path_buf(),
+    let path = path.to_path_buf();
+    let metadata =
+        std::fs::symlink_metadata(&path).map_err(|source| ComponentRenderError::Read {
+            path: path.clone(),
+            source,
+        })?;
+
+    // Reject known special files before opening them: opening a FIFO or device can block before
+    // Wasmtime's execution deadline exists. The platform-specific open then closes the race with
+    // this check, and handle metadata verifies the object that was actually opened.
+    if !is_regular_component(&metadata) {
+        return Err(ComponentRenderError::ComponentNotRegular { path });
+    }
+
+    let mut file = open_component(&path).map_err(|source| ComponentRenderError::Read {
+        path: path.clone(),
         source,
     })?;
+    let metadata = file
+        .metadata()
+        .map_err(|source| ComponentRenderError::Read {
+            path: path.clone(),
+            source,
+        })?;
+
+    if !is_regular_component(&metadata) {
+        return Err(ComponentRenderError::ComponentNotRegular { path });
+    }
+    if metadata.len() > u64::try_from(limit).unwrap_or(u64::MAX) {
+        return Err(ComponentRenderError::ComponentTooLarge { path, limit });
+    }
+
     let mut bytes = Vec::with_capacity(limit.min(64 * 1024));
 
-    file.take((limit as u64).saturating_add(1))
+    (&mut file)
+        .take(u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1))
         .read_to_end(&mut bytes)
         .map_err(|source| ComponentRenderError::Read {
-            path: path.to_path_buf(),
+            path: path.clone(),
             source,
         })?;
     if bytes.len() > limit {
-        return Err(ComponentRenderError::ComponentTooLarge {
-            path: path.to_path_buf(),
-            limit,
-        });
+        return Err(ComponentRenderError::ComponentTooLarge { path, limit });
     }
 
     Ok(bytes)
+}
+
+#[cfg(not(windows))]
+fn is_regular_component(metadata: &std::fs::Metadata) -> bool {
+    metadata.is_file()
+}
+
+#[cfg(windows)]
+fn is_regular_component(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt as _;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+    metadata.is_file() && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
+}
+
+#[cfg(unix)]
+fn open_component(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+}
+
+#[cfg(windows)]
+fn open_component(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn open_component(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(path)
 }
 
 fn deadline_ticks(deadline: Duration) -> u64 {

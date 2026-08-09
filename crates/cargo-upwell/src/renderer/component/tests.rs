@@ -35,6 +35,72 @@ fn component_file_limit_is_enforced_before_wasmtime_compilation() {
     ));
 }
 
+#[cfg(unix)]
+#[test]
+fn component_loader_rejects_fifo_without_waiting_for_a_writer() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let fixture = TempFixture::new("cargo-upwell-renderer-fifo");
+    let path = fixture.child("renderer.component.wasm");
+    let encoded = CString::new(path.as_os_str().as_bytes()).expect("fixture path has no NUL");
+
+    // SAFETY: `encoded` is a live, NUL-terminated path and the mode is valid for `mkfifo`.
+    assert_eq!(unsafe { libc::mkfifo(encoded.as_ptr(), 0o600) }, 0);
+
+    let worker_path = path.clone();
+    let (result_tx, result_rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let _ = result_tx.send(read_bounded(&worker_path, 1024));
+    });
+    let result = match result_rx.recv_timeout(Duration::from_secs(1)) {
+        Ok(result) => result,
+        Err(error) => {
+            // Unblock a regressed blocking reader so this test can cleanly join before failing.
+            let rescue = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&path)
+                .expect("open FIFO rescue endpoint");
+            drop(rescue);
+            worker.join().expect("FIFO reader joins after rescue");
+            panic!("renderer FIFO check blocked waiting for a writer: {error}");
+        }
+    };
+
+    worker.join().expect("FIFO reader joins");
+    assert!(matches!(
+        result,
+        Err(ComponentRenderError::ComponentNotRegular { path: error_path })
+            if error_path == path
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn component_loader_rejects_symlinks_instead_of_following_them() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = TempFixture::new("cargo-upwell-renderer-symlink");
+    let target = fixture.child("target.component.wasm");
+    let link = fixture.child("renderer.component.wasm");
+    std::fs::write(&target, b"target bytes").expect("target writes");
+    symlink(&target, &link).expect("component symlink exists");
+
+    assert_eq!(
+        read_bounded(&target, 1024).expect("regular target loads"),
+        b"target bytes"
+    );
+    assert!(matches!(
+        read_bounded(&link, 1024),
+        Err(ComponentRenderError::ComponentNotRegular { path }) if path == link
+    ));
+}
+
 #[test]
 fn input_limit_is_enforced_before_component_loading() {
     let fixture = TempFixture::new("cargo-upwell-renderer-input");

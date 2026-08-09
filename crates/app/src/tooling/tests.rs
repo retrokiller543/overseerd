@@ -1653,6 +1653,13 @@ struct ThirdPartyProtocol;
 /// Prepared third-party protocol metadata.
 struct PreparedThirdPartyProtocol;
 
+/// Third-party protocol relying on the public prepared tooling default.
+#[derive(Default)]
+struct DefaultToolingProtocol;
+
+/// Prepared third-party protocol with no tooling override.
+struct PreparedDefaultToolingProtocol;
+
 /// Built third-party protocol runtime.
 struct ThirdPartyRuntime;
 
@@ -1674,6 +1681,21 @@ impl ProtocolDefinition for ThirdPartyProtocol {
 
     fn prepare(self, _context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error> {
         Ok(PreparedThirdPartyProtocol)
+    }
+}
+
+impl ProtocolDefinition for DefaultToolingProtocol {
+    type Prepared = PreparedDefaultToolingProtocol;
+    type Error = crate::Error;
+
+    const ID: crate::ProtocolId =
+        crate::namespaced_id!(crate::ProtocolId, "third-party/default-tooling");
+    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
+
+    fn register(&self, _registry: &mut AppRegistry) {}
+
+    fn prepare(self, _context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error> {
+        Ok(PreparedDefaultToolingProtocol)
     }
 }
 
@@ -1722,6 +1744,15 @@ impl PreparedProtocol for PreparedThirdPartyProtocol {
     }
 }
 
+impl PreparedProtocol for PreparedDefaultToolingProtocol {
+    type Runtime = ThirdPartyRuntime;
+    type Error = crate::Error;
+
+    fn build(self, _runtime: &crate::AppRuntime) -> Result<Self::Runtime, Self::Error> {
+        Ok(ThirdPartyRuntime)
+    }
+}
+
 impl ProtocolRuntime for ThirdPartyRuntime {
     type Error = crate::Error;
 }
@@ -1745,6 +1776,29 @@ impl PreparedProtocol for InvalidPreparedToolingProtocol {
 }
 
 #[test]
+fn third_party_protocol_without_tooling_override_uses_default_display() {
+    let document = App::<DefaultToolingProtocol>::builder("default-tooling-protocol")
+        .config_source(ConfigManager::<Toml>::empty())
+        .prepare()
+        .expect("third-party protocol prepares with default tooling")
+        .tooling_document()
+        .expect("default protocol tooling projects");
+    let protocol = document
+        .resources
+        .iter()
+        .find(|resource| resource.id == "protocol:third-party/default-tooling")
+        .expect("protocol resource is projected");
+
+    assert_eq!(
+        protocol
+            .display
+            .as_ref()
+            .and_then(|display| display.label.as_deref()),
+        Some("Protocol")
+    );
+}
+
+#[test]
 fn third_party_protocol_projects_owner_scoped_generic_metadata() {
     TOOLING_CALLS.store(0, Ordering::SeqCst);
 
@@ -1760,6 +1814,19 @@ fn third_party_protocol_projects_owner_scoped_generic_metadata() {
         .tooling_document()
         .expect("third-party metadata reprojects");
 
+    let protocol = document
+        .resources
+        .iter()
+        .find(|resource| resource.id == "protocol:third-party/protocol")
+        .expect("protocol resource is projected");
+
+    assert_eq!(
+        protocol
+            .display
+            .as_ref()
+            .and_then(|display| display.label.as_deref()),
+        Some("Third-party protocol")
+    );
     assert!(document.resources.iter().any(|resource| {
         resource.id == "protocol:third-party/protocol/tooling/transport"
             && resource

@@ -3,9 +3,11 @@
 mod catalog;
 mod publish;
 
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
 use cargo_generate::{GenerateArgs, TemplatePath, Vcs};
+use fs2::FileExt as _;
 use tempfile::TempDir;
 use thiserror::Error;
 
@@ -95,6 +97,16 @@ pub enum InitError {
         /// Manifest read, parse, validation, or write failure.
         #[source]
         source: anyhow::Error,
+    },
+    /// The parent workspace manifest changed while this command was preparing an update.
+    #[error(
+        "workspace manifest `{manifest}` changed or is being updated; no workspace changes were written; reconcile the manifest and retry `cargo upwell init`"
+    )]
+    WorkspaceManifestConflict {
+        /// Generated project directory that was being registered.
+        project: PathBuf,
+        /// Parent workspace manifest that could not safely be replaced.
+        manifest: PathBuf,
     },
     /// Catalog loading or template selection failed.
     #[error(transparent)]
@@ -393,11 +405,39 @@ fn upwell_base_dependency(path: Option<&Path>) -> Result<String, std::io::Error>
 }
 
 fn add_to_parent_workspace(project: &Path) -> Result<(), InitError> {
+    add_to_parent_workspace_with(project, || {})
+}
+
+fn add_to_parent_workspace_with(
+    project: &Path,
+    before_replace: impl FnOnce(),
+) -> Result<(), InitError> {
     let manifest = project
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("Cargo.toml");
-    let result = (|| -> anyhow::Result<()> {
+    let parent = manifest.parent().ok_or_else(|| InitError::Workspace {
+        project: project.to_path_buf(),
+        manifest: manifest.clone(),
+        source: anyhow::anyhow!("workspace manifest has no parent"),
+    })?;
+    let lock_path = parent.join(".cargo-upwell-workspace.lock");
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&lock_path)
+        .and_then(|file| {
+            file.lock_exclusive()?;
+            Ok(file)
+        })
+        .map_err(|source| InitError::Workspace {
+            project: project.to_path_buf(),
+            manifest: manifest.clone(),
+            source: source.into(),
+        })?;
+    let result = (|| -> anyhow::Result<bool> {
         let source = std::fs::read_to_string(&manifest)?;
         let mut document = source.parse::<toml::Table>()?;
         let members = document
@@ -417,9 +457,6 @@ fn add_to_parent_workspace(project: &Path) -> Result<(), InitError> {
             members.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
         }
 
-        let parent = manifest
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("workspace manifest has no parent"))?;
         let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
 
         std::io::Write::write_all(
@@ -427,16 +464,30 @@ fn add_to_parent_workspace(project: &Path) -> Result<(), InitError> {
             toml::to_string_pretty(&document)?.as_bytes(),
         )?;
         temporary.as_file().sync_all()?;
+
+        before_replace();
+        if std::fs::read_to_string(&manifest)? != source {
+            return Ok(false);
+        }
+
         temporary.persist(&manifest)?;
 
-        Ok(())
+        Ok(true)
     })();
+    drop(lock);
 
-    result.map_err(|source| InitError::Workspace {
-        project: project.to_path_buf(),
-        manifest,
-        source,
-    })
+    match result {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(InitError::WorkspaceManifestConflict {
+            project: project.to_path_buf(),
+            manifest,
+        }),
+        Err(source) => Err(InitError::Workspace {
+            project: project.to_path_buf(),
+            manifest,
+            source,
+        }),
+    }
 }
 
 #[cfg(test)]

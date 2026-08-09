@@ -1,9 +1,17 @@
 use std::any::TypeId;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use upwell_core::{ResolverSet, ScopeId, TypeDescriptor};
+use upwell_core::{
+    Cardinality, DependencyDescriptor, ResolutionMode, ResolverSet, ScopeId, StaticScope,
+    TypeDescriptor,
+};
+
+use crate::descriptors::component::from_boxed;
+use crate::{ComponentFactoryDescriptor, Injectable};
 
 use super::*;
 use crate::registry::selection::select_single_provider;
@@ -38,6 +46,176 @@ impl Scope for SameNameScope {
 
     fn name(&self) -> &'static str {
         "Test"
+    }
+}
+
+const FRESH_TARGET_SCOPE_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/fresh-target");
+const FRESH_OWNER_SCOPE_ID: ScopeId = upwell_core::namespaced_id!(ScopeId, "test/fresh-owner");
+
+struct FreshTargetScope;
+
+impl StaticScope for FreshTargetScope {
+    const ID: ScopeId = FRESH_TARGET_SCOPE_ID;
+    const RANK: u8 = 2;
+    const NAME: &'static str = "FreshTarget";
+}
+
+struct FreshOwnerScope;
+
+impl StaticScope for FreshOwnerScope {
+    const ID: ScopeId = FRESH_OWNER_SCOPE_ID;
+    const RANK: u8 = 1;
+    const NAME: &'static str = "FreshOwner";
+}
+
+trait ScopedProvider: Send + Sync {
+    fn source(&self) -> &'static str;
+}
+
+struct TargetProvider;
+
+impl ScopedProvider for TargetProvider {
+    fn source(&self) -> &'static str {
+        "target"
+    }
+}
+
+struct OwnerProvider;
+
+impl ScopedProvider for OwnerProvider {
+    fn source(&self) -> &'static str {
+        "owner"
+    }
+}
+
+struct TargetSeed(&'static str);
+
+struct FreshTarget {
+    provider: Arc<dyn ScopedProvider>,
+    seed: Arc<TargetSeed>,
+}
+
+fn no_dependencies() -> Vec<DependencyDescriptor> {
+    Vec::new()
+}
+
+fn fresh_target_dependencies() -> Vec<DependencyDescriptor> {
+    vec![
+        dependency::<dyn ScopedProvider>(false),
+        dependency::<TargetSeed>(true),
+    ]
+}
+
+fn dependency<T: ?Sized + 'static>(dynamic: bool) -> DependencyDescriptor {
+    DependencyDescriptor {
+        name: std::any::type_name::<T>(),
+        ty: TypeDescriptor::of::<T>(std::any::type_name::<T>()),
+        cardinality: Cardinality::One,
+        optional: false,
+        dynamic,
+        qualifier: None,
+        config: false,
+        resolution: ResolutionMode::Eager,
+    }
+}
+
+fn boxed_component<T: Send + Sync + 'static>(name: &'static str, value: Arc<T>) -> BoxedComponent {
+    BoxedComponent {
+        ty: TypeDescriptor::of::<T>(name),
+        value: Box::new(Injectable::into_stored(value)),
+    }
+}
+
+fn target_provider_factory(
+    _: &mut ComponentConstructionContext,
+) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + '_>> {
+    Box::pin(async { Ok(boxed_component("TargetProvider", Arc::new(TargetProvider))) })
+}
+
+fn owner_provider_factory(
+    _: &mut ComponentConstructionContext,
+) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + '_>> {
+    Box::pin(async { Ok(boxed_component("OwnerProvider", Arc::new(OwnerProvider))) })
+}
+
+fn fresh_target_factory(
+    cx: &mut ComponentConstructionContext,
+) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + '_>> {
+    Box::pin(async {
+        let provider = cx
+            .resolve::<Arc<dyn ScopedProvider>>()
+            .await?
+            .ok_or(Error::MissingComponent("ScopedProvider"))?;
+        let seed = cx
+            .resolve::<Arc<TargetSeed>>()
+            .await?
+            .ok_or(Error::MissingComponent("TargetSeed"))?;
+
+        Ok(boxed_component(
+            "FreshTarget",
+            Arc::new(FreshTarget { provider, seed }),
+        ))
+    })
+}
+
+static TARGET_PROVIDER_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    construct: target_provider_factory,
+    dependencies: no_dependencies,
+    default: false,
+}];
+static OWNER_PROVIDER_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    construct: owner_provider_factory,
+    dependencies: no_dependencies,
+    default: false,
+}];
+static FRESH_TARGET_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    construct: fresh_target_factory,
+    dependencies: fresh_target_dependencies,
+    default: false,
+}];
+
+fn target_provider_factories() -> &'static [ComponentFactoryDescriptor] {
+    &TARGET_PROVIDER_FACTORY
+}
+
+fn owner_provider_factories() -> &'static [ComponentFactoryDescriptor] {
+    &OWNER_PROVIDER_FACTORY
+}
+
+fn fresh_target_factories() -> &'static [ComponentFactoryDescriptor] {
+    &FRESH_TARGET_FACTORY
+}
+
+fn erase_provider<T: ScopedProvider + 'static>(component: &BoxedComponent) -> BoxedComponent {
+    let concrete = from_boxed::<Arc<T>>(component).expect("provider stored");
+    let erased: Arc<dyn ScopedProvider> = concrete;
+
+    BoxedComponent {
+        ty: TypeDescriptor::of::<dyn ScopedProvider>("dyn ScopedProvider"),
+        value: Box::new(Injectable::into_stored(erased)),
+    }
+}
+
+fn erase_target_provider(component: &BoxedComponent) -> BoxedComponent {
+    erase_provider::<TargetProvider>(component)
+}
+
+fn erase_owner_provider(component: &BoxedComponent) -> BoxedComponent {
+    erase_provider::<OwnerProvider>(component)
+}
+
+fn provider_descriptor(
+    concrete_ty: TypeDescriptor,
+    erase: fn(&BoxedComponent) -> BoxedComponent,
+) -> ProviderDescriptor {
+    ProviderDescriptor {
+        trait_ty: TypeDescriptor::of::<dyn ScopedProvider>("dyn ScopedProvider"),
+        concrete_ty,
+        qualifier: "scoped",
+        primary: false,
+        priority: 0,
+        ordering: &[],
+        erase,
     }
 }
 
@@ -302,6 +480,90 @@ fn registry_construction_rejects_orphan_provider() {
     };
 
     assert!(matches!(error, Error::ProviderComponentMissing(_)));
+}
+
+#[tokio::test]
+async fn fresh_target_resolves_from_its_declared_scope_ancestry() {
+    let target_provider = ComponentDescriptor {
+        id: "target-provider",
+        name: "TargetProvider",
+        ty: TypeDescriptor::of::<TargetProvider>("TargetProvider"),
+        scope: &FreshTargetScope,
+        factories: target_provider_factories,
+        hooks: upwell_hooks::no_hooks,
+    };
+    let owner_provider = ComponentDescriptor {
+        id: "owner-provider",
+        name: "OwnerProvider",
+        ty: TypeDescriptor::of::<OwnerProvider>("OwnerProvider"),
+        scope: &FreshOwnerScope,
+        factories: owner_provider_factories,
+        hooks: upwell_hooks::no_hooks,
+    };
+    let fresh_target = ComponentDescriptor {
+        id: "fresh-target",
+        name: "FreshTarget",
+        ty: TypeDescriptor::of::<FreshTarget>("FreshTarget"),
+        scope: &FreshTargetScope,
+        factories: fresh_target_factories,
+        hooks: upwell_hooks::no_hooks,
+    };
+    let target_seed = ComponentDescriptor::manual(
+        "target-seed",
+        "TargetSeed",
+        TypeDescriptor::of::<TargetSeed>("TargetSeed"),
+        &FreshTargetScope,
+    );
+    let components = [target_provider, owner_provider, fresh_target, target_seed]
+        .into_iter()
+        .map(|descriptor| (descriptor.ty.type_id, descriptor))
+        .collect();
+    let providers = vec![
+        provider_descriptor(target_provider.ty, erase_target_provider),
+        provider_descriptor(owner_provider.ty, erase_owner_provider),
+    ];
+    let registry = Arc::new(
+        ScopeRegistry::new(HashMap::new(), components, providers, HashMap::new())
+            .expect("registry validates"),
+    );
+    let root =
+        ScopeContainer::build_root(&[], Vec::new(), ResolverSet::new(), Arc::clone(&registry))
+            .await
+            .expect("root builds");
+    let seed = boxed_component("TargetSeed", Arc::new(TargetSeed("target-seed")));
+    let target_scope = ScopeContainer::open_child(
+        &FreshTargetScope,
+        root,
+        Arc::clone(&registry),
+        &[target_seed, target_provider],
+        vec![seed],
+    )
+    .await
+    .expect("target scope opens");
+    let owner_scope = ScopeContainer::open_child(
+        &FreshOwnerScope,
+        target_scope,
+        Arc::clone(&registry),
+        &[owner_provider],
+        Vec::new(),
+    )
+    .await
+    .expect("owner scope opens");
+
+    let boxed = construct_fresh_boxed(&registry, owner_scope, fresh_target)
+        .await
+        .expect("fresh target constructs");
+    let target = from_boxed::<Arc<FreshTarget>>(&boxed).expect("fresh target stored");
+
+    assert_eq!(
+        target.provider.source(),
+        "target",
+        "the owner's shorter-lived provider must not leak into fresh construction"
+    );
+    assert_eq!(
+        target.seed.0, "target-seed",
+        "a dynamic seed in the target's declared scope remains accessible"
+    );
 }
 
 #[tokio::test]

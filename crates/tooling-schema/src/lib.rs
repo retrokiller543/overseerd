@@ -79,8 +79,8 @@ const fn parse_package_version(version: &str) -> Version {
 
 fn schema_requirement() -> VersionReq {
     VersionReq::parse(&format!(
-        "^{}.{}",
-        TOOLING_SCHEMA_VERSION.major, TOOLING_SCHEMA_VERSION.minor
+        ">={TOOLING_SCHEMA_VERSION},<{}.0.0",
+        TOOLING_SCHEMA_VERSION.major + 1
     ))
     .expect("the package-derived tooling schema requirement is valid")
 }

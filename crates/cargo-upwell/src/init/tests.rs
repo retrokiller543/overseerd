@@ -4,7 +4,7 @@ use upwell_test_utils::TempFixture;
 
 use super::{
     Catalog, CatalogError, GitReference, InitError, InitRequest, TemplateSelection, TemplateSource,
-    init_project,
+    add_to_parent_workspace_with, init_project,
 };
 use crate::{RendererCommand, RendererImplementation};
 
@@ -451,4 +451,27 @@ fn reserved_generator_values_cannot_be_overridden() {
     .expect_err("reserved values are rejected");
 
     assert!(matches!(error, InitError::ReservedValue(name) if name == "upwell_version"));
+}
+
+#[test]
+fn workspace_registration_preserves_a_concurrent_manifest_edit() {
+    let fixture = TempFixture::new("cargo-upwell-workspace-conflict");
+    let project = fixture.child("generated");
+    let manifest = fixture.child("Cargo.toml");
+    let original = "[workspace]\nmembers = []\n";
+    let concurrent = "[workspace]\nmembers = []\n\n[workspace.metadata.concurrent]\nvalue = true\n";
+
+    std::fs::create_dir_all(&project).expect("project directory exists");
+    std::fs::write(&manifest, original).expect("workspace manifest exists");
+
+    let error = add_to_parent_workspace_with(&project, || {
+        std::fs::write(&manifest, concurrent).expect("concurrent edit is written");
+    })
+    .expect_err("concurrent manifest edit is rejected");
+
+    assert!(matches!(error, InitError::WorkspaceManifestConflict { .. }));
+    assert_eq!(
+        std::fs::read_to_string(&manifest).expect("manifest remains readable"),
+        concurrent
+    );
 }

@@ -866,10 +866,11 @@ impl<D: ProtocolDefinition> App<D> {
             }
         });
 
-        let result =
-            std::panic::AssertUnwindSafe(protocol.serve(runtime.clone(), shutdown, endpoint))
-                .catch_unwind()
-                .await;
+        let result = std::panic::AssertUnwindSafe(async {
+            protocol.serve(runtime.clone(), shutdown, endpoint).await
+        })
+        .catch_unwind()
+        .await;
 
         ctrlc.abort();
         let _ = ctrlc.await;

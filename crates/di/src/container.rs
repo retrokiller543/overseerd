@@ -291,7 +291,7 @@ async fn construct_transient_boxed(
 
 pub(crate) async fn construct_fresh_boxed(
     registry: &Arc<ScopeRegistry>,
-    parent: Arc<ScopeContainer>,
+    owner: Arc<ScopeContainer>,
     descriptor: ComponentDescriptor,
 ) -> crate::Result<BoxedComponent> {
     let factory =
@@ -302,11 +302,14 @@ pub(crate) async fn construct_fresh_boxed(
                 component_id: Some(descriptor.id.to_string()),
                 type_name: (descriptor.ty.type_name)().to_string(),
             })?;
-    let externals = parent.resolvers().clone();
-    let slot = parent.slot.clone();
+    let target_scope = owner
+        .container_for_scope(descriptor.scope)
+        .ok_or(Error::MissingComponent(descriptor.name))?;
+    let externals = target_scope.resolvers().clone();
+    let slot = owner.slot.clone();
     let mut cx = ComponentConstructionContext::new_with_slot(
         descriptor.scope,
-        Some(parent),
+        Some(target_scope),
         Arc::clone(registry),
         externals,
         slot,
@@ -440,6 +443,22 @@ impl ScopeContainer {
         self.parent
             .as_ref()
             .is_some_and(|parent| parent.can_access(scope))
+    }
+
+    /// Returns the container whose identity matches `scope` from this scope's
+    /// ancestry. Fresh construction uses this boundary as its resolution root so
+    /// the rebuilt target cannot observe components from its shorter-lived owner.
+    fn container_for_scope(
+        self: &Arc<Self>,
+        scope: &'static dyn Scope,
+    ) -> Option<Arc<ScopeContainer>> {
+        if self.scope.id() == scope.id() {
+            return Some(Arc::clone(self));
+        }
+
+        self.parent
+            .as_ref()
+            .and_then(|parent| parent.container_for_scope(scope))
     }
 
     /// Resolves a retained singleton construction plan into the root container.
