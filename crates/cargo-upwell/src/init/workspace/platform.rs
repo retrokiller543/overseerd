@@ -7,28 +7,15 @@ use super::super::InitError;
 pub(super) enum ExchangeError {
     Unsupported(String),
     Io(std::io::Error),
-    #[cfg(windows)]
-    AfterMutation(std::io::Error),
-}
-
-pub(super) fn candidate_path<'a>(displaced: &'a Path, _candidate: &'a Path) -> &'a Path {
-    #[cfg(windows)]
-    {
-        _candidate
-    }
-    #[cfg(not(windows))]
-    {
-        displaced
-    }
 }
 
 pub(super) fn ensure_supported(project: &Path, manifest: &Path) -> Result<(), InitError> {
-    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let _ = (project, manifest);
         Ok(())
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         Err(InitError::UnsupportedWorkspacePublication {
             project: project.to_path_buf(),
@@ -39,65 +26,54 @@ pub(super) fn ensure_supported(project: &Path, manifest: &Path) -> Result<(), In
 }
 
 pub(super) fn open_manifest(path: &Path) -> std::io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true);
-    #[cfg(windows)]
+    #[cfg(unix)]
     {
-        use std::os::windows::fs::OpenOptionsExt as _;
-        use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
-        options.share_mode(FILE_SHARE_READ);
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "workspace manifest must not be a symlink",
+            ));
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path)?;
+        if !file.metadata()?.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "workspace manifest must be a regular file",
+            ));
+        }
+        Ok(file)
     }
-    options.open(path)
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "safe workspace manifest publication is unavailable on this platform",
+        ))
+    }
 }
 
 pub(super) fn open_published(path: &Path) -> std::io::Result<File> {
-    OpenOptions::new().read(true).open(path)
+    open_manifest(path)
 }
 
 pub(super) fn sync_directory(path: &Path) -> std::io::Result<()> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt as _;
-        use std::os::windows::io::FromRawHandle as _;
-        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-        use windows_sys::Win32::Storage::FileSystem::{
-            CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_GENERIC_READ, FILE_SHARE_DELETE,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, FlushFileBuffers, OPEN_EXISTING,
-        };
-
-        let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        // SAFETY: `path` is a live nul-terminated UTF-16 buffer; the returned owned handle is
-        // converted to `File` exactly once on success.
-        let handle = unsafe {
-            CreateFileW(
-                path.as_ptr(),
-                FILE_GENERIC_READ,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                std::ptr::null(),
-                OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS,
-                std::ptr::null_mut(),
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(std::io::Error::last_os_error());
-        }
-        // SAFETY: `handle` was returned by `CreateFileW` and ownership transfers to `File`.
-        let directory = unsafe { File::from_raw_handle(handle as _) };
-        // SAFETY: the file owns a valid directory handle accepted by `FlushFileBuffers`.
-        let result = unsafe { FlushFileBuffers(handle) };
-        if result == 0 {
-            let error = std::io::Error::last_os_error();
-            drop(directory);
-            return Err(error);
-        }
-        drop(directory);
-        let _ = CloseHandle;
-        Ok(())
-    }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
         File::open(path)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "directory durability is unavailable on this platform",
+        ))
     }
 }
 
@@ -156,26 +132,7 @@ pub(super) fn exchange(
         }
         Ok(())
     }
-    #[cfg(windows)]
-    {
-        use std::io::{Read as _, Seek as _, Write as _};
-
-        let _ = (manifest, _displaced);
-        let mut replacement = Vec::new();
-        File::open(candidate)
-            .and_then(|mut file| file.read_to_end(&mut replacement))
-            .map_err(ExchangeError::Io)?;
-
-        _active
-            .rewind()
-            .and_then(|()| _active.write_all(&replacement))
-            .and_then(|()| _active.set_len(replacement.len() as u64))
-            .and_then(|()| _active.sync_all())
-            .map_err(ExchangeError::AfterMutation)?;
-
-        Ok(())
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = (_active, manifest, candidate, _displaced);
         Err(ExchangeError::Unsupported(String::from(
@@ -185,30 +142,21 @@ pub(super) fn exchange(
 }
 
 pub(super) fn verify_publication(
-    active: &File,
+    active: &mut File,
+    candidate: &File,
     manifest: &Path,
     displaced: &Path,
+    original: &[u8],
     expected: &[u8],
 ) -> std::io::Result<()> {
-    #[cfg(windows)]
-    {
-        use std::io::{Read as _, Seek as _};
-
-        let _ = displaced;
-        let mut active = active;
-        active.rewind()?;
-        let mut bytes = Vec::new();
-        active.read_to_end(&mut bytes)?;
-        if bytes != expected || !path_names_file(active, manifest)? {
-            return Err(std::io::Error::other(
-                "published manifest bytes or identity did not verify",
-            ));
-        }
-        Ok(())
-    }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
         let published = open_published(manifest)?;
+        if !same_file(candidate, &published)? {
+            return Err(std::io::Error::other(
+                "published manifest no longer names the candidate",
+            ));
+        }
         let mut bytes = Vec::new();
         (&published).read_to_end(&mut bytes)?;
         if bytes != expected {
@@ -216,100 +164,62 @@ pub(super) fn verify_publication(
                 "published manifest bytes did not verify",
             ));
         }
-        if !path_names_file(active, displaced)? {
+        let displaced_file = open_manifest(displaced)?;
+        if !same_file(active, &displaced_file)? {
             return Err(std::io::Error::other(
                 "displaced recovery no longer names the original manifest",
             ));
         }
-        verify_metadata(active, &published)
-    }
-}
-
-pub(super) fn rollback(
-    active: &mut File,
-    manifest: &Path,
-    snapshot: &File,
-    displaced: &Path,
-) -> std::io::Result<()> {
-    #[cfg(windows)]
-    {
-        use std::io::{Read as _, Seek as _, Write as _};
-
-        let _ = displaced;
-        let mut original = Vec::new();
-        let mut snapshot = snapshot;
-        snapshot.rewind()?;
-        snapshot.read_to_end(&mut original)?;
+        use std::io::Seek as _;
         active.rewind()?;
-        active.write_all(&original)?;
-        active.set_len(original.len() as u64)?;
-        active.sync_all()?;
-        active.rewind()?;
-        let mut verified = Vec::new();
-        active.read_to_end(&mut verified)?;
-        if verified != original || !path_names_file(active, manifest)? {
+        let mut displaced_bytes = Vec::new();
+        active.read_to_end(&mut displaced_bytes)?;
+        if displaced_bytes != original {
             return Err(std::io::Error::other(
-                "rollback bytes or identity did not verify",
+                "displaced manifest changed during publication",
             ));
         }
+        verify_metadata(active, &published)?;
+        if !path_names_file(candidate, manifest)? || !path_names_file(active, displaced)? {
+            return Err(std::io::Error::other(
+                "publication paths changed during verification",
+            ));
+        }
+
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(not(unix))]
     {
-        let _ = snapshot;
-        match exchange(active, manifest, displaced, displaced) {
-            Ok(()) => Ok(()),
-            Err(ExchangeError::Io(error)) => Err(error),
-            #[cfg(windows)]
-            Err(ExchangeError::AfterMutation(error)) => Err(error),
-            Err(ExchangeError::Unsupported(reason)) => {
-                Err(std::io::Error::new(std::io::ErrorKind::Unsupported, reason))
-            }
-        }
+        let _ = (active, candidate, manifest, displaced, original, expected);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "safe workspace manifest publication is unavailable on this platform",
+        ))
     }
 }
 
 pub(super) fn path_names_file(file: &File, path: &Path) -> std::io::Result<bool> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt as _;
-        let opened = file.metadata()?;
-        let current = std::fs::metadata(path)?;
-        Ok(opened.dev() == current.dev() && opened.ino() == current.ino())
+        let current = open_manifest(path)?;
+
+        same_file(file, &current)
     }
-    #[cfg(windows)]
-    {
-        let opened = windows_file_identity(file)?;
-        let current = open_published(path)?;
-        Ok(opened == windows_file_identity(&current)?)
-    }
-    #[cfg(not(any(unix, windows)))]
+    #[cfg(not(unix))]
     {
         let _ = (file, path);
         Ok(false)
     }
 }
 
-#[cfg(windows)]
-fn windows_file_identity(file: &File) -> std::io::Result<(u32, u64)> {
-    use std::mem::MaybeUninit;
-    use std::os::windows::io::AsRawHandle as _;
-    use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
-    };
-    let mut information = MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
-    // SAFETY: `file` owns a valid handle and the API initializes the output on success.
-    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) }
-        == 0
-    {
-        return Err(std::io::Error::last_os_error());
-    }
-    // SAFETY: the successful API call initialized the structure.
-    let information = unsafe { information.assume_init() };
-    Ok((
-        information.dwVolumeSerialNumber,
-        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow),
-    ))
+#[cfg(unix)]
+fn same_file(left: &File, right: &File) -> std::io::Result<bool> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let left = left.metadata()?;
+    let right = right.metadata()?;
+
+    Ok(left.dev() == right.dev() && left.ino() == right.ino())
 }
 
 pub(super) fn copy_metadata(source: &File, destination: &File) -> std::io::Result<()> {
@@ -354,10 +264,8 @@ pub(super) fn copy_metadata(source: &File, destination: &File) -> std::io::Resul
             destination.set_xattr(&name, &value)?;
         }
     }
-    #[cfg(windows)]
-    {
-        let _ = (source, destination);
-    }
+    #[cfg(not(unix))]
+    let _ = (source, destination);
     Ok(())
 }
 
@@ -370,65 +278,8 @@ pub(super) fn protect_recovery(source: &File, recovery: &File) -> std::io::Resul
     }
     #[cfg(not(unix))]
     {
-        #[cfg(windows)]
-        {
-            use std::os::windows::io::AsRawHandle as _;
-            use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
-            use windows_sys::Win32::Security::Authorization::{
-                GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo,
-            };
-            use windows_sys::Win32::Security::{
-                ACL, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
-                OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
-            };
-
-            let mut owner: PSID = std::ptr::null_mut();
-            let mut group: PSID = std::ptr::null_mut();
-            let mut dacl: *mut ACL = std::ptr::null_mut();
-            let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
-            let information =
-                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
-            // SAFETY: all output pointers are valid and `source` owns a live file handle.
-            let read = unsafe {
-                GetSecurityInfo(
-                    source.as_raw_handle() as _,
-                    SE_FILE_OBJECT,
-                    information,
-                    &mut owner,
-                    &mut group,
-                    &mut dacl,
-                    std::ptr::null_mut(),
-                    &mut descriptor,
-                )
-            };
-            if read != ERROR_SUCCESS {
-                return Err(std::io::Error::from_raw_os_error(read as i32));
-            }
-            // SAFETY: owner, group, and dacl point into `descriptor`, which remains allocated for
-            // this call; `recovery` owns a live destination handle.
-            let written = unsafe {
-                SetSecurityInfo(
-                    recovery.as_raw_handle() as _,
-                    SE_FILE_OBJECT,
-                    information,
-                    owner,
-                    group,
-                    dacl,
-                    std::ptr::null(),
-                )
-            };
-            // SAFETY: `descriptor` was allocated by `GetSecurityInfo` on success.
-            unsafe { LocalFree(descriptor.cast()) };
-            if written != ERROR_SUCCESS {
-                return Err(std::io::Error::from_raw_os_error(written as i32));
-            }
-            Ok(())
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = (source, recovery);
-            Ok(())
-        }
+        let _ = (source, recovery);
+        Ok(())
     }
 }
 
@@ -454,10 +305,8 @@ pub(super) fn verify_metadata(source: &File, destination: &File) -> std::io::Res
             ));
         }
     }
-    #[cfg(windows)]
-    {
-        let _ = (source, destination);
-    }
+    #[cfg(not(unix))]
+    let _ = (source, destination);
     Ok(())
 }
 

@@ -2,46 +2,54 @@ use std::time::{Duration, SystemTime};
 
 use upwell_test_utils::TempFixture;
 
+use crate::init::InitError;
+
 use super::{
-    CANDIDATE_SUFFIX, COMPLETE_SUFFIX, DISPLACED_SUFFIX, INDETERMINATE_SUFFIX, MAX_RECOVERIES,
-    PENDING_SUFFIX, RECOVERY_PREFIX, SNAPSHOT_SUFFIX, cleanup_recoveries, recovery_id,
-    register_with,
+    CANDIDATE_SUFFIX, COMPLETE_SUFFIX, DISPLACED_SUFFIX, INDETERMINATE_SUFFIX,
+    MAX_UNRESOLVED_RECOVERIES, PENDING_SUFFIX, RECOVERY_PREFIX, SNAPSHOT_SUFFIX,
+    cleanup_recoveries, recovery_id, register_with,
 };
 
 #[test]
 fn recovery_names_are_strictly_recognized() {
+    let id = "0123456789abcdef0123456789abcdef-01234567-ab";
+
     assert_eq!(
-        recovery_id(".cargo-upwell-workspace-recovery-0123-ab.snapshot"),
-        Some("0123-ab")
+        recovery_id(&format!(".cargo-upwell-workspace-recovery-{id}.snapshot")),
+        Some(id)
     );
     assert_eq!(
-        recovery_id(".cargo-upwell-workspace-recovery-0123-ab.unrelated"),
+        recovery_id(&format!(".cargo-upwell-workspace-recovery-{id}.unrelated")),
         None
     );
     assert_eq!(
-        recovery_id(".cargo-upwell-workspace-recovery-../x.snapshot"),
+        recovery_id(".cargo-upwell-workspace-recovery-dead.snapshot"),
         None
     );
 }
 
 #[test]
-fn cleanup_expires_pairs_and_enforces_hard_cap() {
+fn cleanup_expires_completed_groups_and_caps_unresolved_groups() {
     let fixture = TempFixture::new("cargo-upwell-workspace-recovery-bounds");
-    for index in 0..(MAX_RECOVERIES + 3) {
-        for suffix in [SNAPSHOT_SUFFIX, DISPLACED_SUFFIX] {
+    for index in 0..(MAX_UNRESOLVED_RECOVERIES + 3) {
+        let id = format!("{index:032x}-00000001-00");
+
+        for suffix in [SNAPSHOT_SUFFIX, PENDING_SUFFIX] {
             std::fs::write(
-                fixture.child(format!("{RECOVERY_PREFIX}{index:02x}{suffix}")),
+                fixture.child(format!("{RECOVERY_PREFIX}{id}{suffix}")),
                 index.to_string(),
             )
             .expect("recognized recovery file exists");
         }
     }
-    let unrelated = fixture.child(format!("{RECOVERY_PREFIX}00.unrelated"));
+    let unrelated = fixture.child(format!("{RECOVERY_PREFIX}dead.snapshot"));
     std::fs::write(&unrelated, "untouched").expect("unrelated file exists");
-    std::fs::create_dir(fixture.child(format!("{RECOVERY_PREFIX}00{CANDIDATE_SUFFIX}")))
-        .expect("recognized-looking directory exists");
+    std::fs::create_dir(fixture.child(format!(
+        "{RECOVERY_PREFIX}00000000000000000000000000000000-00000001-00{CANDIDATE_SUFFIX}"
+    )))
+    .expect("recognized-looking directory exists");
 
-    let error = cleanup_recoveries(fixture.path(), SystemTime::now(), MAX_RECOVERIES)
+    let error = cleanup_recoveries(fixture.path(), SystemTime::now(), MAX_UNRESOLVED_RECOVERIES)
         .expect_err("live recovery cap blocks another transaction");
 
     let recognized = std::fs::read_dir(fixture.path())
@@ -50,19 +58,26 @@ fn cleanup_expires_pairs_and_enforces_hard_cap() {
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
         .filter(|entry| recovery_id(&entry.file_name().to_string_lossy()).is_some())
         .count();
-    assert_eq!(recognized, (MAX_RECOVERIES + 3) * 2);
-    assert!(error.to_string().contains("live recovery transactions"));
+    assert_eq!(recognized, (MAX_UNRESOLVED_RECOVERIES + 3) * 2);
+    assert!(
+        error
+            .to_string()
+            .contains("unresolved recovery transactions")
+    );
     assert!(unrelated.exists());
 }
 
 #[test]
 fn cleanup_removes_expired_recognized_files_only() {
     let fixture = TempFixture::new("cargo-upwell-workspace-recovery-expiry");
-    let expired = fixture.child(format!("{RECOVERY_PREFIX}01{SNAPSHOT_SUFFIX}"));
+    let expired = fixture.child(format!(
+        "{RECOVERY_PREFIX}00000000000000000000000000000001-00000001-00{SNAPSHOT_SUFFIX}"
+    ));
     std::fs::write(&expired, "snapshot").expect("snapshot exists");
     let future = SystemTime::now() + Duration::from_secs(25 * 60 * 60);
 
-    cleanup_recoveries(fixture.path(), future, MAX_RECOVERIES).expect("cleanup succeeds");
+    cleanup_recoveries(fixture.path(), future, MAX_UNRESOLVED_RECOVERIES)
+        .expect("cleanup succeeds");
 
     assert!(!expired.exists());
 }
@@ -70,10 +85,10 @@ fn cleanup_removes_expired_recognized_files_only() {
 #[test]
 fn cleanup_keeps_unresolved_and_uses_newest_group_timestamp() {
     let fixture = TempFixture::new("cargo-upwell-workspace-recovery-state");
-    let pending = fixture.child(format!("{RECOVERY_PREFIX}01{PENDING_SUFFIX}"));
-    let indeterminate = fixture.child(format!("{RECOVERY_PREFIX}02{INDETERMINATE_SUFFIX}"));
-    let old_snapshot = fixture.child(format!("{RECOVERY_PREFIX}03{SNAPSHOT_SUFFIX}"));
-    let fresh_complete = fixture.child(format!("{RECOVERY_PREFIX}03{COMPLETE_SUFFIX}"));
+    let pending = recovery_path(&fixture, 1, PENDING_SUFFIX);
+    let indeterminate = recovery_path(&fixture, 2, INDETERMINATE_SUFFIX);
+    let old_snapshot = recovery_path(&fixture, 3, SNAPSHOT_SUFFIX);
+    let fresh_complete = recovery_path(&fixture, 3, COMPLETE_SUFFIX);
 
     std::fs::write(&pending, "pending").expect("pending state exists");
     std::fs::write(&indeterminate, "indeterminate").expect("indeterminate state exists");
@@ -84,7 +99,11 @@ fn cleanup_keeps_unresolved_and_uses_newest_group_timestamp() {
     let error = cleanup_recoveries(fixture.path(), future, 1)
         .expect_err("unresolved groups continue to count against the cap");
 
-    assert!(error.to_string().contains("live recovery transactions"));
+    assert!(
+        error
+            .to_string()
+            .contains("unresolved recovery transactions")
+    );
     assert!(pending.exists());
     assert!(indeterminate.exists());
     assert!(old_snapshot.exists());
@@ -121,4 +140,59 @@ fn existing_member_is_a_zero_write_success() {
                 .to_string_lossy()
                 .starts_with(RECOVERY_PREFIX))
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn concurrent_replacement_after_validation_is_retained() {
+    let fixture = TempFixture::new("cargo-upwell-workspace-post-validation-race");
+    let project = fixture.child("generated");
+    let manifest = fixture.child("Cargo.toml");
+    let replacement = fixture.child("Cargo.toml.editor");
+    let original = "[workspace]\nmembers = []\n";
+    let concurrent = "[workspace]\nmembers = []\n\n[workspace.metadata.editor]\nvalue = true\n";
+
+    std::fs::create_dir_all(&project).expect("project directory exists");
+    std::fs::write(&manifest, original).expect("workspace manifest exists");
+    std::fs::write(&replacement, concurrent).expect("editor replacement exists");
+
+    let error = register_with(
+        &project,
+        || {},
+        || std::fs::rename(&replacement, &manifest).expect("editor atomically replaces manifest"),
+    )
+    .expect_err("stale publication is retained for recovery");
+
+    assert!(matches!(
+        error,
+        InitError::WorkspacePublicationIndeterminate { .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(&replacement)
+            .expect_err("replacement path was exchanged")
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+    assert!(
+        std::fs::read_to_string(&manifest)
+            .expect("published manifest remains readable")
+            .contains("generated")
+    );
+    assert!(
+        std::fs::read_dir(fixture.path())
+            .expect("fixture remains readable")
+            .filter_map(Result::ok)
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(DISPLACED_SUFFIX)
+                && std::fs::read_to_string(entry.path())
+                    .is_ok_and(|contents| contents == concurrent))
+    );
+}
+
+fn recovery_path(fixture: &TempFixture, sequence: usize, suffix: &str) -> std::path::PathBuf {
+    fixture.child(format!(
+        "{RECOVERY_PREFIX}{sequence:032x}-00000001-00{suffix}"
+    ))
 }

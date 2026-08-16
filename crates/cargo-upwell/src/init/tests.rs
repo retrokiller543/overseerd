@@ -529,7 +529,7 @@ fn workspace_registration_preserves_late_writes_and_recovery_bytes() {
         .open(&manifest)
         .expect("late writer opens original inode");
 
-    add_to_parent_workspace_with(
+    let error = add_to_parent_workspace_with(
         &project,
         || {},
         || {
@@ -541,7 +541,12 @@ fn workspace_registration_preserves_late_writes_and_recovery_bytes() {
             writer.sync_all().expect("late writer syncs old inode");
         },
     )
-    .expect("atomic publication succeeds while preserving the displaced inode");
+    .expect_err("late write makes publication indeterminate");
+
+    assert!(matches!(
+        error,
+        InitError::WorkspacePublicationIndeterminate { .. }
+    ));
 
     assert!(
         std::fs::read_to_string(&manifest)

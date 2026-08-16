@@ -22,7 +22,7 @@ const PENDING_SUFFIX: &str = ".pending";
 const COMPLETE_SUFFIX: &str = ".complete";
 const INDETERMINATE_SUFFIX: &str = ".indeterminate";
 const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
-const MAX_RECOVERIES: usize = 8;
+const MAX_UNRESOLVED_RECOVERIES: usize = 8;
 
 pub(super) fn register(project: &Path) -> Result<(), InitError> {
     register_impl(project, || {}, || {})
@@ -32,15 +32,15 @@ pub(super) fn register(project: &Path) -> Result<(), InitError> {
 pub(super) fn register_with(
     project: &Path,
     before_exchange: impl FnOnce(),
-    after_exchange: impl FnOnce(),
+    after_validation: impl FnOnce(),
 ) -> Result<(), InitError> {
-    register_impl(project, before_exchange, after_exchange)
+    register_impl(project, before_exchange, after_validation)
 }
 
 fn register_impl(
     project: &Path,
     before_exchange: impl FnOnce(),
-    after_exchange: impl FnOnce(),
+    after_validation: impl FnOnce(),
 ) -> Result<(), InitError> {
     let manifest = project
         .parent()
@@ -57,7 +57,7 @@ fn register_impl(
     platform::ensure_supported(project, &manifest)?;
     let _sidecar_lock = lock_sidecar(parent)
         .map_err(|source| workspace_error(project, &manifest, source.into()))?;
-    cleanup_recoveries(parent, SystemTime::now(), MAX_RECOVERIES - 1)
+    cleanup_recoveries(parent, SystemTime::now(), MAX_UNRESOLVED_RECOVERIES - 1)
         .map_err(|source| workspace_error(project, &manifest, source.into()))?;
 
     let mut active = platform::open_manifest(&manifest)
@@ -79,7 +79,7 @@ fn register_impl(
 
     let mut recovery = Recovery::create(parent, &active, &source)
         .map_err(|source| workspace_error(project, &manifest, source.into()))?;
-    let candidate_path = platform::candidate_path(&recovery.displaced, &recovery.candidate);
+    let candidate_path = &recovery.displaced;
     let candidate = match prepare_candidate(&active, candidate_path, replacement.as_bytes()) {
         Ok(candidate) => candidate,
         Err(source) => {
@@ -93,7 +93,7 @@ fn register_impl(
         return Err(workspace_error(project, &manifest, source.into()));
     }
 
-    if let Err(source) = validate_unchanged(&mut active, &manifest, source.as_bytes()) {
+    if let Err(source) = validate_unchanged(&mut active, &candidate, &manifest, source.as_bytes()) {
         drop(candidate);
         recovery.remove_pre_mutation(parent);
         return match source.downcast_ref::<ManifestChanged>() {
@@ -105,7 +105,8 @@ fn register_impl(
         };
     }
 
-    drop(candidate);
+    after_validation();
+
     match platform::exchange(&mut active, &manifest, candidate_path, &recovery.displaced) {
         Ok(()) => {}
         Err(platform::ExchangeError::Unsupported(reason)) => {
@@ -120,37 +121,28 @@ fn register_impl(
             recovery.remove_pre_mutation(parent);
             return Err(workspace_error(project, &manifest, source.into()));
         }
-        #[cfg(windows)]
-        Err(platform::ExchangeError::AfterMutation(source)) => {
-            return rollback_or_indeterminate(
-                project,
-                manifest.clone(),
-                parent,
-                recovery,
-                active,
-                source,
-            );
-        }
     }
 
-    after_exchange();
     let post_result = platform::sync_directory(parent).and_then(|()| {
         platform::verify_publication(
-            &active,
+            &mut active,
+            &candidate,
             &manifest,
             &recovery.displaced,
+            source.as_bytes(),
             replacement.as_bytes(),
         )
     });
     if let Err(source) = post_result {
-        return rollback_or_indeterminate(
-            project,
-            manifest.clone(),
-            parent,
-            recovery,
-            active,
-            source,
-        );
+        recovery.mark_indeterminate(parent);
+
+        return Err(InitError::WorkspacePublicationIndeterminate {
+            project: project.to_path_buf(),
+            manifest,
+            snapshot: recovery.snapshot,
+            displaced: recovery.displaced,
+            source: source.into(),
+        });
     }
 
     if let Err(source) = recovery.mark_complete(parent) {
@@ -163,12 +155,6 @@ fn register_impl(
             source: source.into(),
         });
     }
-    #[cfg(windows)]
-    {
-        let _ = std::fs::remove_file(&recovery.candidate);
-        let _ = platform::sync_directory(parent);
-    }
-
     Ok(())
 }
 
@@ -233,6 +219,7 @@ fn prepare_candidate(active: &File, path: &Path, replacement: &[u8]) -> anyhow::
         .write(true)
         .open(path)
         .with_context(|| format!("creating publication candidate `{}`", path.display()))?;
+    platform::protect_recovery(active, &candidate)?;
     candidate.write_all(replacement)?;
     platform::copy_metadata(active, &candidate)?;
     platform::verify_metadata(active, &candidate)?;
@@ -240,61 +227,22 @@ fn prepare_candidate(active: &File, path: &Path, replacement: &[u8]) -> anyhow::
     Ok(candidate)
 }
 
-fn validate_unchanged(active: &mut File, manifest: &Path, expected: &[u8]) -> anyhow::Result<()> {
+fn validate_unchanged(
+    active: &mut File,
+    candidate: &File,
+    manifest: &Path,
+    expected: &[u8],
+) -> anyhow::Result<()> {
     active.rewind()?;
     let mut current = Vec::new();
     active.read_to_end(&mut current)?;
-    if current != expected || !platform::path_names_file(active, manifest)? {
+    if current != expected
+        || !platform::path_names_file(active, manifest)?
+        || platform::verify_metadata(active, candidate).is_err()
+    {
         return Err(ManifestChanged.into());
     }
     Ok(())
-}
-
-fn rollback_or_indeterminate(
-    project: &Path,
-    manifest: PathBuf,
-    parent: &Path,
-    recovery: Recovery,
-    mut original: File,
-    publication_error: std::io::Error,
-) -> Result<(), InitError> {
-    let rollback = platform::rollback(
-        &mut original,
-        &manifest,
-        &recovery.snapshot_file,
-        &recovery.displaced,
-    )
-    .and_then(|()| platform::sync_directory(parent))
-    .and_then(|()| {
-        if platform::path_names_file(&original, &manifest)? {
-            Ok(())
-        } else {
-            Err(std::io::Error::other("rollback identity did not verify"))
-        }
-    });
-
-    match rollback {
-        Ok(()) => {
-            recovery.remove_pre_mutation(parent);
-            Err(workspace_error(
-                project,
-                &manifest,
-                publication_error.into(),
-            ))
-        }
-        Err(rollback_error) => {
-            recovery.mark_indeterminate(parent);
-            Err(InitError::WorkspacePublicationIndeterminate {
-                project: project.to_path_buf(),
-                manifest,
-                snapshot: recovery.snapshot,
-                displaced: recovery.displaced,
-                source: anyhow!(publication_error).context(format!(
-                    "rollback failed or could not be verified: {rollback_error}"
-                )),
-            })
-        }
-    }
 }
 
 fn workspace_error(project: &Path, manifest: &Path, source: anyhow::Error) -> InitError {
@@ -318,9 +266,7 @@ impl std::error::Error for ManifestChanged {}
 
 struct Recovery {
     snapshot: PathBuf,
-    snapshot_file: File,
     displaced: PathBuf,
-    candidate: PathBuf,
     pending: PathBuf,
     complete: PathBuf,
     indeterminate: PathBuf,
@@ -337,7 +283,6 @@ impl Recovery {
             let base = parent.join(format!("{RECOVERY_PREFIX}{id}"));
             let snapshot = append_suffix(&base, SNAPSHOT_SUFFIX);
             let displaced = append_suffix(&base, DISPLACED_SUFFIX);
-            let candidate = append_suffix(&base, CANDIDATE_SUFFIX);
             let pending = append_suffix(&base, PENDING_SUFFIX);
             let complete = append_suffix(&base, COMPLETE_SUFFIX);
             let indeterminate = append_suffix(&base, INDETERMINATE_SUFFIX);
@@ -352,16 +297,6 @@ impl Recovery {
                         platform::protect_recovery(active, &file)?;
                         file.write_all(source.as_bytes())?;
                         file.sync_all()?;
-                        #[cfg(windows)]
-                        {
-                            let mut displaced_file = OpenOptions::new()
-                                .create_new(true)
-                                .write(true)
-                                .open(&displaced)?;
-                            platform::protect_recovery(active, &displaced_file)?;
-                            displaced_file.write_all(source.as_bytes())?;
-                            displaced_file.sync_all()?;
-                        }
                         let mut state = OpenOptions::new()
                             .create_new(true)
                             .write(true)
@@ -373,16 +308,13 @@ impl Recovery {
                     if let Err(error) = initialized {
                         let _ = std::fs::remove_file(&snapshot);
                         let _ = std::fs::remove_file(&displaced);
-                        let _ = std::fs::remove_file(&candidate);
                         let _ = std::fs::remove_file(&pending);
                         let _ = platform::sync_directory(parent);
                         return Err(error);
                     }
                     return Ok(Self {
                         snapshot,
-                        snapshot_file: file,
                         displaced,
-                        candidate,
                         pending,
                         complete,
                         indeterminate,
@@ -401,7 +333,6 @@ impl Recovery {
     fn remove_pre_mutation(&self, parent: &Path) {
         let _ = std::fs::remove_file(&self.snapshot);
         let _ = std::fs::remove_file(&self.displaced);
-        let _ = std::fs::remove_file(&self.candidate);
         let _ = std::fs::remove_file(&self.pending);
         let _ = std::fs::remove_file(&self.complete);
         let _ = std::fs::remove_file(&self.indeterminate);
@@ -449,20 +380,18 @@ fn cleanup_recoveries(parent: &Path, now: SystemTime, retain: usize) -> std::io:
 
     let mut ordered: Vec<_> = groups.into_values().collect();
     ordered.sort_by_key(|(modified, _)| *modified);
-    let fresh_count = ordered
+    let unresolved_count = ordered
         .iter()
-        .filter(|(modified, paths)| {
+        .filter(|(_, paths)| {
             paths.iter().any(|path| {
                 let path = path.as_os_str().to_string_lossy();
                 path.ends_with(PENDING_SUFFIX) || path.ends_with(INDETERMINATE_SUFFIX)
-            }) || now
-                .duration_since(*modified)
-                .map_or(true, |age| age < RETENTION)
+            })
         })
         .count();
-    if fresh_count > retain {
+    if unresolved_count > retain {
         return Err(std::io::Error::other(format!(
-            "workspace has {fresh_count} live recovery transactions; reconcile them before retrying"
+            "workspace has {unresolved_count} unresolved recovery transactions; reconcile them before retrying"
         )));
     }
     for (modified, paths) in ordered {
@@ -496,15 +425,23 @@ fn recovery_id(name: &str) -> Option<&str> {
         INDETERMINATE_SUFFIX,
     ] {
         if let Some(id) = rest.strip_suffix(suffix)
-            && !id.is_empty()
-            && id
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+            && valid_recovery_id(id)
         {
             return Some(id);
         }
     }
     None
+}
+
+fn valid_recovery_id(id: &str) -> bool {
+    let bytes = id.as_bytes();
+
+    bytes.len() == 44
+        && bytes[32] == b'-'
+        && bytes[41] == b'-'
+        && bytes[..32].iter().all(u8::is_ascii_hexdigit)
+        && bytes[33..41].iter().all(u8::is_ascii_hexdigit)
+        && bytes[42..].iter().all(u8::is_ascii_hexdigit)
 }
 
 #[cfg(test)]

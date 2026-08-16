@@ -118,7 +118,7 @@ pub enum InitError {
         /// Platform or filesystem limitation.
         reason: String,
     },
-    /// Publication may have changed the workspace and could not be verified or rolled back.
+    /// Publication may have changed the workspace and could not be verified safely.
     #[error(
         "workspace publication for `{manifest}` is indeterminate; preserve `{project}` and recover using `{snapshot}` and `{displaced}`"
     )]
@@ -131,7 +131,7 @@ pub enum InitError {
         snapshot: PathBuf,
         /// Durable path holding the inode displaced by publication.
         displaced: PathBuf,
-        /// Publication or rollback failure.
+        /// Publication or verification failure.
         #[source]
         source: anyhow::Error,
     },
