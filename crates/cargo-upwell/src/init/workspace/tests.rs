@@ -6,8 +6,8 @@ use crate::init::InitError;
 
 use super::{
     CANDIDATE_SUFFIX, COMPLETE_SUFFIX, DISPLACED_SUFFIX, INDETERMINATE_SUFFIX,
-    MAX_UNRESOLVED_RECOVERIES, PENDING_SUFFIX, RECOVERY_PREFIX, SNAPSHOT_SUFFIX,
-    cleanup_recoveries, recovery_id, register_with,
+    MAX_COMPLETED_RECOVERIES, MAX_UNRESOLVED_RECOVERIES, PENDING_SUFFIX, RECOVERY_PREFIX,
+    SNAPSHOT_SUFFIX, cleanup_recoveries, recovery_id, register_with,
 };
 
 #[test]
@@ -82,6 +82,30 @@ fn cleanup_removes_expired_recognized_files_only() {
         .expect("cleanup succeeds");
 
     assert!(!expired.exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn cleanup_bounds_fresh_completed_groups() {
+    let fixture = TempFixture::new("cargo-upwell-workspace-completed-bounds");
+
+    for sequence in 0..(MAX_COMPLETED_RECOVERIES + 3) {
+        std::fs::write(
+            recovery_path(&fixture, sequence, COMPLETE_SUFFIX),
+            "complete",
+        )
+        .expect("completed state exists");
+    }
+
+    cleanup_recoveries(fixture.path(), SystemTime::now(), MAX_UNRESOLVED_RECOVERIES)
+        .expect("completed cleanup succeeds");
+
+    let remaining = std::fs::read_dir(fixture.path())
+        .expect("fixture remains readable")
+        .filter_map(Result::ok)
+        .filter(|entry| recovery_id(&entry.file_name().to_string_lossy()).is_some())
+        .count();
+    assert_eq!(remaining, MAX_COMPLETED_RECOVERIES);
 }
 
 #[test]
@@ -185,10 +209,10 @@ fn concurrent_replacement_after_validation_is_retained() {
     )
     .expect_err("stale publication is retained for recovery");
 
-    assert!(matches!(
-        error,
-        InitError::WorkspacePublicationIndeterminate { .. }
-    ));
+    assert!(
+        matches!(&error, InitError::WorkspacePublicationIndeterminate { .. }),
+        "unexpected publication error: {error:?}"
+    );
     assert_eq!(
         std::fs::read_to_string(&replacement)
             .expect_err("replacement path was exchanged")
@@ -210,6 +234,62 @@ fn concurrent_replacement_after_validation_is_retained() {
                 .ends_with(DISPLACED_SUFFIX)
                 && std::fs::read_to_string(entry.path())
                     .is_ok_and(|contents| contents == concurrent))
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn substituted_candidate_is_removed_from_the_live_manifest() {
+    let fixture = TempFixture::new("cargo-upwell-workspace-candidate-substitution");
+    let project = fixture.child("generated");
+    let manifest = fixture.child("Cargo.toml");
+    let substitute = fixture.child("attacker.toml");
+    let original = "[workspace]\nmembers = []\n";
+    let attacker = "[workspace]\nmembers = [\"attacker\"]\n";
+
+    std::fs::create_dir_all(&project).expect("project directory exists");
+    std::fs::write(&manifest, original).expect("workspace manifest exists");
+    std::fs::write(&substitute, attacker).expect("substitute exists");
+
+    let error = register_with(
+        &project,
+        || {},
+        || {
+            let candidate = std::fs::read_dir(fixture.path())
+                .expect("fixture remains readable")
+                .filter_map(Result::ok)
+                .find(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with(DISPLACED_SUFFIX)
+                })
+                .expect("candidate path exists")
+                .path();
+
+            std::fs::rename(&substitute, candidate).expect("candidate path is substituted");
+        },
+    )
+    .expect_err("candidate substitution makes publication indeterminate");
+
+    assert!(matches!(
+        &error,
+        InitError::WorkspacePublicationIndeterminate { .. }
+    ));
+    assert_eq!(
+        std::fs::read_to_string(&manifest).expect("original manifest is restored"),
+        original
+    );
+    assert!(
+        std::fs::read_dir(fixture.path())
+            .expect("fixture remains readable")
+            .filter_map(Result::ok)
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(DISPLACED_SUFFIX)
+                && std::fs::read_to_string(entry.path())
+                    .is_ok_and(|contents| contents == attacker))
     );
 }
 

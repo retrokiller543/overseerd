@@ -23,6 +23,7 @@ const COMPLETE_SUFFIX: &str = ".complete";
 const INDETERMINATE_SUFFIX: &str = ".indeterminate";
 const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const MAX_UNRESOLVED_RECOVERIES: usize = 8;
+const MAX_COMPLETED_RECOVERIES: usize = 8;
 
 pub(super) fn register(project: &Path) -> Result<(), InitError> {
     register_impl(project, || {}, || {})
@@ -134,6 +135,15 @@ fn register_impl(
         )
     });
     if let Err(source) = post_result {
+        if !platform::path_names_file(&candidate, &manifest).unwrap_or(false) {
+            let _ = platform::exchange(
+                &mut active,
+                &manifest,
+                &recovery.displaced,
+                &recovery.displaced,
+            )
+            .and_then(|()| platform::sync_directory(parent).map_err(platform::ExchangeError::Io));
+        }
         recovery.mark_indeterminate(parent);
 
         return Err(InitError::WorkspacePublicationIndeterminate {
@@ -236,12 +246,11 @@ fn validate_unchanged(
     active.rewind()?;
     let mut current = Vec::new();
     active.read_to_end(&mut current)?;
-    if current != expected
-        || !platform::path_names_file(active, manifest)?
-        || platform::verify_metadata(active, candidate).is_err()
-    {
+    if current != expected || !platform::path_names_file(active, manifest)? {
         return Err(ManifestChanged.into());
     }
+    platform::verify_metadata(active, candidate)?;
+
     Ok(())
 }
 
@@ -394,6 +403,9 @@ fn cleanup_recoveries(parent: &Path, now: SystemTime, retain: usize) -> std::io:
             "workspace has {unresolved_count} unresolved recovery transactions; reconcile them before retrying"
         )));
     }
+    let completed_count = ordered.len() - unresolved_count;
+    let mut completed_to_remove = completed_count.saturating_sub(MAX_COMPLETED_RECOVERIES);
+
     for (modified, paths) in ordered {
         if paths.iter().any(|path| {
             let path = path.as_os_str().to_string_lossy();
@@ -404,12 +416,13 @@ fn cleanup_recoveries(parent: &Path, now: SystemTime, retain: usize) -> std::io:
         let expired = now
             .duration_since(modified)
             .is_ok_and(|age| age >= RETENTION);
-        if !expired {
+        if !expired && completed_to_remove == 0 {
             continue;
         }
         for path in paths {
             std::fs::remove_file(path)?;
         }
+        completed_to_remove = completed_to_remove.saturating_sub(1);
     }
     platform::sync_directory(parent)
 }

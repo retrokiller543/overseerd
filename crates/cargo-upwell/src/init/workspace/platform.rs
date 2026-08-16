@@ -286,13 +286,19 @@ pub(super) fn protect_recovery(source: &File, recovery: &File) -> std::io::Resul
 pub(super) fn verify_metadata(source: &File, destination: &File) -> std::io::Result<()> {
     #[cfg(unix)]
     {
+        #[cfg(target_os = "macos")]
+        use std::os::darwin::fs::MetadataExt as _;
         use std::os::unix::fs::MetadataExt as _;
         let source_metadata = source.metadata()?;
         let destination_metadata = destination.metadata()?;
-        if source_metadata.mode() != destination_metadata.mode()
+        let basic_mismatch = source_metadata.mode() != destination_metadata.mode()
             || source_metadata.uid() != destination_metadata.uid()
-            || source_metadata.gid() != destination_metadata.gid()
-        {
+            || source_metadata.gid() != destination_metadata.gid();
+        #[cfg(target_os = "macos")]
+        let basic_mismatch =
+            basic_mismatch || source_metadata.st_flags() != destination_metadata.st_flags();
+
+        if basic_mismatch {
             return Err(std::io::Error::other(
                 "manifest ownership or mode was not preserved",
             ));
@@ -304,10 +310,54 @@ pub(super) fn verify_metadata(source: &File, destination: &File) -> std::io::Res
                 "manifest extended attributes were not preserved",
             ));
         }
+        #[cfg(target_os = "macos")]
+        if acl(source)? != acl(destination)? {
+            return Err(std::io::Error::other(
+                "manifest access control list was not preserved",
+            ));
+        }
     }
     #[cfg(not(unix))]
     let _ = (source, destination);
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn acl(file: &File) -> std::io::Result<Vec<u8>> {
+    use std::ffi::{CStr, c_char, c_int, c_void};
+    use std::os::fd::AsRawFd as _;
+
+    unsafe extern "C" {
+        fn acl_get_fd(fd: c_int) -> *mut c_void;
+        fn acl_to_text(acl: *mut c_void, len: *mut isize) -> *mut c_char;
+        fn acl_free(object: *mut c_void) -> c_int;
+    }
+
+    // SAFETY: the descriptor remains live and each returned allocation is freed exactly once.
+    unsafe {
+        let value = acl_get_fd(file.as_raw_fd());
+        if value.is_null() {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ENOENT) {
+                return Ok(Vec::new());
+            }
+
+            return Err(error);
+        }
+
+        let text = acl_to_text(value, std::ptr::null_mut());
+        if text.is_null() {
+            let error = std::io::Error::last_os_error();
+            let _ = acl_free(value);
+            return Err(error);
+        }
+
+        let bytes = CStr::from_ptr(text).to_bytes().to_vec();
+        let _ = acl_free(text.cast());
+        let _ = acl_free(value);
+
+        Ok(bytes)
+    }
 }
 
 #[cfg(unix)]
