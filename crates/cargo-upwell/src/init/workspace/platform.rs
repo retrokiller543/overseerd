@@ -5,6 +5,7 @@ use std::path::Path;
 use super::super::InitError;
 
 pub(super) enum ExchangeError {
+    Conflict,
     Unsupported(String),
     Io(std::io::Error),
 }
@@ -78,11 +79,14 @@ pub(super) fn sync_directory(path: &Path) -> std::io::Result<()> {
 }
 
 pub(super) fn exchange(
-    _active: &mut File,
+    candidate_file: &File,
     manifest: &Path,
     candidate: &Path,
-    _displaced: &Path,
 ) -> Result<(), ExchangeError> {
+    if !path_names_file(candidate_file, candidate).map_err(ExchangeError::Io)? {
+        return Err(ExchangeError::Conflict);
+    }
+
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::ffi::OsStrExt as _;
@@ -134,7 +138,7 @@ pub(super) fn exchange(
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        let _ = (_active, manifest, candidate, _displaced);
+        let _ = (candidate_file, manifest, candidate);
         Err(ExchangeError::Unsupported(String::from(
             "atomic manifest exchange is not implemented for this platform",
         )))

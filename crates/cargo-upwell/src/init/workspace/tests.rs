@@ -270,11 +270,11 @@ fn substituted_candidate_is_removed_from_the_live_manifest() {
             std::fs::rename(&substitute, candidate).expect("candidate path is substituted");
         },
     )
-    .expect_err("candidate substitution makes publication indeterminate");
+    .expect_err("candidate substitution is rejected before publication");
 
     assert!(matches!(
         &error,
-        InitError::WorkspacePublicationIndeterminate { .. }
+        InitError::WorkspaceManifestConflict { .. }
     ));
     assert_eq!(
         std::fs::read_to_string(&manifest).expect("original manifest is restored"),

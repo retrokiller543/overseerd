@@ -84,19 +84,18 @@ fn register_impl(
     let candidate = match prepare_candidate(&active, candidate_path, replacement.as_bytes()) {
         Ok(candidate) => candidate,
         Err(source) => {
-            recovery.remove_pre_mutation(parent);
+            recovery.remove_pre_mutation(parent, None);
             return Err(workspace_error(project, &manifest, source));
         }
     };
     if let Err(source) = platform::sync_directory(parent) {
-        drop(candidate);
-        recovery.remove_pre_mutation(parent);
+        recovery.remove_pre_mutation(parent, Some(&candidate));
         return Err(workspace_error(project, &manifest, source.into()));
     }
 
     if let Err(source) = validate_unchanged(&mut active, &candidate, &manifest, source.as_bytes()) {
         drop(candidate);
-        recovery.remove_pre_mutation(parent);
+        recovery.remove_pre_mutation(parent, None);
         return match source.downcast_ref::<ManifestChanged>() {
             Some(_) => Err(InitError::WorkspaceManifestConflict {
                 project: project.to_path_buf(),
@@ -108,10 +107,17 @@ fn register_impl(
 
     after_validation();
 
-    match platform::exchange(&mut active, &manifest, candidate_path, &recovery.displaced) {
+    match platform::exchange(&candidate, &manifest, candidate_path) {
         Ok(()) => {}
+        Err(platform::ExchangeError::Conflict) => {
+            recovery.remove_pre_mutation(parent, Some(&candidate));
+            return Err(InitError::WorkspaceManifestConflict {
+                project: project.to_path_buf(),
+                manifest,
+            });
+        }
         Err(platform::ExchangeError::Unsupported(reason)) => {
-            recovery.remove_pre_mutation(parent);
+            recovery.remove_pre_mutation(parent, Some(&candidate));
             return Err(InitError::UnsupportedWorkspacePublication {
                 project: project.to_path_buf(),
                 manifest,
@@ -119,7 +125,7 @@ fn register_impl(
             });
         }
         Err(platform::ExchangeError::Io(source)) => {
-            recovery.remove_pre_mutation(parent);
+            recovery.remove_pre_mutation(parent, Some(&candidate));
             return Err(workspace_error(project, &manifest, source.into()));
         }
     }
@@ -135,15 +141,6 @@ fn register_impl(
         )
     });
     if let Err(source) = post_result {
-        if !platform::path_names_file(&candidate, &manifest).unwrap_or(false) {
-            let _ = platform::exchange(
-                &mut active,
-                &manifest,
-                &recovery.displaced,
-                &recovery.displaced,
-            )
-            .and_then(|()| platform::sync_directory(parent).map_err(platform::ExchangeError::Io));
-        }
         recovery.mark_indeterminate(parent);
 
         return Err(InitError::WorkspacePublicationIndeterminate {
@@ -339,9 +336,11 @@ impl Recovery {
         ))
     }
 
-    fn remove_pre_mutation(&self, parent: &Path) {
+    fn remove_pre_mutation(&self, parent: &Path, candidate: Option<&File>) {
         let _ = std::fs::remove_file(&self.snapshot);
-        let _ = std::fs::remove_file(&self.displaced);
+        if candidate.is_none() {
+            let _ = std::fs::remove_file(&self.displaced);
+        }
         let _ = std::fs::remove_file(&self.pending);
         let _ = std::fs::remove_file(&self.complete);
         let _ = std::fs::remove_file(&self.indeterminate);
