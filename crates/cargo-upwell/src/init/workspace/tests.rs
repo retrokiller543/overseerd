@@ -29,6 +29,7 @@ fn recovery_names_are_strictly_recognized() {
 }
 
 #[test]
+#[cfg(unix)]
 fn cleanup_expires_completed_groups_and_caps_unresolved_groups() {
     let fixture = TempFixture::new("cargo-upwell-workspace-recovery-bounds");
     for index in 0..(MAX_UNRESOLVED_RECOVERIES + 3) {
@@ -68,6 +69,7 @@ fn cleanup_expires_completed_groups_and_caps_unresolved_groups() {
 }
 
 #[test]
+#[cfg(unix)]
 fn cleanup_removes_expired_recognized_files_only() {
     let fixture = TempFixture::new("cargo-upwell-workspace-recovery-expiry");
     let expired = fixture.child(format!(
@@ -83,6 +85,7 @@ fn cleanup_removes_expired_recognized_files_only() {
 }
 
 #[test]
+#[cfg(unix)]
 fn cleanup_keeps_unresolved_and_uses_newest_group_timestamp() {
     let fixture = TempFixture::new("cargo-upwell-workspace-recovery-state");
     let pending = recovery_path(&fixture, 1, PENDING_SUFFIX);
@@ -111,6 +114,7 @@ fn cleanup_keeps_unresolved_and_uses_newest_group_timestamp() {
 }
 
 #[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn existing_member_is_a_zero_write_success() {
     let fixture = TempFixture::new("cargo-upwell-workspace-idempotent");
     let project = fixture.child("generated");
@@ -140,6 +144,24 @@ fn existing_member_is_a_zero_write_success() {
                 .to_string_lossy()
                 .starts_with(RECOVERY_PREFIX))
     );
+}
+
+#[test]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn workspace_publication_is_explicitly_unsupported() {
+    let fixture = TempFixture::new("cargo-upwell-workspace-unsupported");
+    let project = fixture.child("generated");
+    let manifest = fixture.child("Cargo.toml");
+
+    std::fs::create_dir_all(&project).expect("project directory exists");
+    std::fs::write(&manifest, "[workspace]\nmembers = []\n").expect("workspace manifest exists");
+
+    let error = register_with(&project, || {}, || {}).expect_err("publication is unsupported");
+
+    assert!(matches!(
+        error,
+        InitError::UnsupportedWorkspacePublication { .. }
+    ));
 }
 
 #[test]
