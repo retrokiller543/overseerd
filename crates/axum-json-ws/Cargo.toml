@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-axum-json-ws"
-description = "JSON request/reply WebSocket protocol for overseerd-axum."
+name = "upwell-axum-json-ws"
+description = "JSON request/reply WebSocket protocol for upwell-axum."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,13 +12,13 @@ categories.workspace = true
 
 [features]
 default = []
-client = ["overseerd-axum/client", "dep:overseerd-client"]
-tungstenite = ["client", "overseerd-axum/tungstenite"]
+client = ["upwell-axum/client", "dep:upwell-client"]
+tungstenite = ["client", "upwell-axum/tungstenite"]
 
 [dependencies]
-overseerd-axum = { workspace = true, features = ["ws"] }
-overseerd-client = { workspace = true, optional = true }
-overseerd-transport = { workspace = true }
+upwell-axum = { workspace = true, features = ["ws"] }
+upwell-client = { workspace = true, optional = true }
+upwell-transport = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

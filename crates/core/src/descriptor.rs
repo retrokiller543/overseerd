@@ -45,7 +45,7 @@ where
 /// the registration backends impose (the shared `inventory` static must be `Sync + 'static`; the
 /// accessors copy the descriptor out of the slice/collection), so a type that cannot meet them
 /// cannot be registered.
-pub trait OverseerdDescriptor: Copy + Send + Sync + 'static {}
+pub trait UpwellDescriptor: Copy + Send + Sync + 'static {}
 
 /// A descriptor `D` tagged with the owner type `T` it belongs to.
 ///
@@ -55,12 +55,12 @@ pub trait OverseerdDescriptor: Copy + Send + Sync + 'static {}
 /// unrelated types. `T` is a phantom disambiguator only; `PhantomData<fn() -> T>` keeps the
 /// shared static `Sync` regardless of whether `T` is.
 #[derive(Clone, Copy)]
-pub struct DescriptorFor<T, D: OverseerdDescriptor> {
+pub struct DescriptorFor<T, D: UpwellDescriptor> {
     descriptor: D,
     _owner: PhantomData<fn() -> T>,
 }
 
-impl<T, D: OverseerdDescriptor> DescriptorFor<T, D> {
+impl<T, D: UpwellDescriptor> DescriptorFor<T, D> {
     /// Wraps an explicit descriptor value. Used by the many-per-type kinds (component factories,
     /// hooks, rpc groups, routes), where a type carries several descriptors of the same kind.
     pub const fn new(descriptor: D) -> Self {
@@ -71,7 +71,7 @@ impl<T, D: OverseerdDescriptor> DescriptorFor<T, D> {
     }
 }
 
-impl<T, D: OverseerdDescriptor> Deref for DescriptorFor<T, D> {
+impl<T, D: UpwellDescriptor> Deref for DescriptorFor<T, D> {
     type Target = D;
 
     #[inline]
@@ -80,7 +80,7 @@ impl<T, D: OverseerdDescriptor> Deref for DescriptorFor<T, D> {
     }
 }
 
-impl<T, D: OverseerdDescriptor> AsRef<D> for DescriptorFor<T, D> {
+impl<T, D: UpwellDescriptor> AsRef<D> for DescriptorFor<T, D> {
     #[inline]
     fn as_ref(&self) -> &D {
         &self.descriptor
@@ -96,7 +96,7 @@ impl<T, D: OverseerdDescriptor> AsRef<D> for DescriptorFor<T, D> {
 /// orphan-legal there. The generated impl holds the per-`(T, D)` `Registry` in a `static` inside its
 /// concrete `registry()` — one registry per monomorphization — and the blanket `Collect` impl below
 /// forwards to it. The macros emit one `impl RegistryFor<D> for T` per owner/kind.
-pub trait RegistryFor<D: OverseerdDescriptor> {
+pub trait RegistryFor<D: UpwellDescriptor> {
     /// The `(Self, D)` bucket's registry — a distinct `&'static Registry` per implementing type.
     fn registry() -> &'static Registry;
 }
@@ -104,7 +104,7 @@ pub trait RegistryFor<D: OverseerdDescriptor> {
 impl<T, D> inventory::Collect for DescriptorFor<T, D>
 where
     T: RegistryFor<D> + 'static,
-    D: OverseerdDescriptor,
+    D: UpwellDescriptor,
 {
     #[inline]
     fn registry() -> &'static Registry {
@@ -115,7 +115,7 @@ where
 impl<T, D> DescriptorFor<T, D>
 where
     T: Descriptor<D>,
-    D: OverseerdDescriptor,
+    D: UpwellDescriptor,
 {
     /// Pulls the descriptor straight from `T`'s static [`Descriptor<D>`] impl — the zero-arg
     /// convenience for the one-descriptor-per-type header kinds (component/service/controller/

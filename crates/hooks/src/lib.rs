@@ -4,7 +4,7 @@
 //! framework calls when an event of `Kind` occurs. `Kind` is a [`HookKind`] type that owns
 //! the hook's *output* (what the method returns) and its *context* (the typed inputs an
 //! invocation carries). Built-in kinds are [`Startup`] and [`Shutdown`]; config reload is a
-//! kind defined in `overseerd-config`. The system is deliberately general so user-defined
+//! kind defined in `upwell-config`. The system is deliberately general so user-defined
 //! event kinds can be added the same way.
 //!
 //! Hooks do **not** receive component dependencies as parameters — those are reached through
@@ -13,7 +13,7 @@
 //! (the `{Type}Hooks` distributed slice, exposed via [`ComponentHooks`]) and registered into
 //! a [`HookManager`]; a type with no hooks contributes nothing at runtime.
 //!
-//! This crate is generic over the [`ResolverCtx`](overseerd_core::ResolverCtx): a hook's
+//! This crate is generic over the [`ResolverCtx`](upwell_core::ResolverCtx): a hook's
 //! erased [`HookCall`] resolves its receiver through the resolver context, so the hook
 //! layer never names the DI container (which sits above it).
 
@@ -31,7 +31,7 @@ use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
 use futures::FutureExt;
-use overseerd_core::{DependencyDescriptor, OverseerdDescriptor, ResolverCtx, TypeDescriptor};
+use upwell_core::{DependencyDescriptor, ResolverCtx, TypeDescriptor, UpwellDescriptor};
 
 /// A kind of hook: the event a `#[hook(Kind)]` method reacts to.
 ///
@@ -124,7 +124,7 @@ impl HookDescriptor {
     }
 }
 
-impl OverseerdDescriptor for HookDescriptor {}
+impl UpwellDescriptor for HookDescriptor {}
 
 impl fmt::Debug for HookDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -311,7 +311,7 @@ async fn invoke_hook<K: HookKind>(
 }
 
 /// The stable component id of the seeded [`HookManager`] singleton.
-pub const HOOK_MANAGER_ID: &str = "overseerd:hook-manager";
+pub const HOOK_MANAGER_ID: &str = "upwell:hook-manager";
 
 /// The display name of the seeded [`HookManager`] singleton.
 pub const HOOK_MANAGER_NAME: &str = "HookManager";

@@ -1,14 +1,14 @@
 //! Request bodies: a typed wrapper owns its wire format and its `Content-Type`.
 
-use overseerd_transport::CodecError;
 use serde::Serialize;
+use upwell_transport::CodecError;
 
 /// The fixed `multipart/form-data` boundary the client encoder uses. Fixed (rather than random) so
 /// [`Multipart`]'s `Content-Type` can stay an associated `&'static` const like every other body; the
 /// encoder validates that no part contains it, erroring rather than producing a malformed payload.
 macro_rules! multipart_boundary {
     () => {
-        "overseerdFormBoundary7MA4YWxkTrZu0gW"
+        "upwellFormBoundary7MA4YWxkTrZu0gW"
     };
 }
 

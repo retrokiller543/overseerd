@@ -15,8 +15,6 @@ use std::time::Duration;
 
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
-use overseerd_client::{ClientError, ErrorBody};
-use overseerd_transport::{CodecError, Error as TransportError};
 use stomp_parser::client::{
     ConnectFrameBuilder, DisconnectFrameBuilder, SendFrameBuilder, SubscribeFrameBuilder,
     UnsubscribeFrameBuilder,
@@ -24,13 +22,15 @@ use stomp_parser::client::{
 use stomp_parser::headers::{HeaderValue, StompVersion, StompVersions};
 use stomp_parser::server::ServerFrame;
 use tokio::sync::{mpsc, oneshot};
+use upwell_client::{ClientError, ErrorBody};
+use upwell_transport::{CodecError, Error as TransportError};
 // One unified WebSocket type across native and wasm — the socket naming (`MaybeTlsStream<TcpStream>`
 // on native, the JS `WebSocket` on wasm) is hidden, so this transport is target-agnostic.
 use tokio_tungstenite_wasm::{Error as WsError, Message, WebSocketStream};
 
 use super::StompStatus;
 use crate::{MESSAGE_ERROR_HEADER, REPLY_SUBSCRIPTION_ID, Stomp, StompBody};
-use overseerd_axum::client::{
+use upwell_axum::client::{
     MessageRequest, MessageSend, Subscription, SubscriptionId, TopicSubscribe,
 };
 
@@ -282,7 +282,7 @@ impl StompClientTransport {
         let (tx, rx) = mpsc::channel::<Command>(CHANNEL_DEPTH);
         let requests: Requests = Arc::new(Mutex::new(HashMap::new()));
 
-        overseerd_axum::client::ws_rt::spawn(actor(write, read, rx, requests.clone()));
+        upwell_axum::client::ws_rt::spawn(actor(write, read, rx, requests.clone()));
 
         Ok(Self {
             inner: Arc::new(TransportInner {

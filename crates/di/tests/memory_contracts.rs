@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::executor::block_on;
-use overseerd_core::{ResolverSet, Scope, Singleton, TypeDescriptor};
-use overseerd_di::{
+use upwell_core::{ResolverSet, Scope, Singleton, TypeDescriptor};
+use upwell_di::{
     BoxedComponent, Component, ComponentDescriptor, Injectable, ScopeContainer, ScopeRegistry,
 };
 

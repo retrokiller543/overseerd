@@ -9,9 +9,9 @@
 //! STOMP's transport sends no heart-beats in v1 (see `docs/stomp.md` for the deferred-feature list).
 
 use crate::Stomp;
-use overseerd_axum::MessagingClientProtocol;
+use upwell_axum::MessagingClientProtocol;
 
-/// The status carried by a STOMP [`ClientError::Remote`](overseerd_client::ClientError::Remote),
+/// The status carried by a STOMP [`ClientError::Remote`](upwell_client::ClientError::Remote),
 /// mirroring [`WsStatus`](super::WsStatus). This is [`Stomp`]'s [`MessagingClientProtocol::Status`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StompStatus {

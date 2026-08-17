@@ -7,7 +7,7 @@ static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
 
 fn temp_path(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "overseerd-dirs-{tag}-{}-{}",
+        "upwell-dirs-{tag}-{}-{}",
         std::process::id(),
         NEXT_DIR.fetch_add(1, Ordering::Relaxed)
     ))

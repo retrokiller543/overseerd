@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin};
-use overseerd_core::{Descriptor, Scope, TypeDescriptor};
-use overseerd_di::{ComponentDescriptor, ServiceComponent};
-use overseerd_transport::PeerInfo;
 use tower::{Layer, Service};
+use upwell_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin};
+use upwell_core::{Descriptor, Scope, TypeDescriptor};
+use upwell_di::{ComponentDescriptor, ServiceComponent};
+use upwell_transport::PeerInfo;
 
 use crate::descriptors::{RpcOutcome, SERVICES, ServiceDescriptor};
 use crate::extract::ErrorResponse;
@@ -24,7 +24,7 @@ type LayerApplier = Box<dyn FnOnce(RpcService) -> RpcService + Send>;
 /// Seeded into every connection scope with the actual `PeerInfo`, so a connection-scoped
 /// component can depend on `Arc<PeerInfo>` (e.g. to authenticate in its constructor).
 static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
-    "__overseerd_peer_info",
+    "__upwell_peer_info",
     "PeerInfo",
     TypeDescriptor::of::<PeerInfo>("PeerInfo"),
     &ConnectionScope,

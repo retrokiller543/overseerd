@@ -1,6 +1,6 @@
 //! Jobs-aware tracing installation.
 //!
-//! [`init_tracing`] is the drop-in replacement for [`overseerd_app::builtins::init_tracing`]
+//! [`init_tracing`] is the drop-in replacement for [`upwell_app::builtins::init_tracing`]
 //! when the `jobs` scheduler is in use: it installs the framework subscriber and, when capture
 //! is enabled, layers per-run [`JobLogLayer`] capture onto it, returning the [`JobLogSink`] to
 //! hand to [`JobScheduler::set_log_sink`](crate::JobScheduler::set_log_sink). Because layers
@@ -9,9 +9,7 @@
 
 use std::sync::Arc;
 
-use overseerd_app::builtins::{
-    BoxedLayer, InitTracingError, LoggingConfig, init_tracing_with_layers,
-};
+use upwell_app::builtins::{BoxedLayer, InitTracingError, LoggingConfig, init_tracing_with_layers};
 
 use crate::log::{InMemoryJobLogStore, JobLogConfig, JobLogLayer, JobLogSink, NoopJobLogStore};
 
@@ -25,7 +23,7 @@ use crate::log::{InMemoryJobLogStore, JobLogConfig, JobLogLayer, JobLogSink, Noo
 /// changes.
 ///
 /// ```ignore
-/// let sink = overseerd::jobs::init_tracing(&logging, JobLogConfig::default())?;
+/// let sink = upwell::jobs::init_tracing(&logging, JobLogConfig::default())?;
 /// // … after building the app …
 /// scheduler.set_log_sink(sink);
 /// ```

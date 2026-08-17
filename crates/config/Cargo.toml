@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-config"
-description = "Configuration for the Overseerd framework: format-agnostic loading (TOML/YAML) plus the DI-integrated Cfg/ConfigManager/reload layer."
+name = "upwell-config"
+description = "Configuration for the Upwell framework: format-agnostic loading (TOML/YAML) plus the DI-integrated Cfg/ConfigManager/reload layer."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,15 +14,15 @@ categories.workspace = true
 default = ["toml"]
 toml = ["dep:toml"]
 yaml = ["dep:serde_yaml_ng"]
-di-check = ["overseerd-di/di-check"]
+di-check = ["upwell-di/di-check"]
 # Watch config files and reload on change (`ConfigManager::watch_config`), via `notify`.
 watch = ["dep:notify"]
 
 [dependencies]
-overseerd-core = { workspace = true }
-overseerd-di = { workspace = true }
-overseerd-dirs = { workspace = true }
-overseerd-hooks = { workspace = true }
+upwell-core = { workspace = true }
+upwell-di = { workspace = true }
+upwell-dirs = { workspace = true }
+upwell-hooks = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

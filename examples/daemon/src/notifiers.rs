@@ -2,7 +2,7 @@
 //! a primary, plus qualifier-keyed variants. `Send + Sync` is a supertrait, so
 //! the bare `dyn Notifier` is shareable and no use site writes `+ Send + Sync`.
 
-use overseerd::{component, injectable};
+use upwell::{component, injectable};
 
 /// A channel a notification can be delivered over. `#[injectable]` lets it be
 /// depended on as `Arc<dyn Notifier>`; providers register with `provide`.

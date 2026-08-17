@@ -7,11 +7,11 @@
 
 use std::collections::HashMap;
 
-use overseerd_config::{
+use serde::Deserialize;
+use upwell_config::{
     ConfigStr, ConfigValue, MapResolver, ResolverChain, TemplateError, TemplateErrorKind,
     from_value,
 };
-use serde::Deserialize;
 
 /// A string leaf parsed through the real placeholder grammar.
 fn s(raw: &str) -> ConfigValue {
@@ -66,7 +66,7 @@ fn full_placeholder_coerces_to_target_scalar_type() {
         ("FLAG", "true"),
         ("PORT", "8080"),
         ("RATIO", "0.5"),
-        ("NAME", "overseerd"),
+        ("NAME", "upwell"),
     ]);
 
     let cfg: Cfg = from_value(&tree, &chain).unwrap();
@@ -74,7 +74,7 @@ fn full_placeholder_coerces_to_target_scalar_type() {
     assert!(cfg.flag);
     assert_eq!(cfg.port, 8080);
     assert_eq!(cfg.ratio, 0.5);
-    assert_eq!(cfg.name, "overseerd");
+    assert_eq!(cfg.name, "upwell");
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn absolute_path_resolves_against_full_root_from_subtree() {
     let chain = resolvers(&[]);
 
     let subtree = root.get_path("app.server").unwrap();
-    let cfg: Server = overseerd_config::from_value_in(&root, subtree, &chain).unwrap();
+    let cfg: Server = upwell_config::from_value_in(&root, subtree, &chain).unwrap();
 
     assert_eq!(cfg.addr, "127.0.0.1:9000");
 }

@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use overseerd::daemon::App;
-use overseerd::{Dynamic, component};
+use upwell::daemon::App;
+use upwell::{Dynamic, component};
 
 /// A plain dependency, provided as an instance at build time (manual — no factory).
 #[component(default_factory = false)]

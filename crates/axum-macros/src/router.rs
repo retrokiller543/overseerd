@@ -15,9 +15,9 @@ use syn::parse::ParseStream;
 use syn::punctuated::Punctuated;
 use syn::{Ident, LitStr, Path, Token, bracketed};
 
-use overseerd_macros_core::attr::ComponentArgs;
-use overseerd_macros_core::paths::Paths;
-use overseerd_macros_core::{ComponentContext, ComponentExt, NoExt, ParseItem, ParseKeyed, eat_eq};
+use upwell_macros_core::attr::ComponentArgs;
+use upwell_macros_core::paths::Paths;
+use upwell_macros_core::{ComponentContext, ComponentExt, NoExt, ParseItem, ParseKeyed, eat_eq};
 
 /// The `#[controller]` args: the base component args extended with the [`AxumRouter`].
 pub type ControllerComponent<T = NoExt> = ComponentArgs<AxumRouter<T>>;
@@ -199,10 +199,8 @@ impl<T: ComponentExt> AxumRouter<T> {
         let controller_descriptor = paths.plugin("ControllerDescriptor");
         let controllers_slice = paths.plugin("CONTROLLERS");
 
-        let controller_static = format_ident!(
-            "__OVERSEERD_CONTROLLER_{}",
-            ident.to_string().to_uppercase()
-        );
+        let controller_static =
+            format_ident!("__UPWELL_CONTROLLER_{}", ident.to_string().to_uppercase());
         let client_struct = client_struct(ident, docs);
         // The wasm `#[wasm_bindgen]` wrapper *struct* + constructor is emitted once here (like the
         // generic client struct); each `#[handlers]` block contributes its methods onto it. Both
@@ -245,8 +243,8 @@ impl<T: ComponentExt> AxumRouter<T> {
         // (`#[handlers]` blocks append to it); `inventory` keys a `DescriptorFor<Self,
         // ControllerRoute<Self>>` bucket. Both surface as an iterator of `ControllerRoute<Self>`, so
         // the `router()` body is backend-uniform.
-        let route_registry = overseerd_macros_core::backend::dual_backend(
-            overseerd_macros_core::backend::registry_for_impl(
+        let route_registry = upwell_macros_core::backend::dual_backend(
+            upwell_macros_core::backend::registry_for_impl(
                 quote!(#ident),
                 quote!(#controller_route<#ident>),
                 paths,
@@ -258,7 +256,7 @@ impl<T: ComponentExt> AxumRouter<T> {
                 pub static #routes_slice: [#controller_route<#ident>];
             },
         );
-        let route_iter = overseerd_macros_core::backend::dual_backend(
+        let route_iter = upwell_macros_core::backend::dual_backend(
             quote! {
                 #inventory::iter::<#descriptor_for<#ident, #controller_route<#ident>>>
                     .into_iter()
@@ -267,7 +265,7 @@ impl<T: ComponentExt> AxumRouter<T> {
             quote! { #routes_slice.iter().copied() },
         );
 
-        let server = overseerd_macros_core::gate::native_only(quote! {
+        let server = upwell_macros_core::gate::native_only(quote! {
             #route_registry
 
             impl #controller_trait for #ident {
@@ -299,7 +297,7 @@ impl<T: ComponentExt> AxumRouter<T> {
             }
 
             const _: () = {
-                const __OVERSEERD_CONTROLLER_DESCRIPTOR: #controller_descriptor =
+                const __UPWELL_CONTROLLER_DESCRIPTOR: #controller_descriptor =
                     #controller_descriptor {
                         id: #id,
                         name: #name,
@@ -309,12 +307,12 @@ impl<T: ComponentExt> AxumRouter<T> {
                     };
 
                 impl #descriptor_trait<#controller_descriptor> for #ident {
-                    const DESCRIPTOR: #controller_descriptor = __OVERSEERD_CONTROLLER_DESCRIPTOR;
+                    const DESCRIPTOR: #controller_descriptor = __UPWELL_CONTROLLER_DESCRIPTOR;
                 }
 
                 #[#distributed_slice(#controllers_slice)]
                 #[linkme(crate = #linkme_crate)]
-                static #controller_static: #controller_descriptor = __OVERSEERD_CONTROLLER_DESCRIPTOR;
+                static #controller_static: #controller_descriptor = __UPWELL_CONTROLLER_DESCRIPTOR;
             };
 
             #inner
@@ -369,7 +367,7 @@ impl<T: ComponentExt> AxumRouter<T> {
         let ws_route_p = quote!(#ws_route<#protocol>);
 
         let controller_static = format_ident!(
-            "__OVERSEERD_WS_CONTROLLER_{}",
+            "__UPWELL_WS_CONTROLLER_{}",
             ident.to_string().to_uppercase()
         );
         let client_struct = client_struct(ident, docs);
@@ -391,8 +389,8 @@ impl<T: ComponentExt> AxumRouter<T> {
         // The ws controller's server surface (the route slice, the `WebsocketController` impl, and
         // the `WS_CONTROLLERS` registration) is gated out on wasm; the client structs above carry
         // across, so a wasm client gets the generated SEND client with no server code.
-        let ws_route_registry = overseerd_macros_core::backend::dual_backend(
-            overseerd_macros_core::backend::registry_for_impl(
+        let ws_route_registry = upwell_macros_core::backend::dual_backend(
+            upwell_macros_core::backend::registry_for_impl(
                 quote!(#ident),
                 quote!(#controller_ws_route<#ident, #protocol>),
                 paths,
@@ -404,7 +402,7 @@ impl<T: ComponentExt> AxumRouter<T> {
                 pub static #ws_routes_slice: [#controller_ws_route<#ident, #protocol>];
             },
         );
-        let ws_route_iter = overseerd_macros_core::backend::dual_backend(
+        let ws_route_iter = upwell_macros_core::backend::dual_backend(
             quote! {
                 #inventory::iter::<#descriptor_for<#ident, #controller_ws_route<#ident, #protocol>>>
                     .into_iter()
@@ -413,7 +411,7 @@ impl<T: ComponentExt> AxumRouter<T> {
             quote! { #ws_routes_slice.iter().copied() },
         );
 
-        let server = overseerd_macros_core::gate::native_only(quote! {
+        let server = upwell_macros_core::gate::native_only(quote! {
             #ws_route_registry
 
             impl #ws_controller_trait for #ident {
@@ -441,7 +439,7 @@ impl<T: ComponentExt> AxumRouter<T> {
             const _: () = {
                 // Erases the typed `ws_routes` product to `Box<dyn Any>` for the non-generic
                 // `WS_CONTROLLERS` slice; `WsControllerDescriptor::routes_for::<P>` recovers it.
-                fn __overseerd_ws_routes_erased(
+                fn __upwell_ws_routes_erased(
                     runtime: & #app_runtime,
                 ) -> ::std::boxed::Box<dyn ::std::any::Any + ::std::marker::Send> {
                     ::std::boxed::Box::new(
@@ -449,23 +447,23 @@ impl<T: ComponentExt> AxumRouter<T> {
                     )
                 }
 
-                const __OVERSEERD_WS_CONTROLLER_DESCRIPTOR: #ws_descriptor =
+                const __UPWELL_WS_CONTROLLER_DESCRIPTOR: #ws_descriptor =
                     #ws_descriptor {
                         id: #id,
                         name: #name,
                         ty: #type_descriptor::of::<#ident>(#type_name),
                         protocol: || ::std::any::TypeId::of::<#protocol>(),
                         protocol_name: || ::std::any::type_name::<#protocol>(),
-                        routes: __overseerd_ws_routes_erased,
+                        routes: __upwell_ws_routes_erased,
                     };
 
                 impl #descriptor_trait<#ws_descriptor> for #ident {
-                    const DESCRIPTOR: #ws_descriptor = __OVERSEERD_WS_CONTROLLER_DESCRIPTOR;
+                    const DESCRIPTOR: #ws_descriptor = __UPWELL_WS_CONTROLLER_DESCRIPTOR;
                 }
 
                 #[#distributed_slice(#ws_controllers_slice)]
                 #[linkme(crate = #linkme_crate)]
-                static #controller_static: #ws_descriptor = __OVERSEERD_WS_CONTROLLER_DESCRIPTOR;
+                static #controller_static: #ws_descriptor = __UPWELL_WS_CONTROLLER_DESCRIPTOR;
             };
 
             #inner

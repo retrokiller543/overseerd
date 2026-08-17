@@ -127,7 +127,7 @@ impl JobRunContext {
     /// `trace` event inside the run span so it is picked up by log capture.
     pub async fn progress(&self, progress: JobProgress) {
         trace!(
-            target: "overseerd::jobs",
+            target: "upwell::jobs",
             phase = progress.phase.as_deref(),
             current = progress.current,
             total = progress.total,
@@ -242,7 +242,7 @@ fn compute_next(entry: &JobEntry) -> NextFire {
         Schedule::Every(period) => {
             if period.is_zero() {
                 error!(
-                    target: "overseerd::jobs",
+                    target: "upwell::jobs",
                     job = %entry.metadata.name,
                     "interval job has a zero period; it will not run"
                 );
@@ -261,7 +261,7 @@ fn compute_next(entry: &JobEntry) -> NextFire {
 
                 None => {
                     error!(
-                        target: "overseerd::jobs",
+                        target: "upwell::jobs",
                         job = %entry.metadata.name,
                         "cron job has no next occurrence; it will not run"
                     );
@@ -370,7 +370,7 @@ async fn run_body(
     trigger: JobTrigger,
 ) -> JobRunOutcome {
     let span = info_span!(
-        target: "overseerd::jobs",
+        target: "upwell::jobs",
         RUN_SPAN_NAME,
         job_id = entry.id.raw(),
         job_name = %entry.metadata.name,

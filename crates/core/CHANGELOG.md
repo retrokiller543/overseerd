@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.20.0](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.19.1...overseerd-core-v0.20.0) - 2026-07-22
+## [0.20.0](https://github.com/retrokiller543/upwell/compare/upwell-core-v0.19.1...upwell-core-v0.20.0) - 2026-07-22
 
 ### Added
 
 - *(di)* dual linkme/inventory registration backend for factories & hooks
 
-## [0.19.0](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.18.0...overseerd-core-v0.19.0) - 2026-07-21
+## [0.19.0](https://github.com/retrokiller543/upwell/compare/upwell-core-v0.18.0...upwell-core-v0.19.0) - 2026-07-21
 
 ### Added
 
@@ -24,55 +24,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(di)* resolve review findings in provider primitives
 - *(di)* hydrate deferred dependencies after build
 
-## [0.14.2](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.14.1...overseerd-core-v0.14.2) - 2026-07-17
+## [0.14.2](https://github.com/retrokiller543/upwell/compare/upwell-core-v0.14.1...upwell-core-v0.14.2) - 2026-07-17
 
 ### Other
 
 - *(di)* harden hot paths and add controlled benchmarks
 
-## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.11.2...overseerd-core-v0.12.0) - 2026-07-08
+## [0.12.0](https://github.com/retrokiller543/upwell/compare/upwell-core-v0.11.2...upwell-core-v0.12.0) - 2026-07-08
 
 ### Other
 
 - Added docs to all crates
 
-## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.6.0...overseerd-core-v0.7.0) - 2026-06-30
+## [0.7.0](https://github.com/retrokiller543/upwell/compare/upwell-core-v0.6.0...upwell-core-v0.7.0) - 2026-06-30
 
 ### Other
 
-- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/overseerd/pull/20))
+- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/upwell/pull/20))
 
-## [0.6.0](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.5.0...overseerd-core-v0.6.0) - 2026-06-26
-
-### Other
-
-- Config hot-reloading: Live/Dep, mutable Cfg, two-phase reload, hooks, and triggers ([#14](https://github.com/retrokiller543/overseerd/pull/14))
-
-## [0.5.0](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.4.0...overseerd-core-v0.5.0) - 2026-06-25
+## [0.6.0](https://github.com/retrokiller543/upwell/compare/upwell-core-v0.5.0...upwell-core-v0.6.0) - 2026-06-26
 
 ### Other
 
-- manager owns the config registry and seeds all defaults (fixes cross-path default references) ([#12](https://github.com/retrokiller543/overseerd/pull/12))
+- Config hot-reloading: Live/Dep, mutable Cfg, two-phase reload, hooks, and triggers ([#14](https://github.com/retrokiller543/upwell/pull/14))
 
-## [0.4.0](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.3.0...overseerd-core-v0.4.0) - 2026-06-25
-
-### Other
-
-- directory-namespace ergonomics + tagged-enum defaults ([#10](https://github.com/retrokiller543/overseerd/pull/10))
-
-## [0.2.0](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.1.1...overseerd-core-v0.2.0) - 2026-06-25
+## [0.5.0](https://github.com/retrokiller543/upwell/compare/upwell-core-v0.4.0...upwell-core-v0.5.0) - 2026-06-25
 
 ### Other
 
-- directory namespace, templated field defaults, enum support, app errors & unified logging ([#6](https://github.com/retrokiller543/overseerd/pull/6))
+- manager owns the config registry and seeds all defaults (fixes cross-path default references) ([#12](https://github.com/retrokiller543/upwell/pull/12))
 
-## [0.1.1](https://github.com/retrokiller543/overseerd/compare/overseerd-core-v0.1.0...overseerd-core-v0.1.1) - 2026-06-24
+## [0.4.0](https://github.com/retrokiller543/upwell/compare/upwell-core-v0.3.0...upwell-core-v0.4.0) - 2026-06-25
+
+### Other
+
+- directory-namespace ergonomics + tagged-enum defaults ([#10](https://github.com/retrokiller543/upwell/pull/10))
+
+## [0.2.0](https://github.com/retrokiller543/upwell/compare/upwell-core-v0.1.1...upwell-core-v0.2.0) - 2026-06-25
+
+### Other
+
+- directory namespace, templated field defaults, enum support, app errors & unified logging ([#6](https://github.com/retrokiller543/upwell/pull/6))
+
+## [0.1.1](https://github.com/retrokiller543/upwell/compare/upwell-core-v0.1.0...upwell-core-v0.1.1) - 2026-06-24
 
 ### Other
 
 - release v0.1.0
 
-## [0.1.0](https://github.com/retrokiller543/overseerd/releases/tag/overseerd-core-v0.1.0) - 2026-06-24
+## [0.1.0](https://github.com/retrokiller543/upwell/releases/tag/upwell-core-v0.1.0) - 2026-06-24
 
 ### Added
 
@@ -94,7 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - formatted code
 - add crate metadata and internal dep versions for publishing
 - Merge branch 'feat/11-middleware' into feat/builtins-middleware
-- renamed the project to overseerd
+- renamed the project to upwell
 - Address PR #1 review: correct parse-error variant and cap resolution depth
 - Add configuration system and application directories
 - Optimize child scope allocation by reusing parent for empty scopes and conditionally seeding connection scope with PeerInfo

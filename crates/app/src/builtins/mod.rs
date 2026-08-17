@@ -19,7 +19,7 @@ pub use logging::{BoxedLayer, InitTracingError, init_tracing, init_tracing_with_
 
 #[cfg(test)]
 mod tests {
-    use overseerd_config::{ConfigManager, ConfigProperties, Toml};
+    use upwell_config::{ConfigManager, ConfigProperties, Toml};
 
     use super::config::{LoggingConfig, ServerConfig};
 

@@ -31,15 +31,15 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
-use overseerd_transport::{
-    PeerInfo, PredefinedCode, StatusCode, StreamDecode, StreamEncode, StreamEncodeError,
-};
 use serde::{Serialize, de::DeserializeOwned};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
+use upwell_transport::{
+    PeerInfo, PredefinedCode, StatusCode, StreamDecode, StreamEncode, StreamEncodeError,
+};
 
-use overseerd_di::FromContainer;
+use upwell_di::FromContainer;
 
 use crate::{
     Error,
@@ -474,9 +474,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use overseerd_transport::PredefinedCode;
     use serde::Serializer;
     use serde::ser::Error as _;
+    use upwell_transport::PredefinedCode;
 
     use super::*;
 

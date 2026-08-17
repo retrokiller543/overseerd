@@ -2,7 +2,7 @@
 //! request-time extraction.
 //!
 //! - `resolver_set_clone`: cloning the request-scope resolver set (an `Arc` bump; the existing
-//!   deterministic contract in `overseerd-core` proves it is allocation-free — this tracks its
+//!   deterministic contract in `upwell-core` proves it is allocation-free — this tracks its
 //!   wall-clock cost).
 //! - `resolve_by_scope_depth`: `ScopeContainer::get`, resolving a root component from the deepest
 //!   scope, across 1/4/8 nested scopes — the parent-chain walk every injected `Arc<T>` performs.
@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use overseerd_benchmarks::di;
-use overseerd_core::{Resolver, ResolverSet};
+use upwell_benchmarks::di;
+use upwell_core::{Resolver, ResolverSet};
 use tokio::runtime::Runtime;
 
 macro_rules! resolver_types {

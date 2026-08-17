@@ -1,10 +1,10 @@
-//! The Overseerd **axum/HTTP controller** macros: `#[controller]`, `#[handlers]`, and the
+//! The Upwell **axum/HTTP controller** macros: `#[controller]`, `#[handlers]`, and the
 //! route attributes (`#[get]`, `#[post]`, `#[put]`, `#[delete]`, `#[patch]`, `#[head]`,
-//! `#[options]`, and the raw `#[route(METHOD, "/path")]`). They emit `::overseerd::web::*`
-//! types, so they live in their own crate rather than the core `overseerd-macros`, built on
-//! the shared [`overseerd_macros_core`] codegen.
+//! `#[options]`, and the raw `#[route(METHOD, "/path")]`). They emit `::upwell::web::*`
+//! types, so they live in their own crate rather than the core `upwell-macros`, built on
+//! the shared [`upwell_macros_core`] codegen.
 //!
-//! Re-exported through the `overseerd` facade's `web` module; depend on the facade, not this
+//! Re-exported through the `upwell` facade's `web` module; depend on the facade, not this
 //! crate directly.
 //!
 //! - `#[controller]` is a **router component**: a `#[component]` (field-injected singleton)
@@ -23,28 +23,28 @@ mod route;
 mod router;
 mod topics;
 
-use overseerd_macros_core::methods::MethodArgs;
-use overseerd_macros_core::paths::Paths;
-use overseerd_macros_core::run;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use router::ControllerComponent;
 use syn::{DeriveInput, ItemEnum, ItemFn, ItemImpl, ItemStruct};
+use upwell_macros_core::methods::MethodArgs;
+use upwell_macros_core::paths::Paths;
+use upwell_macros_core::run;
 
-/// The default crate roots for the axum macros. Core is always the `overseerd` facade; the
-/// plugin (own-types) root is `::overseerd::axum` when consumed through the facade (the
-/// `facade` feature, set by the `overseerd` crate) and the standalone `::overseerd_axum`
-/// otherwise — so a direct dependant on `overseerd-axum` gets working codegen.
+/// The default crate roots for the axum macros. Core is always the `upwell` facade; the
+/// plugin (own-types) root is `::upwell::axum` when consumed through the facade (the
+/// `facade` feature, set by the `upwell` crate) and the standalone `::upwell_axum`
+/// otherwise — so a direct dependant on `upwell-axum` gets working codegen.
 fn axum_paths() -> Paths {
     if cfg!(feature = "facade") {
         Paths::new(
-            syn::parse_quote!(::overseerd),
-            syn::parse_quote!(::overseerd::axum),
+            syn::parse_quote!(::upwell),
+            syn::parse_quote!(::upwell::axum),
         )
     } else {
         Paths::new(
-            syn::parse_quote!(::overseerd),
-            syn::parse_quote!(::overseerd_axum),
+            syn::parse_quote!(::upwell),
+            syn::parse_quote!(::upwell_axum),
         )
     }
 }
@@ -52,7 +52,7 @@ fn axum_paths() -> Paths {
 /// Declares a **controller** — a router component exposing HTTP routes.
 ///
 /// `#[controller]` is `ComponentArgs<AxumRouter>`: a `#[component]` (field-injected singleton)
-/// plus the controller surface — a [`Controller`](../overseerd_axum/trait.Controller.html) impl,
+/// plus the controller surface — a [`Controller`](../upwell_axum/trait.Controller.html) impl,
 /// the controller's `{Controller}Routes` slice, and its `ControllerDescriptor`. Routes are
 /// added by `#[handlers]` impls. Accepts the component keys plus `path` (the base path) and
 /// `routes_slice`.
@@ -64,7 +64,7 @@ pub fn controller(attr: TokenStream, item: TokenStream) -> TokenStream {
             let paths = args.paths(axum_paths());
 
             run::<ItemStruct, _>(item.into(), |item| {
-                overseerd_macros_core::expand_component(args, item, &paths)
+                upwell_macros_core::expand_component(args, item, &paths)
             })
         }
 
@@ -90,7 +90,7 @@ pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
             let paths = args.paths(axum_paths());
 
             run::<ItemImpl, _>(item.into(), |item| {
-                overseerd_macros_core::methods::expand(args, item, &paths)
+                upwell_macros_core::methods::expand(args, item, &paths)
             })
         }
 
@@ -100,7 +100,7 @@ pub fn handlers(attr: TokenStream, item: TokenStream) -> TokenStream {
     out.into()
 }
 
-/// Marks a type as HTTP **wire data** ([`Dto`](../overseerd_axum/trait.Dto.html)): a request/response
+/// Marks a type as HTTP **wire data** ([`Dto`](../upwell_axum/trait.Dto.html)): a request/response
 /// body or a path/query parameter. Derives `serde::Serialize`/`Deserialize` (skip with
 /// `#[dto(no_serde)]`), derives `tsify::Tsify` on wasm (so the generated client is TypeScript-typed),
 /// and implements `Dto`. `#[handlers]` requires every wire position to be a `Dto`, so a forgotten

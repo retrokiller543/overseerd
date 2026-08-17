@@ -10,7 +10,7 @@
 //! the upgrade-endpoint path (it can't be inferred), mounts the framework's generic upgrade handler
 //! there, and hands the controllers that speak `P` to [`WebsocketProtocol::build`] — so the protocol
 //! sets up its own routing and the app never sees a route. Concrete protocols live in downstream
-//! crates such as `overseerd-axum-json-ws` and `overseerd-axum-stomp`.
+//! crates such as `upwell-axum-json-ws` and `upwell-axum-stomp`.
 
 pub mod pubsub;
 
@@ -21,11 +21,11 @@ use std::sync::Arc;
 
 use axum::extract::ws::{CloseFrame, Message, Utf8Bytes, WebSocket, close_code};
 use futures::future::BoxFuture;
-use overseerd_app::{AppRegistry, AppRuntime};
-use overseerd_config::ContainerConfigExt;
-use overseerd_core::TypeDescriptor;
-use overseerd_di::{BoxedComponent, ScopeContainer};
 use tokio::time::Duration;
+use upwell_app::{AppRegistry, AppRuntime};
+use upwell_config::ContainerConfigExt;
+use upwell_core::TypeDescriptor;
+use upwell_di::{BoxedComponent, ScopeContainer};
 
 use crate::request_meta::RequestMeta;
 
@@ -115,7 +115,7 @@ impl<P: WebsocketProtocol> WsRoute<P> {
 
 /// One `#[handlers]` block's message-route builder, tagged with its controller type `C` and
 /// protocol `P` — the WebSocket analog of [`ControllerRoute`](crate::ControllerRoute). Wraps the
-/// bare builder fn pointer so it can be an [`OverseerdDescriptor`] and thus a
+/// bare builder fn pointer so it can be an [`UpwellDescriptor`] and thus a
 /// `DescriptorFor<C, ControllerWsRoute<C, P>>` bucket element on the `inventory` backend. `Copy` is
 /// manual (a naive derive would wrongly demand `C: Copy` / `P: Copy`).
 pub struct ControllerWsRoute<C, P: WebsocketProtocol>(pub fn(std::sync::Arc<C>) -> Vec<WsRoute<P>>);
@@ -128,10 +128,7 @@ impl<C, P: WebsocketProtocol> Clone for ControllerWsRoute<C, P> {
 
 impl<C, P: WebsocketProtocol> Copy for ControllerWsRoute<C, P> {}
 
-impl<C: 'static, P: WebsocketProtocol> overseerd_core::OverseerdDescriptor
-    for ControllerWsRoute<C, P>
-{
-}
+impl<C: 'static, P: WebsocketProtocol> upwell_core::UpwellDescriptor for ControllerWsRoute<C, P> {}
 
 /// Rejects ambiguous destinations before calling [`WebsocketProtocol::build`]. Keeping this check
 /// in the framework preserves the original infallible public `build` contract for downstream
@@ -326,7 +323,7 @@ impl WsConnectionMeta {
     }
 }
 
-impl overseerd_di::Injectable for WsConnectionMeta {
+impl upwell_di::Injectable for WsConnectionMeta {
     type Target = Self;
     type Stored = Self;
 
@@ -339,9 +336,9 @@ impl overseerd_di::Injectable for WsConnectionMeta {
     }
 }
 
-pub(crate) static WS_CONNECTION_META_DESCRIPTOR: overseerd_di::ComponentDescriptor =
-    overseerd_di::ComponentDescriptor::manual(
-        "__overseerd_ws_connection_meta",
+pub(crate) static WS_CONNECTION_META_DESCRIPTOR: upwell_di::ComponentDescriptor =
+    upwell_di::ComponentDescriptor::manual(
+        "__upwell_ws_connection_meta",
         "WsConnectionMeta",
         TypeDescriptor::of::<WsConnectionMeta>("WsConnectionMeta"),
         &crate::scope::Connection,
@@ -574,7 +571,7 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
 
                 Err(_) => {
                     tracing::warn!(
-                        target: "overseerd::axum",
+                        target: "upwell::axum",
                         "websocket connection limit reached; rejecting upgrade"
                     );
 
@@ -622,7 +619,7 @@ pub(crate) fn mount_ws<P: WebsocketProtocol>(
 
                     Err(error) => {
                         tracing::error!(
-                            target: "overseerd::axum",
+                            target: "upwell::axum",
                             %error,
                             "ws connection scope build failed; closing socket"
                         );

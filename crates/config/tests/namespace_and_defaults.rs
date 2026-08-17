@@ -7,11 +7,11 @@
 
 use std::collections::HashMap;
 
-use overseerd_config::{
+use serde::Deserialize;
+use upwell_config::{
     ConfigStr, ConfigValue, DefaultSpec, EnumTag, MapResolver, ResolverChain, TemplateError,
     TemplateErrorKind, from_value,
 };
-use serde::Deserialize;
 
 /// A string leaf parsed through the real placeholder grammar.
 fn s(raw: &str) -> ConfigValue {

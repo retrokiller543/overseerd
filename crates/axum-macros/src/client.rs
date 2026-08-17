@@ -17,12 +17,12 @@
 //! ([`UNSUPPORTED_WIRE`], the whole-request extractors) opts out: it yields `None`, the server route
 //! still registers, and it simply gets no client method (rather than a silently wrong one).
 
-use overseerd_macros_core::attr::{first_type_arg, type_name};
-use overseerd_macros_core::client::{Capability, ClientMethod};
-use overseerd_macros_core::paths::Paths;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{GenericArgument, Ident, PathArguments, ReturnType, Type, TypeParamBound};
+use upwell_macros_core::attr::{first_type_arg, type_name};
+use upwell_macros_core::client::{Capability, ClientMethod};
+use upwell_macros_core::paths::Paths;
 
 use crate::route::RouteAttr;
 
@@ -42,7 +42,7 @@ pub(crate) enum QueryInput {
     Raw,
 }
 
-/// A route's request body: which [`HttpBody`](../overseerd_axum/client/trait.HttpBody.html) wrapper
+/// A route's request body: which [`HttpBody`](../upwell_axum/client/trait.HttpBody.html) wrapper
 /// carries it, and — for the serde-typed bodies — the payload type. The wrapper-typed bodies
 /// (`Bytes`/`RawForm`/`Multipart`) have a fixed client parameter type, so they carry no `inner`.
 pub(crate) struct Body {
@@ -144,7 +144,7 @@ pub(crate) fn classify(arg_types: &[&Type]) -> Option<Inputs> {
     })
 }
 
-/// Collects the **wire** types of a route that must implement [`Dto`](../overseerd_axum/trait.Dto.html)
+/// Collects the **wire** types of a route that must implement [`Dto`](../upwell_axum/trait.Dto.html)
 /// — the path parameter(s), a typed `Query<T>`, a `Json`/`Form` request body, and the response.
 /// Pushed into `sink` (across a whole `#[handlers]` block) so the caller can dedupe and emit a single
 /// assertion block. Only with the `client` feature (a `Dto` is what the client builds a typed method
@@ -205,13 +205,13 @@ pub fn dto_assertions(mut wire_types: Vec<Type>, paths: &Paths) -> TokenStream {
     let dto = paths.plugin("Dto");
     let asserts = wire_types
         .iter()
-        .map(|ty| quote!(__overseerd_assert_dto::<#ty>();));
+        .map(|ty| quote!(__upwell_assert_dto::<#ty>();));
 
     quote! {
         const _: () = {
-            fn __overseerd_assert_dto<T: #dto>() {}
+            fn __upwell_assert_dto<T: #dto>() {}
 
-            fn __overseerd_assert_wire_types() {
+            fn __upwell_assert_wire_types() {
                 #(#asserts)*
             }
         };
@@ -482,7 +482,7 @@ fn wasm_client_methods(
 /// client methods: the deduped `Dto` wire-type assertions (both targets) and, with the `reqwest`
 /// (fetch) backend, the wasm binding's *method* impl (wasm-only, self-gated). The wrapper struct is
 /// emitted separately by `#[controller]` ([`wasm_client_struct`]). This is the whole of the axum
-/// extension's [`extra_client_tokens`](overseerd_macros_core::ParseMethod::extra_client_tokens).
+/// extension's [`extra_client_tokens`](upwell_macros_core::ParseMethod::extra_client_tokens).
 pub fn extra_client_tokens(
     client_ident: &Ident,
     methods: &[ClientMethod],
@@ -501,7 +501,7 @@ pub fn extra_client_tokens(
     let with_headers = if cfg!(feature = "client") && !header_methods.is_empty() {
         let fns = header_methods
             .iter()
-            .map(|m| overseerd_macros_core::client::client_method_tokens(m, paths));
+            .map(|m| upwell_macros_core::client::client_method_tokens(m, paths));
 
         quote! {
             impl<C> #client_ident<C> {
@@ -1106,7 +1106,7 @@ const UNSUPPORTED_WIRE: &[&str] = &["Request", "RawRequest"];
 /// named argument each — keeping a long route's client signature compact.
 const MAX_NAMED_PATH_PARAMS: usize = 3;
 
-/// Which [`HttpBody`](../overseerd_axum/client/trait.HttpBody.html) wrapper a route's body uses (the
+/// Which [`HttpBody`](../upwell_axum/client/trait.HttpBody.html) wrapper a route's body uses (the
 /// wrapper owns the content type + wire encoding). `Json`/`Form` wrap a serde payload `T`; `Bytes`
 /// and `RawForm` wrap a raw `Vec<u8>`; `Multipart` is the `Multipart` builder, already an `HttpBody`.
 pub(crate) enum BodyKind {

@@ -1,6 +1,6 @@
 use syn::{LitStr, parse_quote};
 
-use overseerd_macros_core::paths::Paths;
+use upwell_macros_core::paths::Paths;
 
 use super::{Segment, TopicsArgs, expand, parse_template};
 

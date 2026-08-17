@@ -4,10 +4,10 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use overseerd_core::{
+use tracing::{debug, error, info, instrument, trace};
+use upwell_core::{
     Cardinality, ResolutionMode, Resolver, ResolverCtx, ResolverSet, Scope, Singleton, Transient,
 };
-use tracing::{debug, error, info, instrument, trace};
 
 use crate::descriptors::BoxedComponent;
 use crate::{
@@ -877,7 +877,7 @@ impl WaitExpansion<'_> {
     /// they are what the consumer actually captures.
     fn single_edge_waits(
         &mut self,
-        dep: &overseerd_core::DependencyDescriptor,
+        dep: &upwell_core::DependencyDescriptor,
         providers: &[ProviderDescriptor],
     ) -> HashSet<TypeId> {
         if let Some(provider) = select_provider_for(dep, providers)
@@ -980,7 +980,7 @@ impl WaitExpansion<'_> {
 /// Selects the provider a single trait dependency constructs: qualifier-selected,
 /// the sole provider, or the unique primary one. Shared with runtime resolution.
 fn select_provider_for(
-    dep: &overseerd_core::DependencyDescriptor,
+    dep: &upwell_core::DependencyDescriptor,
     providers: &[ProviderDescriptor],
 ) -> Option<ProviderDescriptor> {
     match dep.qualifier {
@@ -999,7 +999,7 @@ fn select_provider_for(
 /// edge waits for every provider's. A single concrete edge waits for that
 /// concrete; a multi-valued edge with no providers is trivially ready.
 fn dep_ready(
-    dep: &overseerd_core::DependencyDescriptor,
+    dep: &upwell_core::DependencyDescriptor,
     providers_by_trait: &HashMap<TypeId, Vec<ProviderDescriptor>>,
     provider_waits: &HashMap<TypeId, HashSet<TypeId>>,
     trait_waits: &HashMap<TypeId, HashSet<TypeId>>,

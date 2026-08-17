@@ -7,9 +7,9 @@ use axum::extract::ws::Message;
 use axum::extract::ws::WebSocket;
 #[cfg(feature = "tungstenite")]
 use futures::StreamExt;
-use overseerd_app::AppRuntime;
-use overseerd_core::TypeDescriptor;
-use overseerd_di::ScopeContainer;
+use upwell_app::AppRuntime;
+use upwell_core::TypeDescriptor;
+use upwell_di::ScopeContainer;
 
 #[cfg(feature = "tungstenite")]
 use super::WsConnectionMeta;
@@ -53,7 +53,7 @@ impl WebsocketProtocol for TestProtocol {
 async fn old_signature_custom_protocol_mounts_without_adapter_methods() {
     let builds_before = TEST_PROTOCOL_BUILDS.load(Ordering::Relaxed);
     let app = crate::App::builder("old-signature-ws-test")
-        .config_source(overseerd_config::ConfigManager::<overseerd_config::Toml>::empty())
+        .config_source(upwell_config::ConfigManager::<upwell_config::Toml>::empty())
         .register_ws::<TestProtocol>("/ws")
         .build()
         .await
@@ -130,7 +130,7 @@ fn duplicate_descriptor(id: &'static str) -> WsControllerDescriptor {
 #[tokio::test]
 async fn duplicate_destinations_fail_before_custom_protocol_build() {
     let app = crate::App::builder("duplicate-ws-route-test")
-        .config_source(overseerd_config::ConfigManager::<overseerd_config::Toml>::empty())
+        .config_source(upwell_config::ConfigManager::<upwell_config::Toml>::empty())
         .build()
         .await
         .expect("test runtime builds");
@@ -250,7 +250,7 @@ impl WebsocketProtocol for RequiredSubprotocol {
 #[tokio::test]
 async fn required_subprotocol_is_negotiated_and_seeded() {
     let app = crate::App::builder("ws-subprotocol-test")
-        .config_source(overseerd_config::ConfigManager::<overseerd_config::Toml>::empty())
+        .config_source(upwell_config::ConfigManager::<upwell_config::Toml>::empty())
         .register_ws::<RequiredSubprotocol>("/ws")
         .build()
         .await

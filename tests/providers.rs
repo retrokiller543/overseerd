@@ -8,8 +8,8 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use overseerd::daemon::App;
-use overseerd::{DiError, component, injectable, scope::Transient};
+use upwell::daemon::App;
+use upwell::{DiError, component, injectable, scope::Transient};
 
 /// A trait two components provide. The `Send + Sync` supertraits make the bare
 /// `dyn Animal` shareable, so no use site needs to write `+ Send + Sync`.

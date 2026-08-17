@@ -7,9 +7,9 @@
 //!
 //! The choice is made **at expansion time** and only the chosen backend's tokens are emitted — no
 //! `#[cfg]` leaks into the user's crate, so downstream builds need no cfg registration or lint
-//! config. The signal is the `overseerd_hybrid` cfg (set by this crate's build script via
-//! [`overseerd_build`](https://docs.rs/overseerd-build) — auto-on for the Apple/Mach-O host, or
-//! forced with `OVERSEERD_HYBRID`) OR the `hybrid-registry` Cargo feature (the convenient force,
+//! config. The signal is the `upwell_hybrid` cfg (set by this crate's build script via
+//! [`upwell_build`](https://docs.rs/upwell-build) — auto-on for the Apple/Mach-O host, or
+//! forced with `UPWELL_HYBRID`) OR the `hybrid-registry` Cargo feature (the convenient force,
 //! forwarded from the macro crates and the facade).
 
 use proc_macro2::TokenStream;
@@ -38,11 +38,11 @@ pub fn registry_for_impl(owner: TokenStream, kind: TokenStream, paths: &Paths) -
 
 /// Whether the macros should emit `inventory` registrations instead of `linkme` ones.
 ///
-/// `target_os`/`overseerd_hybrid` here reflect the proc-macro **host** — correct for native builds;
+/// `target_os`/`upwell_hybrid` here reflect the proc-macro **host** — correct for native builds;
 /// cross-compiling to a Mach-O target from a non-Mach-O host needs the `hybrid-registry` feature.
 #[inline]
 pub fn use_inventory() -> bool {
-    cfg!(overseerd_hybrid) || cfg!(feature = "hybrid-registry")
+    cfg!(upwell_hybrid) || cfg!(feature = "hybrid-registry")
 }
 
 /// Selects between the two backends' token streams, emitting exactly one. `inventory` is chosen when

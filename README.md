@@ -1,24 +1,24 @@
-# Overseerd
+# Upwell
 
-Overseerd is a Rust framework for building long-running daemons and network services from strongly
+Upwell is a Rust framework for building long-running daemons and network services from strongly
 typed components, services, and generated infrastructure — with compile-time dependency injection,
 typed config, and typed clients generated from the same source of truth.
 
 The goal is to make service development feel like writing ordinary Rust business logic while
-Overseerd handles dependency wiring, endpoint registration, lifecycle, config, and the client SDK.
+Upwell handles dependency wiring, endpoint registration, lifecycle, config, and the client SDK.
 
-Unlike fully convention-driven frameworks, Overseerd never takes ownership of your entrypoint or
+Unlike fully convention-driven frameworks, Upwell never takes ownership of your entrypoint or
 runtime. You keep control of process startup, runtime construction, and deployment while benefiting
 from generated infrastructure and convention-assisted wiring.
 
-> Overseerd is pre-1.0: the APIs below are implemented and exercised by the examples, but macro
+> Upwell is pre-1.0: the APIs below are implemented and exercised by the examples, but macro
 > syntax and semantics may still evolve.
 
 ## Philosophy
 
 > Boilerplate should be generated. Ownership should remain explicit.
 
-Overseerd embraces code generation and metadata discovery to remove repetitive infrastructure while
+Upwell embraces code generation and metadata discovery to remove repetitive infrastructure while
 keeping behavior inspectable, customizable, and overridable. It aims to sit between minimal runtime
 libraries and fully managed application containers:
 
@@ -31,8 +31,8 @@ libraries and fully managed application containers:
 
 * **Compile-time dependency injection** — components and services are field-injected; a missing
   provider is a `cargo check` error (via the default `di-check` feature), not a runtime panic.
-* **Two protocols, one core** — a native **RPC daemon** (`overseerd::daemon`) and an **axum/HTTP**
-  plugin (`overseerd::axum`), both built on the same protocol-agnostic app/DI core. Run either, or
+* **Two protocols, one core** — a native **RPC daemon** (`upwell::daemon`) and an **axum/HTTP**
+  plugin (`upwell::axum`), both built on the same protocol-agnostic app/DI core. Run either, or
   both side by side.
 * **Typed config** — `#[config]` types bound from a merged TOML/YAML tree, with `#[default]`s,
   `${VAR}`/`${@dir}` templating, and live reload hooks.
@@ -41,21 +41,21 @@ libraries and fully managed application containers:
   (REST + STOMP) with no hand-written bindings.
 * **WebSockets & STOMP** — `#[controller(ws = ..)]` message handlers and a STOMP pub/sub broker with
   a typed `#[topics]` contract shared by server and client.
-* **User-owned runtime** — Overseerd never requires ownership of `main`; you build the runtime, set
+* **User-owned runtime** — Upwell never requires ownership of `main`; you build the runtime, set
   up logging, and decide how to serve.
 
 ## Installation
 
 ```sh
-cargo add overseerd
+cargo add upwell
 ```
 
 Pick what you need with features (all off by default except `di-check`):
 
 | Feature | Enables |
 |---|---|
-| `daemon` | the native RPC protocol (`overseerd::daemon`) |
-| `axum` | the HTTP protocol (`overseerd::axum`): `#[controller]`, routes, DI extractors |
+| `daemon` | the native RPC protocol (`upwell::daemon`) |
+| `axum` | the HTTP protocol (`upwell::axum`): `#[controller]`, routes, DI extractors |
 | `ws` / `stomp` | WebSocket controllers / the STOMP pub/sub broker (imply `axum`) |
 | `client` | generate the typed client SDK for the enabled protocol(s) |
 | `reqwest` / `hyper` | HTTP client backends (pick one or both; `reqwest` also powers the wasm client) |
@@ -74,8 +74,8 @@ browser client; keep `main.rs` as a thin bootstrap.
 
 ```rust
 // lib.rs — the app surface
-use overseerd::axum::prelude::*;
-use overseerd::prelude::*;
+use upwell::axum::prelude::*;
+use upwell::prelude::*;
 
 /// A response body. `#[dto]` derives serde (+ TypeScript types on wasm) and marks it wire data.
 #[dto]
@@ -106,14 +106,14 @@ impl GreetController {
 
 ```rust
 // main.rs — build and serve (you own the runtime)
-use overseerd::axum::prelude::*;
-use overseerd::prelude::*;
+use upwell::axum::prelude::*;
+use upwell::prelude::*;
 
 // Anchor the library so its self-registering `#[controller]`s are linked in.
 extern crate my_service;
 
 #[tokio::main]
-async fn main() -> overseerd::axum::Result<()> {
+async fn main() -> upwell::axum::Result<()> {
     // Each `#[controller]` self-registers; `app!` only needs the protocol.
     let app = app! {
         name: "my-service",
@@ -142,8 +142,8 @@ graceful_shutdown_timeout_ms = 30000
 ## An RPC daemon
 
 ```rust
-use overseerd::daemon::{Inject, Payload, handlers, service};
-use overseerd::{Cfg, Dep};
+use upwell::daemon::{Inject, Payload, handlers, service};
+use upwell::{Cfg, Dep};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -170,10 +170,10 @@ impl Notifications {
 ```
 
 ```rust
-use overseerd::daemon::prelude::*;
+use upwell::daemon::prelude::*;
 
 #[tokio::main]
-async fn main() -> overseerd::daemon::Result<()> {
+async fn main() -> upwell::daemon::Result<()> {
     let app = app! {
         name: "notifyd",
         protocol: RpcPlugin,
@@ -196,7 +196,7 @@ Every service and controller generates a transport-generic Rust client from its 
 the client can never drift from the server:
 
 ```rust
-use overseerd::axum::client::ReqwestClient;
+use upwell::axum::client::ReqwestClient;
 
 let client = GreetControllerClient::new(ReqwestClient::new("http://localhost:3000"));
 let greeting = client.greet("world".into()).await?; // -> Greeting, fully typed
@@ -205,8 +205,8 @@ let greeting = client.greet("world".into()).await?; // -> Greeting, fully typed
 Both native HTTP backends store a generic interceptor value directly:
 
 ```rust
-use overseerd::axum::client::{ClientInterceptor, ReqwestClient};
-use overseerd::axum::http;
+use upwell::axum::client::{ClientInterceptor, ReqwestClient};
+use upwell::axum::http;
 
 struct Hooks;
 
@@ -219,7 +219,7 @@ impl ClientInterceptor for Hooks {
         tracing::debug!(status = %response.status, "client response");
     }
 
-    fn on_error<E>(&self, error: &overseerd::client::ClientError<http::StatusCode, E>) {
+    fn on_error<E>(&self, error: &upwell::client::ClientError<http::StatusCode, E>) {
         tracing::error!(%error, "client call failed");
     }
 }
@@ -280,14 +280,14 @@ sub.unsubscribe();
 await conn.disconnectStomp();                  // closes the socket shared by every client
 ```
 
-The `overseerd` DI/config core is wasm-safe; only the server-hosting pieces (socket transports, file
+The `upwell` DI/config core is wasm-safe; only the server-hosting pieces (socket transports, file
 watching, the serve loops) are native-only, so a wasm build with any feature set just compiles.
 
 ## Design principles
 
 ### User-owned runtime
 
-Overseerd never requires ownership of `main`. You remain free to configure logging before startup,
+Upwell never requires ownership of `main`. You remain free to configure logging before startup,
 build custom Tokio runtimes, load environment variables, run startup validation, and integrate with
 external tooling. The runtime helpers and convenience macros are optional.
 
@@ -312,7 +312,7 @@ one source of truth.
 
 ## Non-goals
 
-Overseerd is not intended to replace Tokio or existing observability ecosystems, hide all runtime
+Upwell is not intended to replace Tokio or existing observability ecosystems, hide all runtime
 decisions, become a distributed-systems platform, or require framework ownership of application
 startup or a specific deployment model.
 

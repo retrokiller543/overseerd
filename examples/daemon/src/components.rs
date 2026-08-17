@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use overseerd::{component, config, methods};
 use serde::Deserialize;
+use upwell::{component, config, methods};
 
 #[allow(dead_code)]
 #[config(path = "app.server")]
@@ -91,7 +91,7 @@ impl Db {
     }
 }
 
-#[component(scope = overseerd::daemon::Request)]
+#[component(scope = upwell::daemon::Request)]
 pub struct DbConnection {
     #[default]
     id: usize,

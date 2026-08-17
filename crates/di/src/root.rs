@@ -9,7 +9,7 @@
 //!
 //! [`RootResolver`] is the general primitive for that. It is seeded as an ordinary
 //! by-value injectable *before* the root is built (its slot empty) and [`attach`]ed to the
-//! finished root afterwards, exactly as the [`HookManager`](overseerd_hooks::HookManager) is.
+//! finished root afterwards, exactly as the [`HookManager`](upwell_hooks::HookManager) is.
 //! It holds only a [`Weak`] to the root, so it adds no cycle; a consumer upgrades it per
 //! call. This lets any singleton reach the whole [`FromContainer`] surface at run time
 //! without the container layer knowing what it is used for.
@@ -19,7 +19,7 @@
 
 use std::sync::{Arc, OnceLock, Weak};
 
-use overseerd_core::TypeDescriptor;
+use upwell_core::TypeDescriptor;
 
 use crate::construct::FromContainer;
 use crate::container::ScopeContainer;
@@ -27,7 +27,7 @@ use crate::descriptors::{Component, Injectable};
 use crate::error::Error;
 
 /// The stable component id of the seeded [`RootResolver`] singleton.
-pub const ROOT_RESOLVER_ID: &str = "overseerd:root-resolver";
+pub const ROOT_RESOLVER_ID: &str = "upwell:root-resolver";
 
 /// The display name of the seeded [`RootResolver`] singleton.
 pub const ROOT_RESOLVER_NAME: &str = "RootResolver";
@@ -107,7 +107,7 @@ pub const fn root_resolver_descriptor() -> crate::ComponentDescriptor {
         ROOT_RESOLVER_ID,
         ROOT_RESOLVER_NAME,
         TypeDescriptor::of::<RootResolver>(ROOT_RESOLVER_NAME),
-        &overseerd_core::Singleton,
+        &upwell_core::Singleton,
     )
 }
 

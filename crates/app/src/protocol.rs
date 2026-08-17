@@ -1,11 +1,11 @@
 //! The pluggable protocol seam (traits).
 //!
 //! These traits are protocol-agnostic; the native RPC protocol implements them in the
-//! `overseerd-rpc` crate, a future axum protocol in its own crate.
+//! `upwell-rpc` crate, a future axum protocol in its own crate.
 
 use std::future::Future;
 
-use overseerd_core::Scope;
+use upwell_core::Scope;
 
 use crate::lifecycle::ShutdownSignal;
 use crate::registry::AppRegistry;

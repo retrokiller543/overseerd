@@ -2,7 +2,7 @@ use std::sync::Mutex;
 
 use http::header::HeaderValue;
 use http::{StatusCode, request, response};
-use overseerd_client::ClientError;
+use upwell_client::ClientError;
 
 use super::ClientInterceptor;
 

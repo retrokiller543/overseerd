@@ -6,7 +6,7 @@
 //! captured once when the group is built. On emission it appends one route-group builder
 //! (`fn(Arc<Self>) -> axum::Router`) to the controller's `{Controller}Routes` slice; routes
 //! sharing a relative path are folded into a single `MethodRouter`. The base
-//! [`MethodArgs`](overseerd_macros_core::methods::MethodArgs) still handles `#[init]`/`#[hook]`.
+//! [`MethodArgs`](upwell_macros_core::methods::MethodArgs) still handles `#[init]`/`#[hook]`.
 
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
@@ -16,11 +16,11 @@ use syn::{
     ReturnType, Type, TypeParamBound, parse_quote,
 };
 
-use overseerd_macros_core::attr::first_type_arg;
-use overseerd_macros_core::client::ClientMethod;
-use overseerd_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
-use overseerd_macros_core::methods::self_ty_ident;
-use overseerd_macros_core::paths::Paths;
+use upwell_macros_core::attr::first_type_arg;
+use upwell_macros_core::client::ClientMethod;
+use upwell_macros_core::extend::{ParseItem, ParseKeyed, ParseMethod, eat_eq};
+use upwell_macros_core::methods::self_ty_ident;
+use upwell_macros_core::paths::Paths;
 
 use crate::client;
 use crate::route::{self, RouteAttr};
@@ -82,7 +82,7 @@ struct HandlerContext {
 }
 
 /// One route claimed from a method: its verb, its relative path, its own
-/// [`AxumMiddleware`](../overseerd_axum/trait.AxumMiddleware.html) list (first-listed
+/// [`AxumMiddleware`](../upwell_axum/trait.AxumMiddleware.html) list (first-listed
 /// outermost), and the handler closure.
 struct RouteSpec {
     verb: Ident,
@@ -501,19 +501,19 @@ impl ToTokens for AxumHandlers {
 
         // One route-group builder per `#[handlers]` block, wrapped in `ControllerRoute<Self>` and
         // registered into the controller's per-type route registry.
-        let register = overseerd_macros_core::backend::dual_backend(
+        let register = upwell_macros_core::backend::dual_backend(
             quote! {
                 #inventory::submit! {
                     #descriptor_for::<#self_ty, #controller_route<#self_ty>>::new(
-                        #controller_route(__overseerd_axum_route_group)
+                        #controller_route(__upwell_axum_route_group)
                     )
                 }
             },
             quote! {
                 #[#distributed_slice(#routes_slice)]
                 #[linkme(crate = #linkme_crate)]
-                static __OVERSEERD_AXUM_ROUTE_GROUP: #controller_route<#self_ty> =
-                    #controller_route(__overseerd_axum_route_group);
+                static __UPWELL_AXUM_ROUTE_GROUP: #controller_route<#self_ty> =
+                    #controller_route(__upwell_axum_route_group);
             },
         );
 
@@ -522,10 +522,10 @@ impl ToTokens for AxumHandlers {
                 // A `#[get]`/`#[post]`/… block only belongs on a REST `#[controller]`; assert it so a
                 // route attribute on a `#[controller(ws = ..)]` fails clearly here, not on the
                 // missing route slice.
-                fn __overseerd_assert_controller<T: #controller_trait>() {}
-                let _ = __overseerd_assert_controller::<#self_ty>;
+                fn __upwell_assert_controller<T: #controller_trait>() {}
+                let _ = __upwell_assert_controller::<#self_ty>;
 
-                fn __overseerd_axum_route_group(
+                fn __upwell_axum_route_group(
                     svc: ::std::sync::Arc<#self_ty>,
                     runtime: & #app_runtime,
                 ) -> #axum::Router {
@@ -578,30 +578,30 @@ impl AxumHandlers {
 
         // One message-route builder per `#[handlers]` block, wrapped in `ControllerWsRoute<Self, P>`
         // and registered into the controller's per-type ws-route registry.
-        let register = overseerd_macros_core::backend::dual_backend(
+        let register = upwell_macros_core::backend::dual_backend(
             quote! {
                 #inventory::submit! {
                     #descriptor_for::<#self_ty, #controller_ws_route<#self_ty, #protocol>>::new(
-                        #controller_ws_route(__overseerd_ws_route_group)
+                        #controller_ws_route(__upwell_ws_route_group)
                     )
                 }
             },
             quote! {
                 #[#distributed_slice(#ws_routes_slice)]
                 #[linkme(crate = #linkme_crate)]
-                static __OVERSEERD_WS_ROUTE_GROUP: #controller_ws_route<#self_ty, #protocol> =
-                    #controller_ws_route(__overseerd_ws_route_group);
+                static __UPWELL_WS_ROUTE_GROUP: #controller_ws_route<#self_ty, #protocol> =
+                    #controller_ws_route(__upwell_ws_route_group);
             },
         );
 
         out.extend(quote! {
             const _: () = {
-                fn __overseerd_assert_ws_controller<
+                fn __upwell_assert_ws_controller<
                     T: #ws_controller_trait<Protocol = #protocol>,
                 >() {}
-                let _ = __overseerd_assert_ws_controller::<#self_ty>;
+                let _ = __upwell_assert_ws_controller::<#self_ty>;
 
-                fn __overseerd_ws_route_group(
+                fn __upwell_ws_route_group(
                     svc: ::std::sync::Arc<#self_ty>,
                 ) -> ::std::vec::Vec<#ws_route_p> {
                     let _ = &svc;
@@ -987,7 +987,7 @@ fn build_message_send_method(
     Ok(Some(ClientMethod {
         ident: method_ident.clone(),
         path: String::new(),
-        capability: overseerd_macros_core::client::Capability::Unary,
+        capability: upwell_macros_core::client::Capability::Unary,
         request,
         encode_as: None,
         req_item: None,
@@ -1055,7 +1055,7 @@ fn build_message_request_method(
     Ok(Some(ClientMethod {
         ident: method_ident.clone(),
         path: String::new(),
-        capability: overseerd_macros_core::client::Capability::Unary,
+        capability: upwell_macros_core::client::Capability::Unary,
         request,
         encode_as: None,
         req_item: None,

@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use crate::components::{Config, DbConfig, DbConnection};
 use crate::notifiers::Notifier;
-use overseerd::daemon::{Inject, Payload, handlers, service};
-use overseerd::{Cfg, CfgNext, ConfigReload, Dep, HookOutcome, ServerConfig, ShutdownHandle};
 use serde::{Deserialize, Serialize};
+use upwell::daemon::{Inject, Payload, handlers, service};
+use upwell::{Cfg, CfgNext, ConfigReload, Dep, HookOutcome, ServerConfig, ShutdownHandle};
 
 #[derive(Serialize, Deserialize)]
 pub struct NotifyRequest {
@@ -96,9 +96,9 @@ impl Notifications {
     async fn on_greet_reload(
         &self,
         #[config("app.greet")] next: CfgNext<Config>,
-    ) -> overseerd::daemon::Result<HookOutcome> {
+    ) -> upwell::daemon::Result<HookOutcome> {
         tracing::info!(
-            target: "overseerd::example",
+            target: "upwell::example",
             greeting = %next.greeting,
             "greeting config reloaded"
         );

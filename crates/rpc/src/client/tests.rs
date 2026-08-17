@@ -12,10 +12,10 @@ use super::{
     ConnectionState, REPLY_BUFFER, REPLY_OVERFLOW_ERROR, RpcResponses, StreamClientTransport,
     WRITE_BUFFER, WriteCommand, Writer, serialize_frame,
 };
-use overseerd_client::ClientError;
-use overseerd_transport::protocol::codec::{MessageReader, write_message};
-use overseerd_transport::protocol::{WireMessage, WireRequest, WireResponse};
-use overseerd_transport::{PredefinedCode, StatusCode, WireOutcome};
+use upwell_client::ClientError;
+use upwell_transport::protocol::codec::{MessageReader, write_message};
+use upwell_transport::protocol::{WireMessage, WireRequest, WireResponse};
+use upwell_transport::{PredefinedCode, StatusCode, WireOutcome};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -202,7 +202,7 @@ async fn final_transport_drop_forces_a_stalled_accepted_write_to_release_its_soc
     .expect("stalled writer socket outlived the bounded drain");
     assert!(matches!(
         pending.await.expect("write waiter task"),
-        Err(ClientError::Transport(overseerd_transport::Error::Closed))
+        Err(ClientError::Transport(upwell_transport::Error::Closed))
             | Err(ClientError::ConnectionClosed)
     ));
 }

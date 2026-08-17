@@ -5,7 +5,7 @@
 //! message to a handler (that stays [`WsDispatchError`]). It renders to an `ERROR` frame via the
 //! server module's `error_frame` helper before the socket closes.
 
-use overseerd_axum::WsDispatchError;
+use upwell_axum::WsDispatchError;
 
 use super::StompAuthenticationError;
 

@@ -9,8 +9,8 @@ use std::{
 };
 
 use arc_swap::ArcSwapOption;
-use overseerd_core::{Cardinality, DependencyDescriptor, ResolutionMode};
 use tokio::sync::Mutex as AsyncMutex;
+use upwell_core::{Cardinality, DependencyDescriptor, ResolutionMode};
 
 use crate::{
     ComponentConstructionContext, FromContainer, Injectable, ProviderDescriptor, ScopeContainer,

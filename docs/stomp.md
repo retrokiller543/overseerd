@@ -1,11 +1,11 @@
 # STOMP over WebSocket — status
 
-STOMP 1.2 pub/sub over WebSocket, implemented by the `overseerd-axum-stomp` crate as an ordinary
-downstream consumer of `overseerd-axum`'s public protocol API. It is re-exported through the
-`overseerd` facade's `stomp` feature. This document tracks what v1 ships and what is deliberately
+STOMP 1.2 pub/sub over WebSocket, implemented by the `upwell-axum-stomp` crate as an ordinary
+downstream consumer of `upwell-axum`'s public protocol API. It is re-exported through the
+`upwell` facade's `stomp` feature. This document tracks what v1 ships and what is deliberately
 deferred.
 
-Custom codecs implement `overseerd_axum::TopicCodec<Stomp>` directly. Rust coherence does not
+Custom codecs implement `upwell_axum::TopicCodec<Stomp>` directly. Rust coherence does not
 permit a protocol crate to blanket-adapt every downstream codec trait implementation; the bundled
 `JsonCodec` provides the default adapter.
 
@@ -38,7 +38,7 @@ permit a protocol crate to blanket-adapt every downstream codec trait implementa
   and symmetric (client encode = server decode).
 - **Integrations.** `TopicParam` has explicit std impls; the cross-cutting `uuid` feature adds
   `TopicParam for uuid::Uuid`. The facade fans an integration flag out only to enabled crates
-  (`uuid = ["overseerd-axum?/uuid"]`).
+  (`uuid = ["upwell-axum?/uuid"]`).
 
 ## Not yet implemented (deferred past v1)
 

@@ -10,9 +10,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseerd_core::Scope;
-use overseerd_di::{BoxedComponent, ComponentDescriptor, ScopeContainer, ScopeRegistry};
-use overseerd_hooks::HookManager;
+use upwell_core::Scope;
+use upwell_di::{BoxedComponent, ComponentDescriptor, ScopeContainer, ScopeRegistry};
+use upwell_hooks::HookManager;
 
 /// Everything a protocol needs to drive requests through DI, cheaply cloneable.
 ///

@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.20.0](https://github.com/retrokiller543/overseerd/compare/overseerd-hooks-v0.19.1...overseerd-hooks-v0.20.0) - 2026-07-22
+## [0.20.0](https://github.com/retrokiller543/upwell/compare/upwell-hooks-v0.19.1...upwell-hooks-v0.20.0) - 2026-07-22
 
 ### Added
 
@@ -18,19 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(hooks)* non_exhaustive HookDescriptor + constructor; doc factory_slice merge
 
-## [0.19.0](https://github.com/retrokiller543/overseerd/compare/overseerd-hooks-v0.18.0...overseerd-hooks-v0.19.0) - 2026-07-21
+## [0.19.0](https://github.com/retrokiller543/upwell/compare/upwell-hooks-v0.18.0...upwell-hooks-v0.19.0) - 2026-07-21
 
 ### Added
 
 - *(di)* add provider ordering and deferred primitives
 
-## [0.16.0](https://github.com/retrokiller543/overseerd/compare/overseerd-hooks-v0.15.0...overseerd-hooks-v0.16.0) - 2026-07-17
+## [0.16.0](https://github.com/retrokiller543/upwell/compare/upwell-hooks-v0.15.0...upwell-hooks-v0.16.0) - 2026-07-17
 
 ### Fixed
 
-- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/retrokiller543/overseerd/pull/85))
+- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/retrokiller543/upwell/pull/85))
 
-## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-hooks-v0.11.2...overseerd-hooks-v0.12.0) - 2026-07-08
+## [0.12.0](https://github.com/retrokiller543/upwell/compare/upwell-hooks-v0.11.2...upwell-hooks-v0.12.0) - 2026-07-08
 
 ### Fixed
 
@@ -40,8 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added docs to all crates
 
-## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-hooks-v0.6.0...overseerd-hooks-v0.7.0) - 2026-06-30
+## [0.7.0](https://github.com/retrokiller543/upwell/compare/upwell-hooks-v0.6.0...upwell-hooks-v0.7.0) - 2026-06-30
 
 ### Other
 
-- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/overseerd/pull/20))
+- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/upwell/pull/20))

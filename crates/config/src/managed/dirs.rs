@@ -1,6 +1,6 @@
 //! The `${@<label>}` directory namespace resolver.
 //!
-//! `overseerd-dirs` is config-agnostic: it exposes its known directories as plain
+//! `upwell-dirs` is config-agnostic: it exposes its known directories as plain
 //! `(label, path)` data via [`DirectoriesManager::entries`]. This module turns that data
 //! into a [`config::Resolver`](crate::Resolver), so a config value like
 //! `"${@runtime}/app.sock"` resolves against the platform's directories. config owns the
@@ -11,7 +11,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use overseerd_dirs::DirectoriesManager;
+use upwell_dirs::DirectoriesManager;
 
 use crate::Resolver;
 

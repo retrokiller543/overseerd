@@ -1,8 +1,8 @@
-# overseerd-macros-core
+# upwell-macros-core
 
-> Shared codegen library for the Overseerd proc-macros.
+> Shared codegen library for the Upwell proc-macros.
 
-Part of the [Overseerd](../../README.md) framework — the base codegen layer every macro crate builds on.
+Part of the [Upwell](../../README.md) framework — the base codegen layer every macro crate builds on.
 
 ## Role
 
@@ -13,13 +13,13 @@ expansions share: attribute parsing (`attr`), the extension seams (`extend` — 
 `ParseItem`, `ParseMethod`, `ComponentExt`), crate-path resolution (`paths::Paths`), field-injection
 (`inject`), hooks (`hook`), the DI assertions (`di`), provider wiring (`provide`), client generation
 (`client`), and the base impl-macro state machine (`methods`). These pieces are public so a plugin's
-macro crate (e.g. `overseerd-rpc-macros`) can reuse them to build its own macros without forking the
+macro crate (e.g. `upwell-rpc-macros`) can reuse them to build its own macros without forking the
 codegen. The crate is deliberately protocol-agnostic — protocol macro crates own their protocol
 types via the extension seam.
 
 ## Usage
 
-Most users depend on the [`overseerd`](../../README.md) facade and never touch this crate. It is a
+Most users depend on the [`upwell`](../../README.md) facade and never touch this crate. It is a
 **codegen library consumed by macro crates, not by end users** — there are no proc-macros exported
 here to attach to your code. You meet its output indirectly through `#[component]`, `#[config]`, and
 the protocol macros.
@@ -32,9 +32,9 @@ the generated code refers to.
 
 ## Internal role
 
-- `overseerd-macros` is a thin proc-macro shim: each entry point forwards its token streams to the
+- `upwell-macros` is a thin proc-macro shim: each entry point forwards its token streams to the
   matching `component` / `config` / `methods` / `injectable` / `app` function here.
-- `overseerd-rpc-macros` builds `#[service]`, `#[handlers]`, `#[rpc]` on top via the extension seam
+- `upwell-rpc-macros` builds `#[service]`, `#[handlers]`, `#[rpc]` on top via the extension seam
   — reusing `expand_component`, `methods::expand`, `MethodArgs`, `Paths`, and `run`.
 
 ## Feature flags

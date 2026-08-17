@@ -4,16 +4,16 @@
 //! the deref-to-body), then shut the server down so the test never hangs.
 
 use futures::{Stream, StreamExt};
-use overseerd::axum::Ndjson;
-use overseerd::axum::axum::extract::Path;
-use overseerd::axum::axum::{Json, http};
-use overseerd::axum::client::{ClientInterceptor, HyperClient, ReqwestClient};
-use overseerd::axum::prelude::*;
-use overseerd::client::{ClientError, Unary};
-use overseerd::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::net::TcpListener;
+use upwell::axum::Ndjson;
+use upwell::axum::axum::extract::Path;
+use upwell::axum::axum::{Json, http};
+use upwell::axum::client::{ClientInterceptor, HyperClient, ReqwestClient};
+use upwell::axum::prelude::*;
+use upwell::client::{ClientError, Unary};
+use upwell::prelude::*;
 
 #[dto]
 struct EchoOut {
@@ -175,7 +175,7 @@ impl Api {
 async fn generated_client_round_trips_over_reqwest() {
     let app = app! {
         name: "client-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: upwell::axum::AxumPlugin,
     }
     .build()
     .await
@@ -216,7 +216,7 @@ async fn generated_client_round_trips_over_reqwest() {
         .body(())
         .expect("request");
 
-    match Unary::unary::<(), EchoOut, overseerd::client::Raw>(&backend, "", request).await {
+    match Unary::unary::<(), EchoOut, upwell::client::Raw>(&backend, "", request).await {
         Err(ClientError::Remote(error)) => {
             // The HTTP client surfaces the genuine `http::StatusCode` — no folding into the RPC
             // packed status.
@@ -318,8 +318,7 @@ async fn generated_client_round_trips_over_reqwest() {
         .uri("/api/missing")
         .body(())
         .unwrap();
-    let _ =
-        Unary::unary::<(), EchoOut, overseerd::client::Raw>(&reqwest_backend, "", missing).await;
+    let _ = Unary::unary::<(), EchoOut, upwell::client::Raw>(&reqwest_backend, "", missing).await;
     assert_eq!(reqwest_interceptor.errors.load(Ordering::SeqCst), 1);
 
     let hyper_interceptor = TestInterceptor::default();
@@ -334,7 +333,7 @@ async fn generated_client_round_trips_over_reqwest() {
         .uri("/api/missing")
         .body(())
         .unwrap();
-    let _ = Unary::unary::<(), EchoOut, overseerd::client::Raw>(&hyper_backend, "", missing).await;
+    let _ = Unary::unary::<(), EchoOut, upwell::client::Raw>(&hyper_backend, "", missing).await;
     assert_eq!(hyper_interceptor.errors.load(Ordering::SeqCst), 1);
 
     shutdown.shutdown();

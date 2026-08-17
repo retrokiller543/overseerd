@@ -15,14 +15,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use overseerd_core::{ResolverSet, TypeDescriptor};
-use overseerd_di::{ScopeContainer, ScopeRegistry};
-use overseerd_rpc::descriptors::{RpcCallContext, RpcOutcome, RpcResponse};
-use overseerd_rpc::{
+use upwell_core::{ResolverSet, TypeDescriptor};
+use upwell_di::{ScopeContainer, ScopeRegistry};
+use upwell_rpc::descriptors::{RpcCallContext, RpcOutcome, RpcResponse};
+use upwell_rpc::{
     ErrorResponse, OperationKind, ResolvedService, RpcDescriptor, RpcGroup, RpcRouter,
     ServiceDescriptor,
 };
-use overseerd_transport::{PeerInfo, WireMessage, WireOutcome, WireRequest, WireResponse};
+use upwell_transport::{PeerInfo, WireMessage, WireOutcome, WireRequest, WireResponse};
 use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;

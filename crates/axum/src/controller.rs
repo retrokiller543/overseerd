@@ -8,15 +8,15 @@
 
 use std::sync::Arc;
 
-use overseerd_app::AppRuntime;
-use overseerd_core::{OverseerdDescriptor, TypeDescriptor};
+use upwell_app::AppRuntime;
+use upwell_core::{TypeDescriptor, UpwellDescriptor};
 
 /// One `#[handlers]` block's route-group builder, tagged with its controller type `C`.
 ///
-/// The route registries hold bare `fn` pointers, which cannot implement [`OverseerdDescriptor`]
+/// The route registries hold bare `fn` pointers, which cannot implement [`UpwellDescriptor`]
 /// (a primitive fn-pointer type is foreign and carries no local type, so the marker impl would
 /// violate the orphan rule). This local newtype is the HTTP analog of the RPC `RpcGroup`: it wraps
-/// the builder so it *can* be an `OverseerdDescriptor` and thus a `DescriptorFor<C, ControllerRoute<C>>`
+/// the builder so it *can* be an `UpwellDescriptor` and thus a `DescriptorFor<C, ControllerRoute<C>>`
 /// bucket element on the `inventory` backend. `Copy` is manual (a naive derive would wrongly demand
 /// `C: Copy`); the wrapped fn pointer is always `Copy`.
 pub struct ControllerRoute<C>(pub fn(Arc<C>, &AppRuntime) -> axum::Router);
@@ -29,7 +29,7 @@ impl<C> Clone for ControllerRoute<C> {
 
 impl<C> Copy for ControllerRoute<C> {}
 
-impl<C: 'static> OverseerdDescriptor for ControllerRoute<C> {}
+impl<C: 'static> UpwellDescriptor for ControllerRoute<C> {}
 
 /// A controller's link-time registration: its identity and a builder for its routes.
 ///

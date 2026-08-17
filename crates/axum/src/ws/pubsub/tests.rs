@@ -8,14 +8,14 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use axum::extract::ws::WebSocket;
-use overseerd_app::AppRuntime;
-use overseerd_di::ScopeContainer;
 use serde::{Deserialize, Serialize};
+use upwell_app::AppRuntime;
+use upwell_di::ScopeContainer;
 
 use super::{Publisher, TopicBus};
 use crate::messaging::{MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec};
 use crate::ws::{PubSubProtocol, WebsocketProtocol, WsControllerDescriptor, WsShutdown};
-use overseerd_transport::CodecError;
+use upwell_transport::CodecError;
 
 /// A throwaway pub/sub protocol used only to prove genericity. Its body is deliberately *not*
 /// [`StompBody`](crate::stomp::StompBody).

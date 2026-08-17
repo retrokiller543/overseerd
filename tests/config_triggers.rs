@@ -7,16 +7,16 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use overseerd::ConfigManager;
-use overseerd::app;
-use overseerd::config::Toml;
-use overseerd::dirs::{Config, DirectoriesManager};
+use upwell::ConfigManager;
+use upwell::app;
+use upwell::config::Toml;
+use upwell::dirs::{Config, DirectoriesManager};
 
 #[cfg(feature = "watch")]
-use overseerd::daemon::App;
+use upwell::daemon::App;
 
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("overseerd-triggers-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("upwell-triggers-{tag}-{}", std::process::id()));
 
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -39,7 +39,7 @@ fn config_manager_carries_its_triggers() {
 }
 
 #[tokio::test]
-async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::daemon::Result<()> {
+async fn daemon_macro_builds_a_configured_manager_from_a_block() -> upwell::daemon::Result<()> {
     let root = temp_dir("macro");
     let dirs = DirectoriesManager::from_path(root);
 
@@ -50,7 +50,7 @@ async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::d
     // and applies the triggers to the manager.
     let built = app! {
         name: "trigger-macro-test",
-        protocol: overseerd::daemon::RpcPlugin,
+        protocol: upwell::daemon::RpcPlugin,
         managers: {
             directories: dirs,
             config: { sighup: true, debounce: Duration::from_millis(50) },

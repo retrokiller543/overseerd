@@ -2,8 +2,8 @@
 
 use std::net::{IpAddr, SocketAddr};
 
-use overseerd_config::{ConfigProperties, DefaultSpec};
 use serde::Deserialize;
+use upwell_config::{ConfigProperties, DefaultSpec};
 
 /// The property path the [`AxumPlugin`](crate::AxumPlugin) always binds.
 pub const AXUM_CONFIG_PATH: &str = "axum";

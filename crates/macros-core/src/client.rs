@@ -1,7 +1,7 @@
 //! The protocol-agnostic generated **client** — a framework responsibility.
 //!
 //! The generated `{Service}Client<C>` is transport-generic and capability-partitioned: it
-//! roots entirely at `::overseerd::client::*` (the agnostic capability contract), so the same
+//! roots entirely at `::upwell::client::*` (the agnostic capability contract), so the same
 //! client works over any protocol that supplies those capabilities. The framework therefore
 //! **owns the client generation**; a protocol macro only describes each method as a
 //! [`ClientMethod`] *hint* — returned as a byproduct of its
@@ -57,7 +57,7 @@ pub struct ClientMethod {
     /// The unary/client-streaming success type.
     pub response: Type,
     /// The decoded error body type (protocol-specific — RPC uses `<E as ResponseError>::Body`).
-    /// `None` leaves the framework default `::overseerd::client::Raw` (an opaque error body).
+    /// `None` leaves the framework default `::upwell::client::Raw` (an opaque error body).
     pub error_ty: Option<TokenStream>,
     /// Extra leading method parameters before the request body (HTTP path/query params).
     /// Empty for RPC. Spliced into the signature and visible to [`request_builder`](Self::request_builder).

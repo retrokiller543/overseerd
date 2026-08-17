@@ -8,11 +8,11 @@
 
 use std::sync::Arc;
 
-use overseerd_axum::Injectable;
+use upwell_axum::Injectable;
 
 use super::broker::{Broker, BrokerExt};
 use crate::StompBody;
-use overseerd_axum::ConnectionId;
+use upwell_axum::ConnectionId;
 
 /// The headers of the STOMP frame that triggered the current message, in wire order (first value
 /// wins per the spec). A cheap, `Arc`-backed clone so seeding it per message is nearly free.
@@ -117,6 +117,6 @@ impl Injectable for StompSession {
 mod di_check {
     use super::{StompHeaders, StompSession};
 
-    impl overseerd_axum::Provide<StompHeaders> for overseerd_axum::Wiring {}
-    impl overseerd_axum::Provide<StompSession> for overseerd_axum::Wiring {}
+    impl upwell_axum::Provide<StompHeaders> for upwell_axum::Wiring {}
+    impl upwell_axum::Provide<StompSession> for upwell_axum::Wiring {}
 }

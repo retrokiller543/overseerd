@@ -7,13 +7,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{
-    Cfg, CfgNext, ConfigManager, ConfigReload, HookOutcome, component, config, methods,
-};
 use serde::Deserialize;
+use upwell::config::Toml;
+use upwell::daemon::App;
+use upwell::dirs::{Config, DirectoriesManager};
+use upwell::{Cfg, CfgNext, ConfigManager, ConfigReload, HookOutcome, component, config, methods};
 
 #[config(path = "svc")]
 #[derive(Deserialize)]
@@ -58,7 +56,7 @@ impl Watcher {
     async fn on_reload(
         &self,
         #[config("svc")] next: CfgNext<SvcCfg>,
-    ) -> overseerd::daemon::Result<HookOutcome> {
+    ) -> upwell::daemon::Result<HookOutcome> {
         self.last_seen.store(next.value, Ordering::SeqCst);
         self.fired.fetch_add(1, Ordering::SeqCst);
 
@@ -85,7 +83,7 @@ impl OtherWatcher {
     async fn on_reload(
         &self,
         #[config("other")] _next: CfgNext<OtherCfg>,
-    ) -> overseerd::daemon::Result<HookOutcome> {
+    ) -> upwell::daemon::Result<HookOutcome> {
         self.fired.fetch_add(1, Ordering::SeqCst);
 
         Ok(HookOutcome::Reloaded)
@@ -105,7 +103,7 @@ impl RestartWatcher {
     async fn on_reload(
         &self,
         #[config("svc")] _next: CfgNext<SvcCfg>,
-    ) -> overseerd::daemon::Result<HookOutcome> {
+    ) -> upwell::daemon::Result<HookOutcome> {
         let _ = self.marker;
 
         Ok(HookOutcome::RestartRequired("needs restart"))
@@ -113,7 +111,7 @@ impl RestartWatcher {
 }
 
 fn temp_config_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("overseerd-hooks-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("upwell-hooks-{}", std::process::id()));
 
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create temp config dir");

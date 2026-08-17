@@ -1,6 +1,6 @@
 //! Generic, pluggable per-run log capture.
 //!
-//! Log storage is deliberately behind a trait ([`JobLogSink`]) so `overseerd-jobs` never
+//! Log storage is deliberately behind a trait ([`JobLogSink`]) so `upwell-jobs` never
 //! couples to a particular backend: the built-in [`InMemoryJobLogStore`] is a bounded local
 //! buffer for development, [`NoopJobLogStore`] is the do-nothing default, and an application
 //! can supply its own sink (a database, object store, or remote pipeline) through

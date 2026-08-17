@@ -1,8 +1,8 @@
 //! The native RPC protocol.
 //!
-//! [`Rpc`] implements the [`Protocol`]/[`Serve`] traits from `overseerd-app`: it owns the
+//! [`Rpc`] implements the [`Protocol`]/[`Serve`] traits from `upwell-app`: it owns the
 //! router + middleware stack and drives the per-connection / per-call loop over any
-//! [`Transport`](overseerd_transport::Transport), opening connection and request scopes
+//! [`Transport`](upwell_transport::Transport), opening connection and request scopes
 //! through the [`AppRuntime`]. The serve envelope (lifecycle hooks, reload triggers,
 //! ctrl-c) is run by `App::serve`, so this loop only watches its transport and the
 //! shutdown signal.
@@ -10,17 +10,17 @@
 use std::{panic::AssertUnwindSafe, sync::Arc, time::Duration};
 
 use futures::{FutureExt, StreamExt};
-use overseerd_app::{AppRuntime, Protocol, Serve, ShutdownSignal};
-use overseerd_core::TypeDescriptor;
-use overseerd_di::{BoxedComponent, ScopeContainer};
-use overseerd_transport::{
-    CallResult, Connection, Error as TransportError, PeerInfo, PredefinedCode, Respond,
-    RespondStream, ResponseSink, StatusCode, Transport,
-};
 use tokio::{sync::mpsc, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 use tower::{Service, ServiceExt};
 use tracing::{debug, error, info, instrument, warn};
+use upwell_app::{AppRuntime, Protocol, Serve, ShutdownSignal};
+use upwell_core::TypeDescriptor;
+use upwell_di::{BoxedComponent, ScopeContainer};
+use upwell_transport::{
+    CallResult, Connection, Error as TransportError, PeerInfo, PredefinedCode, Respond,
+    RespondStream, ResponseSink, StatusCode, Transport,
+};
 
 use crate::descriptors::{RpcCallContext, RpcOutcome, RpcResponse};
 use crate::extract::ErrorResponse;
@@ -146,7 +146,7 @@ where
     ) -> crate::Result<()> {
         let transport_name = std::any::type_name::<T>();
 
-        info!(target: "overseerd::daemon", app = runtime.name(), transport = transport_name, "serve starting");
+        info!(target: "upwell::daemon", app = runtime.name(), transport = transport_name, "serve starting");
 
         let connection_cancel = CancellationToken::new();
         let mut connections = JoinSet::new();
@@ -159,7 +159,7 @@ where
                     match result {
                         Ok(conn) => {
                             accept_retry = self.limits.accept_retry_initial;
-                            debug!(target: "overseerd::daemon", peer = ?conn.peer().addr, "connection accepted, spawning task");
+                            debug!(target: "upwell::daemon", peer = ?conn.peer().addr, "connection accepted, spawning task");
 
                             let service = self.service.clone();
                             let error_handler = self.error_handler.clone();
@@ -174,12 +174,12 @@ where
                         }
 
                         Err(TransportError::Io(e)) if is_transient_accept_error(&e) => {
-                            warn!(target: "overseerd::daemon", error = %e, retry_in = ?accept_retry, "transient transport accept failure");
+                            warn!(target: "upwell::daemon", error = %e, retry_in = ?accept_retry, "transient transport accept failure");
 
                             tokio::select! {
                                 _ = tokio::time::sleep(accept_retry) => {}
                                 _ = shutdown.wait() => {
-                                    info!(target: "overseerd::daemon", "shutdown signal received during accept backoff");
+                                    info!(target: "upwell::daemon", "shutdown signal received during accept backoff");
                                     connection_cancel.cancel();
                                     break 'serve;
                                 }
@@ -193,7 +193,7 @@ where
                         Err(TransportError::Closed) => break,
 
                         Err(e) => {
-                            error!(target: "overseerd::daemon", error = %e, "terminal transport accept failure");
+                            error!(target: "upwell::daemon", error = %e, "terminal transport accept failure");
                             connection_cancel.cancel();
                             serve_error = Some(e.into());
                             break;
@@ -203,12 +203,12 @@ where
 
                 result = connections.join_next(), if !connections.is_empty() => {
                     if let Some(Err(e)) = result {
-                        warn!(target: "overseerd::daemon", error = %e, "connection task failed");
+                        warn!(target: "upwell::daemon", error = %e, "connection task failed");
                     }
                 }
 
                 _ = shutdown.wait() => {
-                    info!(target: "overseerd::daemon", "shutdown signal received");
+                    info!(target: "upwell::daemon", "shutdown signal received");
                     connection_cancel.cancel();
                     break;
                 }
@@ -219,7 +219,7 @@ where
             tokio::select! {
                 result = connections.join_next() => {
                     if let Some(Err(e)) = result {
-                        warn!(target: "overseerd::daemon", error = %e, "connection task failed during shutdown");
+                        warn!(target: "upwell::daemon", error = %e, "connection task failed during shutdown");
                     }
                 }
 
@@ -232,11 +232,11 @@ where
 
         while let Some(result) = connections.join_next().await {
             if let Err(e) = result {
-                warn!(target: "overseerd::daemon", error = %e, "connection task failed during shutdown");
+                warn!(target: "upwell::daemon", error = %e, "connection task failed during shutdown");
             }
         }
 
-        info!(target: "overseerd::daemon", transport = transport_name, "serve stopped");
+        info!(target: "upwell::daemon", transport = transport_name, "serve stopped");
 
         match serve_error {
             Some(error) => Err(error),
@@ -321,7 +321,7 @@ fn is_transient_accept_os_error(_raw: Option<i32>) -> bool {
 /// streaming calls run concurrently and the connection keeps reading inbound frames
 /// while handlers run.
 #[instrument(
-    target = "overseerd::daemon",
+    target = "upwell::daemon",
     level = "debug",
     skip_all,
     fields(peer = ?conn.peer().addr),
@@ -336,7 +336,7 @@ async fn serve_connection<C: Connection>(
     shutdown: CancellationToken,
     max_calls: usize,
 ) {
-    debug!(target: "overseerd::daemon", "connection established");
+    debug!(target: "upwell::daemon", "connection established");
 
     // The peer (by value — the framework's connection-scoped injectable) is seeded
     // only when a component depends on it; handlers reach it through the `Peer`
@@ -359,14 +359,14 @@ async fn serve_connection<C: Connection>(
         Ok(scope) => scope,
 
         Err(e) => {
-            error!(target: "overseerd::daemon", error = %e, "connection scope build failed, closing");
+            error!(target: "upwell::daemon", error = %e, "connection scope build failed, closing");
             return;
         }
     };
 
     let mut tasks: JoinSet<()> = JoinSet::new();
 
-    debug!(target: "overseerd::daemon", "connection ready");
+    debug!(target: "upwell::daemon", "connection ready");
 
     loop {
         tokio::select! {
@@ -378,7 +378,7 @@ async fn serve_connection<C: Connection>(
 
                     if tasks.len() >= max_calls {
                         warn!(
-                            target: "overseerd::daemon",
+                            target: "upwell::daemon",
                             max_calls,
                             "connection exceeded its in-flight call limit; closing"
                         );
@@ -393,7 +393,7 @@ async fn serve_connection<C: Connection>(
                     let runtime = runtime.clone();
                     let peer = peer.clone();
 
-                    debug!(target: "overseerd::daemon", %path, "dispatching call");
+                    debug!(target: "upwell::daemon", %path, "dispatching call");
 
                     tasks.spawn(drive_call(
                         path,
@@ -410,12 +410,12 @@ async fn serve_connection<C: Connection>(
                 }
 
                 Ok(None) => {
-                    debug!(target: "overseerd::daemon", "connection closed by peer");
+                    debug!(target: "upwell::daemon", "connection closed by peer");
                     break;
                 }
 
                 Err(e) => {
-                    warn!(target: "overseerd::daemon", error = %e, "connection error");
+                    warn!(target: "upwell::daemon", error = %e, "connection error");
                     break;
                 }
             },
@@ -427,7 +427,7 @@ async fn serve_connection<C: Connection>(
             }
 
             _ = shutdown.cancelled() => {
-                debug!(target: "overseerd::daemon", "connection shutdown requested");
+                debug!(target: "upwell::daemon", "connection shutdown requested");
                 break;
             }
         }
@@ -437,12 +437,12 @@ async fn serve_connection<C: Connection>(
     // calls via their tokens; abort any handler tasks still winding down.
     tasks.shutdown().await;
 
-    debug!(target: "overseerd::daemon", "connection ended");
+    debug!(target: "upwell::daemon", "connection ended");
 }
 
 fn observe_call_task(result: Result<(), tokio::task::JoinError>) {
     if let Err(error) = result {
-        warn!(target: "overseerd::daemon", %error, "call task failed");
+        warn!(target: "upwell::daemon", %error, "call task failed");
     }
 }
 
@@ -464,48 +464,45 @@ async fn drive_call<R>(
 ) where
     R: Respond + RespondStream + Send + 'static,
 {
-    let request_scope = match AssertUnwindSafe(runtime.open_scope(
-        &RequestScope,
-        connection_scope,
-        Vec::new(),
-    ))
-    .catch_unwind()
-    .await
-    {
-        Ok(Ok(scope)) => scope,
+    let request_scope =
+        match AssertUnwindSafe(runtime.open_scope(&RequestScope, connection_scope, Vec::new()))
+            .catch_unwind()
+            .await
+        {
+            Ok(Ok(scope)) => scope,
 
-        Ok(Err(e)) => {
-            error!(target: "overseerd::daemon", %path, error = %e, "request scope build failed");
-            let response = apply_error_handler(
-                &error_handler,
-                &path,
-                ErrorResponse::from(crate::Error::from(e)),
-            )
-            .await;
-            let _ = responder
-                .respond(CallResult::Err {
-                    code: response.code,
-                    body: response.body,
-                })
+            Ok(Err(e)) => {
+                error!(target: "upwell::daemon", %path, error = %e, "request scope build failed");
+                let response = apply_error_handler(
+                    &error_handler,
+                    &path,
+                    ErrorResponse::from(crate::Error::from(e)),
+                )
                 .await;
+                let _ = responder
+                    .respond(CallResult::Err {
+                        code: response.code,
+                        body: response.body,
+                    })
+                    .await;
 
-            return;
-        }
+                return;
+            }
 
-        Err(_) => {
-            error!(target: "overseerd::daemon", %path, "request scope build panicked");
-            let response =
-                apply_error_handler(&error_handler, &path, internal_error_response()).await;
-            let _ = responder
-                .respond(CallResult::Err {
-                    code: response.code,
-                    body: response.body,
-                })
-                .await;
+            Err(_) => {
+                error!(target: "upwell::daemon", %path, "request scope build panicked");
+                let response =
+                    apply_error_handler(&error_handler, &path, internal_error_response()).await;
+                let _ = responder
+                    .respond(CallResult::Err {
+                        code: response.code,
+                        body: response.body,
+                    })
+                    .await;
 
-            return;
-        }
-    };
+                return;
+            }
+        };
 
     let ctx = RpcCallContext::new(payload, peer, request_scope, requests, cancel);
     let request = RpcRequest::new(path.clone(), ctx);
@@ -524,7 +521,7 @@ async fn drive_call<R>(
     {
         Ok(outcome) => outcome,
         Err(_) => {
-            error!(target: "overseerd::daemon", %path, "call handler panicked");
+            error!(target: "upwell::daemon", %path, "call handler panicked");
             let response =
                 apply_error_handler(&error_handler, &path, internal_error_response()).await;
 
@@ -535,7 +532,7 @@ async fn drive_call<R>(
                 })
                 .await
             {
-                warn!(target: "overseerd::daemon", %path, %error, "failed to send panic response");
+                warn!(target: "upwell::daemon", %path, %error, "failed to send panic response");
             }
 
             return;
@@ -544,15 +541,15 @@ async fn drive_call<R>(
 
     match outcome {
         Ok(RpcOutcome::Unary(RpcResponse { payload })) => {
-            debug!(target: "overseerd::daemon", %path, "call succeeded");
+            debug!(target: "upwell::daemon", %path, "call succeeded");
 
             if let Err(e) = responder.respond(CallResult::Ok(payload)).await {
-                warn!(target: "overseerd::daemon", %path, error = %e, "failed to send response");
+                warn!(target: "upwell::daemon", %path, error = %e, "failed to send response");
             }
         }
 
         Ok(RpcOutcome::Stream(mut stream)) => {
-            debug!(target: "overseerd::daemon", %path, "streaming response");
+            debug!(target: "upwell::daemon", %path, "streaming response");
 
             let mut sink = responder.into_sink();
 
@@ -560,14 +557,14 @@ async fn drive_call<R>(
                 match AssertUnwindSafe(stream.next()).catch_unwind().await {
                     Ok(Some(Ok(item))) => {
                         if let Err(e) = sink.send(item).await {
-                            warn!(target: "overseerd::daemon", %path, error = %e, "failed to send stream item");
+                            warn!(target: "upwell::daemon", %path, error = %e, "failed to send stream item");
 
                             return;
                         }
                     }
 
                     Ok(Some(Err(e))) => {
-                        warn!(target: "overseerd::daemon", %path, code = ?e.code, "stream handler errored");
+                        warn!(target: "upwell::daemon", %path, code = ?e.code, "stream handler errored");
                         let e = apply_error_handler(&error_handler, &path, e).await;
                         let _ = sink.error(e.code, e.body).await;
 
@@ -577,7 +574,7 @@ async fn drive_call<R>(
                     Ok(None) => break,
 
                     Err(_) => {
-                        error!(target: "overseerd::daemon", %path, "response stream panicked");
+                        error!(target: "upwell::daemon", %path, "response stream panicked");
                         let response =
                             apply_error_handler(&error_handler, &path, internal_error_response())
                                 .await;
@@ -589,12 +586,12 @@ async fn drive_call<R>(
             }
 
             if let Err(e) = sink.finish().await {
-                warn!(target: "overseerd::daemon", %path, error = %e, "failed to finish stream");
+                warn!(target: "upwell::daemon", %path, error = %e, "failed to finish stream");
             }
         }
 
         Err(e) => {
-            warn!(target: "overseerd::daemon", %path, code = ?e.code, "call returned error");
+            warn!(target: "upwell::daemon", %path, code = ?e.code, "call returned error");
             let e = apply_error_handler(&error_handler, &path, e).await;
 
             if let Err(e) = responder
@@ -604,7 +601,7 @@ async fn drive_call<R>(
                 })
                 .await
             {
-                warn!(target: "overseerd::daemon", %path, error = %e, "failed to send error response");
+                warn!(target: "upwell::daemon", %path, error = %e, "failed to send error response");
             }
         }
     }
@@ -631,7 +628,7 @@ async fn apply_error_handler(
         {
             Ok(response) => response,
             Err(_) => {
-                error!(target: "overseerd::daemon", %path, "global error handler panicked");
+                error!(target: "upwell::daemon", %path, "global error handler panicked");
 
                 internal_error_response()
             }

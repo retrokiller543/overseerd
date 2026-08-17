@@ -8,11 +8,11 @@ use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::Route;
-use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin};
-use overseerd_config::{ConfigBinding, ContainerConfigExt};
-use overseerd_core::{Descriptor, Scope, TypeDescriptor};
-use overseerd_di::{BoxedComponent, Component, ComponentDescriptor};
 use tower::{Layer, Service};
+use upwell_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin};
+use upwell_config::{ConfigBinding, ContainerConfigExt};
+use upwell_core::{Descriptor, Scope, TypeDescriptor};
+use upwell_di::{BoxedComponent, Component, ComponentDescriptor};
 
 use crate::config::{AXUM_CONFIG_PATH, AxumConfig};
 use crate::controller::{CONTROLLERS, ControllerDescriptor};
@@ -213,7 +213,7 @@ impl ProtocolPlugin for AxumPlugin {
 
                         Err(error) => {
                             tracing::error!(
-                                target: "overseerd::axum",
+                                target: "upwell::axum",
                                 error = %error,
                                 "request scope build failed"
                             );
@@ -283,7 +283,7 @@ fn normalize_base_path(base_path: &str) -> String {
 
 /// Configured serving for a built axum app.
 ///
-/// This is the zero-boilerplate counterpart to [`overseerd_app::App::serve`]: it binds the
+/// This is the zero-boilerplate counterpart to [`upwell_app::App::serve`]: it binds the
 /// listener described by the plugin-owned [`AxumConfig`] instead of requiring a `SocketAddr` at
 /// the call site. Explicit `SocketAddr` and pre-bound `TcpListener` serving remain available for
 /// tests and advanced embedding.
@@ -292,7 +292,7 @@ pub trait AxumAppServe {
     fn serve_configured(self) -> impl Future<Output = crate::Result<()>> + Send;
 }
 
-impl AxumAppServe for overseerd_app::App<AxumPlugin> {
+impl AxumAppServe for upwell_app::App<AxumPlugin> {
     fn serve_configured(self) -> impl Future<Output = crate::Result<()>> + Send {
         self.serve(())
     }

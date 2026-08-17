@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.18.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-json-ws-v0.17.2...overseerd-axum-json-ws-v0.18.0) - 2026-07-19
+## [0.18.0](https://github.com/retrokiller543/upwell/compare/upwell-axum-json-ws-v0.17.2...upwell-axum-json-ws-v0.18.0) - 2026-07-19
 
 ### Added
 
-- *(axum)* make WebSocket protocols portable ([#105](https://github.com/retrokiller543/overseerd/pull/105))
+- *(axum)* make WebSocket protocols portable ([#105](https://github.com/retrokiller543/upwell/pull/105))

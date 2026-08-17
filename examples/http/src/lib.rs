@@ -1,7 +1,7 @@
 //! The example app's **surface**: every controller and component lives here, in the library, so it
 //! is part of the reusable crate — not the binary. `main.rs` only wires up and serves the app.
 //!
-//! ## Recommended layout for an Overseerd axum project
+//! ## Recommended layout for an Upwell axum project
 //!
 //! ```text
 //! src/

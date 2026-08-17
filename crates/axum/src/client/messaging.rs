@@ -15,8 +15,8 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use futures::Stream;
-use overseerd_client::ClientError;
-use overseerd_transport::CodecError;
+use upwell_client::ClientError;
+use upwell_transport::CodecError;
 
 use crate::messaging::MessagingClientProtocol;
 
@@ -145,13 +145,13 @@ impl<P: MessagingClientProtocol, C: TopicSubscribe<P>, M> Drop for Subscription<
 /// (mirrors the `()` impls for the request/reply websocket client).
 impl<P: MessagingClientProtocol> MessageSend<P> for () {
     async fn send(&self, _: &str, _: P::Body) -> Result<(), ClientError<P::Status>> {
-        Err(ClientError::Transport(overseerd_transport::Error::Closed))
+        Err(ClientError::Transport(upwell_transport::Error::Closed))
     }
 }
 
 impl<P: MessagingClientProtocol> MessageRequest<P> for () {
     async fn request(&self, _: &str, _: P::Body) -> Result<P::Body, ClientError<P::Status>> {
-        Err(ClientError::Transport(overseerd_transport::Error::Closed))
+        Err(ClientError::Transport(upwell_transport::Error::Closed))
     }
 }
 
@@ -164,7 +164,7 @@ impl<P: MessagingClientProtocol> TopicSubscribe<P> for () {
     where
         M: Send + 'static,
     {
-        Err(ClientError::Transport(overseerd_transport::Error::Closed))
+        Err(ClientError::Transport(upwell_transport::Error::Closed))
     }
 
     fn unsubscribe(&self, _: SubscriptionId) {}

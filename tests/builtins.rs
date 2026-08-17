@@ -2,8 +2,8 @@
 //! transport. A handler injects the seeded [`ShutdownHandle`] and the call
 //! completes, proving the builtin resolves through the request scope chain.
 
-use overseerd::daemon::{App, Inject, Payload, handlers, service};
-use overseerd::{CallResult, MemoryClient, MemoryConnectionHandle, ShutdownHandle};
+use upwell::daemon::{App, Inject, Payload, handlers, service};
+use upwell::{CallResult, MemoryClient, MemoryConnectionHandle, ShutdownHandle};
 
 /// A service whose handler injects the framework-seeded shutdown handle.
 #[service(id = "builtins_svc", version = "0.1")]

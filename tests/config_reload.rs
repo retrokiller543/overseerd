@@ -7,11 +7,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{Cfg, ConfigManager, component, config};
 use serde::Deserialize;
+use upwell::config::Toml;
+use upwell::daemon::App;
+use upwell::dirs::{Config, DirectoriesManager};
+use upwell::{Cfg, ConfigManager, component, config};
 
 #[config(path = "svc")]
 #[derive(Deserialize)]
@@ -46,7 +46,7 @@ impl Consumer {
 
 /// A unique temp config directory for this test run, cleaned and recreated.
 fn temp_config_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("overseerd-config-reload-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("upwell-config-reload-{}", std::process::id()));
 
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).expect("create temp config dir");

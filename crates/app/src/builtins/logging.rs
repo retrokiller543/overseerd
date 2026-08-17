@@ -50,7 +50,7 @@ pub fn init_tracing(config: &LoggingConfig) -> Result<(), InitTracingError> {
 /// framework's filtered `fmt` layer.
 ///
 /// The escape hatch for crates above the app core that need to add their own capture — e.g.
-/// `overseerd-jobs` layering per-run log capture — without the app core depending on them.
+/// `upwell-jobs` layering per-run log capture — without the app core depending on them.
 /// Layers must be composed before installation, so an already-installed subscriber cannot be
 /// extended after the fact; call this once, at startup.
 pub fn init_tracing_with_layers(

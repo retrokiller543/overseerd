@@ -8,13 +8,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::{SinkExt, StreamExt};
-use overseerd::axum::client::{TokioTungsteniteWs, WebsocketClient};
-use overseerd::axum::prelude::*;
-use overseerd::client::ClientError;
-use overseerd::prelude::*;
-use overseerd::{component, methods};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
+use upwell::axum::client::{TokioTungsteniteWs, WebsocketClient};
+use upwell::axum::prelude::*;
+use upwell::client::ClientError;
+use upwell::prelude::*;
+use upwell::{component, methods};
 
 /// A shared greeting backend (singleton), field-injected into the ws controller.
 #[component(by_value)]
@@ -94,7 +94,7 @@ impl Sock {
 async fn ws_controller_dispatches_and_injects() {
     let app = app! {
         name: "ws-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: upwell::axum::AxumPlugin,
     }
     .register_ws::<JsonWs>("/ws")
     .build()
@@ -177,7 +177,7 @@ async fn ws_controller_dispatches_and_injects() {
         .expect_err("unknown destination is remote error");
     match error {
         ClientError::Remote(body) => {
-            assert_eq!(body.code(), overseerd::axum::JsonWsStatus::Error);
+            assert_eq!(body.code(), upwell::axum::JsonWsStatus::Error);
             assert_eq!(
                 String::from_utf8(body.into_raw()).unwrap(),
                 "no handler for destination"

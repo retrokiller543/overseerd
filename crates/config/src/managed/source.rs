@@ -2,9 +2,9 @@ use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use overseerd_dirs::DirectoriesManager;
 use serde::de::DeserializeOwned;
 use tracing::{debug, info, instrument, trace};
+use upwell_dirs::DirectoriesManager;
 
 use crate::resolve::{ResolveCtx, ResolvedDependency};
 use crate::{ConfigValue, Resolver, ResolverChain, from_value_in};
@@ -160,9 +160,9 @@ impl<F: Format> ConfigManager<F> {
     /// Takes a plain [`Path`] rather than a `Dir<Config>`, so config need not name the
     /// directory kind types. The base `application.<ext>` underlies the per-profile overlays
     /// `application-<profile>.<ext>`, each overriding the previous. Profiles come from
-    /// `OVERSEERD_PROFILES` (comma-separated) first, then `profiles`. A missing file is
+    /// `UPWELL_PROFILES` (comma-separated) first, then `profiles`. A missing file is
     /// skipped; a malformed one is an error.
-    #[instrument(target = "overseerd::config", level = "debug", skip(dir, profiles), fields(dir = %dir.display()))]
+    #[instrument(target = "upwell::config", level = "debug", skip(dir, profiles), fields(dir = %dir.display()))]
     pub fn load_in(dir: &Path, profiles: &[String]) -> Result<Self, ConfigError> {
         let parsers = F::parsers();
         let active = resolve_profiles(profiles);
@@ -170,7 +170,7 @@ impl<F: Format> ConfigManager<F> {
         let mut root = ConfigValue::Table(Vec::new());
         let mut sources = Vec::new();
 
-        debug!(target: "overseerd::config", profiles = ?active, "loading config");
+        debug!(target: "upwell::config", profiles = ?active, "loading config");
 
         merge_stem(&mut root, dir, "application", &parsers, &mut sources)?;
 
@@ -180,7 +180,7 @@ impl<F: Format> ConfigManager<F> {
             merge_stem(&mut root, dir, &stem, &parsers, &mut sources)?;
         }
 
-        info!(target: "overseerd::config", sources = sources.len(), profiles = active.len(), "config loaded");
+        info!(target: "upwell::config", sources = sources.len(), profiles = active.len(), "config loaded");
 
         Ok(Self::wrap(root, sources))
     }
@@ -220,7 +220,7 @@ impl<F> ConfigManager<F> {
     /// Deserializes the subtree at `path` into `T`, resolving `${...}` placeholders
     /// against environment variables and other config paths. The single entry point
     /// shared by transport setup in `main` and DI-seeded `Cfg<T>` injection.
-    #[instrument(target = "overseerd::config", level = "debug", skip(self))]
+    #[instrument(target = "upwell::config", level = "debug", skip(self))]
     pub fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, ConfigError> {
         let subtree = self
             .root
@@ -238,7 +238,7 @@ impl<F> ConfigManager<F> {
             }
         })?;
 
-        trace!(target: "overseerd::config", "config subtree deserialized");
+        trace!(target: "upwell::config", "config subtree deserialized");
 
         Ok(value)
     }
@@ -252,7 +252,7 @@ impl<F> ConfigManager<F> {
     /// proceeds from an empty table so a fully-defaulted type still materializes; absent and
     /// default-free remains a [`MissingPath`](ConfigError::MissingPath) error, matching
     /// [`get`](Self::get).
-    #[instrument(target = "overseerd::config", level = "debug", skip(self))]
+    #[instrument(target = "upwell::config", level = "debug", skip(self))]
     pub fn get_config<T: ConfigProperties>(&self, path: &str) -> Result<T, ConfigError> {
         self.get_config_in::<T>(&self.root, path)
     }
@@ -326,7 +326,7 @@ impl<F> ConfigManager<F> {
                 },
             )?;
 
-        trace!(target: "overseerd::config", "config subtree deserialized with defaults");
+        trace!(target: "upwell::config", "config subtree deserialized with defaults");
 
         Ok((
             value,
@@ -555,7 +555,7 @@ fn seed_defaults_into(root: &mut ConfigValue, bindings: &[ConfigBinding]) {
             // macro-emitted specs; a hand-built spec with a malformed template lands here
             // and is left unseeded (the real error surfaces at the later typed read).
             debug!(
-                target: "overseerd::config",
+                target: "upwell::config",
                 path = %binding.path,
                 %error,
                 "skipping unseedable default",
@@ -588,7 +588,7 @@ fn merge_file(
     let extension = path.extension().and_then(|ext| ext.to_str());
 
     let Some((_, parse)) = parsers.iter().find(|(ext, _)| Some(*ext) == extension) else {
-        trace!(target: "overseerd::config", path = %path.display(), "no parser for source extension, skipping");
+        trace!(target: "upwell::config", path = %path.display(), "no parser for source extension, skipping");
 
         return Ok(());
     };
@@ -635,12 +635,12 @@ fn ensure_path_mut<'a>(root: &'a mut ConfigValue, path: &str) -> Option<&'a mut 
     Some(current)
 }
 
-/// Combines `OVERSEERD_PROFILES` (consulted first) with the explicitly supplied
+/// Combines `UPWELL_PROFILES` (consulted first) with the explicitly supplied
 /// profiles, preserving order.
 fn resolve_profiles(explicit: &[String]) -> Vec<String> {
     let mut profiles = Vec::new();
 
-    if let Ok(env) = std::env::var("OVERSEERD_PROFILES") {
+    if let Ok(env) = std::env::var("UPWELL_PROFILES") {
         let from_env = env
             .split(',')
             .map(|s| s.trim().to_string())
@@ -666,7 +666,7 @@ fn merge_stem(
         let path = dir.join(format!("{stem}.{ext}"));
 
         if !path.exists() {
-            trace!(target: "overseerd::config", path = %path.display(), "config file absent, skipping");
+            trace!(target: "upwell::config", path = %path.display(), "config file absent, skipping");
 
             continue;
         }
@@ -683,7 +683,7 @@ fn merge_stem(
         merge_into(root, parsed);
         sources.push(path.clone());
 
-        debug!(target: "overseerd::config", path = %path.display(), "merged config file");
+        debug!(target: "upwell::config", path = %path.display(), "merged config file");
     }
 
     Ok(())

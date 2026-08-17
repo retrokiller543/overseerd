@@ -1,6 +1,6 @@
-//! Procedural macros for the Overseerd framework.
+//! Procedural macros for the Upwell framework.
 //!
-//! These are re-exported from the `overseerd` facade crate; depend on that rather
+//! These are re-exported from the `upwell` facade crate; depend on that rather
 //! than this crate directly. They span three subsystems — components (dependency
 //! injection), services (RPC), and configuration.
 //!
@@ -46,7 +46,7 @@
 //! # Implementation
 //!
 //! Each `#[proc_macro_*]` entry point here is a thin shim: it forwards its token streams to
-//! the matching `expand` function in [`overseerd_macros_core`], the ordinary library that
+//! the matching `expand` function in [`upwell_macros_core`], the ordinary library that
 //! holds all the parsing and codegen (a proc-macro crate can only export proc-macros, so the
 //! reusable machinery lives there). Errors are surfaced as `compile_error!` by the core, not
 //! by panicking.
@@ -100,7 +100,7 @@ use proc_macro::TokenStream;
 /// # Example
 ///
 /// ```ignore
-/// use overseerd::prelude::*;
+/// use upwell::prelude::*;
 /// use std::sync::Arc;
 ///
 /// #[component(default_factory = false)]
@@ -131,7 +131,7 @@ use proc_macro::TokenStream;
 /// (an `#[init]` constructor for any component).
 #[proc_macro_attribute]
 pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
-    overseerd_macros_core::component(attr.into(), item.into()).into()
+    upwell_macros_core::component(attr.into(), item.into()).into()
 }
 
 /// Implements the `ConfigProperties` trait for a config `struct` or `enum`, making it
@@ -165,7 +165,7 @@ pub fn component(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
-    overseerd_macros_core::config(attr.into(), item.into()).into()
+    upwell_macros_core::config(attr.into(), item.into()).into()
 }
 
 /// Registers a component's lifecycle methods from an inherent `impl` block.
@@ -195,7 +195,7 @@ pub fn config(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
-    overseerd_macros_core::methods(attr.into(), item.into()).into()
+    upwell_macros_core::methods(attr.into(), item.into()).into()
 }
 
 /// Assembles an app and validates it from one declaration.
@@ -225,19 +225,19 @@ pub fn methods(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - `configs` binds the same config type at several property paths; a type with a
 ///   baked-in `#[config(path = "..")]` auto-registers and needs no entry.
 /// - `managers` hands in instances built earlier in `main`: `config: <binding>` a
-///   [`ConfigManager`](overseerd_core::ConfigManager), `directories: <binding>` a
-///   [`DirectoriesManager`](overseerd_core::DirectoriesManager). Both are optional —
+///   [`ConfigManager`](upwell_core::ConfigManager), `directories: <binding>` a
+///   [`DirectoriesManager`](upwell_core::DirectoriesManager). Both are optional —
 ///   omitted, the builder constructs defaults (config loaded from the `Dir<Config>`
 ///   directory, directories derived from the app name).
 ///
 /// The listed `services` are additionally required to be
-/// [`Wired`](overseerd_core::Wired) under the `di-check` feature, asserting their
+/// [`Wired`](upwell_core::Wired) under the `di-check` feature, asserting their
 /// whole dependency graph (including trait-object and `#[service]` field
 /// dependencies, across crates) at compile time. The same declaration that wires the
 /// app validates it — there is no separate list to maintain.
 #[proc_macro]
 pub fn app(input: TokenStream) -> TokenStream {
-    overseerd_macros_core::app(input.into()).into()
+    upwell_macros_core::app(input.into()).into()
 }
 
 /// Deprecated alias for [`app!`](macro@app). Renamed in 0.7.0; removed in 1.0.0.
@@ -247,7 +247,7 @@ pub fn app(input: TokenStream) -> TokenStream {
 )]
 #[proc_macro]
 pub fn daemon(input: TokenStream) -> TokenStream {
-    overseerd_macros_core::app(input.into()).into()
+    upwell_macros_core::app(input.into()).into()
 }
 
 /// Marks a trait as injectable as `Arc<dyn Trait>` (providers register with
@@ -263,5 +263,5 @@ pub fn daemon(input: TokenStream) -> TokenStream {
 /// Sync` (state it as a supertrait) and object-safe.
 #[proc_macro_attribute]
 pub fn injectable(attr: TokenStream, item: TokenStream) -> TokenStream {
-    overseerd_macros_core::injectable(attr.into(), item.into()).into()
+    upwell_macros_core::injectable(attr.into(), item.into()).into()
 }

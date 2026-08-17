@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 
 mod order;
 
-use overseerd_core::{Cardinality, ResolutionMode, Scope, Singleton};
+use upwell_core::{Cardinality, ResolutionMode, Scope, Singleton};
 
 use crate::descriptors::{COMPONENTS, ComponentDescriptor, PROVIDERS, ProviderDescriptor};
 use crate::error::Error;
@@ -476,7 +476,7 @@ impl ComponentRegistry {
 
     fn fresh_targets(
         &self,
-        dependency: &overseerd_core::DependencyDescriptor,
+        dependency: &upwell_core::DependencyDescriptor,
         by_type: &HashMap<TypeId, ComponentDescriptor>,
     ) -> Vec<ComponentDescriptor> {
         if let Some(component) = by_type.get(&dependency.ty.type_id) {
@@ -525,9 +525,7 @@ mod tests {
         BoxedComponent, ComponentConstructionContext, ComponentDescriptor,
         ComponentFactoryDescriptor,
     };
-    use overseerd_core::{
-        Cardinality, DependencyDescriptor, StaticScope, Transient, TypeDescriptor,
-    };
+    use upwell_core::{Cardinality, DependencyDescriptor, StaticScope, Transient, TypeDescriptor};
 
     /// Local stand-in intermediate scopes (the captive rule only cares about rank
     /// ordering): `Connection` outranks `Request`, both between singleton and transient.
@@ -601,7 +599,7 @@ mod tests {
                 ty: $ty,
                 scope: $scope,
                 factories,
-                hooks: ::overseerd_hooks::no_hooks,
+                hooks: ::upwell_hooks::no_hooks,
             }
         }};
     }
@@ -626,7 +624,7 @@ mod tests {
         ty: TypeDescriptor::of::<u16>("PgPool"),
         scope: &Singleton,
         factories: pg_pool_factories,
-        hooks: overseerd_hooks::no_hooks,
+        hooks: upwell_hooks::no_hooks,
     };
 
     fn backup_repo_deps() -> Vec<DependencyDescriptor> {
@@ -658,7 +656,7 @@ mod tests {
         ty: TypeDescriptor::of::<u8>("BackupRepository"),
         scope: &Singleton,
         factories: backup_repo_factories,
-        hooks: overseerd_hooks::no_hooks,
+        hooks: upwell_hooks::no_hooks,
     };
 
     #[test]

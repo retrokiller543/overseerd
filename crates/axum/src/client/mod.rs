@@ -2,9 +2,9 @@
 //! pluggable transport backends.
 //!
 //! A generated `{Controller}Client<C>` is transport-generic: `C` is any backend implementing
-//! the [`Unary`](overseerd_client::Unary) capability with `Request<B> = http::Request<B>` and
-//! `Response<R> = HttpResponse<R>` (plus the [`Encodes`](overseerd_transport::Encodes) /
-//! [`Decodes`](overseerd_transport::Decodes) codec). Both bundled backends — [`reqwest`] and
+//! the [`Unary`](upwell_client::Unary) capability with `Request<B> = http::Request<B>` and
+//! `Response<R> = HttpResponse<R>` (plus the [`Encodes`](upwell_transport::Encodes) /
+//! [`Decodes`](upwell_transport::Decodes) codec). Both bundled backends — [`reqwest`] and
 //! `hyper` — qualify, so the same client runs over either; pick one with the matching feature.
 
 mod body;
@@ -52,7 +52,7 @@ pub use streaming::{HttpClientStreaming, HttpStreaming, StreamDecode, encode_str
 pub use websocket::*;
 
 /// Re-exported so generated streaming-client code names the codec without a separate dep.
-pub use overseerd_transport::{Decodes, Encodes};
+pub use upwell_transport::{Decodes, Encodes};
 
 /// Percent-encodes one URI path segment according to RFC 3986. Generated clients call this for
 /// every route `Path<T>` substitution before building the request URI.
@@ -96,7 +96,7 @@ pub fn encode_query<T: serde::Serialize>(value: &T) -> String {
     serde_urlencoded::to_string(value).expect("query value serializes to a URL-encoded string")
 }
 
-/// Maps a non-success HTTP response into a [`ClientError::Remote`](overseerd_client::ClientError),
+/// Maps a non-success HTTP response into a [`ClientError::Remote`](upwell_client::ClientError),
 /// carrying the genuine [`http::StatusCode`](axum::http::StatusCode) and the raw error body. The
 /// HTTP client's protocol status *is* the HTTP status — no folding into the RPC packed status — so
 /// a caller inspects `error.code()` as an `http::StatusCode` directly. Used by the streaming
@@ -106,8 +106,8 @@ pub fn encode_query<T: serde::Serialize>(value: &T) -> String {
 pub(crate) fn remote_error(
     status: http::StatusCode,
     body: Vec<u8>,
-) -> overseerd_client::ClientError<http::StatusCode> {
-    overseerd_client::ClientError::Remote(overseerd_client::ErrorBody::new(status, body))
+) -> upwell_client::ClientError<http::StatusCode> {
+    upwell_client::ClientError::Remote(upwell_client::ErrorBody::new(status, body))
 }
 
 #[cfg(all(feature = "hyper", not(target_family = "wasm")))]

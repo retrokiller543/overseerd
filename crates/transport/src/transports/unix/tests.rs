@@ -8,7 +8,7 @@ static NEXT_SOCKET: AtomicUsize = AtomicUsize::new(0);
 fn socket_path(tag: &str) -> PathBuf {
     std::env::temp_dir()
         .join(format!(
-            "overseerd-unix-{tag}-{}-{}",
+            "upwell-unix-{tag}-{}-{}",
             std::process::id(),
             NEXT_SOCKET.fetch_add(1, Ordering::Relaxed)
         ))
@@ -92,7 +92,7 @@ async fn relative_socket_path_without_a_parent_still_binds() {
     use std::os::unix::fs::PermissionsExt;
 
     let path = PathBuf::from(format!(
-        "overseerd-relative-{}-{}.sock",
+        "upwell-relative-{}-{}.sock",
         std::process::id(),
         NEXT_SOCKET.fetch_add(1, Ordering::Relaxed)
     ));

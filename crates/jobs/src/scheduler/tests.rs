@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use overseerd_di::{Component, RootResolver};
-use overseerd_hooks::{HookKind, Startup};
+use upwell_di::{Component, RootResolver};
+use upwell_hooks::{HookKind, Startup};
 
 use super::{JobScheduler, scheduler_descriptor};
 use crate::registry::{JobState, JobTrigger};

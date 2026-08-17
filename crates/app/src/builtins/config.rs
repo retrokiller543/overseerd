@@ -1,25 +1,25 @@
 //! Framework-provided configuration property structs.
 //!
-//! These implement [`ConfigProperties`](overseerd_config::ConfigProperties) and derive
+//! These implement [`ConfigProperties`](upwell_config::ConfigProperties) and derive
 //! serde `Deserialize` but carry **no** `#[config(path = "..")]` auto-binding —
 //! binding a missing subtree is a hard build error, so they are opt-in. A user binds
 //! them explicitly, e.g. `AppBuilder::config::<ServerConfig>("server")` (or the
 //! `configs:` key of the `app!{}` macro), and injects them as
-//! [`Cfg<ServerConfig>`](overseerd_config::Cfg).
+//! [`Cfg<ServerConfig>`](upwell_config::Cfg).
 //!
-//! They use `#[config(overseerd = ::overseerd_config)]`: this crate lives *below* the
-//! facade and cannot reference `::overseerd::*`, so the macro's `overseerd =` override
-//! roots the generated `ConfigProperties` impl directly at `overseerd-config`. (Without
+//! They use `#[config(upwell = ::upwell_config)]`: this crate lives *below* the
+//! facade and cannot reference `::upwell::*`, so the macro's `upwell =` override
+//! roots the generated `ConfigProperties` impl directly at `upwell-config`. (Without
 //! a `path`, the macro emits only that impl — no descriptor or `linkme` registration —
-//! so `overseerd-config`'s re-export of `ConfigProperties` is all the override needs.)
+//! so `upwell-config`'s re-export of `ConfigProperties` is all the override needs.)
 
 use serde::Deserialize;
 
-use overseerd_macros::config;
+use upwell_macros::config;
 
 /// Network binding settings for a daemon's transport, bound from a config subtree
-/// and injected as [`Cfg<ServerConfig>`](overseerd_config::Cfg).
-#[config(overseerd = ::overseerd_config)]
+/// and injected as [`Cfg<ServerConfig>`](upwell_config::Cfg).
+#[config(upwell = ::upwell_config)]
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
     /// The host or IP address the daemon binds its listener to.
@@ -30,8 +30,8 @@ pub struct ServerConfig {
 }
 
 /// Tracing/logging settings consumed by the `init_tracing` helper, bound from a
-/// config subtree and injected as [`Cfg<LoggingConfig>`](overseerd_config::Cfg).
-#[config(overseerd = ::overseerd_config)]
+/// config subtree and injected as [`Cfg<LoggingConfig>`](upwell_config::Cfg).
+#[config(upwell = ::upwell_config)]
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct LoggingConfig {
     /// An `EnvFilter`-style level directive (e.g. `"info"`, `"app=debug,info"`).

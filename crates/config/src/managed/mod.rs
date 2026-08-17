@@ -17,8 +17,8 @@ use std::sync::{Arc, Mutex};
 
 use serde::de::DeserializeOwned;
 
-use overseerd_core::TypeDescriptor;
-use overseerd_di::{BoxedComponent, Injectable, Live, LiveRef};
+use upwell_core::TypeDescriptor;
+use upwell_di::{BoxedComponent, Injectable, Live, LiveRef};
 
 pub use dirs::DirectoriesResolver;
 use reload::ConfigSlot;

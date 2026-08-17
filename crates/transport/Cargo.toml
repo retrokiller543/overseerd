@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-transport"
-description = "Wire transport and status-code types for the overseerd daemon framework."
+name = "upwell-transport"
+description = "Wire transport and status-code types for the upwell daemon framework."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,11 +11,11 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-# Make `PeerInfo` an Overseerd DI injectable (so a connection-scoped component can depend
-# on it). Pulls in `overseerd-di`; off by default so the transport stays standalone.
-di = ["dep:overseerd-di"]
+# Make `PeerInfo` an Upwell DI injectable (so a connection-scoped component can depend
+# on it). Pulls in `upwell-di`; off by default so the transport stays standalone.
+di = ["dep:upwell-di"]
 # Additionally emit the compile-time `Provide<PeerInfo>` impl for di-check.
-di-check = ["di", "overseerd-di/di-check"]
+di-check = ["di", "upwell-di/di-check"]
 
 [dependencies]
 bitflags = { workspace = true }
@@ -24,7 +24,7 @@ futures = { workspace = true }
 serde = { workspace = true }
 postcard = { workspace = true }
 tracing = { workspace = true }
-overseerd-di = { workspace = true, optional = true }
+upwell-di = { workspace = true, optional = true }
 
 # Native: the full runtime for the socket transports and length-prefixed IO codec.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

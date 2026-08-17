@@ -12,19 +12,19 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd::axum::axum::body::{self, Body};
-use overseerd::axum::axum::extract::Request as HttpRequest;
-use overseerd::axum::axum::http::StatusCode;
-use overseerd::axum::axum::http::header::AUTHORIZATION;
-use overseerd::axum::axum::middleware::Next;
-use overseerd::axum::axum::response::Response;
-use overseerd::axum::axum::{Router, middleware as axum_middleware};
-use overseerd::axum::prelude::*;
-use overseerd::axum::tower::ServiceExt;
-use overseerd::axum::{AxumMiddleware, RequestMeta, ScopeHandle};
-use overseerd::config::Toml;
-use overseerd::prelude::*;
-use overseerd::{ConfigManager, component, methods};
+use upwell::axum::axum::body::{self, Body};
+use upwell::axum::axum::extract::Request as HttpRequest;
+use upwell::axum::axum::http::StatusCode;
+use upwell::axum::axum::http::header::AUTHORIZATION;
+use upwell::axum::axum::middleware::Next;
+use upwell::axum::axum::response::Response;
+use upwell::axum::axum::{Router, middleware as axum_middleware};
+use upwell::axum::prelude::*;
+use upwell::axum::tower::ServiceExt;
+use upwell::axum::{AxumMiddleware, RequestMeta, ScopeHandle};
+use upwell::config::Toml;
+use upwell::prelude::*;
+use upwell::{ConfigManager, component, methods};
 
 /// Reads a JSON response body into the given type.
 async fn json_body<T: serde::de::DeserializeOwned>(response: Response) -> T {
@@ -45,7 +45,7 @@ struct ConfiguredController {}
 #[handlers]
 impl ConfiguredController {
     #[post("/echo")]
-    async fn echo(&self, _body: overseerd::axum::bytes::Bytes) {}
+    async fn echo(&self, _body: upwell::axum::bytes::Bytes) {}
 
     #[get("/slow")]
     async fn slow(&self) {
@@ -68,7 +68,7 @@ async fn axum_config_is_automatic_and_enforces_body_and_request_limits() {
     .expect("parse axum config");
     let app = app! {
         name: "configured-axum",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: upwell::axum::AxumPlugin,
     }
     .config_source(config)
     .build()
@@ -200,7 +200,7 @@ async fn raw_layer_and_global_controller_path_middleware_run_in_order() {
 
     let app = app! {
         name: "test-order",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: upwell::axum::AxumPlugin,
     }
     .layer(raw_layer)
     .middleware::<GlobalMw>()
@@ -266,7 +266,7 @@ impl SharedController {
 async fn same_middleware_type_shares_one_instance_across_attach_points() {
     let app = app! {
         name: "test-shared",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: upwell::axum::AxumPlugin,
     }
     .middleware::<SharedMw>()
     .build()
@@ -348,7 +348,7 @@ impl AuthController {
 async fn request_scoped_component_reads_request_meta_and_is_shared() {
     let app = app! {
         name: "test-auth",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: upwell::axum::AxumPlugin,
     }
     .build()
     .await

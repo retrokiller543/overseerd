@@ -44,8 +44,8 @@ pub struct AppInput {
     middleware: Vec<Expr>,
     guards: Vec<Expr>,
     error_handler: Option<Expr>,
-    /// Override for the core `overseerd` facade root (`overseerd: ::path`).
-    overseerd: Option<syn::Path>,
+    /// Override for the core `upwell` facade root (`upwell: ::path`).
+    upwell: Option<syn::Path>,
     /// Override for the plugin own-types root (`crate: ::path`).
     krate: Option<syn::Path>,
 }
@@ -183,7 +183,7 @@ impl Parse for AppInput {
         let mut middleware = Vec::new();
         let mut guards = Vec::new();
         let mut error_handler = None;
-        let mut overseerd = None;
+        let mut upwell = None;
         let mut krate = None;
 
         while !input.is_empty() {
@@ -200,7 +200,7 @@ impl Parse for AppInput {
                 "middleware" => middleware = bracketed_list::<Expr>(input)?,
                 "guards" => guards = bracketed_list::<Expr>(input)?,
                 "error_handler" => error_handler = Some(input.parse()?),
-                "overseerd" => overseerd = Some(input.parse()?),
+                "upwell" => upwell = Some(input.parse()?),
                 "crate" => krate = Some(input.parse()?),
                 other => {
                     return Err(syn::Error::new(
@@ -208,7 +208,7 @@ impl Parse for AppInput {
                         format!(
                             "unknown `app!` key `{other}`, expected `name`, `protocol`, \
                              `services`, `components`, `configs`, `managers`, `middleware`, \
-                             `guards`, `error_handler`, `overseerd`, or `crate`"
+                             `guards`, `error_handler`, `upwell`, or `crate`"
                         ),
                     ));
                 }
@@ -235,7 +235,7 @@ impl Parse for AppInput {
             middleware,
             guards,
             error_handler,
-            overseerd,
+            upwell,
             krate,
         })
     }
@@ -312,13 +312,13 @@ pub fn expand(input: AppInput) -> TokenStream {
         middleware,
         guards,
         error_handler,
-        overseerd,
+        upwell,
         krate,
     } = input;
 
     // `app!` is a core macro; its emitted items are all core (`App`, `ConfigManager`, …),
-    // resolved against the `overseerd` facade unless overridden per-invocation.
-    let paths = &Paths::overseerd().resolve(overseerd, krate);
+    // resolved against the `upwell` facade unless overridden per-invocation.
+    let paths = &Paths::upwell().resolve(upwell, krate);
 
     let config_tys = configs.iter().map(|entry| &entry.ty);
     let config_paths = configs.iter().map(|entry| &entry.path);
@@ -336,10 +336,10 @@ pub fn expand(input: AppInput) -> TokenStream {
 
         quote! {
             const _: () = {
-                fn __overseerd_assert_wired<T: #wired>() {}
+                fn __upwell_assert_wired<T: #wired>() {}
 
-                fn __overseerd_app_check() {
-                    #(__overseerd_assert_wired::<#services>();)*
+                fn __upwell_app_check() {
+                    #(__upwell_assert_wired::<#services>();)*
                 }
             };
         }
@@ -355,8 +355,8 @@ pub fn expand(input: AppInput) -> TokenStream {
 
     match &directories_manager {
         Some(ManagerSource::Instance(expr)) => {
-            directories_binding = quote!(let __overseerd_directories = #expr;);
-            directories_call = quote!(.directories(__overseerd_directories));
+            directories_binding = quote!(let __upwell_directories = #expr;);
+            directories_call = quote!(.directories(__upwell_directories));
             directories_available = true;
         }
 
@@ -369,8 +369,8 @@ pub fn expand(input: AppInput) -> TokenStream {
                 return error("a `directories` config block needs `app` or `root`");
             };
 
-            directories_binding = quote!(let __overseerd_directories = #expr;);
-            directories_call = quote!(.directories(__overseerd_directories));
+            directories_binding = quote!(let __upwell_directories = #expr;);
+            directories_call = quote!(.directories(__upwell_directories));
             directories_available = true;
         }
 
@@ -384,8 +384,8 @@ pub fn expand(input: AppInput) -> TokenStream {
 
     match &config_manager {
         Some(ManagerSource::Instance(expr)) => {
-            config_binding = quote!(let __overseerd_config = #expr;);
-            config_call = quote!(.config_source(__overseerd_config));
+            config_binding = quote!(let __upwell_config = #expr;);
+            config_call = quote!(.config_source(__upwell_config));
         }
 
         Some(ManagerSource::Configure(settings)) => {
@@ -397,7 +397,7 @@ pub fn expand(input: AppInput) -> TokenStream {
                     None => quote!(&[]),
                 };
 
-                quote!(#config_manager_path::<#config_dynamic>::load_from(&__overseerd_directories, #profiles)?)
+                quote!(#config_manager_path::<#config_dynamic>::load_from(&__upwell_directories, #profiles)?)
             } else {
                 return error(
                     "a `config` block without `source` requires a `directories` manager to load from",
@@ -418,8 +418,8 @@ pub fn expand(input: AppInput) -> TokenStream {
                 chain = quote!(#chain.config_reload_debounce(#debounce));
             }
 
-            config_binding = quote!(let __overseerd_config = #chain;);
-            config_call = quote!(.config_source(__overseerd_config));
+            config_binding = quote!(let __upwell_config = #chain;);
+            config_call = quote!(.config_source(__upwell_config));
         }
 
         None => {}

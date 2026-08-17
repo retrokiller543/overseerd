@@ -14,7 +14,7 @@
 //! [`StompOutcome`](crate::ws::stomp::StompOutcome)) also stay in that module.
 
 use bytes::Bytes;
-use overseerd_transport::CodecError;
+use upwell_transport::CodecError;
 
 /// The `subscription` header value the server stamps on a request/response reply `MESSAGE`. It is a
 /// sentinel (never a real client subscription id, which are `sub-*`), so the client consults its
@@ -27,7 +27,7 @@ pub(crate) const REPLY_SUBSCRIPTION_ID: &str = "reply";
 /// reply (the handler failed). Its presence flips the client's awaiting call from `Ok(body)` to
 /// `Err`, so a failing request handler resolves the caller instead of hanging it. Shared by the
 /// server (framing) and the client (demux).
-pub(crate) const MESSAGE_ERROR_HEADER: &str = "overseerd-error";
+pub(crate) const MESSAGE_ERROR_HEADER: &str = "upwell-error";
 
 #[cfg(not(target_family = "wasm"))]
 use std::collections::HashMap;
@@ -35,10 +35,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[cfg(not(target_family = "wasm"))]
-use overseerd_axum::AppRuntime;
+use upwell_axum::AppRuntime;
 
 #[cfg(not(target_family = "wasm"))]
-use overseerd_axum::WsHandlerFn;
+use upwell_axum::WsHandlerFn;
 
 /// A STOMP frame body: opaque bytes with an optional `content-type`. Handlers usually receive a
 /// decoded type (via [`WsCodec`](crate::ws::WsCodec) JSON decoding) rather than this directly.
@@ -94,7 +94,7 @@ pub struct Stomp {
     pub(crate) config: server::StompConfig,
 }
 
-impl overseerd_axum::MessagingProtocol for Stomp {
+impl upwell_axum::MessagingProtocol for Stomp {
     type Body = StompBody;
     type DefaultCodec = JsonCodec;
 }
@@ -127,7 +127,7 @@ impl StompCodec for JsonCodec {
     }
 }
 
-impl overseerd_axum::TopicCodec<Stomp> for JsonCodec {
+impl upwell_axum::TopicCodec<Stomp> for JsonCodec {
     fn encode<T: serde::Serialize>(value: &T) -> Result<StompBody, CodecError> {
         <Self as StompCodec>::encode(value)
     }

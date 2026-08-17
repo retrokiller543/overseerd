@@ -1,6 +1,6 @@
 //! The macro extension seams.
 //!
-//! Overseerd's attribute macros are built as a **state machine** over an extension value. The
+//! Upwell's attribute macros are built as a **state machine** over an extension value. The
 //! extension starts at [`Default`] and is driven through single-purpose phases, each mutating
 //! its accumulated state; [`Expand::expand`] then reads that state. This lets `#[service]` be
 //! `#[component]` + a router extension, and `#[handlers]` be `#[methods]` + an RPC extension,

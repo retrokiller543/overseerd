@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use overseerd::daemon::App;
-use overseerd::{Dep, component};
+use upwell::daemon::App;
+use upwell::{Dep, component};
 
 /// The reloadable target. `id` distinguishes the original instance (built with
 /// `Default`) from a swapped-in replacement.

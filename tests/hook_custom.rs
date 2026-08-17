@@ -6,9 +6,9 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::{ConfigManager, HookKind, component, methods};
+use upwell::config::Toml;
+use upwell::daemon::App;
+use upwell::{ConfigManager, HookKind, component, methods};
 
 /// A user-defined lifecycle kind — no inputs, no output.
 struct Startup;
@@ -44,7 +44,7 @@ impl Boot {
 #[methods]
 impl Boot {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> upwell::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())

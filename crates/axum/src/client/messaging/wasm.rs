@@ -92,7 +92,7 @@ where
 
                         Err(error) => {
                             tracing::warn!(
-                                target: "overseerd::axum",
+                                target: "upwell::axum",
                                 %error,
                                 "topic message failed to serialize for JS; skipping"
                             );
@@ -101,7 +101,7 @@ where
 
                     Err(error) => {
                         tracing::warn!(
-                            target: "overseerd::axum",
+                            target: "upwell::axum",
                             ?error,
                             "topic subscription error; ending subscription"
                         );

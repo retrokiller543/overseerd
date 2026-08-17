@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use overseerd_axum::SubscriptionRegistry;
+use upwell_axum::SubscriptionRegistry;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 

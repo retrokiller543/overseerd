@@ -4,8 +4,8 @@
 //! warning-free while still exercising the deprecated surface.
 #![allow(deprecated)]
 
-use overseerd::daemon;
-use overseerd::daemon::{Daemon, DaemonBuilder};
+use upwell::daemon;
+use upwell::daemon::{Daemon, DaemonBuilder};
 
 #[tokio::test]
 async fn daemon_type_alias_builds() {
@@ -31,7 +31,7 @@ async fn daemon_builder_alias_builds() {
 async fn daemon_macro_alias_builds() {
     let app = daemon! {
         name: "deprecated-macro-alias",
-        protocol: overseerd::daemon::RpcPlugin,
+        protocol: upwell::daemon::RpcPlugin,
     }
     .build()
     .await

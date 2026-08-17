@@ -1,17 +1,17 @@
-# overseerd-axum
+# upwell-axum
 
-> The axum/HTTP protocol plugin for Overseerd: controllers, DI route extractors, WebSockets/STOMP, multipart, and a generated typed client.
+> The axum/HTTP protocol plugin for Upwell: controllers, DI route extractors, WebSockets/STOMP, multipart, and a generated typed client.
 
-Part of the [Overseerd](../../README.md) framework — the HTTP protocol layer over the protocol-agnostic `overseerd-app` core.
+Part of the [Upwell](../../README.md) framework — the HTTP protocol layer over the protocol-agnostic `upwell-app` core.
 
 ## Role
 
-`overseerd-axum` is a [`ProtocolPlugin`] ([`AxumPlugin`]): it builds a real [`axum::Router`] from
+`upwell-axum` is a [`ProtocolPlugin`] ([`AxumPlugin`]): it builds a real [`axum::Router`] from
 `#[controller]` components and serves them over HTTP. It bridges the framework's dependency
 injection into axum via the [`Inject`] extractor — a per-request scope layer threads an
 `Arc<ScopeContainer>` through the request extensions, and `Inject<T>` resolves components from it, so
 route handlers freely mix native axum extractors with DI. The bridge is deliberately thin and
-one-directional: nothing in `overseerd-di` or `overseerd-core` knows axum exists.
+one-directional: nothing in `upwell-di` or `upwell-core` knows axum exists.
 
 Beyond plain REST it owns the HTTP-side extras that mirror the RPC protocol for the web: WebSocket
 controllers ([`WebsocketController`], `#[controller(ws = ..)]`), a STOMP 1.2 pub/sub [`Broker`] with
@@ -20,14 +20,14 @@ transport-generic generated client (`crate::client`) that also compiles to wasm/
 
 ## Usage
 
-Most users depend on the [`overseerd`](../../README.md) facade, which re-exports this crate under
-`overseerd::axum` — you rarely name it directly. Enable the `axum` feature; it pulls in the HTTP
+Most users depend on the [`upwell`](../../README.md) facade, which re-exports this crate under
+`upwell::axum` — you rarely name it directly. Enable the `axum` feature; it pulls in the HTTP
 protocol plus the controller macros. Declare `#[controller]`/`#[handlers]` with route attributes,
 then build an [`App`] (an `App<AxumPlugin>`) and serve.
 
 ```rust
-use overseerd::axum::prelude::*;
-use overseerd::prelude::*;
+use upwell::axum::prelude::*;
+use upwell::prelude::*;
 
 #[dto]
 pub struct Greeting {
@@ -52,12 +52,12 @@ issues typed calls from the same definition, and the crate compiles to `wasm32` 
 
 ## Internal role
 
-Native (server) builds depend on `overseerd-app`, `overseerd-core`, `overseerd-di`,
-`overseerd-config`, and `overseerd-hooks`, plus `axum`/`tower`/`tokio`. It re-exports the agnostic
-app surface (`App`, `AppBuilder`, `ProtocolPlugin`, `Serve`, …) so a standalone `overseerd-axum`
-user has a single import. The macros come from the sibling `overseerd-axum-macros` crate (re-exported
+Native (server) builds depend on `upwell-app`, `upwell-core`, `upwell-di`,
+`upwell-config`, and `upwell-hooks`, plus `axum`/`tower`/`tokio`. It re-exports the agnostic
+app surface (`App`, `AppBuilder`, `ProtocolPlugin`, `Serve`, …) so a standalone `upwell-axum`
+user has a single import. The macros come from the sibling `upwell-axum-macros` crate (re-exported
 here: `controller`, `handlers`, the route attrs, `dto`, `topics`), and codecs build on
-`overseerd-transport`. The `overseerd` facade re-exports everything under `overseerd::axum`. Because
+`upwell-transport`. The `upwell` facade re-exports everything under `upwell::axum`. Because
 the generated client must build for wasm, the client/DTO/stream/STOMP-wire modules are wasm-safe,
 while the server modules (controller, plugin, protocol, ws broker, extractors) are gated to non-wasm.
 
@@ -76,4 +76,4 @@ while the server modules (controller, plugin, protocol, ws broker, extractors) a
 | `wasm-ts` | Opt into the newer `tsify` `Ts<T>` wasm ABI for the browser client (needs unreleased `tsify`). |
 | `yaml` / `watch` / `tracing-subscriber` | Forwarded config extras: YAML sources / reload on change / `init_tracing`. |
 | `di-check` | Compile-time DI-graph validation (forwarded across app/di/config/macros). |
-| `facade` | Set by the `overseerd` facade: root the macros' generated plugin types at `::overseerd::axum::*` instead of the standalone `::overseerd_axum::*`. |
+| `facade` | Set by the `upwell` facade: root the macros' generated plugin types at `::upwell::axum::*` instead of the standalone `::upwell_axum::*`. |

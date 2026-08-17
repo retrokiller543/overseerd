@@ -1,6 +1,6 @@
-use overseerd_macros_core::paths::Paths;
 use quote::quote;
 use syn::{ImplItemFn, ReturnType, parse_quote};
+use upwell_macros_core::paths::Paths;
 
 use super::{
     AxumHandlers, HandlerContext, build_message_request_method, build_message_send_method,
@@ -200,7 +200,7 @@ fn ws_route_group_uses_handlers_protocol() {
         paths: paths(),
         capture: Vec::new(),
     });
-    overseerd_macros_core::extend::ParseMethod::parse_method(&mut handlers, &mut method)
+    upwell_macros_core::extend::ParseMethod::parse_method(&mut handlers, &mut method)
         .expect("message method");
 
     let tokens = output(quote!(#handlers));

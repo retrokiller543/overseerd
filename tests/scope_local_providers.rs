@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use overseerd::{
+use upwell::{
     ComponentDescriptor, Descriptor, PROVIDERS, ResolverSet, ScopeContainer, ScopeRegistry,
     StaticScope, component, injectable, topological_sort,
 };

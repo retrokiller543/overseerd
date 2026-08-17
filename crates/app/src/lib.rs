@@ -1,4 +1,4 @@
-//! The Overseerd protocol-agnostic application core.
+//! The Upwell protocol-agnostic application core.
 //!
 //! This crate ties the DI engine, config, hooks, and dirs into a runnable [`App`] that is
 //! generic over the [`ProtocolPlugin`] it installs. It owns the [`AppBuilder`], the agnostic

@@ -7,10 +7,10 @@
 // Anchor the example library so the classic (macOS) linker actually processes its object files, and
 // with them the `#[linkme]` OpenAPI/controller registrations the greeter contributes. A plain path
 // reference can be dropped as dead code; `extern crate` forces the crate to be linked in.
-extern crate overseerd_example_http;
+extern crate upwell_example_http;
 
-use overseerd::axum::build_openapi;
-use overseerd::axum::utoipa;
+use upwell::axum::build_openapi;
+use upwell::axum::utoipa;
 
 /// Builds the document once with the example's controllers linked in.
 fn doc() -> utoipa::openapi::OpenApi {
@@ -86,9 +86,9 @@ fn base_path_becomes_a_server_entry() {
 // a `Form` body (documented as `application/x-www-form-urlencoded`) and a handler that overrides the
 // generated responses via `#[openapi(responses(..))]`.
 mod fixture {
-    use overseerd::axum::axum::extract::Form;
-    use overseerd::axum::dto;
-    use overseerd::axum::prelude::*;
+    use upwell::axum::axum::extract::Form;
+    use upwell::axum::dto;
+    use upwell::axum::prelude::*;
 
     /// A form-encoded login submission.
     #[dto]
@@ -136,8 +136,8 @@ mod fixture {
 
         /// `GET /docs-demo/raw` — returns a raw axum `Response` (opaque, no schema).
         #[get("/raw")]
-        async fn raw(&self) -> overseerd::axum::axum::response::Response {
-            use overseerd::axum::axum::response::IntoResponse;
+        async fn raw(&self) -> upwell::axum::axum::response::Response {
+            use upwell::axum::axum::response::IntoResponse;
 
             "raw".into_response()
         }
@@ -145,7 +145,7 @@ mod fixture {
         /// `GET /docs-demo/opaque` — the canonical `-> impl IntoResponse` axum handler (opaque, no
         /// schema). Must be a valid handler, documented bodyless, not schema-ified.
         #[get("/opaque")]
-        async fn opaque(&self) -> impl overseerd::axum::axum::response::IntoResponse {
+        async fn opaque(&self) -> impl upwell::axum::axum::response::IntoResponse {
             "opaque"
         }
     }

@@ -27,16 +27,16 @@ use crate::paths::Paths;
 #[derive(Default)]
 pub struct MethodArgs<Ext = NoExt> {
     factory_slice: Option<Ident>,
-    overseerd: Option<syn::Path>,
+    upwell: Option<syn::Path>,
     krate: Option<syn::Path>,
     ext: Ext,
 }
 
 impl<Ext: ParseKeyed> MethodArgs<Ext> {
     /// Resolves the crate [`Paths`] for this invocation: the macro's `default` roots with any
-    /// `overseerd =` / `crate =` overrides applied.
+    /// `upwell =` / `crate =` overrides applied.
     pub fn paths(&self, default: Paths) -> Paths {
-        default.resolve(self.overseerd.clone(), self.krate.clone())
+        default.resolve(self.upwell.clone(), self.krate.clone())
     }
 }
 
@@ -52,14 +52,14 @@ impl<Ext: ParseKeyed> Parse for MethodArgs<Ext> {
                     eat_eq(input)?;
                     args.factory_slice = Some(input.parse()?);
                 }
-                "overseerd" => args.overseerd = Some(crate::attr::parse_path_override(input)?),
+                "upwell" => args.upwell = Some(crate::attr::parse_path_override(input)?),
                 "crate" => args.krate = Some(crate::attr::parse_path_override(input)?),
 
                 _ => {
                     if !args.ext.parse_keyed(&key, input)? {
                         return Err(unknown_key_error::<Ext>(
                             &key,
-                            &["factory_slice", "overseerd", "crate"],
+                            &["factory_slice", "upwell", "crate"],
                         ));
                     }
                 }
@@ -284,8 +284,8 @@ fn generate_init(
 
     let factory_literal = quote! {
         #component_factory_descriptor {
-            construct: __overseerd_init_factory,
-            dependencies: __overseerd_init_deps,
+            construct: __upwell_init_factory,
+            dependencies: __upwell_init_deps,
             default: false,
         }
     };
@@ -300,7 +300,7 @@ fn generate_init(
         quote! {
             #[#distributed_slice(#registrations_slice)]
             #[linkme(crate = #linkme_crate)]
-            static __OVERSEERD_INIT_FACTORY: #registration =
+            static __UPWELL_INIT_FACTORY: #registration =
                 #registration::Factory(#factory_literal);
         },
     );
@@ -309,12 +309,12 @@ fn generate_init(
     // dependency edges and drives construction. No hand-built dep list — each parameter's
     // `FromContainer` impl supplies its edge.
     let component = quote! {
-        fn __overseerd_init_deps() -> ::std::vec::Vec<#dependency_descriptor> {
+        fn __upwell_init_deps() -> ::std::vec::Vec<#dependency_descriptor> {
             #factory_dependencies(<#self_ty>::init)
         }
 
         #[allow(unused_variables)]
-        fn __overseerd_init_factory(
+        fn __upwell_init_factory(
             cx: &mut #component_construction_context,
         ) -> ::core::pin::Pin<
             ::std::boxed::Box<

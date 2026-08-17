@@ -299,7 +299,7 @@ fn mount_ui(
 #[allow(dead_code)]
 fn warn_missing_ui(ui: &str, feature: &str) {
     tracing::warn!(
-        target: "overseerd::axum",
+        target: "upwell::axum",
         ui,
         feature,
         "OpenAPI UI selected in config but its crate feature is not enabled; serving JSON only"

@@ -7,16 +7,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use http_body_util::BodyExt;
-use overseerd::axum::Ndjson;
-use overseerd::axum::axum::body::Body;
-use overseerd::axum::axum::extract::Path;
-use overseerd::axum::axum::http::{Request, StatusCode};
-use overseerd::axum::axum::{Json, Router};
-use overseerd::axum::prelude::*;
-use overseerd::prelude::*;
-use overseerd::{component, config, methods};
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt;
+use upwell::axum::Ndjson;
+use upwell::axum::axum::body::Body;
+use upwell::axum::axum::extract::Path;
+use upwell::axum::axum::http::{Request, StatusCode};
+use upwell::axum::axum::{Json, Router};
+use upwell::axum::prelude::*;
+use upwell::prelude::*;
+use upwell::{component, config, methods};
 
 #[config(path = "greeting")]
 #[derive(Serialize, Deserialize)]
@@ -101,7 +101,7 @@ impl TestController {
 async fn router() -> Router {
     let app = app! {
         name: "test-http",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: upwell::axum::AxumPlugin,
     }
     .build()
     .await
@@ -111,7 +111,7 @@ async fn router() -> Router {
 }
 
 /// Reads a response body to a UTF-8 string.
-async fn body_string(response: overseerd::axum::axum::response::Response) -> String {
+async fn body_string(response: upwell::axum::axum::response::Response) -> String {
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
 
     String::from_utf8(bytes.to_vec()).unwrap()

@@ -5,16 +5,16 @@
 //! real server on an ephemeral port, so a route that classified wrong (no client method, or one that
 //! silently drops an input) fails to compile or round-trips wrong here.
 
-use overseerd::axum::Multipart;
-use overseerd::axum::axum::Json;
-use overseerd::axum::axum::body::Bytes;
-use overseerd::axum::axum::extract::{FromRequestParts, Query, RawForm, RawQuery};
-use overseerd::axum::axum::http::header::{HeaderMap, HeaderValue};
-use overseerd::axum::axum::http::request::Parts;
-use overseerd::axum::client::{Multipart as ClientMultipart, ReqwestClient};
-use overseerd::axum::prelude::*;
-use overseerd::prelude::*;
 use tokio::net::TcpListener;
+use upwell::axum::Multipart;
+use upwell::axum::axum::Json;
+use upwell::axum::axum::body::Bytes;
+use upwell::axum::axum::extract::{FromRequestParts, Query, RawForm, RawQuery};
+use upwell::axum::axum::http::header::{HeaderMap, HeaderValue};
+use upwell::axum::axum::http::request::Parts;
+use upwell::axum::client::{Multipart as ClientMultipart, ReqwestClient};
+use upwell::axum::prelude::*;
+use upwell::prelude::*;
 
 /// A custom `FromRequestParts` guard: the kind of auth/tenant extractor the client generator must
 /// treat as server-only context and drop, so a guarded route still gets a client method. It reads an
@@ -194,7 +194,7 @@ impl Extras {
 async fn generated_client_covers_every_extractor() {
     let app = app! {
         name: "extractors-test",
-        protocol: overseerd::axum::AxumPlugin,
+        protocol: upwell::axum::AxumPlugin,
     }
     .build()
     .await

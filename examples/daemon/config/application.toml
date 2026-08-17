@@ -4,11 +4,11 @@
 # can only produce a string. `${@kind}` resolves an application directory
 # (`@config @data @cache @state @runtime @tmp`) from the DirectoriesManager.
 
-# A single `overseerd=<level>` knob now covers all framework logging (daemon, config,
-# dirs, …), since every framework log uses a target under the `overseerd::` root. Narrow
-# to one area with e.g. `overseerd::config=trace`.
+# A single `upwell=<level>` knob now covers all framework logging (daemon, config,
+# dirs, …), since every framework log uses a target under the `upwell::` root. Narrow
+# to one area with e.g. `upwell::config=trace`.
 [logging]
-level = "info,overseerd=trace"
+level = "info,upwell=trace"
 format = "full"
 ansi = true
 

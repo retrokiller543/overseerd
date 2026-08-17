@@ -9,8 +9,8 @@
 //! unrelated to registration).
 #![cfg(not(feature = "client"))]
 
-use overseerd::daemon::{App, Payload, RpcAppBuilder, handlers, service};
-use overseerd::{CallResult, MemoryClient, MemoryConnectionHandle};
+use upwell::daemon::{App, Payload, RpcAppBuilder, handlers, service};
+use upwell::{CallResult, MemoryClient, MemoryConnectionHandle};
 
 /// A service whose RPCs are contributed by two separate `#[handlers]` blocks.
 #[service(id = "typed_svc", version = "0.1")]

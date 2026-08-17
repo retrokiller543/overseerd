@@ -1,13 +1,13 @@
-# overseerd-axum-macros
+# upwell-axum-macros
 
-> The controller/route macros for the Overseerd axum/HTTP protocol: `#[controller]`, `#[handlers]`, the route attributes, `#[dto]`, and `#[topics]`.
+> The controller/route macros for the Upwell axum/HTTP protocol: `#[controller]`, `#[handlers]`, the route attributes, `#[dto]`, and `#[topics]`.
 
-Part of the [Overseerd](../../README.md) framework — the proc-macro companion to `overseerd-axum`, built on the shared `overseerd-macros-core` codegen.
+Part of the [Upwell](../../README.md) framework — the proc-macro companion to `upwell-axum`, built on the shared `upwell-macros-core` codegen.
 
 ## Role
 
 This crate owns the axum/HTTP macro surface. It exists as a separate crate from the core
-`overseerd-macros` because its generated code names plugin types under `::overseerd::axum::*` (the
+`upwell-macros` because its generated code names plugin types under `::upwell::axum::*` (the
 HTTP protocol), which the protocol-agnostic core must not depend on. It provides:
 
 - `#[controller]` — a **router component**: a `#[component]` (field-injected singleton) plus a
@@ -26,12 +26,12 @@ HTTP protocol), which the protocol-agnostic core must not depend on. It provides
 
 ## Usage
 
-Most users depend on the [`overseerd`](../../README.md) facade, which re-exports these macros through
-`overseerd-axum` under `overseerd::axum` — you never name this crate directly. Enable the `axum`
+Most users depend on the [`upwell`](../../README.md) facade, which re-exports these macros through
+`upwell-axum` under `upwell::axum` — you never name this crate directly. Enable the `axum`
 feature and use the attributes on your controllers.
 
 ```rust
-use overseerd::axum::prelude::*;
+use upwell::axum::prelude::*;
 
 #[dto]
 pub struct Greeting { pub message: String }
@@ -50,20 +50,20 @@ impl GreetController {
 
 ## Internal role
 
-A `proc-macro = true` crate built on `overseerd-macros-core` (which supplies `MethodArgs`, `Paths`,
+A `proc-macro = true` crate built on `upwell-macros-core` (which supplies `MethodArgs`, `Paths`,
 `run`, `expand_component`, and the shared method codegen). It is a direct dependency of
-`overseerd-axum`, which re-exports every macro at its crate root; the core macros (`app!`,
-`#[component]`, …) come from `overseerd` instead. `axum_paths()` selects the generated plugin-type
-root: `::overseerd::axum` under the `facade` feature, else the standalone `::overseerd_axum` — while
-core vocabulary is always rooted at `::overseerd` either way.
+`upwell-axum`, which re-exports every macro at its crate root; the core macros (`app!`,
+`#[component]`, …) come from `upwell` instead. `axum_paths()` selects the generated plugin-type
+root: `::upwell::axum` under the `facade` feature, else the standalone `::upwell_axum` — while
+core vocabulary is always rooted at `::upwell` either way.
 
 ## Feature flags
 
 | Feature | Effect |
 |---|---|
-| `client` | Emit the generated HTTP client (forwarded to `overseerd-macros-core`). |
+| `client` | Emit the generated HTTP client (forwarded to `upwell-macros-core`). |
 | `reqwest` | Pure codegen signal that the reqwest/fetch backend is available, so client codegen may emit the wasm `#[wasm_bindgen]` binding over `ReqwestClient`. Implies `client`. |
 | `tungstenite` | Pure codegen signal that the WS transport is available, so STOMP `#[topics]`/`#[message]` codegen may emit the wasm binding over `StompClientTransport`. Implies `client`. |
 | `wasm-ts` | Opt into the newer `tsify` `Ts<T>` wasm ABI: `#[dto]` derives plain `Tsify` and the client marshals via `Ts<T>` (needs unreleased `tsify`). |
-| `di-check` | Emit compile-time DI assertions (forwarded to `overseerd-macros-core`). |
-| `facade` | Root generated plugin types at `::overseerd::axum::*` (set by the `overseerd` facade) instead of the standalone `::overseerd_axum::*`. |
+| `di-check` | Emit compile-time DI assertions (forwarded to `upwell-macros-core`). |
+| `facade` | Root generated plugin types at `::upwell::axum::*` (set by the `upwell` facade) instead of the standalone `::upwell_axum::*`. |

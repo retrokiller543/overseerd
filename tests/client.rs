@@ -15,12 +15,12 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{DuplexStream, ReadHalf, WriteHalf};
 
 use futures::StreamExt;
-use overseerd::client::ClientError;
-use overseerd::daemon::{
+use upwell::client::ClientError;
+use upwell::daemon::{
     App, ErrorResponse, Payload, ResponseError, ResponseStream, StreamClientTransport, Streaming,
     handlers, service,
 };
-use overseerd::transport::{PeerInfo, StreamConnection, Transport};
+use upwell::transport::{PeerInfo, StreamConnection, Transport};
 
 // ---------------------------------------------------------------------------
 // A service covering every return shape the client codegen must handle.
@@ -93,7 +93,7 @@ impl Calc {
     }
 
     #[rpc]
-    async fn sum(mut input: Streaming<u32>) -> overseerd::daemon::Result<u32> {
+    async fn sum(mut input: Streaming<u32>) -> upwell::daemon::Result<u32> {
         let mut total = 0;
 
         while let Some(item) = input.next().await {
@@ -124,7 +124,7 @@ struct OnceTransport {
 impl Transport for OnceTransport {
     type Connection = ServerConn;
 
-    async fn accept(&mut self) -> overseerd::transport::Result<Self::Connection> {
+    async fn accept(&mut self) -> upwell::transport::Result<Self::Connection> {
         match self.conn.take() {
             Some(conn) => Ok(conn),
 

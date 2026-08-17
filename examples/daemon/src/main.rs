@@ -1,4 +1,4 @@
-//! A small but complete Overseerd daemon, demonstrating the dependency-injection
+//! A small but complete Upwell daemon, demonstrating the dependency-injection
 //! surface across modules — including config bound from a merged tree — and
 //! validated at build time by `build.rs`.
 //!
@@ -6,7 +6,7 @@
 //! their dependencies, services, and RPCs):
 //!
 //! ```text
-//! cargo run -p overseerd-example-daemon
+//! cargo run -p upwell-example-daemon
 //! ```
 
 mod components;
@@ -14,13 +14,13 @@ mod notifiers;
 mod service;
 
 use crate::components::{AppServer, DbConfig};
-use overseerd::app;
-use overseerd::builtins::init_tracing;
-use overseerd::config::Toml;
-use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig};
+use upwell::app;
+use upwell::builtins::init_tracing;
+use upwell::config::Toml;
+use upwell::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig};
 
 #[tokio::main]
-async fn main() -> overseerd::daemon::Result<()> {
+async fn main() -> upwell::daemon::Result<()> {
     const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
 
     let dir_manager = DirectoriesManager::from_path(CRATE_PATH.into());
@@ -44,7 +44,7 @@ async fn main() -> overseerd::daemon::Result<()> {
 
     let app = app! {
         name: "example-daemon",
-        protocol: overseerd::daemon::RpcPlugin,
+        protocol: upwell::daemon::RpcPlugin,
 
         // `app.greet` auto-registers via its `#[config(path = "app.greet")]`; the two
         // `DbConfig` bindings share one type at different paths, so they are listed

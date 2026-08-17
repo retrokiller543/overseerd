@@ -17,7 +17,7 @@
 //! The scheduler is a framework-internal component. Like the other framework singletons
 //! (`ShutdownHandle`, `HookManager`, `ConfigReloader`), it hand-rolls its DI descriptors
 //! rather than going through the `#[service]`/`#[hook]` macros — which root their generated
-//! paths at the `overseerd` facade and so cannot be used from a crate *below* it.
+//! paths at the `upwell` facade and so cannot be used from a crate *below* it.
 //!
 //! Each job runs on its own [child token](CancellationToken::child_token) of the scheduler's
 //! token, so cancelling one job stops only that job while dropping the scheduler (on shutdown)
@@ -29,18 +29,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use arc_swap::ArcSwap;
-use overseerd_core::{DependencyDescriptor, ResolverCtx, ResolverCtxExt, TypeDescriptor};
-use overseerd_di::{
+use std::pin::Pin;
+use tokio_util::sync::CancellationToken;
+use tracing::info;
+use upwell_core::{DependencyDescriptor, ResolverCtx, ResolverCtxExt, TypeDescriptor};
+use upwell_di::{
     BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
     ComponentFactoryDescriptor, ComponentSource, Result as DiResult, RootResolver, Singleton,
     dispatch_factory, factory_dependencies,
 };
-use overseerd_hooks::{
-    Error as HookError, HookDescriptor, HookKind, Result as HookResult, Startup,
-};
-use std::pin::Pin;
-use tokio_util::sync::CancellationToken;
-use tracing::info;
+use upwell_hooks::{Error as HookError, HookDescriptor, HookKind, Result as HookResult, Startup};
 
 use crate::descriptor::{JOBS, JobOutcome};
 use crate::error::JobError;
@@ -56,7 +54,7 @@ use crate::schedule::{JobOptions, Schedule, ScheduleError};
 mod tests;
 
 /// The stable component id of the [`JobScheduler`] singleton.
-const SCHEDULER_ID: &str = "overseerd:job-scheduler";
+const SCHEDULER_ID: &str = "upwell:job-scheduler";
 
 /// The display name of the [`JobScheduler`] singleton.
 const SCHEDULER_NAME: &str = "JobScheduler";
@@ -215,14 +213,14 @@ impl JobScheduler {
             count += 1;
 
             info!(
-                target: "overseerd::jobs",
+                target: "upwell::jobs",
                 job = job.name,
                 schedule = job.schedule,
                 "job scheduled"
             );
         }
 
-        info!(target: "overseerd::jobs", count, "job scheduler started");
+        info!(target: "upwell::jobs", count, "job scheduler started");
 
         Ok(())
     }
@@ -420,7 +418,7 @@ impl Component for JobScheduler {
 /// Under `di-check`, the scheduler is plugin-seeded, so it is always provided — letting a user
 /// component inject `Arc<JobScheduler>` to schedule jobs at run time.
 #[cfg(feature = "di-check")]
-impl overseerd_di::Provide<JobScheduler> for overseerd_di::Wiring {}
+impl upwell_di::Provide<JobScheduler> for upwell_di::Wiring {}
 
 /// The scheduler's construction factory: resolves the injected [`RootResolver`] and builds it.
 fn scheduler_construct<'a>(
@@ -444,7 +442,7 @@ fn scheduler_factories() -> &'static [ComponentFactoryDescriptor] {
     &SCHEDULER_FACTORIES
 }
 
-/// The boxed future a hook call returns — the same shape `overseerd-hooks` uses internally,
+/// The boxed future a hook call returns — the same shape `upwell-hooks` uses internally,
 /// named here so the hand-rolled hook signature stays readable.
 type HookCallFuture<'a> =
     Pin<Box<dyn Future<Output = HookResult<Box<dyn Any + Send>>> + Send + 'a>>;

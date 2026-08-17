@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.19.0](https://github.com/retrokiller543/overseerd/compare/overseerd-app-v0.18.0...overseerd-app-v0.19.0) - 2026-07-21
+## [0.19.0](https://github.com/retrokiller543/upwell/compare/upwell-app-v0.18.0...upwell-app-v0.19.0) - 2026-07-21
 
 ### Added
 
@@ -17,13 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(di)* resolve transient dependencies from the building scope
 
-## [0.16.0](https://github.com/retrokiller543/overseerd/compare/overseerd-app-v0.15.0...overseerd-app-v0.16.0) - 2026-07-17
+## [0.16.0](https://github.com/retrokiller543/upwell/compare/upwell-app-v0.15.0...upwell-app-v0.16.0) - 2026-07-17
 
 ### Fixed
 
-- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/retrokiller543/overseerd/pull/85))
+- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/retrokiller543/upwell/pull/85))
 
-## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-app-v0.11.2...overseerd-app-v0.12.0) - 2026-07-08
+## [0.12.0](https://github.com/retrokiller543/upwell/compare/upwell-app-v0.11.2...upwell-app-v0.12.0) - 2026-07-08
 
 ### Added
 
@@ -38,8 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added docs to all crates
 
-## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-app-v0.6.0...overseerd-app-v0.7.0) - 2026-06-30
+## [0.7.0](https://github.com/retrokiller543/upwell/compare/upwell-app-v0.6.0...upwell-app-v0.7.0) - 2026-06-30
 
 ### Other
 
-- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/overseerd/pull/20))
+- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/upwell/pull/20))

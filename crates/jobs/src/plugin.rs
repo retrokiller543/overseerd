@@ -1,6 +1,6 @@
 //! The `JobsPlugin`: registers the scheduler so a daemon runs its `#[job]`s.
 
-use overseerd_app::{AppRegistry, Plugin};
+use upwell_app::{AppRegistry, Plugin};
 
 use crate::scheduler::scheduler_descriptor;
 

@@ -6,10 +6,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures::FutureExt;
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::{ConfigManager, Shutdown, Startup, component, methods};
-use overseerd_app::{
+use upwell::config::Toml;
+use upwell::daemon::App;
+use upwell::{ConfigManager, Shutdown, Startup, component, methods};
+use upwell_app::{
     AppRegistry, AppRuntime, Plugin, Protocol, ProtocolPlugin, Serve, ShutdownSignal,
 };
 
@@ -92,14 +92,14 @@ impl PartiallyStartedComponent {
 #[methods]
 impl LifecycleComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> upwell::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -109,16 +109,14 @@ impl LifecycleComponent {
 #[methods]
 impl FailingStartupComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> upwell::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
-        Err(overseerd::daemon::Error::MissingComponent(
-            "startup rejected",
-        ))
+        Err(upwell::daemon::Error::MissingComponent("startup rejected"))
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -128,14 +126,14 @@ impl FailingStartupComponent {
 #[methods]
 impl NeverStartedComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> upwell::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -145,23 +143,23 @@ impl NeverStartedComponent {
 #[methods]
 impl PartiallyStartedComponent {
     #[hook(Startup)]
-    async fn first_startup(&self) -> overseerd::daemon::Result<()> {
+    async fn first_startup(&self) -> upwell::daemon::Result<()> {
         self.startups.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Startup)]
-    async fn second_startup_fails(&self) -> overseerd::daemon::Result<()> {
+    async fn second_startup_fails(&self) -> upwell::daemon::Result<()> {
         self.startups.fetch_add(1, Ordering::SeqCst);
 
-        Err(overseerd::daemon::Error::MissingComponent(
+        Err(upwell::daemon::Error::MissingComponent(
             "second startup rejected",
         ))
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -288,9 +286,9 @@ impl Plugin for PanickingPlugin {
 
 impl ProtocolPlugin for PanickingPlugin {
     type Protocol = PanickingProtocol;
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 
-    const SCOPES: &'static [&'static dyn overseerd::Scope] = &[];
+    const SCOPES: &'static [&'static dyn upwell::Scope] = &[];
 
     fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
         Ok(PanickingProtocol)
@@ -298,7 +296,7 @@ impl ProtocolPlugin for PanickingPlugin {
 }
 
 impl Protocol for PanickingProtocol {
-    type Error = overseerd_app::Error;
+    type Error = upwell_app::Error;
 }
 
 impl Serve<()> for PanickingProtocol {
@@ -314,7 +312,7 @@ impl Serve<()> for PanickingProtocol {
 
 #[tokio::test]
 async fn protocol_panic_still_runs_shutdown_hooks() {
-    let app = overseerd_app::App::<PanickingPlugin>::builder("panic-cleanup-test")
+    let app = upwell_app::App::<PanickingPlugin>::builder("panic-cleanup-test")
         .config_source(ConfigManager::<Toml>::empty())
         .component::<LifecycleComponent>()
         .build()

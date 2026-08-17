@@ -9,8 +9,8 @@ use std::{
     },
 };
 
-use overseerd::daemon::App;
-use overseerd::{
+use upwell::daemon::App;
+use upwell::{
     ComponentDescriptor, Deferred, Descriptor, Fresh, Lazy, ResolverSet, ScopeContainer,
     ScopeRegistry, component, injectable,
 };
@@ -97,7 +97,7 @@ struct DeferredCycleB {
 }
 
 /// A transient component holding a deferred dependency on a singleton.
-#[component(scope = overseerd::scope::Transient)]
+#[component(scope = upwell::scope::Transient)]
 struct TransientDeferredConsumer {
     target: Deferred<PrimitiveTarget>,
 }

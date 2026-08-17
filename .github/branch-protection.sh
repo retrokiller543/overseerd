@@ -21,12 +21,12 @@ BRANCH="master"
 REQUIRED_CONTEXTS=(
   "Formatting"
   "Test suite"
-  "Build (overseerd)"
-  "Build (overseerd-config)"
-  "Build (overseerd-core)"
-  "Build (overseerd-macros)"
-  "Build (overseerd-transport)"
-  "Build (overseerd-analyze)"
+  "Build (upwell)"
+  "Build (upwell-config)"
+  "Build (upwell-core)"
+  "Build (upwell-macros)"
+  "Build (upwell-transport)"
+  "Build (upwell-analyze)"
 )
 
 contexts_json="$(printf '%s\n' "${REQUIRED_CONTEXTS[@]}" \
