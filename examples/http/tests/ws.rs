@@ -1,20 +1,28 @@
 //! End-to-end test of a **WebSocket controller**: build the app, serve it on an ephemeral port,
 //! connect a real ws client (`tokio-tungstenite`), and exercise both a plain `#[message]` handler
 //! and one that mixes the JSON payload with route-level `Inject` DI — proving ws handlers get the
-//! same request-scoped dependency injection as REST routes. The server is shut down at the end so
+//! message-scoped dependency injection. The server is shut down at the end so
 //! the test never hangs.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::{SinkExt, StreamExt};
-use overseerd::axum::client::{TokioTungsteniteWs, WebsocketClient};
-use overseerd::axum::prelude::*;
-use overseerd::client::ClientError;
-use overseerd::prelude::*;
-use overseerd::{component, methods};
-use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
 use tokio_tungstenite::tungstenite::Message;
+use upwell::axum::client::{TokioTungsteniteWs, WebsocketClient};
+use upwell::axum::prelude::*;
+use upwell::client::ClientError;
+use upwell::prelude::*;
+use upwell::{component, methods};
+use upwell_test_utils::{TestEnvironment, TestServer, deadline};
+
+app! {
+    /// Generated host for WebSocket integration tests.
+    app WebsocketTestApplication {
+        name: "ws-test",
+        protocol: upwell::axum::Axum,
+    }
+}
 
 /// A shared greeting backend (singleton), field-injected into the ws controller.
 #[component(by_value)]
@@ -32,15 +40,15 @@ impl Greeter {
     }
 }
 
-/// A per-request component — for ws, "request" means one inbound message — resolved through DI.
-#[component(scope = Request)]
-struct RequestTicket {
+/// A per-message component resolved through DI for one inbound WebSocket message.
+#[component(scope = WebsocketMessage)]
+struct MessageTicket {
     #[default]
     id: u64,
 }
 
 #[methods]
-impl RequestTicket {
+impl MessageTicket {
     #[init]
     async fn init() -> Self {
         Self { id: 4242 }
@@ -78,9 +86,9 @@ impl Sock {
         Greeting { message, count }
     }
 
-    /// Mixes the JSON payload with an injected, request-scoped `RequestTicket`.
+    /// Mixes the JSON payload with an injected, message-scoped `MessageTicket`.
     #[message("ticket")]
-    async fn ticket(&self, msg: Who, Inject(ticket): Inject<Arc<RequestTicket>>) -> Ticketed {
+    async fn ticket(&self, msg: Who, Inject(ticket): Inject<Arc<MessageTicket>>) -> Ticketed {
         let (message, _) = self.greeter.greet(&msg.who);
 
         Ticketed {
@@ -92,17 +100,15 @@ impl Sock {
 
 #[tokio::test]
 async fn ws_controller_dispatches_and_injects() {
-    let environment = TestEnvironment::new("overseerd-http-ws-");
-    let app = app! {
-        name: "ws-test",
-        protocol: overseerd::axum::AxumPlugin,
-    }
-    .config_source(environment.config())
-    .directories(environment.directories())
-    .register_ws::<JsonWs>("/ws")
-    .build()
-    .await
-    .expect("app builds");
+    let environment = TestEnvironment::new("upwell-http-ws-");
+    let app = WebsocketTestApplication::builder()
+        .expect("app builder")
+        .config_source(environment.config())
+        .directories(environment.directories())
+        .register_ws::<JsonWs>("/ws")
+        .build()
+        .await
+        .expect("app builds");
 
     let server = TestServer::start_with_guard(app, environment).await;
     let addr = server.address();
@@ -130,7 +136,7 @@ async fn ws_controller_dispatches_and_injects() {
     assert_eq!(reply["ok"]["message"], "Hello, world!");
     assert_eq!(reply["ok"]["count"], 1);
 
-    // DI handler: the injected request-scoped ticket is resolved per message.
+    // DI handler: the injected message-scoped ticket is resolved per message.
     deadline(
         "send ticket frame",
         socket.send(Message::Text(
@@ -197,7 +203,7 @@ async fn ws_controller_dispatches_and_injects() {
     .expect_err("unknown destination is remote error");
     match error {
         ClientError::Remote(body) => {
-            assert_eq!(body.code(), overseerd::axum::JsonWsStatus::Error);
+            assert_eq!(body.code(), upwell::axum::JsonWsStatus::Error);
             assert_eq!(
                 String::from_utf8(body.into_raw()).unwrap(),
                 "no handler for destination"

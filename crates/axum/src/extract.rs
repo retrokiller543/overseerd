@@ -2,7 +2,7 @@
 //!
 //! The integration surface between the framework's dependency injection and axum is a
 //! single [`ScopeHandle`] — an `Arc` of the request's
-//! [`ScopeContainer`](overseerd_di::ScopeContainer) — carried in the request's
+//! [`ScopeContainer`](upwell_di::ScopeContainer) — carried in the request's
 //! [`Extensions`](axum::http::Extensions). The protocol's scope layer opens the request
 //! scope and inserts the handle; [`Inject`] reads it back out and resolves a component
 //! through the scope chain. Native axum extractors (`Json`, `Path`, `Query`, `State`, …)
@@ -14,7 +14,7 @@ use axum::extract::FromRequestParts;
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
-use overseerd_di::{FromContainer, ScopeContainer};
+use upwell_di::{FromContainer, ScopeContainer};
 
 /// The per-request DI scope, carried in request extensions.
 ///
@@ -54,14 +54,14 @@ impl IntoResponse for InjectRejection {
         match self {
             InjectRejection::MissingScope => {
                 tracing::error!(
-                    target: "overseerd::axum",
-                    "request scope handle missing from extensions; is the AxumPlugin scope layer installed?"
+                    target: "upwell::axum",
+                    "request scope handle missing from extensions; is the Axum scope layer installed?"
                 );
             }
 
             InjectRejection::Unresolved(name, error) => {
                 tracing::error!(
-                    target: "overseerd::axum",
+                    target: "upwell::axum",
                     type_name = name,
                     error = %error,
                     "failed to extract injected dependency"

@@ -6,15 +6,15 @@
 use std::fs;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{
-    Cfg, CfgNext, ConfigManager, ConfigReload, HookOutcome, component, config, methods,
-};
-use overseerd_config::ResolverChain;
 use serde::Deserialize;
 use tempfile::TempDir;
+use upwell::config::Toml;
+use upwell::dirs::{Config, DirectoriesManager};
+use upwell::{
+    App, AppError, Cfg, CfgNext, ConfigManager, ConfigReload, HookOutcome, component, config,
+    methods,
+};
+use upwell_config::ResolverChain;
 
 #[config(path = "svc")]
 #[derive(Deserialize)]
@@ -59,7 +59,7 @@ impl Watcher {
     async fn on_reload(
         &self,
         #[config("svc")] next: CfgNext<SvcCfg>,
-    ) -> overseerd::daemon::Result<HookOutcome> {
+    ) -> Result<HookOutcome, AppError> {
         self.last_seen.store(next.value, Ordering::SeqCst);
         self.fired.fetch_add(1, Ordering::SeqCst);
 
@@ -86,7 +86,7 @@ impl OtherWatcher {
     async fn on_reload(
         &self,
         #[config("other")] _next: CfgNext<OtherCfg>,
-    ) -> overseerd::daemon::Result<HookOutcome> {
+    ) -> Result<HookOutcome, AppError> {
         self.fired.fetch_add(1, Ordering::SeqCst);
 
         Ok(HookOutcome::Reloaded)
@@ -106,7 +106,7 @@ impl RestartWatcher {
     async fn on_reload(
         &self,
         #[config("svc")] _next: CfgNext<SvcCfg>,
-    ) -> overseerd::daemon::Result<HookOutcome> {
+    ) -> Result<HookOutcome, AppError> {
         let _ = self.marker;
 
         Ok(HookOutcome::RestartRequired("needs restart"))
@@ -115,7 +115,7 @@ impl RestartWatcher {
 
 fn temp_config_dir() -> TempDir {
     tempfile::Builder::new()
-        .prefix("overseerd-hooks-")
+        .prefix("upwell-hooks-")
         .tempdir()
         .expect("create temp config dir")
 }
@@ -134,7 +134,7 @@ async fn config_reload_hooks_fire_only_for_changed_configs() {
         ConfigManager::<Toml>::load_in_with_resolvers(&config_dir, &[], ResolverChain::empty())
             .expect("load config");
 
-    let daemon = App::builder("hooks-test")
+    let daemon = App::<()>::builder("hooks-test")
         .config_source(manager)
         .auto_discover()
         .build()

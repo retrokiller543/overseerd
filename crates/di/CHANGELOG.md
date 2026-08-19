@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.20.0](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.19.1...overseerd-di-v0.20.0) - 2026-07-22
+## 0.20.0 - 2026-07-22
 
 ### Added
 
 - *(di)* dual linkme/inventory registration backend for factories & hooks
 
-## [0.19.0](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.18.0...overseerd-di-v0.19.0) - 2026-07-21
+## 0.19.0 - 2026-07-21
 
 ### Added
 
@@ -33,32 +33,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(di)* resolve review findings in provider primitives
 - *(di)* hydrate deferred dependencies after build
 
-## [0.17.2](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.17.1...overseerd-di-v0.17.2) - 2026-07-18
+## 0.17.2 - 2026-07-18
 
 ### Other
 
 - *(di)* isolate memory contract measurements
 
-## [0.17.1](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.17.0...overseerd-di-v0.17.1) - 2026-07-17
+## 0.17.1 - 2026-07-17
 
 ### Other
 
 - *(benchmarks)* address automated review findings
 - *(benchmarks)* expand suite across DI, config, RPC, serde, and WS
 
-## [0.16.0](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.15.0...overseerd-di-v0.16.0) - 2026-07-17
+## 0.16.0 - 2026-07-17
 
 ### Fixed
 
-- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/retrokiller543/overseerd/pull/85))
+- *(runtime)* harden lifecycle, reloads, and filesystem safety ([#85](https://github.com/upwell-rs/upwell/pull/85))
 
-## [0.14.2](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.14.1...overseerd-di-v0.14.2) - 2026-07-17
+## 0.14.2 - 2026-07-17
 
 ### Other
 
 - *(di)* harden hot paths and add controlled benchmarks
 
-## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.11.2...overseerd-di-v0.12.0) - 2026-07-08
+## 0.12.0 - 2026-07-08
 
 ### Added
 
@@ -68,8 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added docs to all crates
 
-## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-di-v0.6.0...overseerd-di-v0.7.0) - 2026-06-30
+## 0.7.0 - 2026-06-30
 
 ### Other
 
-- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/overseerd/pull/20))
+- Feature/protocol agnostic ([#20](https://github.com/upwell-rs/upwell/pull/20))

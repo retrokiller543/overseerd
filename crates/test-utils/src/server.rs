@@ -1,49 +1,46 @@
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 
-use overseerd_app::{App, Protocol, ProtocolPlugin, Serve, ShutdownHandle};
 use tokio::net::TcpListener;
+use upwell_app::{
+    App, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve, ShutdownHandle,
+};
 
 use crate::LoopbackTask;
 
-type ProtocolError<P> = <<P as ProtocolPlugin>::Protocol as Protocol>::Error;
+type Runtime<D> = <<D as ProtocolDefinition>::Prepared as PreparedProtocol>::Runtime;
+type ProtocolError<D> = <Runtime<D> as ProtocolRuntime>::Error;
 
 /// Owns a protocol-generic loopback server and aborts it on incomplete cleanup.
-pub struct TestServer<P: ProtocolPlugin, G = ()> {
+pub struct TestServer<D: ProtocolDefinition> {
     shutdown: ShutdownHandle,
-    task: LoopbackTask<Result<(), ProtocolError<P>>>,
-    _guard: G,
-    _plugin: PhantomData<P>,
+    task: LoopbackTask<Result<(), ProtocolError<D>>>,
+    _definition: PhantomData<D>,
 }
 
-impl<P> TestServer<P>
+impl<D> TestServer<D>
 where
-    P: ProtocolPlugin + 'static,
-    P::Protocol: Serve<TcpListener>,
-    ProtocolError<P>: From<overseerd_app::Error>,
-{
-    /// Starts an application on an ephemeral loopback listener.
-    pub async fn start(app: App<P>) -> Self {
-        Self::start_with_guard(app, ()).await
-    }
-}
-
-impl<P, G> TestServer<P, G>
-where
-    P: ProtocolPlugin + 'static,
-    P::Protocol: Serve<TcpListener>,
-    ProtocolError<P>: From<overseerd_app::Error>,
+    D: ProtocolDefinition,
+    Runtime<D>: Serve<TcpListener>,
+    ProtocolError<D>: From<upwell_app::Error>,
 {
     /// Starts an application while retaining an associated fixture guard.
-    pub async fn start_with_guard(app: App<P>, guard: G) -> Self {
+    pub async fn start_with_guard<G>(app: App<D>, guard: G) -> Self
+    where
+        G: Send + 'static,
+    {
         let shutdown = app.shutdown_handle();
-        let task = LoopbackTask::spawn("test server", |listener| app.serve(listener)).await;
+        let task = LoopbackTask::spawn("test server", |listener| async move {
+            let _guard = guard;
+
+            app.serve(listener).await
+        })
+        .await;
 
         Self {
             shutdown,
             task,
-            _guard: guard,
-            _plugin: PhantomData,
+            _definition: PhantomData,
         }
     }
 

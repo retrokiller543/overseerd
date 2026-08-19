@@ -127,10 +127,10 @@ pub fn generate_hook(
     let kind = &info.kind;
     let method = &info.ident;
 
-    let deps_fn = format_ident!("__overseerd_hook_{index}_deps");
-    let call_fn = format_ident!("__overseerd_hook_{index}_call");
-    let kind_ty_fn = format_ident!("__overseerd_hook_{index}_kind_ty");
-    let descriptor_static = format_ident!("__OVERSEERD_HOOK_{index}");
+    let deps_fn = format_ident!("__upwell_hook_{index}_deps");
+    let call_fn = format_ident!("__upwell_hook_{index}_call");
+    let kind_ty_fn = format_ident!("__upwell_hook_{index}_kind_ty");
+    let descriptor_static = format_ident!("__UPWELL_HOOK_{index}");
 
     let arg_idents: Vec<_> = (0..info.params.len())
         .map(|i| format_ident!("__a{i}"))
@@ -200,6 +200,7 @@ pub fn generate_hook(
         quote! {
             #[#distributed_slice(#registrations_slice)]
             #[linkme(crate = #linkme_crate)]
+            #[allow(unsafe_code)]
             static #descriptor_static: #registration = #registration::Hook(#hook_literal);
         },
     );

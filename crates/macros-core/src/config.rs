@@ -33,17 +33,17 @@ use crate::paths::Paths;
 pub struct ConfigArgs {
     name: Option<LitStr>,
     path: Option<LitStr>,
-    /// Override for the core `overseerd` facade root (`overseerd = ::path`).
-    overseerd: Option<syn::Path>,
+    /// Override for the core `upwell` facade root (`upwell = ::path`).
+    upwell: Option<syn::Path>,
     /// Override for the plugin own-types root (`crate = ::path`).
     krate: Option<syn::Path>,
 }
 
 impl ConfigArgs {
     /// Resolves the crate [`Paths`] for this invocation: the macro's `default` roots with any
-    /// `overseerd =` / `crate =` overrides applied.
+    /// `upwell =` / `crate =` overrides applied.
     pub fn paths(&self, default: Paths) -> Paths {
-        default.resolve(self.overseerd.clone(), self.krate.clone())
+        default.resolve(self.upwell.clone(), self.krate.clone())
     }
 }
 
@@ -63,13 +63,13 @@ impl Parse for ConfigArgs {
                     input.parse::<Token![=]>()?;
                     args.path = Some(input.parse()?);
                 }
-                "overseerd" => args.overseerd = Some(crate::attr::parse_path_override(input)?),
+                "upwell" => args.upwell = Some(crate::attr::parse_path_override(input)?),
                 "crate" => args.krate = Some(crate::attr::parse_path_override(input)?),
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
                         format!(
-                            "unknown argument `{other}`, expected `name`, `path`, `overseerd`, or `crate`"
+                            "unknown argument `{other}`, expected `name`, `path`, `upwell`, or `crate`"
                         ),
                     ));
                 }
@@ -122,7 +122,8 @@ pub fn expand(args: ConfigArgs, mut item: DeriveInput, paths: &Paths) -> syn::Re
             const _: () = {
                 #[#distributed_slice(#config_bindings)]
                 #[linkme(crate = #linkme_crate)]
-                static __OVERSEERD_CONFIG_BINDING: #config_binding_descriptor =
+                #[allow(unsafe_code)]
+                static __UPWELL_CONFIG_BINDING: #config_binding_descriptor =
                     <#ident as #descriptor<#config_binding_descriptor>>::DESCRIPTOR;
             };
         },

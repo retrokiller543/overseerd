@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-axum"
-description = "The Overseerd axum/HTTP protocol plugin: controllers, route DI extractors, and the serve loop over the protocol-agnostic overseerd-app core."
+name = "upwell-axum"
+description = "The Upwell axum/HTTP protocol: controllers, route DI extractors, and the serve loop over the protocol-agnostic upwell-app core."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,10 +15,11 @@ default = []
 # Compile the generated HTTP client SDK: the body/response envelopes and the codec, protocol
 # but transport-agnostic. Pick a backend (`reqwest` / `hyper`) to actually issue requests.
 client = [
-    "dep:overseerd-client",
+    "dep:upwell-client",
     "dep:http",
     "dep:serde_urlencoded",
-    "overseerd-axum-macros/client",
+    "dep:wasm-bindgen",
+    "upwell-axum-macros/client",
 ]
 # Client backends — independent so a user picks one (or both). Each pulls in only its stack.
 # `dep:wasm-bindgen` (wasm-only, dropped on native) backs the framework `Connection` class; the
@@ -27,16 +28,15 @@ client = [
 reqwest = [
     "client",
     "dep:reqwest",
-    "dep:wasm-bindgen",
     "dep:wasm-bindgen-futures",
     "dep:js-sys",
     "dep:web-sys",
-    "overseerd-axum-macros/reqwest",
+    "upwell-axum-macros/reqwest",
 ]
 # Opt into the new `tsify` `Ts<T>` wasm ABI for the generated browser client (typed, leak-free).
 # Requires the unreleased `tsify` (git master) as a wasm dep in the consuming crate. Off by default
 # uses the published `tsify` `into_wasm_abi` path, which needs no git dependency.
-wasm-ts = ["overseerd-axum-macros/wasm-ts"]
+wasm-ts = ["upwell-axum-macros/wasm-ts"]
 hyper = ["client", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 # Protocol-neutral cross-target WebSocket client primitives.
 tungstenite = [
@@ -47,21 +47,23 @@ tungstenite = [
     "dep:js-sys",
     "dep:serde-wasm-bindgen",
     "dep:wasm-bindgen",
-    "overseerd-axum-macros/tungstenite",
+    "upwell-axum-macros/tungstenite",
 ]
 di-check = [
-    "overseerd-app/di-check",
-    "overseerd-di/di-check",
-    "overseerd-config/di-check",
-    "overseerd-axum-macros/di-check",
+    "upwell-app/di-check",
+    "upwell-di/di-check",
+    "upwell-config/di-check",
+    "upwell-axum-macros/di-check",
 ]
-yaml = ["overseerd-app/yaml", "overseerd-config/yaml"]
-watch = ["overseerd-app/watch", "overseerd-config/watch"]
-tracing-subscriber = ["overseerd-app/tracing-subscriber"]
+hybrid-registry = ["upwell-axum-macros/hybrid-registry"]
+yaml = ["upwell-app/yaml", "upwell-config/yaml"]
+watch = ["upwell-app/watch", "upwell-config/watch"]
+tracing-subscriber = ["upwell-app/tracing-subscriber"]
+tooling = ["upwell-app/tooling"]
 # OpenAPI 3.1 spec generation via utoipa. Turns on the `ToSchema` derive on `#[dto]`, the
 # `#[utoipa::path]` emission on routes, the operation/schema linkme slices, and the served
 # `/openapi.json` route. Off by default; a plain build pulls no utoipa. Native server surface only.
-openapi = ["dep:utoipa", "overseerd-axum-macros/openapi"]
+openapi = ["dep:utoipa", "upwell-axum-macros/openapi"]
 # OpenAPI UIs — each pulls only its own utoipa-* crate and is additionally gated at runtime by
 # `AxumConfig.openapi.ui`, so compiling one still lets a deployment serve JSON only.
 openapi-swagger-ui = ["openapi", "dep:utoipa-swagger-ui"]
@@ -79,20 +81,20 @@ multipart = ["axum/multipart"]
 # the actual `TopicParam for Uuid` impl is gated on `all(ws, uuid)`, so `uuid` without `ws` is
 # a harmless no-op rather than an error.
 uuid = ["dep:uuid"]
-# Set by the `overseerd` facade: root the macros' generated plugin types at
-# `::overseerd::axum::*`. Off (the default) keeps them at this standalone crate
-# (`::overseerd_axum::*`), so depending on `overseerd-axum` directly works.
-facade = ["overseerd-axum-macros/facade"]
+# Set by the `upwell` facade: root the macros' generated protocol types at
+# `::upwell::axum::*`. Off (the default) keeps them at this standalone crate
+# (`::upwell_axum::*`), so depending on `upwell-axum` directly works.
+facade = ["upwell-axum-macros/facade"]
 
 # Shared across all targets: the generated HTTP client runtime and its lightweight support. The
 # client is transport-generic and pure, so these must compile for wasm too.
 [dependencies]
 # Proc-macro crate — built for the host regardless of target.
-overseerd-axum-macros = { workspace = true }
-overseerd-client = { workspace = true, optional = true }
+upwell-axum-macros = { workspace = true }
+upwell-client = { workspace = true, optional = true }
 # Non-optional: the client codecs build on its `Encodes`/`Decodes`/`CodecError`, and it is
 # wasm-safe (server IO transports are gated out inside that crate).
-overseerd-transport = { workspace = true }
+upwell-transport = { workspace = true }
 bytes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -111,11 +113,11 @@ serde-wasm-bindgen = { workspace = true, optional = true }
 # Native (non-wasm): the full server stack — axum, the DI/app/config crates, tokio, and the
 # streaming/ws/hyper client backends that need a real runtime and sockets.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-overseerd-app = { workspace = true }
-overseerd-core = { workspace = true }
-overseerd-di = { workspace = true }
-overseerd-config = { workspace = true }
-overseerd-hooks = { workspace = true }
+upwell-app = { workspace = true }
+upwell-core = { workspace = true }
+upwell-di = { workspace = true }
+upwell-config = { workspace = true }
+upwell-hooks = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
@@ -155,7 +157,7 @@ web-sys = { workspace = true, optional = true, features = ["Blob", "File"] }
 tokio = { workspace = true, features = ["test-util"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
-overseerd-test-utils = { workspace = true }
+upwell-test-utils = { workspace = true, features = ["app"] }
 
 [build-dependencies]
-overseerd-build = { workspace = true }
+upwell-build = { workspace = true }

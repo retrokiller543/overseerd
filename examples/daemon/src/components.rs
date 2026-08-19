@@ -1,15 +1,14 @@
-//! Config-bound and plain components: a greeting config (auto-registered), a
-//! database config bound at two paths, and a by-value pool.
+//! Homeledger configuration and database components.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use overseerd::{component, config, methods};
 use serde::Deserialize;
+use upwell::{component, config, methods};
 
 #[allow(dead_code)]
-#[config(path = "app.server")]
+#[config(path = "homeledger.server")]
 #[derive(Deserialize)]
 pub struct AppServer {
     pub port: u16,
@@ -20,18 +19,18 @@ pub struct AppServer {
     /// socket path under it without hardcoding a location. The `#[serde(rename)]` proves
     /// the default keys on the *serde* name (`socket_path`), not the Rust identifier.
     #[serde(rename = "socket_path")]
-    #[default = "${@runtime}/example-daemon.sock"]
+    #[default = "${@runtime}/homeledger.sock"]
     pub socket: PathBuf,
 }
 
 /// Storage backend selection, demonstrating `#[config]` on an **internally-tagged enum**
 /// (`tag = "kind"`) — the config picks the variant with `kind = "memory"` / `kind = "disk"`
 /// (lower-cased by `rename_all`). `#[default]` marks `Memory` as the variant chosen when
-/// `[app.storage]` names none (or is absent). A variant-field default applies only when that
+/// `[homeledger.storage]` names none (or is absent). A variant-field default applies only when that
 /// variant is present — `disk`'s `path` falls back to a `${@data}`-rooted location when
 /// omitted, filled flat alongside the `kind` tag.
 #[allow(dead_code)]
-#[config(path = "app.storage")]
+#[config(path = "homeledger.storage")]
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Storage {
@@ -43,77 +42,107 @@ pub enum Storage {
     },
 }
 
-/// Greeting configuration, deserialized from the `app.greet` subtree and injected
-/// as `Cfg<Config>`. `#[config(path = "..")]` auto-registers the binding, so
+/// Household ledger configuration, deserialized from the `homeledger.ledger` subtree and injected
+/// as `Cfg<LedgerConfig>`. `#[config(path = "..")]` auto-registers the binding, so
 /// `auto_discover` picks it up — no explicit `configs:` entry needed.
-#[config(path = "app.greet")]
+#[config(path = "homeledger.ledger")]
 #[derive(Deserialize)]
-pub struct Config {
-    pub greeting: String,
+pub struct LedgerConfig {
+    pub household: String,
+    pub currency: String,
 }
 
 /// Database connection settings. The same type is bound at two paths
-/// (`app.db.reader` / `app.db.writer`) — identical shape, different usage — so it is
+/// (`homeledger.database.reader` / `homeledger.database.writer`) — identical shape, different usage — so it is
 /// registered explicitly per path (bare `#[config]`, no baked-in path) and selected
 /// at the injection site by property path.
 #[config]
 #[derive(Deserialize)]
-pub struct DbConfig {
+pub struct DatabaseConfig {
     pub url: String,
     pub pool_size: u16,
 }
 
-/// A connection pool that is internally `Arc` and therefore cheap to clone, so
-/// `#[component(by_value)]` stores and injects it as `Db` directly — no outer
-/// `Arc<Db>`. The `#[default]` field is owned state, not an injected dependency.
-#[component(by_value)]
+/// Homeledger's in-process database pool and schema state.
+#[component(by_value, factory = build_database)]
 #[derive(Clone)]
-pub struct Db {
-    #[default]
+pub struct Database {
     connection: Arc<AtomicUsize>,
 
-    #[default]
-    queries: Arc<AtomicU64>,
+    transactions: Arc<AtomicU64>,
+
+    schema_version: Arc<AtomicU64>,
 }
 
-impl Db {
-    pub fn create_connection(&self) -> DbConnection {
+#[cfg(test)]
+static DATABASE_BUILDS: AtomicUsize = AtomicUsize::new(0);
+
+async fn build_database() -> Database {
+    #[cfg(test)]
+    DATABASE_BUILDS.fetch_add(1, Ordering::SeqCst);
+
+    Database {
+        connection: Arc::new(AtomicUsize::new(0)),
+        transactions: Arc::new(AtomicU64::new(0)),
+        schema_version: Arc::new(AtomicU64::new(0)),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn reset_database_builds() {
+    DATABASE_BUILDS.store(0, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn database_builds() -> usize {
+    DATABASE_BUILDS.load(Ordering::SeqCst)
+}
+
+impl Database {
+    pub fn create_connection(&self) -> DatabaseConnection {
         let id = self.connection.fetch_add(1, Ordering::Relaxed);
-        let queries = self.queries.clone();
+        let transactions = self.transactions.clone();
 
-        DbConnection::new(id, queries)
+        DatabaseConnection::new(id, transactions)
     }
 
-    /// Records a query and returns the running total. Shared across all clones
-    /// of the handle, since the counter lives behind the internal `Arc`.
-    pub fn record_query(&self) -> u64 {
-        self.queries.fetch_add(1, Ordering::Relaxed) + 1
+    /// Verifies the schema and returns its current version.
+    pub fn verify_schema(&self) -> u64 {
+        self.schema_version.load(Ordering::Relaxed)
+    }
+
+    /// Applies pending migrations and returns the resulting schema version.
+    pub fn migrate(&self, target: u64) -> u64 {
+        self.schema_version.store(target, Ordering::Relaxed);
+
+        target
     }
 }
 
-#[component(scope = overseerd::daemon::Request)]
-pub struct DbConnection {
+/// A request-scoped database connection used by ledger RPC handlers.
+#[component(scope = upwell::daemon::Request)]
+pub struct DatabaseConnection {
     #[default]
     id: usize,
     #[default]
-    queries: Arc<AtomicU64>,
+    transactions: Arc<AtomicU64>,
 }
 
-impl DbConnection {
-    pub fn new(id: usize, queries: Arc<AtomicU64>) -> Self {
-        Self { id, queries }
+impl DatabaseConnection {
+    pub fn new(id: usize, transactions: Arc<AtomicU64>) -> Self {
+        Self { id, transactions }
     }
 
     #[tracing::instrument(skip(self), fields(connection_id = self.id))]
-    pub fn record_query(&self) -> u64 {
-        self.queries.fetch_add(1, Ordering::Relaxed) + 1
+    pub fn record_transaction(&self) -> u64 {
+        self.transactions.fetch_add(1, Ordering::Relaxed) + 1
     }
 }
 
 #[methods]
-impl DbConnection {
+impl DatabaseConnection {
     #[init]
-    pub async fn init(db: Db) -> Self {
-        db.create_connection()
+    pub async fn init(database: Database) -> Self {
+        database.create_connection()
     }
 }

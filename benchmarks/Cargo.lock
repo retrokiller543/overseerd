@@ -839,16 +839,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
-name = "overseerd-app"
+name = "upwell-app"
 version = "0.18.0"
 dependencies = [
  "futures",
- "overseerd-config",
- "overseerd-core",
- "overseerd-di",
- "overseerd-dirs",
- "overseerd-hooks",
- "overseerd-macros",
+ "upwell-config",
+ "upwell-core",
+ "upwell-di",
+ "upwell-dirs",
+ "upwell-hooks",
+ "upwell-macros",
  "serde",
  "thiserror",
  "tokio",
@@ -856,7 +856,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseerd-axum"
+name = "upwell-axum"
 version = "0.18.0"
 dependencies = [
  "axum",
@@ -865,14 +865,14 @@ dependencies = [
  "futures",
  "http",
  "linkme",
- "overseerd-app",
- "overseerd-axum-macros",
- "overseerd-client",
- "overseerd-config",
- "overseerd-core",
- "overseerd-di",
- "overseerd-hooks",
- "overseerd-transport",
+ "upwell-app",
+ "upwell-axum-macros",
+ "upwell-client",
+ "upwell-config",
+ "upwell-core",
+ "upwell-di",
+ "upwell-hooks",
+ "upwell-transport",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -884,24 +884,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseerd-axum-macros"
+name = "upwell-axum-macros"
 version = "0.18.0"
 dependencies = [
- "overseerd-macros-core",
+ "upwell-macros-core",
  "proc-macro2",
  "quote",
  "syn",
 ]
 
 [[package]]
-name = "overseerd-axum-stomp"
+name = "upwell-axum-stomp"
 version = "0.18.0"
 dependencies = [
  "bytes",
  "futures",
  "js-sys",
- "overseerd-axum",
- "overseerd-transport",
+ "upwell-axum",
+ "upwell-transport",
  "serde",
  "serde_json",
  "stomp-parser",
@@ -913,18 +913,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseerd-benchmarks"
+name = "upwell-benchmarks"
 version = "0.0.0"
 dependencies = [
  "criterion",
  "futures",
- "overseerd-axum",
- "overseerd-axum-stomp",
- "overseerd-config",
- "overseerd-core",
- "overseerd-di",
- "overseerd-rpc",
- "overseerd-transport",
+ "upwell-axum",
+ "upwell-axum-stomp",
+ "upwell-config",
+ "upwell-core",
+ "upwell-di",
+ "upwell-rpc",
+ "upwell-transport",
  "postcard",
  "serde",
  "serde_json",
@@ -934,24 +934,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseerd-client"
+name = "upwell-client"
 version = "0.18.0"
 dependencies = [
  "futures",
- "overseerd-transport",
+ "upwell-transport",
 ]
 
 [[package]]
-name = "overseerd-config"
+name = "upwell-config"
 version = "0.18.0"
 dependencies = [
  "arc-swap",
  "futures",
  "linkme",
- "overseerd-core",
- "overseerd-di",
- "overseerd-dirs",
- "overseerd-hooks",
+ "upwell-core",
+ "upwell-di",
+ "upwell-dirs",
+ "upwell-hooks",
  "serde",
  "thiserror",
  "tokio",
@@ -960,54 +960,54 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseerd-core"
+name = "upwell-core"
 version = "0.18.0"
 
 [[package]]
-name = "overseerd-di"
+name = "upwell-di"
 version = "0.18.0"
 dependencies = [
  "arc-swap",
  "futures",
  "linkme",
- "overseerd-core",
- "overseerd-hooks",
+ "upwell-core",
+ "upwell-hooks",
  "thiserror",
  "tokio",
  "tracing",
 ]
 
 [[package]]
-name = "overseerd-dirs"
+name = "upwell-dirs"
 version = "0.18.0"
 dependencies = [
  "directories",
  "libc",
- "overseerd-core",
- "overseerd-di",
+ "upwell-core",
+ "upwell-di",
  "tracing",
  "windows-sys",
 ]
 
 [[package]]
-name = "overseerd-hooks"
+name = "upwell-hooks"
 version = "0.18.0"
 dependencies = [
  "futures",
- "overseerd-core",
+ "upwell-core",
  "thiserror",
 ]
 
 [[package]]
-name = "overseerd-macros"
+name = "upwell-macros"
 version = "0.18.0"
 dependencies = [
- "overseerd-macros-core",
+ "upwell-macros-core",
  "proc-macro2",
 ]
 
 [[package]]
-name = "overseerd-macros-core"
+name = "upwell-macros-core"
 version = "0.18.0"
 dependencies = [
  "proc-macro2",
@@ -1016,21 +1016,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseerd-rpc"
+name = "upwell-rpc"
 version = "0.18.0"
 dependencies = [
  "arc-swap",
  "directories",
  "futures",
  "linkme",
- "overseerd-app",
- "overseerd-config",
- "overseerd-core",
- "overseerd-di",
- "overseerd-dirs",
- "overseerd-hooks",
- "overseerd-rpc-macros",
- "overseerd-transport",
+ "upwell-app",
+ "upwell-config",
+ "upwell-core",
+ "upwell-di",
+ "upwell-dirs",
+ "upwell-hooks",
+ "upwell-rpc-macros",
+ "upwell-transport",
  "postcard",
  "serde",
  "thiserror",
@@ -1042,23 +1042,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "overseerd-rpc-macros"
+name = "upwell-rpc-macros"
 version = "0.18.0"
 dependencies = [
- "overseerd-macros-core",
+ "upwell-macros-core",
  "proc-macro2",
  "quote",
  "syn",
 ]
 
 [[package]]
-name = "overseerd-transport"
+name = "upwell-transport"
 version = "0.18.0"
 dependencies = [
  "bitflags",
  "futures",
  "libc",
- "overseerd-di",
+ "upwell-di",
  "postcard",
  "serde",
  "thiserror",

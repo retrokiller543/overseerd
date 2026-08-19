@@ -2,14 +2,14 @@
 //!
 //! It derives `serde::Serialize` + `serde::Deserialize` (unless `#[dto(no_serde)]`, for a type that
 //! provides its own), derives `tsify::Tsify` on wasm (so the generated browser client is typed in
-//! TypeScript), and implements [`Dto`](../overseerd_axum/trait.Dto.html) so the type may appear as a
+//! TypeScript), and implements [`Dto`](../upwell_axum/trait.Dto.html) so the type may appear as a
 //! handler's body, response, or path/query parameter.
 
-use overseerd_macros_core::paths::Paths;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::parse::{Parse, ParseStream};
 use syn::{DeriveInput, Ident, Token};
+use upwell_macros_core::paths::Paths;
 
 /// Parsed `#[dto(..)]` arguments.
 #[derive(Default)]

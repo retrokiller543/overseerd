@@ -1,15 +1,15 @@
-//! # Overseerd Jobs
+//! # Upwell Jobs
 //!
-//! A job scheduler for Overseerd, integrated as a non-protocol
-//! [`Plugin`](overseerd_app::Plugin). Mark an `async` method on a `#[component]` with
+//! A job scheduler for Upwell, integrated as a non-protocol
+//! [`Plugin`](upwell_app::Plugin). Mark an `async` method on a `#[component]` with
 //! `#[job(every = "..")]` or `#[job(cron = "..")]` inside a [`#[jobs]`](macro@jobs) impl block,
 //! register [`JobsPlugin`], and the framework spawns a supervised background loop that runs the
 //! method on schedule — resolving its `&self` receiver and any dependency parameters from the
 //! DI container on each run.
 //!
 //! ```ignore
-//! use overseerd::jobs::{JobsPlugin, jobs};
-//! use overseerd::{component, Dep};
+//! use upwell::jobs::{JobsPlugin, jobs};
+//! use upwell::{component, Dep};
 //!
 //! #[component]
 //! struct Reaper { db: Dep<Db> }
@@ -26,7 +26,7 @@
 //!     async fn report(&self, metrics: Dep<Metrics>) { metrics.snapshot().flush().await; }
 //! }
 //!
-//! app.plugin(JobsPlugin);
+//! app.register_plugin::<JobsPlugin>();
 //! ```
 //!
 //! ## Schedules
@@ -111,7 +111,7 @@
 //!
 //! ## Standalone job runner
 //!
-//! The scheduler needs no network protocol. Because [`App::run`](overseerd_app::App::run) runs
+//! The scheduler needs no network protocol. Because [`App::run`](upwell_app::App::run) runs
 //! the startup hooks (which spawn the jobs) and then simply waits for shutdown — without serving
 //! any endpoint — an app built with [`JobsPlugin`] and driven by `run()` (not `serve()`) is a
 //! dedicated **scheduler process** with no request surface: a cron/worker daemon. Pair the
@@ -140,6 +140,8 @@ pub use log::{
     InMemoryJobLogStore, JobLogConfig, JobLogLayer, JobLogLevel, JobLogRecord, JobLogSink,
     NoopJobLogStore,
 };
+#[cfg(all(feature = "cli", feature = "tracing-subscriber"))]
+pub use logging::configure_bootstrap_tracing;
 #[cfg(feature = "tracing-subscriber")]
 pub use logging::init_tracing;
 pub use metrics::JobMetrics;
@@ -154,10 +156,10 @@ pub use schedule::{
 pub use scheduler::{JobHandle, JobScheduler};
 
 /// The `#[jobs]` impl-block macro and its `#[job]` method marker, owned by
-/// `overseerd-jobs-macros` and re-exported here (the plugin crate owns its macros).
-pub use overseerd_jobs_macros::{job, jobs};
+/// `upwell-jobs-macros` and re-exported here (the plugin crate owns its macros).
+pub use upwell_jobs_macros::{job, jobs};
 
 /// Re-exported so `#[job]`-generated code can reach the `#[distributed_slice]` attribute
-/// through a stable path (`overseerd::jobs::linkme`).
+/// through a stable path (`upwell::jobs::linkme`).
 #[doc(hidden)]
 pub use linkme;

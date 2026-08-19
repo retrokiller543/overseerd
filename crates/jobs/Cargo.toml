@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-jobs"
-description = "The Overseerd job scheduler: declare `#[job]` methods that run on an interval or cron schedule as supervised background tasks, integrated as a plugin over the protocol-agnostic overseerd-app core."
+name = "upwell-jobs"
+description = "The Upwell job scheduler: declare `#[job]` methods that run on an interval or cron schedule as supervised background tasks, integrated as a plugin over the protocol-agnostic upwell-app core."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,25 +12,26 @@ categories.workspace = true
 
 [features]
 default = []
+cli = ["upwell-app/cli"]
 di-check = [
-    "overseerd-app/di-check",
-    "overseerd-di/di-check",
-    "overseerd-jobs-macros/di-check",
+    "upwell-app/di-check",
+    "upwell-di/di-check",
+    "upwell-jobs-macros/di-check",
 ]
-# Root the macros' generated plugin types at `::overseerd::jobs::*` (set by the `overseerd`
-# facade). Off (the default) keeps them at this standalone crate (`::overseerd_jobs::*`), so
-# depending on `overseerd-jobs` directly works.
-facade = ["overseerd-jobs-macros/facade"]
+# Root the macros' generated plugin types at `::upwell::jobs::*` (set by the `upwell`
+# facade). Off (the default) keeps them at this standalone crate (`::upwell_jobs::*`), so
+# depending on `upwell-jobs` directly works.
+facade = ["upwell-jobs-macros/facade"]
 # Provide the jobs-aware `init_tracing`, which composes the per-run `JobLogLayer` onto the
 # framework subscriber. Pulls in the app's `init_tracing` helper (and its `tracing-subscriber`).
-tracing-subscriber = ["overseerd-app/tracing-subscriber"]
+tracing-subscriber = ["upwell-app/tracing-subscriber"]
 
 [dependencies]
-overseerd-app = { workspace = true }
-overseerd-core = { workspace = true }
-overseerd-di = { workspace = true }
-overseerd-hooks = { workspace = true }
-overseerd-jobs-macros = { workspace = true }
+upwell-app = { workspace = true }
+upwell-core = { workspace = true }
+upwell-di = { workspace = true }
+upwell-hooks = { workspace = true }
+upwell-jobs-macros = { workspace = true }
 linkme = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

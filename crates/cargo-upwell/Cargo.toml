@@ -1,0 +1,51 @@
+[package]
+name = "cargo-upwell"
+description = "Cargo target discovery and probe execution for Upwell developer tooling."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "cargo-upwell-renderer-compiler"
+path = "src/bin/cargo-upwell-renderer-compiler.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+cargo_metadata = { workspace = true }
+cargo-generate = { workspace = true }
+clap_complete = { workspace = true }
+clap = { workspace = true }
+command-group = { workspace = true }
+directories = { workspace = true }
+dialoguer = { workspace = true }
+fs2 = { workspace = true }
+globset = { workspace = true }
+upwell-tooling-schema = { workspace = true }
+semver = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+wasmtime = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+xattr = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+upwell-test-utils = { workspace = true }

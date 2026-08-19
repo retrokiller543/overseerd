@@ -1,5 +1,5 @@
-use overseerd_transport::{PredefinedCode, StatusCode};
 use thiserror::Error;
+use upwell_transport::{PredefinedCode, StatusCode};
 
 use crate::extract::{ErrorResponse, ResponseError};
 
@@ -37,24 +37,24 @@ pub enum Error {
     /// An assembly failure from the protocol-agnostic application core (DI graph, config,
     /// hooks, scope planning). Boxed to keep this error small.
     #[error(transparent)]
-    App(Box<overseerd_app::Error>),
+    App(Box<upwell_app::Error>),
 
     /// A configuration failure surfaced directly (e.g. the `app!` macro loading a config
     /// source); the same error also reaches here wrapped in [`App`](Error::App).
     #[error(transparent)]
-    Config(#[from] overseerd_config::ConfigError),
+    Config(#[from] upwell_config::ConfigError),
 
     #[error("transport error: {0}")]
-    Transport(#[from] overseerd_transport::Error),
+    Transport(#[from] upwell_transport::Error),
 
     /// A dependency extraction failure when an `Inject` extractor resolves a parameter — a
     /// missing component/provider, or a resolver-backed value (e.g. `Cfg<T>`) unavailable.
     #[error(transparent)]
-    Di(#[from] overseerd_di::Error),
+    Di(#[from] upwell_di::Error),
 }
 
-impl From<overseerd_app::Error> for Error {
-    fn from(error: overseerd_app::Error) -> Self {
+impl From<upwell_app::Error> for Error {
+    fn from(error: upwell_app::Error) -> Self {
         Error::App(Box::new(error))
     }
 }
@@ -76,10 +76,6 @@ impl Error {
 impl ResponseError for Error {
     type Body = String;
 
-    fn status_code(&self) -> StatusCode {
-        self.status_code()
-    }
-
     fn error_response(self) -> ErrorResponse {
         let code = self.status_code();
         let public_message = match &self {
@@ -94,6 +90,10 @@ impl ResponseError for Error {
         }
 
         ErrorResponse::with_serialized_body(code, public_message)
+    }
+
+    fn status_code(&self) -> StatusCode {
+        self.status_code()
     }
 }
 

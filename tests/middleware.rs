@@ -2,6 +2,7 @@
 //! in-memory transport. Covers a tower middleware observing a call before and
 //! after the handler, a `Guard` short-circuiting an unauthorized call, and a
 //! global `ErrorHandler` remapping an outgoing error.
+#![cfg(feature = "daemon")]
 
 mod common;
 
@@ -11,12 +12,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 
-use overseerd::daemon::tower::{Layer, Service};
-use overseerd::daemon::{
+use upwell::daemon::tower::{Layer, Service};
+use upwell::daemon::{
     App, ErrorHandler, ErrorResponse, Guard, Payload, RpcAppBuilder, RpcCallContext, RpcOutcome,
     RpcRequest, handlers, service,
 };
-use overseerd::{CallResult, PredefinedCode, StatusCode};
+use upwell::{CallResult, PredefinedCode, StatusCode};
 
 use common::{MemoryServer, deadline};
 
@@ -38,8 +39,8 @@ impl MwSvc {
 
     /// Always returns a framework error (mapped to `BadInput`).
     #[rpc]
-    async fn boom() -> overseerd::daemon::Result<u32> {
-        Err(overseerd::daemon::Error::InvalidPayload("boom".to_string()))
+    async fn boom() -> upwell::daemon::Result<u32> {
+        Err(upwell::daemon::Error::InvalidPayload("boom".to_string()))
     }
 }
 
@@ -159,7 +160,7 @@ impl ErrorHandler for RemapHandler {
 /// client handle.
 async fn start<F>(configure: F) -> MemoryServer
 where
-    F: FnOnce(overseerd::daemon::AppBuilder) -> overseerd::daemon::AppBuilder,
+    F: FnOnce(upwell::daemon::AppBuilder) -> upwell::daemon::AppBuilder,
 {
     let builder = App::builder("test").auto_discover();
     let daemon = configure(builder).build().await.expect("build daemon");

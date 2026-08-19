@@ -7,38 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.20.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.19.1...overseerd-axum-macros-v0.20.0) - 2026-07-22
+## 0.20.0 - 2026-07-22
 
 ### Added
 
 - *(rpc,axum)* dual linkme/inventory backend for rpc groups & routes; stable hook order
 - *(di)* dual linkme/inventory registration backend for factories & hooks
 
-## [0.18.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.17.2...overseerd-axum-macros-v0.18.0) - 2026-07-19
+## 0.18.0 - 2026-07-19
 
 ### Added
 
-- *(axum)* make WebSocket protocols portable ([#105](https://github.com/retrokiller543/overseerd/pull/105))
+- *(axum)* make WebSocket protocols portable ([#105](https://github.com/upwell-rs/upwell/pull/105))
 
-## [0.15.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.14.2...overseerd-axum-macros-v0.15.0) - 2026-07-17
+## 0.15.0 - 2026-07-17
 
 ### Fixed
 
 - *(axum)* harden websocket and streaming clients
 
-## [0.14.1](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.14.0...overseerd-axum-macros-v0.14.1) - 2026-07-17
+## 0.14.1 - 2026-07-17
 
 ### Added
 
 - *(axum)* support opaque handler returns (Response / impl IntoResponse)
 
-## [0.14.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.13.0...overseerd-axum-macros-v0.14.0) - 2026-07-17
+## 0.14.0 - 2026-07-17
 
 ### Added
 
-- *(axum)* [**breaking**] DI-native STOMP auth + protocol-generic WS topics with per-message request/response ([#76](https://github.com/retrokiller543/overseerd/pull/76))
+- *(axum)* [**breaking**] DI-native STOMP auth + protocol-generic WS topics with per-message request/response ([#76](https://github.com/upwell-rs/upwell/pull/76))
 
-## [0.12.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.11.2...overseerd-axum-macros-v0.12.0) - 2026-07-08
+## 0.12.0 - 2026-07-08
 
 ### Added
 
@@ -53,32 +53,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added docs to all crates
 
-## [0.11.2](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.11.1...overseerd-axum-macros-v0.11.2) - 2026-07-07
+## 0.11.2 - 2026-07-07
 
 ### Fixed
 
 - *(axum)* never drop client methods for guard-consumed path params
 
-## [0.11.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.10.0...overseerd-axum-macros-v0.11.0) - 2026-07-07
+## 0.11.0 - 2026-07-07
 
 ### Added
 
 - *(axum)* drop custom guards from client codegen; add query/raw/multipart bodies + per-call & transport headers
 
-## [0.10.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.9.1...overseerd-axum-macros-v0.10.0) - 2026-07-03
+## 0.10.0 - 2026-07-03
 
 ### Added
 
 - *(axum)* STOMP subscribe/send wasm clients over a shared Connection
 - Made the framework compile to wasm and be able to generate wasm rest clients for axum.
 
-## [0.9.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.8.0...overseerd-axum-macros-v0.9.0) - 2026-07-02
+## 0.9.0 - 2026-07-02
 
 ### Added
 
 - *(axum)* DI-backed middleware registration + RequestMeta request-scope seed
 
-## [0.8.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.7.0...overseerd-axum-macros-v0.8.0) - 2026-07-02
+## 0.8.0 - 2026-07-02
 
 ### Added
 
@@ -97,8 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - *(axum/ws/stomp)* improve code formatting and readability across multiple files
 
-## [0.7.0](https://github.com/retrokiller543/overseerd/compare/overseerd-axum-macros-v0.6.0...overseerd-axum-macros-v0.7.0) - 2026-06-30
+## 0.7.0 - 2026-06-30
 
 ### Other
 
-- Feature/protocol agnostic ([#20](https://github.com/retrokiller543/overseerd/pull/20))
+- Feature/protocol agnostic ([#20](https://github.com/upwell-rs/upwell/pull/20))

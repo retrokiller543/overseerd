@@ -1,6 +1,6 @@
 //! Backend-agnostic operational observation.
 //!
-//! `overseerd-jobs` deliberately ships no metrics client and no health policy. Instead it
+//! `upwell-jobs` deliberately ships no metrics client and no health policy. Instead it
 //! exposes the *state* an application needs to feed its own system — [`metrics`], OpenTelemetry,
 //! a health endpoint — through [`JobScheduler::metrics`](crate::JobScheduler::metrics) (an
 //! aggregate [`JobMetrics`] snapshot) and [`JobScheduler::list_jobs`](crate::JobScheduler::list_jobs)

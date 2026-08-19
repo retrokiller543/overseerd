@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-app"
-description = "The Overseerd protocol-agnostic application core: the App/AppBuilder, the Plugin/Protocol traits, the DI runtime handle, scope planning, lifecycle, and builtins."
+name = "upwell-app"
+description = "The Upwell protocol-agnostic application core: application and protocol states, plugins, DI runtime, scope planning, lifecycle, and builtins."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,25 +11,37 @@ keywords.workspace = true
 categories.workspace = true
 
 [features]
-default = []
-di-check = [
-    "overseerd-di/di-check",
-    "overseerd-config/di-check",
+default = ["cli"]
+cli = ["dep:clap", "upwell-macros/cli"]
+tooling = [
+    "dep:upwell-tooling-schema",
+    "dep:serde_json",
+    "upwell-macros/tooling",
 ]
-yaml = ["overseerd-config/yaml"]
-watch = ["overseerd-config/watch"]
+di-check = [
+    "upwell-di/di-check",
+    "upwell-config/di-check",
+]
+yaml = ["upwell-config/yaml"]
+watch = ["upwell-config/watch"]
 tracing-subscriber = ["dep:tracing-subscriber"]
 
 [dependencies]
-overseerd-core = { workspace = true }
-overseerd-di = { workspace = true }
-overseerd-hooks = { workspace = true }
-overseerd-config = { workspace = true }
-overseerd-dirs = { workspace = true }
-overseerd-macros = { workspace = true }
+upwell-core = { workspace = true }
+upwell-di = { workspace = true }
+upwell-hooks = { workspace = true }
+upwell-config = { workspace = true }
+upwell-dirs = { workspace = true }
+upwell-macros = { workspace = true }
 tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true, optional = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, optional = true }
 thiserror = { workspace = true }
+clap = { workspace = true, optional = true }
+upwell-tooling-schema = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,11 +1,10 @@
-use overseerd_macros_core::paths::Paths;
 use quote::quote;
 use syn::{ImplItemFn, ReturnType, parse_quote};
+use upwell_macros_core::paths::Paths;
 
-use super::{
-    AxumHandlers, HandlerContext, build_message_request_method, build_message_send_method,
-    build_ws_route, message_success_value, resolve_message_reply,
-};
+use super::ws::{build_ws_route, message_success_value, resolve_message_reply};
+use super::ws_client::{build_message_request_method, build_message_send_method};
+use super::{AxumHandlers, HandlerContext};
 use crate::route::MessageMode;
 
 fn paths() -> Paths {
@@ -42,6 +41,8 @@ fn result_success_normalization_maps_application_errors() {
     assert_eq!(output(quote!(#value_ty)), "Reply");
     assert!(unit_tokens.contains("WsDispatchError :: Application"));
     assert!(value_tokens.contains("WsDispatchError :: Application"));
+    assert!(!unit_tokens.contains("ToString"));
+    assert!(!value_tokens.contains("ToString"));
     assert!(value_tokens.ends_with(". 0"));
     assert!(!unit_tokens.contains("WsDispatchError :: Encode"));
 }
@@ -179,7 +180,7 @@ fn explicit_unit_request_has_unit_client_response() {
     let output: ReturnType = parse_quote!(-> Result<(), Failure>);
 
     assert!(resolve_message_reply(MessageMode::Request, &output));
-    let response = super::client::response_type(&output);
+    let response = crate::client::response_type(&output);
 
     assert_eq!(quote!(#response).to_string(), "()");
 }
@@ -200,7 +201,7 @@ fn ws_route_group_uses_handlers_protocol() {
         paths: paths(),
         capture: Vec::new(),
     });
-    overseerd_macros_core::extend::ParseMethod::parse_method(&mut handlers, &mut method)
+    upwell_macros_core::extend::ParseMethod::parse_method(&mut handlers, &mut method)
         .expect("message method");
 
     let tokens = output(quote!(#handlers));

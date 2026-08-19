@@ -14,9 +14,9 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Attribute, DeriveInput, Ident, ImplItemFn, ReturnType, Type};
+use syn::{Attribute, DeriveInput, Ident, ImplItemFn, Type};
 
-use overseerd_macros_core::paths::Paths;
+use upwell_macros_core::paths::Paths;
 
 use crate::client::{self, BodyKind};
 use crate::route::RouteAttr;
@@ -56,13 +56,13 @@ pub(crate) fn dto_tokens(item: &DeriveInput, paths: &Paths) -> (TokenStream, Tok
     let distributed_slice = paths.core("linkme::distributed_slice");
     let linkme_crate = paths.core("linkme");
     let register = format_ident!(
-        "__OVERSEERD_OPENAPI_SCHEMA_{}",
+        "__UPWELL_OPENAPI_SCHEMA_{}",
         ident.to_string().to_uppercase()
     );
 
     // The whole schema surface is native + server-only (utoipa is not compiled for wasm), so gate
     // the registration the same way the runtime slices are.
-    let registration = overseerd_macros_core::gate::native_only(quote! {
+    let registration = upwell_macros_core::gate::native_only(quote! {
         const _: () = {
             #[#distributed_slice(#schemas_slice)]
             #[linkme(crate = #linkme_crate)]
@@ -121,7 +121,7 @@ pub(crate) fn operation_tokens(
     let marker_fn = format_ident!("{}_{}", self_ident, method_ident);
     let path_struct = format_ident!("__path_{}", marker_fn);
     let register = format_ident!(
-        "__OVERSEERD_OPENAPI_OP_{}_{}",
+        "__UPWELL_OPENAPI_OP_{}_{}",
         self_ident.to_string().to_uppercase(),
         method_ident.to_string().to_uppercase()
     );
@@ -144,13 +144,21 @@ pub(crate) fn operation_tokens(
     let responses = if extra.as_ref().is_some_and(declares_responses) {
         quote!()
     } else {
-        let responses = responses_arg(&method.sig.output);
+        let conventional = route
+            .returns
+            .clone()
+            .unwrap_or_else(|| client::response_type(&method.sig.output));
+        let responses = responses_arg(&crate::http_analysis::response_contract(
+            method,
+            route,
+            &conventional,
+        ));
 
         quote!(, #responses)
     };
     let extra = extra.map(|tokens| quote!(, #tokens)).unwrap_or_default();
 
-    Some(overseerd_macros_core::gate::native_only(quote! {
+    Some(upwell_macros_core::gate::native_only(quote! {
         const _: () = {
             #[#utoipa::path(#verb, path = #path #params #request_body #responses #extra)]
             #(#doc_attrs)*
@@ -225,17 +233,28 @@ fn request_body_arg(arg_types: &[&Type]) -> TokenStream {
 
 /// The `responses(..)` argument. Documents a `200`; the body is the peeled response type
 /// (`client::response_type` peels `Result`/`Json`, matching what the client decodes) — unless that
-/// type is one of the [`Dto`](../overseerd_axum/trait.Dto.html) escape hatches that is not a
+/// type is one of the [`Dto`](../upwell_axum/trait.Dto.html) escape hatches that is not a
 /// `utoipa::ToSchema` ([`undocumented_body`]), in which case the `200` is bodyless. This parallels
 /// how those same shapes yield an uncallable typed client method: they carry no schema.
-fn responses_arg(output: &ReturnType) -> TokenStream {
-    let response = client::response_type(output);
+fn responses_arg(contract: &crate::http_analysis::ResponseContract) -> TokenStream {
+    use crate::http_analysis::ResponseBody;
 
-    if undocumented_body(&response) {
-        quote!(responses((status = 200)))
-    } else {
-        quote!(responses((status = 200, body = #response)))
+    if contract.alternatives.is_empty() {
+        return quote!(responses((status = "default")));
     }
+
+    let alternatives = contract.alternatives.iter().map(|response| {
+        let status = response.status;
+
+        match &response.body {
+            ResponseBody::Typed(body) if !undocumented_body(body) => {
+                quote!((status = #status, body = #body))
+            }
+            _ => quote!((status = #status)),
+        }
+    });
+
+    quote!(responses(#(#alternatives),*))
 }
 
 /// Whether a response type has no documentable schema and must yield a bodyless response: the unit

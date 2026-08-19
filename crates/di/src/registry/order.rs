@@ -4,10 +4,18 @@ use std::collections::{HashMap, HashSet};
 use crate::descriptors::{ComponentDescriptor, ProviderDescriptor, ProviderOrderDirection};
 use crate::error::Error;
 
+mod cycle;
+
 pub(super) fn build(
     components: &[ComponentDescriptor],
     providers: &[ProviderDescriptor],
 ) -> crate::Result<HashMap<TypeId, HashMap<TypeId, usize>>> {
+    super::selection::validate_provider_components(components, providers)?;
+
+    let components_by_type: HashMap<_, _> = components
+        .iter()
+        .map(|component| (component.ty.type_id, component))
+        .collect();
     let component_ids: HashSet<_> = components.iter().map(|c| c.ty.type_id).collect();
     let mut by_concrete: HashMap<TypeId, Vec<&ProviderDescriptor>> = HashMap::new();
     let mut by_trait: HashMap<TypeId, Vec<&ProviderDescriptor>> = HashMap::new();
@@ -32,13 +40,21 @@ pub(super) fn build(
             if !component_ids.contains(&target_id) {
                 return Err(Error::MissingProviderOrderTarget {
                     component: (source.concrete_ty.type_name)().to_string(),
+                    component_id: components_by_type[&source.concrete_ty.type_id]
+                        .id
+                        .to_string(),
                     target: (ordering.target.type_name)().to_string(),
+                    target_type: (ordering.target.type_name)().to_string(),
                 });
             }
 
             if target_id == source.concrete_ty.type_id {
                 return Err(Error::SelfProviderOrder {
                     component: (source.concrete_ty.type_name)().to_string(),
+                    component_id: components_by_type[&source.concrete_ty.type_id]
+                        .id
+                        .to_string(),
+                    component_type: (source.concrete_ty.type_name)().to_string(),
                 });
             }
 
@@ -49,10 +65,17 @@ pub(super) fn build(
                     .iter()
                     .any(|p| p.trait_ty.type_id == trait_id)
                 {
-                    return Err(Error::ProviderOrderSourceTraitMismatch {
-                        component: (source.concrete_ty.type_name)().to_string(),
-                        trait_name: (trait_ty.type_name)().to_string(),
-                    });
+                    return Err(Error::ProviderOrderSourceTraitMismatch(Box::new(
+                        crate::error::ProviderOrderSourceTraitMismatch {
+                            component: (source.concrete_ty.type_name)().to_string(),
+                            component_id: components_by_type[&source.concrete_ty.type_id]
+                                .id
+                                .to_string(),
+                            component_type: (source.concrete_ty.type_name)().to_string(),
+                            trait_name: (trait_ty.type_name)().to_string(),
+                            trait_type: (trait_ty.type_name)().to_string(),
+                        },
+                    )));
                 }
             }
         }
@@ -87,11 +110,20 @@ pub(super) fn build(
                         continue;
                     }
 
-                    return Err(Error::ProviderOrderTargetTraitMismatch {
-                        component: (source.concrete_ty.type_name)().to_string(),
-                        target: (ordering.target.type_name)().to_string(),
-                        trait_name: (source.trait_ty.type_name)().to_string(),
-                    });
+                    return Err(Error::ProviderOrderTargetTraitMismatch(Box::new(
+                        crate::error::ProviderOrderTargetTraitMismatch {
+                            component: (source.concrete_ty.type_name)().to_string(),
+                            component_id: components_by_type[&source.concrete_ty.type_id]
+                                .id
+                                .to_string(),
+                            component_type: (source.concrete_ty.type_name)().to_string(),
+                            target: (ordering.target.type_name)().to_string(),
+                            target_id: components_by_type[&target_id].id.to_string(),
+                            target_type: (ordering.target.type_name)().to_string(),
+                            trait_name: (source.trait_ty.type_name)().to_string(),
+                            trait_type: (source.trait_ty.type_name)().to_string(),
+                        },
+                    )));
                 }
 
                 let (from, to) = match ordering.direction {
@@ -124,17 +156,37 @@ pub(super) fn build(
                         .then_with(|| left.qualifier.cmp(right.qualifier))
                 });
             let Some(next) = next else {
-                let components = trait_providers
+                let remaining = trait_providers
                     .iter()
                     .filter(|provider| !ordered.contains(&provider.concrete_ty.type_id))
-                    .map(|provider| (provider.concrete_ty.type_name)())
+                    .map(|provider| provider.concrete_ty.type_id)
+                    .collect::<Vec<_>>();
+                let stable_keys = remaining
+                    .iter()
+                    .map(|type_id| (*type_id, components_by_type[type_id].id.to_string()))
+                    .collect::<HashMap<_, _>>();
+                let cyclic = cycle::members(&remaining, &edges, &stable_keys);
+                let components = cyclic
+                    .iter()
+                    .map(|type_id| (components_by_type[type_id].ty.type_name)())
                     .collect::<Vec<_>>()
                     .join(", ");
 
-                return Err(Error::ProviderOrderCycle {
-                    trait_name: (trait_providers[0].trait_ty.type_name)().to_string(),
-                    components,
-                });
+                return Err(Error::ProviderOrderCycle(Box::new(
+                    crate::error::ProviderOrderCycle {
+                        trait_name: (trait_providers[0].trait_ty.type_name)().to_string(),
+                        trait_type: (trait_providers[0].trait_ty.type_name)().to_string(),
+                        components,
+                        component_ids: cyclic
+                            .iter()
+                            .map(|type_id| components_by_type[type_id].id.to_string())
+                            .collect(),
+                        component_types: cyclic
+                            .iter()
+                            .map(|type_id| (components_by_type[type_id].ty.type_name)().to_string())
+                            .collect(),
+                    },
+                )));
             };
             let next_id = next.concrete_ty.type_id;
 
@@ -166,7 +218,7 @@ pub(super) fn build(
 mod tests {
     use super::*;
     use crate::descriptors::{BoxedComponent, ProviderOrder};
-    use overseerd_core::{Singleton, TypeDescriptor};
+    use upwell_core::{Singleton, TypeDescriptor};
 
     trait Trait: Send + Sync {}
     trait OtherTrait: Send + Sync {}
@@ -352,7 +404,36 @@ mod tests {
 
         assert!(matches!(
             build(&components, &providers),
-            Err(Error::ProviderOrderTargetTraitMismatch { .. })
+            Err(Error::ProviderOrderTargetTraitMismatch(_))
+        ));
+    }
+
+    #[test]
+    fn orphan_provider_without_ordering_is_rejected_before_ordering() {
+        let orphan = provider::<Alpha>("Orphan Alpha", "orphan", &[]);
+        let error = build(&[], &[orphan]).expect_err("orphan provider is rejected");
+        let Error::ProviderComponentMissing(error) = error else {
+            panic!("missing component error is returned before provider ordering");
+        };
+
+        assert_eq!(error.trait_type, std::any::type_name::<dyn Trait>());
+        assert_eq!(error.component_type, std::any::type_name::<Alpha>());
+        assert_eq!(error.component, "Orphan Alpha");
+        assert_eq!(error.qualifier, "orphan");
+    }
+
+    #[test]
+    fn orphan_provider_with_ordering_is_rejected_before_order_metadata() {
+        static MISSING_TARGET: [ProviderOrder; 1] = [ProviderOrder {
+            target: TypeDescriptor::of::<Gamma>("Missing Gamma"),
+            traits: &[],
+            direction: ProviderOrderDirection::Before,
+        }];
+        let orphan = provider::<Alpha>("Orphan Alpha", "ordered", &MISSING_TARGET);
+
+        assert!(matches!(
+            build(&[], &[orphan]),
+            Err(Error::ProviderComponentMissing(_))
         ));
     }
 
@@ -397,7 +478,99 @@ mod tests {
                     provider::<Beta>("Beta", "beta", &BETA_BEFORE_ALPHA),
                 ],
             ),
-            Err(Error::ProviderOrderCycle { .. })
+            Err(Error::ProviderOrderCycle(_))
         ));
+    }
+
+    #[test]
+    fn cycle_diagnostics_exclude_blocked_downstream_providers() {
+        static ALPHA_BEFORE_BETA: [ProviderOrder; 1] = [ProviderOrder {
+            target: TypeDescriptor::of::<Beta>("Beta"),
+            traits: &[],
+            direction: ProviderOrderDirection::Before,
+        }];
+        static BETA_BEFORE_ALPHA_AND_GAMMA: [ProviderOrder; 2] = [
+            ProviderOrder {
+                target: TypeDescriptor::of::<Alpha>("Alpha"),
+                traits: &[],
+                direction: ProviderOrderDirection::Before,
+            },
+            ProviderOrder {
+                target: TypeDescriptor::of::<Gamma>("Gamma"),
+                traits: &[],
+                direction: ProviderOrderDirection::Before,
+            },
+        ];
+        let components = [
+            component::<Gamma>("gamma-id"),
+            component::<Beta>("beta-id"),
+            component::<Alpha>("alpha-id"),
+        ];
+        let providers = [
+            provider::<Gamma>("Gamma", "gamma", &[]),
+            provider::<Beta>("Beta", "beta", &BETA_BEFORE_ALPHA_AND_GAMMA),
+            provider::<Alpha>("Alpha", "alpha", &ALPHA_BEFORE_BETA),
+        ];
+        let Error::ProviderOrderCycle(error) =
+            build(&components, &providers).expect_err("provider order contains a cycle")
+        else {
+            panic!("provider cycle error expected");
+        };
+
+        assert_eq!(error.component_ids, ["alpha-id", "beta-id"]);
+        assert_eq!(
+            error.component_types,
+            [
+                std::any::type_name::<Alpha>(),
+                std::any::type_name::<Beta>()
+            ]
+        );
+        assert!(!error.components.contains(std::any::type_name::<Gamma>()));
+    }
+
+    #[test]
+    fn cycle_diagnostics_are_deterministic_across_registration_permutations() {
+        static ALPHA_BEFORE_BETA: [ProviderOrder; 1] = [ProviderOrder {
+            target: TypeDescriptor::of::<Beta>("Beta"),
+            traits: &[],
+            direction: ProviderOrderDirection::Before,
+        }];
+        static BETA_BEFORE_ALPHA_AND_GAMMA: [ProviderOrder; 2] = [
+            ProviderOrder {
+                target: TypeDescriptor::of::<Alpha>("Alpha"),
+                traits: &[],
+                direction: ProviderOrderDirection::Before,
+            },
+            ProviderOrder {
+                target: TypeDescriptor::of::<Gamma>("Gamma"),
+                traits: &[],
+                direction: ProviderOrderDirection::Before,
+            },
+        ];
+        let alpha = component::<Alpha>("alpha-id");
+        let beta = component::<Beta>("beta-id");
+        let gamma = component::<Gamma>("gamma-id");
+        let alpha_provider = provider::<Alpha>("Alpha", "alpha", &ALPHA_BEFORE_BETA);
+        let beta_provider = provider::<Beta>("Beta", "beta", &BETA_BEFORE_ALPHA_AND_GAMMA);
+        let gamma_provider = provider::<Gamma>("Gamma", "gamma", &[]);
+        let diagnostic = |components: &[ComponentDescriptor], providers: &[ProviderDescriptor]| {
+            let Error::ProviderOrderCycle(error) =
+                build(components, providers).expect_err("provider order contains a cycle")
+            else {
+                panic!("provider cycle error expected");
+            };
+
+            (error.component_ids, error.component_types, error.components)
+        };
+        let first = diagnostic(
+            &[alpha, beta, gamma],
+            &[alpha_provider, beta_provider, gamma_provider],
+        );
+        let second = diagnostic(
+            &[gamma, alpha, beta],
+            &[gamma_provider, beta_provider, alpha_provider],
+        );
+
+        assert_eq!(first, second);
     }
 }

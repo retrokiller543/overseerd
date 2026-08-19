@@ -32,15 +32,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
-use overseerd_axum::axum::extract::ws::{Message, WebSocket};
-use overseerd_axum::{AppRuntime, BoxedComponent, ScopeContainer, TypeDescriptor};
 use stomp_parser::client::ClientFrame;
 use stomp_parser::headers::{HeaderValue, StompVersion, StompVersions};
 use stomp_parser::server::{ConnectedFrameBuilder, ErrorFrame, ReceiptFrameBuilder};
 use tokio::sync::mpsc;
+use upwell_axum::axum::extract::ws::{Message, WebSocket};
+use upwell_axum::{
+    AppRuntime, BoxedComponent, ComponentDescriptor, ScopeContainer, TypeDescriptor,
+    WebsocketMessageScope,
+};
 
-use overseerd_axum::RequestScope;
-use overseerd_axum::{
+use upwell_axum::{
     MessageReply, PubSubProtocol, SOCKET_SEND_TIMEOUT, WebsocketProtocol, WsControllerDescriptor,
     WsDispatchError, WsHandlerFn, WsIdle, WsRespond, WsShutdown,
 };
@@ -55,7 +57,28 @@ pub use error::{StompBuildError, StompError};
 pub use headers::{StompHeaders, StompSession};
 // The protocol-generic pub/sub runtime lives in `crate::ws::pubsub`; re-exported here so the STOMP
 // serve loop and the crate's historical `ws::stomp::*` surface keep naming them unchanged.
-pub use overseerd_axum::{ConnectionId, Publisher, SubscriptionRegistry, TopicBus};
+pub use upwell_axum::{ConnectionId, Publisher, SubscriptionRegistry, TopicBus};
+
+static STOMP_HEADERS_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    "__upwell_stomp_headers",
+    "StompHeaders",
+    TypeDescriptor::of::<StompHeaders>("StompHeaders"),
+    &WebsocketMessageScope,
+);
+
+static STOMP_SESSION_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    "__upwell_stomp_session",
+    "StompSession",
+    TypeDescriptor::of::<StompSession>("StompSession"),
+    &WebsocketMessageScope,
+);
+
+static STOMP_PRINCIPAL_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
+    "__upwell_stomp_principal",
+    "StompPrincipal",
+    TypeDescriptor::of::<StompPrincipal>("StompPrincipal"),
+    &WebsocketMessageScope,
+);
 
 /// STOMP's protocol-specific instantiation of the neutral topic bus.
 pub type StompTopicBus = TopicBus<Stomp>;
@@ -136,10 +159,6 @@ impl WebsocketProtocol for Stomp {
     type Outcome = StompOutcome;
     type Options = StompConfig;
     type BuildError = StompBuildError;
-
-    fn register(registry: &mut overseerd_axum::AppRegistry) {
-        overseerd_axum::register_topic_bus::<Self>(registry);
-    }
 
     fn build(
         controllers: &[WsControllerDescriptor],
@@ -244,7 +263,7 @@ impl WebsocketProtocol for Stomp {
 
                 _ = idle.wait() => {
                     if idle.on_timeout() {
-                        tracing::debug!(target: "overseerd::axum", "STOMP peer did not answer idle probe");
+                        tracing::debug!(target: "upwell::axum", "STOMP peer did not answer idle probe");
 
                         break;
                     }
@@ -283,7 +302,7 @@ impl WebsocketProtocol for Stomp {
                         Some(Ok(_)) => {}
 
                         Some(Err(error)) => {
-                            tracing::debug!(target: "overseerd::axum", %error, "STOMP connection read error");
+                            tracing::debug!(target: "upwell::axum", %error, "STOMP connection read error");
 
                             break;
                         }
@@ -302,6 +321,15 @@ impl WebsocketProtocol for Stomp {
             writer.abort();
             let _ = writer.await;
         }
+    }
+
+    fn register(registry: &mut upwell_axum::AppRegistry) {
+        upwell_axum::register_topic_bus::<Self>(registry);
+        registry.components.extend([
+            STOMP_HEADERS_DESCRIPTOR,
+            STOMP_SESSION_DESCRIPTOR,
+            STOMP_PRINCIPAL_DESCRIPTOR,
+        ]);
     }
 }
 
@@ -453,9 +481,12 @@ impl Stomp {
                     headers,
                 };
 
-                self.route_send(message, conn_id, connection, principal, reply)
-                    .await;
-                self.send_receipt(tx, receipt).await;
+                if self
+                    .route_send(message, conn_id, connection, principal, reply)
+                    .await
+                {
+                    self.send_receipt(tx, receipt).await;
+                }
 
                 Continue(())
             }
@@ -489,7 +520,7 @@ impl Stomp {
         connection: &Arc<ScopeContainer>,
         principal: &StompPrincipal,
         reply: ReplyContext<'_>,
-    ) {
+    ) -> bool {
         let InboundMessage {
             destination,
             body,
@@ -499,7 +530,7 @@ impl Stomp {
         let Some(handler) = self.app_routes.get(destination.as_str()) else {
             self.broker.publish(&destination, &body, &[]);
 
-            return;
+            return true;
         };
 
         let seeds = vec![
@@ -519,15 +550,20 @@ impl Stomp {
 
         let scope = match self
             .runtime
-            .open_scope(&RequestScope, Arc::clone(connection), seeds)
+            .open_scope(&WebsocketMessageScope, Arc::clone(connection), seeds)
             .await
         {
             Ok(scope) => scope,
 
             Err(error) => {
-                tracing::error!(target: "overseerd::axum", %error, "STOMP message scope build failed");
+                tracing::error!(target: "upwell::axum", %error, "STOMP message scope build failed");
+                self.deliver_error_reply(
+                    &WsDispatchError::Inject("message scope construction failed".to_owned()),
+                    &reply,
+                )
+                .await;
 
-                return;
+                return false;
             }
         };
 
@@ -546,10 +582,12 @@ impl Stomp {
             Ok(StompOutcome::Nothing) => {}
 
             Err(error) => {
-                tracing::warn!(target: "overseerd::axum", %error, dest = %destination, "STOMP handler failed");
+                tracing::warn!(target: "upwell::axum", %error, dest = %destination, "STOMP handler failed");
                 self.deliver_error_reply(&error, &reply).await;
             }
         }
+
+        true
     }
 
     /// Routes a request handler's reply back to the requester on its own connection: a directed
@@ -559,7 +597,7 @@ impl Stomp {
     async fn deliver_reply(&self, destination: &str, body: StompBody, reply: &ReplyContext<'_>) {
         let Some(reply_to) = &reply.reply_to else {
             tracing::warn!(
-                target: "overseerd::axum",
+                target: "upwell::axum",
                 dest = destination,
                 "STOMP request handler returned a reply but the frame carried no `reply-to`; dropping"
             );
@@ -656,10 +694,9 @@ impl IntoStompOutcome for Vec<Publish> {
 impl<T, E> IntoStompOutcome for Result<T, E>
 where
     T: IntoStompOutcome,
-    E: std::fmt::Display,
 {
     fn into_outcome(self) -> Result<StompOutcome, WsDispatchError> {
-        self.map_err(|e| WsDispatchError::Application(e.to_string()))?
+        self.map_err(|_| WsDispatchError::Application)?
             .into_outcome()
     }
 }
@@ -738,7 +775,7 @@ fn is_heartbeat(bytes: &[u8]) -> bool {
     bytes.is_empty() || bytes == b"\n" || bytes == b"\r\n"
 }
 
-/// Injects a `host:overseerd` header into a `CONNECT`/`STOMP` frame that lacks one, so a client
+/// Injects a `host:upwell` header into a `CONNECT`/`STOMP` frame that lacks one, so a client
 /// that omits the (spec-mandatory but widely-skipped) `host` header still connects. Leaves any
 /// other frame — and a CONNECT that already has a host — untouched.
 fn ensure_connect_host(bytes: Vec<u8>) -> Vec<u8> {
@@ -755,7 +792,7 @@ fn ensure_connect_host(bytes: Vec<u8>) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len() + 16);
 
     out.extend_from_slice(&bytes[..=newline]);
-    out.extend_from_slice(b"host:overseerd\n");
+    out.extend_from_slice(b"host:upwell\n");
     out.extend_from_slice(&bytes[newline + 1..]);
 
     out

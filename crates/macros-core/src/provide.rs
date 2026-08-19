@@ -94,7 +94,7 @@ pub fn generate_providers<Ext: ParseKeyed>(
 
             if seen_ordering_assertions.insert(key) {
                 ordering_assertions.push(quote! {
-                    __overseerd_assert_ordering_provider::<#concrete, #trait_ty>();
+                    __upwell_assert_ordering_provider::<#concrete, #trait_ty>();
                 });
             }
         }
@@ -102,20 +102,20 @@ pub fn generate_providers<Ext: ParseKeyed>(
 
     let assertions = quote! {
         const _: () = {
-            fn __overseerd_assert_injectable<T>()
+            fn __upwell_assert_injectable<T>()
             where
                 T: ?Sized + #runtime_descriptor<#component_descriptor>,
             {
             }
 
-            fn __overseerd_assert_ordering_provider<T, P: ?Sized>()
+            fn __upwell_assert_ordering_provider<T, P: ?Sized>()
             where
                 T: #provider_of<P>,
             {
             }
 
-            fn __overseerd_check_provider_contracts() {
-                #(__overseerd_assert_injectable::<#provided_traits>();)*
+            fn __upwell_check_provider_contracts() {
+                #(__upwell_assert_injectable::<#provided_traits>();)*
                 #(#ordering_assertions)*
             }
         };
@@ -138,9 +138,9 @@ pub fn generate_providers<Ext: ParseKeyed>(
         // shared across threads); otherwise the erase fn's `Box<dyn Any + Send +
         // Sync>` storage fails to compile, pointing the author at the missing bound.
         let trait_name = LitStr::new(&dyn_ty.to_token_stream().to_string(), Span::call_site());
-        let assert_provider_ident = format_ident!("__overseerd_assert_provider_{}", i);
-        let erase_ident = format_ident!("__overseerd_erase_{}", i);
-        let provider_ident = format_ident!("__OVERSEERD_PROVIDER_{}", i);
+        let assert_provider_ident = format_ident!("__upwell_assert_provider_{}", i);
+        let erase_ident = format_ident!("__upwell_erase_{}", i);
+        let provider_ident = format_ident!("__UPWELL_PROVIDER_{}", i);
 
         helpers.push(quote! {
             impl #provider_of<#dyn_ty> for #self_ident {}
@@ -183,6 +183,7 @@ pub fn generate_providers<Ext: ParseKeyed>(
         statics.push(quote! {
             #[#distributed_slice(#providers_slice)]
             #[linkme(crate = #linkme_crate)]
+            #[allow(unsafe_code)]
             static #provider_ident: #provider_descriptor =
                 <#self_ident as #descriptor<&'static [#provider_descriptor]>>::DESCRIPTOR[#i];
         });

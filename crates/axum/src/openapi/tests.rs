@@ -2,7 +2,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use super::{build_openapi, join_base, mount, normalize_prefix, spec_url};
+use super::{build_openapi, join_base, mount, normalize_prefix, spec_url, validate_config};
 use crate::config::{OpenApiConfig, OpenApiUi};
 
 /// Drives a `GET path` through `router` and returns `(status, body_string)`.
@@ -78,6 +78,26 @@ fn json_only_config() -> OpenApiConfig {
     }
 }
 
+#[test]
+fn invalid_mount_paths_are_rejected_before_router_construction() {
+    let mut config = json_only_config();
+    config.json_path = String::from("openapi.json");
+
+    let error = validate_config(&config).expect_err("relative JSON path must be rejected");
+
+    assert!(matches!(error, crate::Error::Config(_)), "got: {error}");
+
+    config.json_path = String::from("/openapi.json");
+    config.ui = OpenApiUi::Swagger;
+    config.ui_path = String::from("/docs/{tenant}");
+
+    if super::ui_is_compiled(config.ui) {
+        let error = validate_config(&config).expect_err("dynamic UI path must be rejected");
+
+        assert!(matches!(error, crate::Error::Config(_)), "got: {error}");
+    }
+}
+
 #[tokio::test]
 async fn disabled_config_mounts_nothing() {
     let mut config = json_only_config();
@@ -123,6 +143,31 @@ fn overlapping_json_and_ui_paths_are_rejected() {
         mount(axum::Router::new(), &config, "").is_ok(),
         "distinct paths mount cleanly"
     );
+}
+
+#[cfg(feature = "openapi-redoc")]
+#[test]
+fn overlapping_paths_fail_during_app_prepare() {
+    let config = upwell_config::ConfigManager::<upwell_config::Toml>::from_str(
+        r#"
+            [axum.openapi]
+            enabled = true
+            ui = "redoc"
+            ui_path = "/docs"
+            json_path = "/docs/openapi.json"
+        "#,
+    )
+    .expect("config parses");
+    let result = crate::App::builder("invalid-openapi-config-test")
+        .config_source(config)
+        .prepare();
+
+    let error = match result {
+        Ok(_) => panic!("overlapping OpenAPI paths were not rejected during preparation"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(error, crate::Error::Config(_)), "got: {error}");
 }
 
 // When the selected UI's feature is absent, the UI is not mounted (JSON-only fallback), so

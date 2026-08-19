@@ -11,14 +11,16 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd::axum::axum::Json;
-use overseerd::axum::axum::extract::Request;
-use overseerd::axum::axum::http::{StatusCode, header};
-use overseerd::axum::axum::middleware::Next;
-use overseerd::axum::axum::response::{IntoResponse, Response};
-use overseerd::axum::prelude::*;
-use overseerd::axum::{AxumMiddleware, RequestMeta};
-use overseerd::{component, methods};
+use upwell::axum::axum::Json;
+use upwell::axum::axum::body::Body;
+use upwell::axum::axum::extract::Request;
+use upwell::axum::axum::http::{StatusCode, header};
+use upwell::axum::axum::middleware::Next;
+use upwell::axum::axum::response::{IntoResponse, Redirect, Response};
+use upwell::axum::client::HttpBody;
+use upwell::axum::prelude::*;
+use upwell::axum::{AxumMiddleware, HttpRequest, RequestMeta};
+use upwell::{component, methods};
 
 /// A plain `axum::middleware::from_fn` closure — standard, un-wrapped axum middleware,
 /// registered globally in `main.rs` via `.layer(...)` alongside the DI-backed kind below.
@@ -75,7 +77,7 @@ impl AxumMiddleware for RequireAuth {
 /// The worked example: a request-scoped component that reads the bearer token from
 /// [`RequestMeta`], fetches the user once, and is then shared — via the request scope's
 /// per-type caching — by every handler that injects it, with no second fetch.
-#[component(scope = Request)]
+#[component(scope = HttpRequest)]
 struct AuthenticatedUser {
     #[default]
     name: Option<String>,
@@ -100,9 +102,9 @@ impl AuthenticatedUser {
 /// The `/me` response: the authenticated user's name, and whether both `Inject`ions below
 /// resolved the same cached instance.
 #[dto]
-struct WhoAmI {
-    name: Option<String>,
-    same_instance: bool,
+pub struct WhoAmI {
+    pub name: Option<String>,
+    pub same_instance: bool,
 }
 
 /// A controller with no middleware of its own — [`RequireAuth`] and [`AuthenticatedUser`] are
@@ -131,5 +133,51 @@ impl MeController {
             name: user.name.clone(),
             same_instance: Arc::ptr_eq(&user, &same_user),
         })
+    }
+
+    #[get("/login")]
+    async fn login() -> Response {
+        Redirect::to("/me/login/callback").into_response()
+    }
+
+    #[get("/login/callback")]
+    async fn login_callback() -> Response {
+        let body = Json(WhoAmI {
+            name: None,
+            same_instance: true,
+        });
+
+        let bytes = body.encode().expect("failed to encode body");
+        let json_str = String::from_utf8(bytes).expect("valid utf8");
+
+        Response::builder()
+            .status(StatusCode::FORBIDDEN)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::new(json_str))
+            .expect("failed to build response")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use upwell::axum::client::{HttpResponse, ReqwestClient};
+
+    use super::{MeControllerClient, WhoAmI};
+
+    fn assert_login_callback_type(
+        client: &MeControllerClient<ReqwestClient>,
+    ) -> impl Future<
+        Output = Result<
+            HttpResponse<WhoAmI>,
+            upwell::client::ClientError<upwell::axum::http::StatusCode>,
+        >,
+    > + '_ {
+        client.login_callback()
+    }
+
+    #[test]
+    fn generated_callback_client_uses_the_only_known_body_type() {
+        let client = MeControllerClient::new(ReqwestClient::new("http://localhost"));
+        let _future = assert_login_callback_type(&client);
     }
 }

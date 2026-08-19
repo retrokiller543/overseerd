@@ -1,0 +1,54 @@
+# Upwell user catalog schema. Copy this file to the platform catalog path:
+#
+# macOS:  ~/Library/Application Support/org.upwell-rs.Upwell/catalog.toml
+# Linux:  $XDG_CONFIG_HOME/upwell/catalog.toml, or ~/.config/upwell/catalog.toml
+# Windows: %APPDATA%\upwell-rs\Upwell\config\catalog.toml
+# UPWELL_CATALOG_PATH may select an explicit catalog for every cargo-upwell command.
+schema = "1"
+
+# Entries are merged over cargo-upwell's built-ins by stable ID. A user template may override a
+# built-in template ID. Tools and renderers may not use the same ID as an effective template.
+[[entries]]
+type = "template"
+id = "team/application"
+description = "Team application template"
+path = "templates/application"
+
+# Relative paths are resolved from this catalog file's parent directory.
+[[entries]]
+type = "template"
+id = "team/protocol"
+description = "Pinned team protocol template"
+git = "https://github.com/example/upwell-template-protocol.git"
+tag = "v1.2.3"
+
+# Git templates accept at most one of branch, tag, or revision. Pin a tag or revision when
+# reproducibility matters.
+[[entries]]
+type = "tool"
+id = "team/axum"
+command = "cargo-upwell-axum"
+description = "Axum-specific Upwell development tooling"
+package = "cargo-upwell-axum"
+protocols = ["upwell/axum"]
+
+# Tool entries are metadata only. cargo-upwell does not install or execute them yet.
+
+# Renderer components are loaded only when their command and format are explicitly selected.
+# Relative component paths are resolved from this catalog file's parent directory. Format
+# completion reads this metadata but never loads or executes the component.
+[[entries]]
+type = "renderer"
+id = "team/architecture"
+component = "renderers/architecture.component.wasm"
+commands = ["inspect", "graph"]
+format = "architecture"
+media-type = "text/plain"
+extension = "txt"
+color = false
+pager = true
+output-file = false
+priority = 100
+abi = "^0.1"
+tooling-schema = "^0.20"
+utf8 = true

@@ -4,6 +4,7 @@
 //! All services in this binary are auto-discovered into one daemon, which is
 //! served on a `MemoryTransport` in a background task; each test opens calls on
 //! a fresh connection and asserts on the server's events.
+#![cfg(feature = "daemon")]
 
 mod common;
 
@@ -11,8 +12,8 @@ use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 
-use overseerd::daemon::{App, Cancel, Payload, ResponseStream, Streaming, handlers, service};
-use overseerd::{
+use upwell::daemon::{App, Cancel, Payload, ResponseStream, Streaming, handlers, service};
+use upwell::{
     CallResult, MemoryConnectionHandle, ServerEvent, StreamDecode, StreamDecodeError, StreamEncode,
     StreamEncodeError,
 };
@@ -46,13 +47,13 @@ impl StreamSvc {
     }
 
     #[rpc]
-    async fn fallible_ok() -> overseerd::daemon::Result<u32> {
+    async fn fallible_ok() -> upwell::daemon::Result<u32> {
         Ok(1)
     }
 
     #[rpc]
-    async fn fallible_err() -> overseerd::daemon::Result<u32> {
-        Err(overseerd::daemon::Error::InvalidPayload("nope".to_string()))
+    async fn fallible_err() -> upwell::daemon::Result<u32> {
+        Err(upwell::daemon::Error::InvalidPayload("nope".to_string()))
     }
 
     // --- Server streaming: one request, many responses ---
@@ -67,7 +68,7 @@ impl StreamSvc {
         ResponseStream::new(futures::stream::iter(vec![
             Ok(0),
             Ok(1),
-            Err(overseerd::daemon::Error::InvalidPayload("boom".to_string())),
+            Err(upwell::daemon::Error::InvalidPayload("boom".to_string())),
         ]))
     }
 
@@ -92,7 +93,7 @@ impl StreamSvc {
     // --- Client streaming: many requests, one response ---
 
     #[rpc]
-    async fn sum(mut input: Streaming<u32>) -> overseerd::daemon::Result<u32> {
+    async fn sum(mut input: Streaming<u32>) -> upwell::daemon::Result<u32> {
         let mut total = 0;
 
         while let Some(item) = input.next().await {
@@ -226,7 +227,7 @@ fn dec<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> T {
 
 /// Drains a streaming call into its items, returning whether it ended cleanly
 /// (`true` = `StreamEnd`, `false` = `StreamError`).
-async fn drain(call: &mut overseerd::MemoryCall) -> (Vec<u32>, bool) {
+async fn drain(call: &mut upwell::MemoryCall) -> (Vec<u32>, bool) {
     let mut items = Vec::new();
 
     loop {
@@ -252,8 +253,8 @@ async fn infers_operation_kinds() {
         .await
         .expect("build daemon");
 
-    let __all: Vec<_> = overseerd::daemon::SERVICES.iter().copied().collect();
-    let services = overseerd::daemon::resolved_services(&__all);
+    let __all: Vec<_> = upwell::daemon::SERVICES.iter().copied().collect();
+    let services = upwell::daemon::resolved_services(&__all);
     let svc = services
         .iter()
         .find(|s| s.descriptor.name == "StreamSvc")
@@ -558,8 +559,8 @@ async fn ergo_operation_kinds() {
         .await
         .expect("build daemon");
 
-    let __all: Vec<_> = overseerd::daemon::SERVICES.iter().copied().collect();
-    let services = overseerd::daemon::resolved_services(&__all);
+    let __all: Vec<_> = upwell::daemon::SERVICES.iter().copied().collect();
+    let services = upwell::daemon::resolved_services(&__all);
     let svc = services
         .iter()
         .find(|s| s.descriptor.name == "ErgoSvc")

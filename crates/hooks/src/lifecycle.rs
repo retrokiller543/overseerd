@@ -13,9 +13,10 @@ use super::HookKind;
 pub struct Startup;
 
 impl HookKind for Startup {
-    const NAME: &'static str = "startup";
     type Output = ();
     type Cx = ();
+
+    const NAME: &'static str = "startup";
 }
 
 /// Fired once when the daemon begins a graceful shutdown (the serve/run loop has stopped).
@@ -23,7 +24,8 @@ impl HookKind for Startup {
 pub struct Shutdown;
 
 impl HookKind for Shutdown {
-    const NAME: &'static str = "shutdown";
     type Output = ();
     type Cx = ();
+
+    const NAME: &'static str = "shutdown";
 }

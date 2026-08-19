@@ -60,7 +60,7 @@ jobs:
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
-  # Per-crate build. One status check per crate (e.g. `Build (overseerd-core)`),
+  # Per-crate build. One status check per crate (e.g. `Build (upwell-core)`),
   # so an individual crate can be a blocker or advisory on its own.
   build:
     name: Build
@@ -69,21 +69,22 @@ jobs:
       fail-fast: false
       matrix:
         crate:
-          - overseerd
-          - overseerd-core
-          - overseerd-di
-          - overseerd-hooks
-          - overseerd-config
-          - overseerd-app
-          - overseerd-dirs
-          - overseerd-transport
-          - overseerd-client
-          - overseerd-rpc
-          - overseerd-macros
-          - overseerd-macros-core
-          - overseerd-rpc-macros
-          - overseerd-axum
-          - overseerd-axum-macros
+          - upwell
+          - upwell-core
+          - upwell-di
+          - upwell-hooks
+          - upwell-config
+          - upwell-app
+          - upwell-dirs
+          - upwell-transport
+          - upwell-client
+          - upwell-rpc
+          - upwell-macros
+          - upwell-macros-core
+          - upwell-rpc-macros
+          - upwell-axum
+          - upwell-axum-macros
+          - cargo-upwell
     steps:
       - *checkout
       - *cache
@@ -121,19 +122,19 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Check transport-generic client
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
-        run: cargo check -p overseerd-axum --target wasm32-unknown-unknown --no-default-features --features client --locked
+        run: cargo check -p upwell-axum --target wasm32-unknown-unknown --no-default-features --features client --locked
       - name: Check WebSocket-only browser client
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
-        run: cargo check -p overseerd-axum --target wasm32-unknown-unknown --no-default-features --features tungstenite --locked
+        run: cargo check -p upwell-axum --target wasm32-unknown-unknown --no-default-features --features tungstenite --locked
       - name: Check JSON WebSocket browser protocol
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
-        run: cargo check -p overseerd-axum-json-ws --target wasm32-unknown-unknown --no-default-features --features tungstenite --locked
+        run: cargo check -p upwell-axum-json-ws --target wasm32-unknown-unknown --no-default-features --features tungstenite --locked
       - name: Check STOMP browser protocol
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
-        run: cargo check -p overseerd-axum-stomp --target wasm32-unknown-unknown --no-default-features --features tungstenite --locked
+        run: cargo check -p upwell-axum-stomp --target wasm32-unknown-unknown --no-default-features --features tungstenite --locked
       - name: Check reqwest browser client
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
-        run: cargo check -p overseerd-axum --target wasm32-unknown-unknown --no-default-features --features reqwest --locked
+        run: cargo check -p upwell-axum --target wasm32-unknown-unknown --no-default-features --features reqwest --locked
 
   test_archive_linux:
     name: Test archive (Linux)
@@ -158,6 +159,8 @@ jobs:
       - name: Build nextest archive
         shell: bash
         run: cargo nextest archive --workspace --all-features --locked --archive-file nextest-linux.tar.zst
+      - name: Validate generated projects
+        run: cargo test -p cargo-upwell --test init --locked
       - name: Upload nextest archive
         uses: actions/upload-artifact@v4
         with:
@@ -187,7 +190,6 @@ jobs:
           tool: just@1.42.4
           fallback: none
       - name: Build nextest archive
-        shell: bash
         run: cargo nextest archive --workspace --all-features --locked --archive-file nextest-windows.tar.zst
       - name: Upload nextest archive
         uses: actions/upload-artifact@v4
@@ -222,6 +224,8 @@ jobs:
           name: nextest-archive-linux-${{ github.run_id }}-${{ github.run_attempt }}
           path: nextest-archive
       - name: Run critical tests
+        env:
+          UPWELL_SKIP_GENERATED_PROJECT_BUILDS: "1"
         shell: bash
         run: |
           [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
@@ -263,6 +267,8 @@ jobs:
           name: nextest-archive-linux-${{ github.run_id }}-${{ github.run_attempt }}
           path: nextest-archive
       - name: Run extended tests
+        env:
+          UPWELL_SKIP_GENERATED_PROJECT_BUILDS: "1"
         shell: bash
         run: |
           [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
@@ -304,6 +310,8 @@ jobs:
           name: nextest-archive-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: nextest-archive
       - name: Run critical tests
+        env:
+          UPWELL_SKIP_GENERATED_PROJECT_BUILDS: "1"
         shell: bash
         run: |
           [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
@@ -345,6 +353,8 @@ jobs:
           name: nextest-archive-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: nextest-archive
       - name: Run extended tests
+        env:
+          UPWELL_SKIP_GENERATED_PROJECT_BUILDS: "1"
         shell: bash
         run: |
           [[ "$(cargo nextest --version)" == "cargo-nextest 0.9.140 "* ]]
@@ -454,9 +464,9 @@ jobs:
       - *cache
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-      - name: cargo build -p overseerd-example-daemon
+      - name: cargo build -p upwell-example-daemon
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
-        run: cargo build -p overseerd-example-daemon --locked
-      - name: cargo build -p overseerd-example-http
+        run: cargo build -p upwell-example-daemon --locked
+      - name: cargo build -p upwell-example-http
         if: ${{ !startsWith(github.head_ref, 'release-plz-') }}
-        run: cargo build -p overseerd-example-http --locked
+        run: cargo build -p upwell-example-http --locked

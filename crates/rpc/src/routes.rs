@@ -1,6 +1,6 @@
 //! Service/RPC route resolution and validation.
 //!
-//! Services live in the [`RpcPlugin`](crate::RpcPlugin) accumulator (not the agnostic
+//! Services live in the [`Rpc`](crate::Rpc) accumulator (not the agnostic
 //! `AppRegistry`), so this operates on a `&[ServiceDescriptor]` rather than a registry.
 
 use std::collections::HashSet;

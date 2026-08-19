@@ -1,7 +1,7 @@
 //! The config store: a DI resolver holding every bound config value.
 //!
 //! Config values do not live in the DI container. They live here, in a
-//! [`ConfigStore`] that implements [`Resolver`](overseerd_core::Resolver) and is inserted
+//! [`ConfigStore`] that implements [`Resolver`](upwell_core::Resolver) and is inserted
 //! into the resolver set before the container is built. A `Cfg<T>` field or factory
 //! parameter resolves through `ctx.get_resolver::<ConfigStore>()`, so the container stays unaware
 //! that config exists — config is just another resolution source.
@@ -9,8 +9,8 @@
 use std::any::TypeId;
 use std::collections::HashMap;
 
-use overseerd_core::{Cardinality, DependencyDescriptor, Resolver, ResolverCtxExt};
-use overseerd_di::{
+use upwell_core::{Cardinality, DependencyDescriptor, Resolver, ResolverCtxExt};
+use upwell_di::{
     BoxedComponent, ComponentConstructionContext, FromContainer, Injectable, ScopeContainer,
     dependency_of, from_boxed,
 };
@@ -87,10 +87,10 @@ impl<T: ConfigProperties> FromContainer for Cfg<T> {
         dependency_of::<T>(Cardinality::One, false, true)
     }
 
-    async fn from_container(cx: &ComponentConstructionContext) -> overseerd_di::Result<Self> {
+    async fn from_container(cx: &ComponentConstructionContext) -> upwell_di::Result<Self> {
         cx.get_resolver::<ConfigStore>()
             .and_then(|store| store.resolve_sole::<Cfg<T>>())
-            .ok_or(overseerd_di::Error::MissingComponent(T::NAME))
+            .ok_or(upwell_di::Error::MissingComponent(T::NAME))
     }
 }
 

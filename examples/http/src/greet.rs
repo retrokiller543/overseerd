@@ -8,10 +8,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use overseerd::axum::dto;
-use overseerd::axum::prelude::*;
-use overseerd::prelude::*;
 use serde::{Deserialize, Serialize};
+use upwell::axum::dto;
+use upwell::axum::prelude::*;
+use upwell::prelude::*;
 
 /// Example configuration bound from `application.toml`'s `example` table (server-side).
 #[config(path = "example")]
@@ -41,7 +41,7 @@ impl Greeter {
 }
 
 /// A per-request ticket: a request-scoped component, so each request gets a fresh instance.
-#[component(scope = Request)]
+#[component(scope = HttpRequest)]
 pub struct RequestTicket {
     #[default]
     pub id: u64,
@@ -104,7 +104,10 @@ impl GreetController {
 
         Json(message)
     }
+}
 
+#[handlers]
+impl GreetController {
     /// `POST /greet` — greets a JSON string body.
     #[post("/")]
     async fn greet_body(&self, Json(who): Json<String>) -> Json<GreetResponse> {

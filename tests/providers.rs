@@ -1,15 +1,13 @@
 //! End-to-end tests for `provide = dyn Trait` injection: primary selection for a
 //! single `Arc<dyn Trait>`, and the guarantee that a provider is the *same*
 //! instance as the concrete component (an `Arc` alias, never a second build).
-
 use std::collections::HashMap;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
 
-use overseerd::daemon::App;
-use overseerd::{DiError, component, injectable, scope::Transient};
+use upwell::{App, DiError, component, injectable, scope::Transient};
 
 /// A trait two components provide. The `Send + Sync` supertraits make the bare
 /// `dyn Animal` shareable, so no use site needs to write `+ Send + Sync`.
@@ -284,7 +282,7 @@ impl BrokenTransient {
 
 #[tokio::test]
 async fn primary_provider_is_chosen_and_aliases_the_single_instance() {
-    let daemon = App::builder("providers-test")
+    let daemon = App::<()>::builder("providers-test")
         .auto_discover()
         .build()
         .await
@@ -328,7 +326,7 @@ async fn primary_provider_is_chosen_and_aliases_the_single_instance() {
 
 #[tokio::test]
 async fn provider_priority_accepts_const_and_associated_const_expressions() {
-    let daemon = App::builder("provider-priority-test")
+    let daemon = App::<()>::builder("provider-priority-test")
         .auto_discover()
         .build()
         .await
@@ -348,7 +346,7 @@ async fn provider_priority_accepts_const_and_associated_const_expressions() {
 
 #[tokio::test]
 async fn transient_providers_are_fresh_erased_and_globally_ordered() {
-    let daemon = App::builder("transient-providers-test")
+    let daemon = App::<()>::builder("transient-providers-test")
         .auto_discover()
         .build()
         .await
@@ -412,7 +410,7 @@ async fn transient_providers_are_fresh_erased_and_globally_ordered() {
 
 #[tokio::test]
 async fn singleton_consumes_transient_providers_eagerly() {
-    let daemon = App::builder("singleton-transient-views-test")
+    let daemon = App::<()>::builder("singleton-transient-views-test")
         .auto_discover()
         .build()
         .await
@@ -458,7 +456,7 @@ async fn singleton_consumes_transient_providers_eagerly() {
 
 #[tokio::test]
 async fn transient_provider_dependencies_resolve_from_the_building_scope() {
-    let daemon = App::builder("dependent-transient-provider-test")
+    let daemon = App::<()>::builder("dependent-transient-provider-test")
         .auto_discover()
         .build()
         .await
@@ -480,7 +478,7 @@ async fn transient_provider_dependencies_resolve_from_the_building_scope() {
 
 #[tokio::test]
 async fn single_provider_edges_do_not_wait_for_unselected_transient_providers() {
-    let daemon = App::builder("cycle-prone-provider-test")
+    let daemon = App::<()>::builder("cycle-prone-provider-test")
         .auto_discover()
         .build()
         .await
@@ -496,7 +494,7 @@ async fn single_provider_edges_do_not_wait_for_unselected_transient_providers() 
 
 #[tokio::test]
 async fn transient_provider_factory_errors_remain_typed() {
-    let daemon = App::builder("transient-provider-error-test")
+    let daemon = App::<()>::builder("transient-provider-error-test")
         .auto_discover()
         .build()
         .await

@@ -1,16 +1,56 @@
-//! Configuration owned and automatically bound by the axum protocol plugin.
+//! Configuration owned and automatically bound by the axum protocol definition.
 
 use std::net::{IpAddr, SocketAddr};
 
-use overseerd_config::{ConfigProperties, DefaultSpec};
 use serde::Deserialize;
+use upwell_config::{ConfigProperties, DefaultSpec};
 
-/// The property path the [`AxumPlugin`](crate::AxumPlugin) always binds.
+/// Validates a configured static Axum mount path before router construction.
+pub(crate) fn validate_mount_path(label: &str, path: &str) -> crate::Result<()> {
+    let invalid_character = path
+        .chars()
+        .find(|character| matches!(character, '?' | '#' | '{' | '}' | ':' | '*'));
+
+    if path.is_empty() || !path.starts_with('/') {
+        return Err(crate::Error::Config(format!(
+            "{label} (`{path}`) must be an absolute path beginning with `/`"
+        )));
+    }
+
+    if let Some(character) = invalid_character {
+        return Err(crate::Error::Config(format!(
+            "{label} (`{path}`) must be static and cannot contain `{character}`"
+        )));
+    }
+
+    if path.contains("//") {
+        return Err(crate::Error::Config(format!(
+            "{label} (`{path}`) cannot contain empty path segments"
+        )));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::validate_mount_path;
+
+    #[test]
+    fn static_absolute_mount_paths_are_required() {
+        assert!(validate_mount_path("test path", "/api/v1").is_ok());
+        assert!(validate_mount_path("test path", "api").is_err());
+        assert!(validate_mount_path("test path", "/{*tail}").is_err());
+        assert!(validate_mount_path("test path", "/api//v1").is_err());
+    }
+}
+
+/// The property path the [`Axum`](crate::Axum) always binds.
 pub const AXUM_CONFIG_PATH: &str = "axum";
 
 /// Listener settings for the axum HTTP server.
 ///
-/// The plugin always binds this type at [`AXUM_CONFIG_PATH`], even when application config
+/// The protocol definition always binds this type at [`AXUM_CONFIG_PATH`], even when application config
 /// auto-discovery is disabled. All fields have environment-aware defaults, so an axum app can be
 /// built and served without declaring configuration of its own:
 ///
@@ -146,7 +186,7 @@ impl ConfigProperties for AxumConfig {
     ]);
 }
 
-/// The property path the [`AxumPlugin`](crate::AxumPlugin) binds the OpenAPI settings at, under the
+/// The property path the [`Axum`](crate::Axum) binds the OpenAPI settings at, under the
 /// `openapi` feature. A subtree of `[axum]`, bound separately so its own field defaults apply.
 #[cfg(feature = "openapi")]
 pub const AXUM_OPENAPI_CONFIG_PATH: &str = "axum.openapi";

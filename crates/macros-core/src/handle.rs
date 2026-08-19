@@ -12,11 +12,12 @@ use syn::Ident;
 
 use crate::paths::Paths;
 
-/// The pieces a `Component` impl needs for its handle: the associated-type and
-/// `into_handle` body to splice into the impl, plus an optional standalone
-/// `Injectable` impl (non-empty only for `by_value`).
+/// The pieces a `Component` impl needs for its handle: the associated type and
+/// `into_handle` method to splice around the constants, plus an optional
+/// standalone `Injectable` impl (non-empty only for `by_value`).
 pub struct HandleImpl {
-    pub items: TokenStream,
+    pub associated_type: TokenStream,
+    pub method: TokenStream,
     pub injectable: TokenStream,
 }
 
@@ -25,9 +26,10 @@ pub fn handle_impl(self_ident: &Ident, by_value: bool, paths: &Paths) -> HandleI
         let injectable = paths.core("Injectable");
 
         HandleImpl {
-            items: quote! {
+            associated_type: quote! {
                 type Handle = Self;
-
+            },
+            method: quote! {
                 fn into_handle(self) -> Self::Handle {
                     self
                 }
@@ -49,9 +51,10 @@ pub fn handle_impl(self_ident: &Ident, by_value: bool, paths: &Paths) -> HandleI
         }
     } else {
         HandleImpl {
-            items: quote! {
+            associated_type: quote! {
                 type Handle = ::std::sync::Arc<Self>;
-
+            },
+            method: quote! {
                 fn into_handle(self) -> Self::Handle {
                     ::std::sync::Arc::new(self)
                 }

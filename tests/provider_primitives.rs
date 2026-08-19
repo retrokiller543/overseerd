@@ -1,4 +1,5 @@
 //! End-to-end coverage for scope-capturing DI provider primitives.
+#![allow(dead_code)]
 
 use std::{
     any::TypeId,
@@ -9,8 +10,9 @@ use std::{
     },
 };
 
-use overseerd::daemon::App;
-use overseerd::{
+#[cfg(feature = "daemon")]
+use upwell::daemon::App;
+use upwell::{
     ComponentDescriptor, Deferred, Descriptor, Fresh, Lazy, ResolverSet, ScopeContainer,
     ScopeRegistry, component, injectable,
 };
@@ -97,7 +99,7 @@ struct DeferredCycleB {
 }
 
 /// A transient component holding a deferred dependency on a singleton.
-#[component(scope = overseerd::scope::Transient)]
+#[component(scope = upwell::scope::Transient)]
 struct TransientDeferredConsumer {
     target: Deferred<PrimitiveTarget>,
 }
@@ -110,6 +112,7 @@ struct RootBuildTransientOwner {
 }
 
 #[tokio::test]
+#[cfg(feature = "daemon")]
 async fn lazy_fresh_and_deferred_follow_their_cache_contracts() {
     let app = App::builder("provider-primitives")
         .auto_discover()
@@ -188,15 +191,18 @@ async fn deferred_hydrates_after_construction_without_retaining_a_cycle() {
         <DeferredCycleA as Descriptor<ComponentDescriptor>>::DESCRIPTOR,
         <DeferredCycleB as Descriptor<ComponentDescriptor>>::DESCRIPTOR,
     ];
-    let registry = Arc::new(ScopeRegistry::new(
-        HashMap::new(),
-        components
-            .iter()
-            .map(|component| (component.ty.type_id, *component))
-            .collect::<HashMap<TypeId, ComponentDescriptor>>(),
-        Vec::new(),
-        HashMap::new(),
-    ));
+    let registry = Arc::new(
+        ScopeRegistry::new(
+            HashMap::new(),
+            components
+                .iter()
+                .map(|component| (component.ty.type_id, *component))
+                .collect::<HashMap<TypeId, ComponentDescriptor>>(),
+            Vec::new(),
+            HashMap::new(),
+        )
+        .expect("scope registry validates"),
+    );
     let container =
         ScopeContainer::build_root(&components, Vec::new(), ResolverSet::new(), registry)
             .await
@@ -218,6 +224,7 @@ async fn deferred_hydrates_after_construction_without_retaining_a_cycle() {
 }
 
 #[tokio::test]
+#[cfg(feature = "daemon")]
 async fn deferred_in_transient_built_during_root_build_hydrates_at_attach() {
     let app = App::builder("root-build-transient-deferred")
         .auto_discover()

@@ -4,16 +4,25 @@
 //! the deref-to-body), then shut the server down so the test never hangs.
 
 use futures::{Stream, StreamExt};
-use overseerd::axum::Ndjson;
-use overseerd::axum::axum::extract::Path;
-use overseerd::axum::axum::{Json, http};
-use overseerd::axum::client::{ClientInterceptor, HyperClient, ReqwestClient};
-use overseerd::axum::prelude::*;
-use overseerd::client::{ClientError, Unary};
-use overseerd::prelude::*;
-use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use upwell::axum::Ndjson;
+use upwell::axum::axum::extract::Path;
+use upwell::axum::axum::response::Redirect;
+use upwell::axum::axum::{Json, http};
+use upwell::axum::client::{ClientInterceptor, HyperClient, ReqwestClient};
+use upwell::axum::prelude::*;
+use upwell::client::{ClientError, Unary};
+use upwell::prelude::*;
+use upwell_test_utils::{TestEnvironment, TestServer, deadline};
+
+app! {
+    /// Generated host for HTTP client integration tests.
+    app ClientTestApplication {
+        name: "client-test",
+        protocol: upwell::axum::Axum,
+    }
+}
 
 #[dto]
 struct EchoOut {
@@ -96,6 +105,11 @@ impl Api {
         )
     }
 
+    #[get("/redirect")]
+    async fn redirect(&self) -> Redirect {
+        Redirect::to("/api/missing")
+    }
+
     /// Two path params: the client exposes them as dedicated named args (`a`, `b`).
     #[get("/pair/{a}/{b}")]
     async fn pair(&self, Path((a, b)): Path<(i64, i64)>) -> Json<i64> {
@@ -173,16 +187,14 @@ impl Api {
 
 #[tokio::test]
 async fn generated_client_round_trips_over_reqwest() {
-    let environment = TestEnvironment::new("overseerd-http-client-");
-    let app = app! {
-        name: "client-test",
-        protocol: overseerd::axum::AxumPlugin,
-    }
-    .config_source(environment.config())
-    .directories(environment.directories())
-    .build()
-    .await
-    .expect("app builds");
+    let environment = TestEnvironment::new("upwell-http-client-");
+    let app = ClientTestApplication::builder()
+        .expect("app builder")
+        .config_source(environment.config())
+        .directories(environment.directories())
+        .build()
+        .await
+        .expect("app builds");
 
     let server = TestServer::start_with_guard(app, environment).await;
     let addr = server.address();
@@ -220,7 +232,7 @@ async fn generated_client_round_trips_over_reqwest() {
 
     let missing = deadline(
         "missing request",
-        Unary::unary::<(), EchoOut, overseerd::client::Raw>(&backend, "", request),
+        Unary::unary::<(), EchoOut, upwell::client::Raw>(&backend, "", request),
     )
     .await;
 
@@ -235,6 +247,13 @@ async fn generated_client_round_trips_over_reqwest() {
         Ok(_) => panic!("expected remote 404, got success"),
         Err(other) => panic!("expected remote 404, got {other:?}"),
     }
+
+    let redirect = deadline("redirect request", client.redirect())
+        .await
+        .expect("declared redirect response");
+    assert_eq!(redirect.status(), http::StatusCode::SEE_OTHER);
+    assert_eq!(redirect.body().status, 303);
+    assert_eq!(redirect.body().location.as_deref(), Some("/api/missing"));
 
     // Two path params surface as dedicated named args: `GET /api/pair/{a}/{b}`.
     let product = deadline("pair request", client.pair(6, 7))
@@ -336,7 +355,7 @@ async fn generated_client_round_trips_over_reqwest() {
         .unwrap();
     let _ = deadline(
         "reqwest missing interceptor request",
-        Unary::unary::<(), EchoOut, overseerd::client::Raw>(&reqwest_backend, "", missing),
+        Unary::unary::<(), EchoOut, upwell::client::Raw>(&reqwest_backend, "", missing),
     )
     .await;
     assert_eq!(reqwest_interceptor.errors.load(Ordering::SeqCst), 1);
@@ -357,7 +376,7 @@ async fn generated_client_round_trips_over_reqwest() {
         .unwrap();
     let _ = deadline(
         "hyper missing interceptor request",
-        Unary::unary::<(), EchoOut, overseerd::client::Raw>(&hyper_backend, "", missing),
+        Unary::unary::<(), EchoOut, upwell::client::Raw>(&hyper_backend, "", missing),
     )
     .await;
     assert_eq!(hyper_interceptor.errors.load(Ordering::SeqCst), 1);

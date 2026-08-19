@@ -13,7 +13,7 @@
 //!
 //! The manager's directory list is consumed by the config crate (to resolve `${@runtime}`
 //! and friends) and seeded into the daemon, so directory resolution is defined once. This
-//! crate is standalone — it depends only on `overseerd-core` and `overseerd-di`, and knows
+//! crate is standalone — it depends only on `upwell-core` and `upwell-di`, and knows
 //! nothing about config.
 
 use std::marker::PhantomData;
@@ -25,7 +25,7 @@ use std::sync::{Arc, Mutex};
 use directories::ProjectDirs;
 use tracing::{debug, trace, warn};
 
-use overseerd_di::{Component, Injectable};
+use upwell_di::{Component, Injectable};
 
 #[cfg(windows)]
 mod windows;
@@ -68,7 +68,7 @@ macro_rules! dir_kinds {
             impl DirKind for $name {
                 const NAME: &'static str = concat!(stringify!($name), "Dir");
                 const LABEL: &'static str = $label;
-                const COMPONENT_ID: &'static str = concat!("overseerd:dir:", $label);
+                const COMPONENT_ID: &'static str = concat!("upwell:dir:", $label);
                 const PRIVATE: bool = $private;
 
                 fn project_path(dirs: &ProjectDirs) -> PathBuf {
@@ -97,7 +97,7 @@ dir_kinds! {
         d.runtime_dir().map(Path::to_path_buf).unwrap_or_else(|| {
             let fallback = d.cache_dir().to_path_buf();
             warn!(
-                target: "overseerd::dirs",
+                target: "upwell::dirs",
                 path = %fallback.display(),
                 "platform runtime directory unavailable; using persistent cache directory"
             );
@@ -148,7 +148,7 @@ impl<K> Dir<K> {
     where
         K: DirKind,
     {
-        debug!(target: "overseerd::dirs", path = %self.path.display(), "ensuring directory exists");
+        debug!(target: "upwell::dirs", path = %self.path.display(), "ensuring directory exists");
 
         if !K::PRIVATE {
             return std::fs::create_dir_all(&self.path);
@@ -340,9 +340,10 @@ fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
 }
 
 impl<K: DirKind> Component for Dir<K> {
+    type Handle = Dir<K>;
+
     const ID: &'static str = K::COMPONENT_ID;
     const NAME: &'static str = K::NAME;
-    type Handle = Dir<K>;
 
     fn into_handle(self) -> Self::Handle {
         self
@@ -364,7 +365,7 @@ impl<K: DirKind> Injectable for Dir<K> {
 
 /// Under `di-check`, every `Dir<K>` is framework-seeded, so it is always provided.
 #[cfg(feature = "di-check")]
-impl<K: DirKind> overseerd_di::Provide<Dir<K>> for overseerd_di::Wiring {}
+impl<K: DirKind> upwell_di::Provide<Dir<K>> for upwell_di::Wiring {}
 
 /// How a [`DirectoriesManager`] resolves directories.
 #[derive(Clone)]
@@ -388,7 +389,7 @@ impl DirectoriesManager {
     /// Creates a new manager from any path, can be used if nothing else is possible or if default behavior
     /// is not enough. It will never fail.
     pub fn from_path(path: PathBuf) -> Self {
-        debug!(target: "overseerd::dirs", root = %path.display(), "directories rooted at path");
+        debug!(target: "upwell::dirs", root = %path.display(), "directories rooted at path");
 
         Self {
             backing: Backing::Rooted(path),
@@ -402,7 +403,7 @@ impl DirectoriesManager {
 
         match resolved {
             Some(project) => {
-                debug!(target: "overseerd::dirs", application, "directories resolved from project metadata");
+                debug!(target: "upwell::dirs", application, "directories resolved from project metadata");
 
                 Some(Self {
                     backing: Backing::Project(project),
@@ -410,7 +411,7 @@ impl DirectoriesManager {
             }
 
             None => {
-                debug!(target: "overseerd::dirs", application, "no home directory; project directories unavailable");
+                debug!(target: "upwell::dirs", application, "no home directory; project directories unavailable");
 
                 None
             }
@@ -446,7 +447,7 @@ impl DirectoriesManager {
             Backing::Rooted(root) => (K::rooted_path(root), Some(root.clone())),
         };
 
-        trace!(target: "overseerd::dirs", kind = K::LABEL, path = %path.display(), "resolved directory");
+        trace!(target: "upwell::dirs", kind = K::LABEL, path = %path.display(), "resolved directory");
 
         Dir::new(path, secure_root)
     }
@@ -473,16 +474,17 @@ impl DirectoriesManager {
             (Tmp::LABEL, self.dir::<Tmp>().path().to_path_buf()),
         ];
 
-        debug!(target: "overseerd::dirs", kinds = entries.len(), "enumerated directory namespace");
+        debug!(target: "upwell::dirs", kinds = entries.len(), "enumerated directory namespace");
 
         entries
     }
 }
 
 impl Component for DirectoriesManager {
-    const ID: &'static str = "overseerd:directories";
-    const NAME: &'static str = "DirectoriesManager";
     type Handle = DirectoriesManager;
+
+    const ID: &'static str = "upwell:directories";
+    const NAME: &'static str = "DirectoriesManager";
 
     fn into_handle(self) -> Self::Handle {
         self
@@ -504,7 +506,7 @@ impl Injectable for DirectoriesManager {
 
 /// Under `di-check`, the manager is framework-seeded, so it is always provided.
 #[cfg(feature = "di-check")]
-impl overseerd_di::Provide<DirectoriesManager> for overseerd_di::Wiring {}
+impl upwell_di::Provide<DirectoriesManager> for upwell_di::Wiring {}
 
 #[cfg(test)]
 mod tests;

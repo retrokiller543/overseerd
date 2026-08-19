@@ -3,17 +3,19 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
 
-use overseerd_config::{CONFIG_BINDINGS, ConfigBinding};
-use overseerd_core::DependencyDescriptor;
-use overseerd_di::{
-    COMPONENTS, ComponentDescriptor, ComponentRegistry, PROVIDERS, ProviderDescriptor,
+use upwell_config::{CONFIG_BINDINGS, ConfigBinding};
+use upwell_core::DependencyDescriptor;
+use upwell_di::{
+    COMPONENTS, Component, ComponentDescriptor, ComponentRegistry, PROVIDERS, ProviderDescriptor,
+    ProviderSelectionModel,
 };
 
 use crate::error::Error;
+use crate::scope::PreparedScopeTopology;
 
 /// Holds the *agnostic* component, provider, and config-binding descriptors of an app —
 /// declarations only. Runtime instances live in the
-/// [`ScopeContainer`](overseerd_di::ScopeContainer).
+/// [`ScopeContainer`](upwell_di::ScopeContainer).
 ///
 /// Wraps the DI engine's [`ComponentRegistry`] (component/provider graph) with the config
 /// bindings, and runs the cross-cutting validation the component graph alone cannot
@@ -31,7 +33,7 @@ pub struct AppRegistry {
 impl AppRegistry {
     /// Collects every link-time-registered agnostic descriptor (components, providers,
     /// config bindings) into an `AppRegistry`. Protocol variant slices (e.g. RPC services)
-    /// are folded in by the protocol plugin, not here.
+    /// are folded in by the protocol definition, not here.
     pub fn collect() -> Self {
         let mut components: Vec<_> = COMPONENTS.iter().copied().collect();
         let mut providers: Vec<_> = PROVIDERS.iter().copied().collect();
@@ -72,6 +74,19 @@ impl AppRegistry {
         Ok(self.component_registry().resolved_components()?)
     }
 
+    /// Returns the effective descriptor registered for component type `T`.
+    ///
+    /// Duplicate registrations are resolved by the same rules used during registry validation.
+    pub fn resolved_component<T: Component>(&self) -> crate::Result<Option<ComponentDescriptor>> {
+        let type_id = TypeId::of::<T>();
+        let component = self
+            .resolved_components()?
+            .into_iter()
+            .find(|component| component.ty.type_id == type_id);
+
+        Ok(component)
+    }
+
     /// Validates structural consistency: the component graph (via the DI engine), then the
     /// config-binding rules.
     pub fn validate(&self) -> crate::Result<()> {
@@ -80,6 +95,42 @@ impl AppRegistry {
         let components = self.resolved_components()?;
 
         self.validate_configs(&components)?;
+
+        Ok(())
+    }
+
+    /// Validates the component graph against a prepared protocol-owned scope topology,
+    /// then applies the application configuration-binding rules.
+    pub fn validate_with_scope_topology(
+        &self,
+        topology: &PreparedScopeTopology,
+    ) -> crate::Result<()> {
+        self.component_registry()
+            .validate_with_scope_reachability(|consumer, dependency| {
+                topology.is_reachable(&consumer, &dependency)
+            })?;
+
+        let components = self.resolved_components()?;
+
+        self.validate_configs(&components)?;
+
+        Ok(())
+    }
+
+    pub(crate) fn validate_effective_with_scope_topology(
+        &self,
+        components: &[ComponentDescriptor],
+        selection: &ProviderSelectionModel,
+        topology: &PreparedScopeTopology,
+    ) -> crate::Result<()> {
+        self.component_registry()
+            .validate_with_scope_reachability_using(
+                components,
+                selection,
+                |consumer, dependency| topology.is_reachable(&consumer, &dependency),
+            )?;
+
+        self.validate_configs(components)?;
 
         Ok(())
     }
@@ -192,13 +243,14 @@ impl fmt::Display for AppRegistry {
 
 #[cfg(test)]
 mod tests {
+    use std::any::TypeId;
     use std::future::Future;
     use std::pin::Pin;
 
-    use overseerd_config::{ConfigBinding, ConfigProperties};
-    use overseerd_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
-    use overseerd_di::{
-        BoxedComponent, ComponentConstructionContext, ComponentDescriptor,
+    use upwell_config::{ConfigBinding, ConfigProperties};
+    use upwell_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
+    use upwell_di::{
+        BoxedComponent, Component, ComponentConstructionContext, ComponentDescriptor,
         ComponentFactoryDescriptor, Singleton,
     };
 
@@ -212,9 +264,22 @@ mod tests {
         const NAME: &'static str = "TestConfig";
     }
 
+    struct RegisteredComponent;
+
+    impl Component for RegisteredComponent {
+        type Handle = std::sync::Arc<Self>;
+
+        const ID: &'static str = "registered";
+        const NAME: &'static str = "RegisteredComponent";
+
+        fn into_handle(self) -> Self::Handle {
+            std::sync::Arc::new(self)
+        }
+    }
+
     fn fake_factory<'a>(
         _: &'a mut ComponentConstructionContext,
-    ) -> Pin<Box<dyn Future<Output = overseerd_di::Result<BoxedComponent>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = upwell_di::Result<BoxedComponent>> + Send + 'a>> {
         Box::pin(async { unreachable!("registry validation does not construct components") })
     }
 
@@ -227,7 +292,7 @@ mod tests {
             dynamic: false,
             qualifier: None,
             config: true,
-            resolution: overseerd_core::ResolutionMode::Eager,
+            resolution: upwell_core::ResolutionMode::Eager,
         }]
     }
 
@@ -248,8 +313,25 @@ mod tests {
             ty: TypeDescriptor::of::<()>("NeedsConfig"),
             scope: &Singleton,
             factories: config_factories,
-            hooks: overseerd_hooks::no_hooks,
+            hooks: upwell_hooks::no_hooks,
         }
+    }
+
+    #[test]
+    fn resolves_component_descriptor_by_concrete_type() {
+        let registry = AppRegistry {
+            components: vec![ComponentDescriptor::of::<RegisteredComponent>()],
+            providers: Vec::new(),
+            config_bindings: Vec::new(),
+        };
+
+        let descriptor = registry
+            .resolved_component::<RegisteredComponent>()
+            .expect("component resolution succeeds")
+            .expect("typed component is registered");
+
+        assert_eq!(descriptor.id, RegisteredComponent::ID);
+        assert_eq!(descriptor.ty.type_id, TypeId::of::<RegisteredComponent>());
     }
 
     #[test]

@@ -1,19 +1,16 @@
-use overseerd_config::{ConfigManager, ResolverChain, Toml};
-use overseerd_dirs::DirectoriesManager;
-use tempfile::{Builder, TempDir};
+use crate::TempFixture;
+use upwell_config::{ConfigManager, ResolverChain, Toml};
+use upwell_dirs::DirectoriesManager;
 
 /// Owns private application directories and environment-free configuration for a test.
 pub struct TestEnvironment {
-    root: TempDir,
+    root: TempFixture,
 }
 
 impl TestEnvironment {
     /// Creates a private test root with a descriptive prefix.
     pub fn new(prefix: &str) -> Self {
-        let root = Builder::new()
-            .prefix(prefix)
-            .tempdir()
-            .expect("create isolated test environment");
+        let root = TempFixture::new(prefix);
 
         Self { root }
     }

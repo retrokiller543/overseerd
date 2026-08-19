@@ -1,8 +1,8 @@
-//! The Overseerd **job** macros: `#[jobs]` and `#[job]`. They emit `::overseerd::jobs::*`
+//! The Upwell **job** macros: `#[jobs]` and `#[job]`. They emit `::upwell::jobs::*`
 //! types, so — like the RPC and axum protocol macros — they live in their own crate built on
-//! the shared [`overseerd_macros_core`] codegen, rather than in the core `overseerd-macros`.
+//! the shared [`upwell_macros_core`] codegen, rather than in the core `upwell-macros`.
 //!
-//! Re-exported through the `overseerd` facade's `jobs` module (with the `jobs` feature); depend
+//! Re-exported through the `upwell` facade's `jobs` module (with the `jobs` feature); depend
 //! on the facade, not this crate directly.
 //!
 //! - `#[jobs]` is `MethodArgs<Jobs>` — the base impl macro (`#[methods]`: `#[init]` + `#[hook]`)
@@ -16,27 +16,27 @@ extern crate proc_macro;
 mod jobs;
 
 use jobs::Jobs;
-use overseerd_macros_core::methods::MethodArgs;
-use overseerd_macros_core::paths::Paths;
-use overseerd_macros_core::run;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use syn::{ItemFn, ItemImpl};
+use upwell_macros_core::methods::MethodArgs;
+use upwell_macros_core::paths::Paths;
+use upwell_macros_core::run;
 
-/// The default crate roots for the job macros. Core is always the `overseerd` facade; the
-/// plugin (own-types) root is `::overseerd::jobs` when consumed through the facade (the
-/// `facade` feature, set by the `overseerd` crate) and the standalone `::overseerd_jobs`
-/// otherwise — so a direct dependant on `overseerd-jobs` gets working codegen.
+/// The default crate roots for the job macros. Core is always the `upwell` facade; the
+/// plugin (own-types) root is `::upwell::jobs` when consumed through the facade (the
+/// `facade` feature, set by the `upwell` crate) and the standalone `::upwell_jobs`
+/// otherwise — so a direct dependant on `upwell-jobs` gets working codegen.
 fn jobs_paths() -> Paths {
     if cfg!(feature = "facade") {
         Paths::new(
-            syn::parse_quote!(::overseerd),
-            syn::parse_quote!(::overseerd::jobs),
+            syn::parse_quote!(::upwell),
+            syn::parse_quote!(::upwell::jobs),
         )
     } else {
         Paths::new(
-            syn::parse_quote!(::overseerd),
-            syn::parse_quote!(::overseerd_jobs),
+            syn::parse_quote!(::upwell),
+            syn::parse_quote!(::upwell_jobs),
         )
     }
 }
@@ -56,7 +56,7 @@ pub fn jobs(attr: TokenStream, item: TokenStream) -> TokenStream {
             let paths = args.paths(jobs_paths());
 
             run::<ItemImpl, _>(item.into(), |item| {
-                overseerd_macros_core::methods::expand(args, item, &paths)
+                upwell_macros_core::methods::expand(args, item, &paths)
             })
         }
 

@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use upwell_core::ScopeId;
+
 /// Errors from the protocol-agnostic application core: registry validation, the DI
 /// engine, config, and hooks.
 ///
@@ -7,12 +9,71 @@ use thiserror::Error;
 /// `build`/`serve` can absorb assembly failures while adding its own variants.
 #[derive(Debug, Error)]
 pub enum Error {
+    /// A component descriptor uses a non-universal scope absent from the protocol topology.
     #[error(
         "component '{component}' declares scope '{scope}', which the active protocol does not open"
     )]
     UndeclaredScope {
+        /// The component's stable Rust type name.
         component: String,
-        scope: &'static str,
+        /// The undeclared stable scope identity.
+        scope: ScopeId,
+    },
+
+    /// A protocol attempted to open a boundary absent from its prepared topology.
+    #[error("scope boundary '{scope}' is not declared by the active protocol")]
+    UndeclaredScopeOpen {
+        /// The requested stable scope identity.
+        scope: ScopeId,
+    },
+
+    /// A parent container belongs to another prepared application runtime.
+    #[error("cannot open scope '{child}' over foreign-runtime parent '{parent}'")]
+    ForeignScopeParent {
+        /// The requested child boundary.
+        child: ScopeId,
+        /// The supplied parent's stable scope identity.
+        parent: ScopeId,
+    },
+
+    /// A child was opened over a parent other than its declared parent.
+    #[error("scope '{child}' requires parent '{expected}', but parent '{actual}' was supplied")]
+    InvalidScopeParent {
+        /// The requested child boundary.
+        child: ScopeId,
+        /// The topology-declared parent identity.
+        expected: ScopeId,
+        /// The supplied parent container's identity.
+        actual: ScopeId,
+    },
+
+    /// A dynamic seed is registered for another boundary.
+    #[error("seed type '{type_name}' belongs to scope '{expected}', not opened scope '{actual}'")]
+    InvalidSeedDestination {
+        /// The seeded Rust type name.
+        type_name: &'static str,
+        /// The descriptor's declared destination.
+        expected: ScopeId,
+        /// The boundary being opened.
+        actual: ScopeId,
+    },
+
+    /// A dynamic seed has no factory-less descriptor registered for this application.
+    #[error("seed type '{type_name}' is not registered for opened scope '{scope}'")]
+    UnregisteredSeed {
+        /// The boundary being opened.
+        scope: ScopeId,
+        /// The seeded Rust type name.
+        type_name: &'static str,
+    },
+
+    /// The same concrete seed type was supplied more than once.
+    #[error("seed type '{type_name}' is supplied more than once for scope '{scope}'")]
+    DuplicateSeedType {
+        /// The boundary being opened.
+        scope: ScopeId,
+        /// The duplicated Rust type name.
+        type_name: &'static str,
     },
 
     #[error(
@@ -43,15 +104,32 @@ pub enum Error {
     /// A component-graph failure from the DI engine (cycle, missing dependency, ambiguous
     /// provider, scope violation, duplicate/ambiguous factory, …).
     #[error(transparent)]
-    Di(#[from] overseerd_di::Error),
+    Di(#[from] upwell_di::Error),
 
     /// A configuration loading, binding, or substitution failure.
     #[error(transparent)]
-    Config(#[from] overseerd_config::ConfigError),
+    Config(#[from] upwell_config::ConfigError),
 
     /// A hook failure (e.g. an unresolvable receiver or parameter).
     #[error(transparent)]
-    Hook(#[from] overseerd_hooks::Error),
+    Hook(#[from] upwell_hooks::Error),
+
+    /// A protocol-owned scope topology declaration is structurally invalid.
+    #[error(transparent)]
+    ScopeTopology(#[from] crate::scope::ScopeTopologyError),
+
+    /// Plugin declarations could not be resolved into one deterministic effective plan.
+    #[error(transparent)]
+    Composition(#[from] crate::CompositionDiagnostics),
+
+    /// Retained plugin contributions could not be frozen or lowered safely.
+    #[error(transparent)]
+    PluginPlan(#[from] crate::PluginPlanError),
+
+    /// A protocol supplied structurally invalid owner-scoped tooling metadata.
+    #[cfg(feature = "tooling")]
+    #[error(transparent)]
+    ToolingContribution(#[from] crate::ToolingContributionError),
 
     /// An application-defined error surfaced through the framework.
     #[error(transparent)]

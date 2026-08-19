@@ -1,71 +1,145 @@
-//! A small but complete Overseerd daemon, demonstrating the dependency-injection
-//! surface across modules — including config bound from a merged tree — and
-//! validated at build time by `build.rs`.
+//! Homeledger, a complete generated Upwell application host for a household ledger.
 //!
-//! Run it to assemble the daemon and print the discovered registry (components,
-//! their dependencies, services, and RPCs):
+//! The named `app!` declaration generates the Clap parser, lifecycle dispatcher, and
+//! `DaemonApplication::run()` process entry point. It also demonstrates application-specific
+//! customization of framework-owned CLI slots without replacing generated bootstrap or startup.
 //!
 //! ```text
-//! cargo run -p overseerd-example-daemon
+//! cargo run -p upwell-example-daemon -- --help
+//! cargo run -p upwell-example-daemon -- inspect registry --verbose
+//! cargo run -p upwell-example-daemon -- database migrate --dry-run
+//! cargo run -p upwell-example-daemon -- operator-context --operator release-bot
+//! cargo run -p upwell-example-daemon -- --environment production --log-filter homeledger=trace --log-format json run
+//! cargo run -p upwell-example-daemon --
 //! ```
+//!
+//! The declaration changes `--config` to `--config-dir`, `--profile` to `--environment`, and the
+//! generated `serve` command to `run`, while retaining visible compatibility aliases. The config
+//! directory and `development` profile declared with Clap's exact default settings are shown in
+//! help and make commands runnable from the workspace. Generated bootstrap retains their
+//! `DefaultValue` source. Config location resolves explicit CLI, `UPWELL_CONFIG`, parser default,
+//! then the platform directory; profiles resolve explicit CLI, `UPWELL_PROFILES`, parser
+//! defaults, then an empty list. Loaded profile/base config participates later when logging and
+//! color settings are resolved.
+//! `--color` is deliberately disabled because Homeledger's logging destination owns ANSI policy
+//! through `logging.ansi`/`NO_COLOR`.
+//!
+//! With no subcommand, the generated CLI intentionally defaults to `run` and serves until Ctrl-C.
+//! `operator-context` comes from a statically installed plugin and stops after setup; `inspect
+//! registry` reaches `PreBuild` without constructing components; `database migrate` reaches `Built`
+//! so it can resolve the database but never starts the server. The setup and `after_build` hooks
+//! retain bootstrap provenance and verify the database schema for both commands and serving.
+//! Homeledger's example-local RPC definition also exposes audit-policy defaults: the declaration
+//! replaces the household policy with its compliance policy and suppresses optional audit export.
+//! The selected protocol still delegates preparation, runtime construction, and serving to RPC.
 
+mod audit;
+mod commands;
 mod components;
-mod notifiers;
+mod lifecycle;
+mod operations;
+mod protocol;
 mod service;
 
-use crate::components::{AppServer, DbConfig};
-use overseerd::app;
-use overseerd::builtins::init_tracing;
-use overseerd::config::Toml;
-use overseerd::{ConfigManager, DirectoriesManager, LoggingConfig, ServerConfig};
+use crate::commands::{DatabaseMigrateCommand, InspectRegistryCommand, OutputArgs};
+use crate::components::DatabaseConfig;
+use crate::lifecycle::{after_build, setup};
+use crate::operations::HomeledgerOperationsPlugin;
+use crate::protocol::{
+    AUDIT_EXPORT_SLOT, AUDIT_POLICY_SLOT, ComplianceAuditPolicyPlugin, HomeledgerRpc,
+};
+use upwell::{Cfg, LogFormat, LoggingConfig, ServerConfig, TcpTransport, app};
+
+app! {
+    /// A generated Homeledger daemon host with lifecycle-aware administration commands.
+    app DaemonApplication {
+        name: "homeledger",
+        protocol: HomeledgerRpc,
+        configs: [
+            DatabaseConfig => "homeledger.database.reader",
+            DatabaseConfig => "homeledger.database.writer",
+            ServerConfig => "homeledger.server",
+            LoggingConfig => "logging",
+        ],
+        cli: {
+            config: {
+                name: "config-dir",
+                visible_aliases: ["config"],
+                help: "Homeledger configuration file or directory.",
+                value_name: "CONFIG_DIR",
+                default_value: "examples/daemon/config",
+            },
+            profile: {
+                name: "environment",
+                short: 'e',
+                visible_aliases: ["profile"],
+                help: "Ordered Homeledger environment overlay; may be repeated.",
+                value_name: "ENVIRONMENT",
+                default_values_t: [String::from("development")],
+            },
+            log: {
+                name: "log-filter",
+                visible_aliases: ["log"],
+                help: "Override the configured tracing filter.",
+                value_name: "DIRECTIVES",
+            },
+            log_format: {
+                help: "Override the configured tracing formatter.",
+                default_value_t: LogFormat::Compact,
+            },
+            color: false,
+            serve: {
+                name: "run",
+                visible_aliases: ["serve"],
+                help: "Run the Homeledger RPC service until shutdown.",
+                default_command: true,
+            },
+        },
+        plugins: [
+            HomeledgerOperationsPlugin,
+            replace AUDIT_POLICY_SLOT => ComplianceAuditPolicyPlugin,
+            suppress AUDIT_EXPORT_SLOT,
+        ],
+        args: {
+            output: OutputArgs,
+        },
+        commands: {
+            /// Inspect Homeledger's validated application metadata.
+            #[command(alias = "show", visible_alias = "describe", display_order = 10)]
+            inspect: {
+                /// Print the prepared registry and plugin plan.
+                registry: InspectRegistryCommand,
+            },
+            /// Run Homeledger database administration commands.
+            #[command(alias = "db", display_order = 20)]
+            database: {
+                /// Build Homeledger and migrate its database schema.
+                migrate: DatabaseMigrateCommand,
+            },
+        },
+        setup = setup,
+        after_build = after_build,
+        serve(_context, app, server: Cfg<ServerConfig>) {
+            let server = server.snapshot();
+            let transport = TcpTransport::bind((server.bind.as_str(), server.port)).await?;
+
+            println!(
+                "Homeledger listening on {}:{}; press Ctrl-C to stop",
+                server.bind, server.port
+            );
+
+            app.serve(transport).await?;
+
+            Ok::<(), upwell::daemon::Error>(())
+        },
+    }
+}
 
 #[tokio::main]
-async fn main() -> overseerd::daemon::Result<()> {
-    const CRATE_PATH: &str = env!("CARGO_MANIFEST_DIR");
-
-    let dir_manager = DirectoriesManager::from_path(CRATE_PATH.into());
-
-    // Build the merged config first. `load_from` loads from the manager's config dir and
-    // registers the `${@kind}` directory namespace in one step, so config can reference,
-    // e.g., the runtime directory. `auto_discover` registers every `#[config(path)]` type and
-    // seeds its defaults, so a default may reference another path even when that value is
-    // itself only a default. (`${VAR:default}` placeholders resolve against the environment as
-    // each subtree is deserialized.)
-    let config = ConfigManager::<Toml>::load_from(&dir_manager, &[])?.auto_discover();
-
-    init_tracing(&config.get("logging")?).ok();
-
-    // Configure the transport from config before the daemon is assembled. `get_config`
-    // applies the type's `#[default]` fields, so `socket` (omitted from the file) falls
-    // back to its templated default under the runtime directory.
-    let server: AppServer = config.get_config::<AppServer>("app.server")?;
-    println!("server would bind to {}", server.addr);
-    println!("server socket resolves to {}", server.socket.display());
-
-    let app = app! {
-        name: "example-daemon",
-        protocol: overseerd::daemon::RpcPlugin,
-
-        // `app.greet` auto-registers via its `#[config(path = "app.greet")]`; the two
-        // `DbConfig` bindings share one type at different paths, so they are listed
-        // explicitly. The framework `ServerConfig` builtin carries no auto-binding, so
-        // it is bound here at `app.server`. The supplied config source backs them all.
-        configs: [
-            DbConfig => "app.db.reader",
-            DbConfig => "app.db.writer",
-            ServerConfig => "app.server",
-            LoggingConfig => "logging"
-        ],
-
-        managers: {
-            config: config,
-            directories: dir_manager,
-        }
-    }
-    .build()
-    .await?;
-
-    println!("{app}");
-
-    Ok(())
+async fn main() -> Result<(), upwell::CliError> {
+    DaemonApplication::run().await
 }
+
+#[cfg(test)]
+#[path = "main/tests.rs"]
+mod tests;

@@ -11,9 +11,9 @@ use hyper::body::Frame;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
-use overseerd_client::{ClientError, MaybeSend, Transport, Unary};
-use overseerd_transport::{CodecError, Decodes, Encodes, Error as TransportError};
 use serde::de::DeserializeOwned;
+use upwell_client::{ClientError, MaybeSend, Transport, Unary};
+use upwell_transport::{CodecError, Decodes, Encodes, Error as TransportError};
 
 #[cfg(all(feature = "ws", feature = "client"))]
 use super::WebsocketClient;
@@ -227,6 +227,14 @@ where
             .to_vec();
 
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                return Err(self.fail(super::redirect_error(
+                    parts.status,
+                    &parts.headers,
+                    body_bytes,
+                )));
+            }
+
             return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 
@@ -235,6 +243,55 @@ where
             .map_err(|error| self.fail(ClientError::Decode(error.to_string())))?;
 
         Ok(HttpResponse::new(parts.status, parts.headers, decoded))
+    }
+}
+
+impl<W, I> super::HttpExchange for HyperClient<W, I>
+where
+    W: Send + Sync,
+    I: ClientInterceptor + Send + Sync,
+{
+    async fn exchange<B>(
+        &self,
+        request: Request<B>,
+    ) -> Result<HttpResponse<Vec<u8>>, ClientError<http::StatusCode>>
+    where
+        Self: Encodes<B>,
+        B: Send,
+    {
+        let request = self.build_request(request)?;
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|error| self.fail(net_err(error)))?;
+        let (mut parts, body) = response.into_parts();
+
+        self.interceptor.on_response(&mut parts);
+
+        let body = body
+            .collect()
+            .await
+            .map_err(|error| self.fail(net_err(error)))?
+            .to_bytes()
+            .to_vec();
+
+        Ok(HttpResponse::new(parts.status, parts.headers, body))
+    }
+
+    fn decode_response<T>(&self, body: Vec<u8>) -> Result<T, ClientError<http::StatusCode>>
+    where
+        Self: Decodes<T>,
+    {
+        self.decode(body)
+            .map_err(|error| self.fail(ClientError::Decode(error.to_string())))
+    }
+
+    fn fail_unexpected<E>(
+        &self,
+        response: HttpResponse<Vec<u8>>,
+    ) -> ClientError<http::StatusCode, E> {
+        self.fail(super::unexpected_response(response))
     }
 }
 
@@ -265,6 +322,17 @@ where
         // A non-success status is a pre-stream failure; surface it as the outer `Err` rather than
         // streaming an error body as items.
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                let body = body
+                    .collect()
+                    .await
+                    .map_err(|error| self.fail(net_err(error)))?
+                    .to_bytes()
+                    .to_vec();
+
+                return Err(self.fail(super::redirect_error(parts.status, &parts.headers, body)));
+            }
+
             let body = body
                 .collect()
                 .await
@@ -320,6 +388,14 @@ where
             .to_vec();
 
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                return Err(self.fail(super::redirect_error(
+                    parts.status,
+                    &parts.headers,
+                    body_bytes,
+                )));
+            }
+
             return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 
@@ -378,7 +454,7 @@ fn net_err<T, S, E>(error: T) -> ClientError<S, E>
 where
     T: std::fmt::Display,
 {
-    ClientError::Transport(overseerd_transport::Error::Io(std::io::Error::other(
+    ClientError::Transport(upwell_transport::Error::Io(std::io::Error::other(
         error.to_string(),
     )))
 }

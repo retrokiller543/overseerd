@@ -31,15 +31,15 @@ use std::{
 };
 
 use futures::{Stream, StreamExt};
-use overseerd_transport::{
-    PeerInfo, PredefinedCode, StatusCode, StreamDecode, StreamEncode, StreamEncodeError,
-};
 use serde::{Serialize, de::DeserializeOwned};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
+use upwell_transport::{
+    PeerInfo, PredefinedCode, StatusCode, StreamDecode, StreamEncode, StreamEncodeError,
+};
 
-use overseerd_di::FromContainer;
+use upwell_di::FromContainer;
 
 use crate::{
     Error,
@@ -232,14 +232,14 @@ impl ErrorResponse {
 pub trait ResponseError {
     type Body: Serialize;
 
+    /// Renders the error to a code + serialized body, attaching
+    /// [`status_code`](Self::status_code).
+    fn error_response(self) -> ErrorResponse;
+
     /// The status code for this error. Defaults to `Internal`.
     fn status_code(&self) -> StatusCode {
         StatusCode::from(PredefinedCode::Internal)
     }
-
-    /// Renders the error to a code + serialized body, attaching
-    /// [`status_code`](Self::status_code).
-    fn error_response(self) -> ErrorResponse;
 }
 
 impl<E> ResponseError for E
@@ -474,9 +474,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use overseerd_transport::PredefinedCode;
     use serde::Serializer;
     use serde::ser::Error as _;
+    use upwell_transport::PredefinedCode;
 
     use super::*;
 

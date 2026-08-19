@@ -1,5 +1,5 @@
 [package]
-name = "overseerd-example-jobs"
+name = "upwell-example-jobs"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,6 +7,8 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-overseerd = { path = "../..", features = ["daemon", "jobs", "tracing-subscriber"] }
+upwell = { path = "../..", features = ["daemon", "jobs", "tooling", "tracing-subscriber"] }
+clap.workspace = true
 tokio = { workspace = true }
+thiserror.workspace = true
 tracing.workspace = true

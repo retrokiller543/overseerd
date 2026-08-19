@@ -1,12 +1,11 @@
 //! End-to-end tests for the Phase 0 dependency model: `#[default]` local state,
 //! optional dependencies (`Option<Arc<T>>`), and runtime-provided dependencies
-//! (`Dynamic<Arc<T>>`). Each builds a real daemon and inspects the constructed
+//! (`Dynamic<Arc<T>>`). Each builds a real app and inspects the constructed
 //! component out of the container.
 
 use std::sync::Arc;
 
-use overseerd::daemon::App;
-use overseerd::{Dynamic, component};
+use upwell::{App, Dynamic, component};
 
 /// A plain dependency, provided as an instance at build time (manual — no factory).
 #[component(default_factory = false)]
@@ -34,7 +33,7 @@ struct Widget {
 
 #[tokio::test]
 async fn resolves_default_optional_and_dynamic_edges() {
-    let daemon = App::builder("di-test")
+    let daemon = App::<()>::builder("di-test")
         .auto_discover()
         .with_component(Settings {
             name: "configured".to_string(),

@@ -1,25 +1,25 @@
 //! Phase 4 triggers: `ConfigManager` carries the opt-in reload triggers (config lives on the
-//! manager, never the daemon), the `app!` macro can construct + configure a manager from a
-//! per-manager config block, and — under the `watch` feature — a file change drives a reload.
+//! manager, never a protocol), an app builder can be configured with that manager, and — under the
+//! `watch` feature — a file change drives a reload.
 #![allow(dead_code)]
 
 use std::fs;
 use std::time::Duration;
 
-use overseerd::ConfigManager;
-use overseerd::app;
-use overseerd::config::Toml;
-use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd_config::ResolverChain;
-use overseerd_test_utils::AbortOnDropTask;
 use tempfile::TempDir;
+use upwell::ConfigManager;
+use upwell::config::Toml;
+#[cfg(any(feature = "daemon", feature = "watch"))]
+use upwell::dirs::{Config, DirectoriesManager};
+use upwell_config::ResolverChain;
+use upwell_test_utils::AbortOnDropTask;
 
 #[cfg(feature = "watch")]
-use overseerd::daemon::App;
+use upwell::App;
 
 fn temp_dir(tag: &str) -> TempDir {
     tempfile::Builder::new()
-        .prefix(&format!("overseerd-triggers-{tag}-"))
+        .prefix(&format!("upwell-triggers-{tag}-"))
         .tempdir()
         .expect("create temp dir")
 }
@@ -40,25 +40,28 @@ fn config_manager_carries_its_triggers() {
 }
 
 #[tokio::test]
-async fn daemon_macro_builds_a_configured_manager_from_a_block() -> overseerd::daemon::Result<()> {
+#[cfg(feature = "daemon")]
+async fn app_builder_builds_with_a_configured_manager() -> upwell::daemon::Result<()> {
     let root = temp_dir("macro");
     let dirs = DirectoriesManager::from_path(root.path().to_path_buf());
 
     fs::create_dir_all(dirs.dir::<Config>().path()).expect("create config dir");
     fs::write(dirs.dir::<Config>().join("application.toml"), "").expect("write config");
 
-    // `config` is a block (no instance): the macro loads it from the `directories` instance
-    // and applies the triggers to the manager.
-    let built = app! {
-        name: "trigger-macro-test",
-        protocol: overseerd::daemon::RpcPlugin,
-        managers: {
-            directories: dirs,
-            config: { sighup: true, debounce: Duration::from_millis(50) },
-        },
-    }
-    .build()
-    .await?;
+    let config = ConfigManager::<upwell::config::Dynamic>::load_from_with_resolvers(
+        &dirs,
+        &[],
+        ResolverChain::empty(),
+    )?
+    .reload_on_sighup()
+    .config_reload_debounce(Duration::from_millis(50));
+
+    let built = upwell::App::<upwell::daemon::Rpc>::builder("trigger-builder-test")
+        .auto_discover()
+        .directories(dirs)
+        .config_source(config)
+        .build()
+        .await?;
 
     // The reloader is always present; a manual reload still works.
     let report = built
@@ -89,17 +92,17 @@ async fn watching_a_source_file_triggers_a_reload() -> Result<(), Box<dyn std::e
             .watch_config()
             .config_reload_debounce(Duration::from_millis(50));
 
-    let daemon = App::builder("watch-test")
+    let app = App::<()>::builder("watch-test")
         .config_source(manager)
         .build()
         .await
-        .expect("daemon builds");
+        .expect("protocol-neutral app builds");
 
-    let reloader = daemon.config_reloader();
-    let shutdown = daemon.shutdown_handle();
+    let reloader = app.config_reloader();
+    let shutdown = app.shutdown_handle();
     let before = reloader.generation();
 
-    let mut task = AbortOnDropTask::spawn("watch daemon", daemon.run());
+    let mut task = AbortOnDropTask::spawn("watch daemon", app.run());
     let mut daemon_exit = None;
     let mut reloaded = false;
 

@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-di"
-description = "The Overseerd dependency-injection engine: scope containers, factories, and component descriptors over the core resolver."
+name = "upwell-di"
+description = "The Upwell dependency-injection engine: scope containers, factories, and component descriptors over the core resolver."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,8 +16,8 @@ default = []
 di-check = []
 
 [dependencies]
-overseerd-core = { workspace = true }
-overseerd-hooks = { workspace = true }
+upwell-core = { workspace = true }
+upwell-hooks = { workspace = true }
 arc-swap = { workspace = true }
 linkme = { workspace = true }
 inventory = { workspace = true }
@@ -26,7 +26,7 @@ futures = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 
-# Sets the `overseerd_hybrid` cfg (target-correct here) so the registration read-side can branch on
+# Sets the `upwell_hybrid` cfg (target-correct here) so the registration read-side can branch on
 # the active backend if it ever needs to.
 [build-dependencies]
-overseerd-build = { workspace = true }
+upwell-build = { workspace = true }

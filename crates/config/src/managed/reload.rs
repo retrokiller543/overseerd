@@ -13,9 +13,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use overseerd_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
-use overseerd_di::{BoxedComponent, Injectable};
-use overseerd_hooks::{HookKind, HookManager, HookParam};
+use upwell_core::{Cardinality, DependencyDescriptor, TypeDescriptor};
+use upwell_di::{BoxedComponent, Injectable};
+use upwell_hooks::{HookKind, HookManager, HookParam};
 
 use crate::ConfigValue;
 
@@ -27,9 +27,10 @@ use super::{Cfg, CfgNext, ConfigError, ConfigManager, ConfigProperties};
 pub struct ConfigReload;
 
 impl HookKind for ConfigReload {
-    const NAME: &'static str = "config_reload";
     type Output = HookOutcome;
     type Cx = ReloadProposal;
+
+    const NAME: &'static str = "config_reload";
 }
 
 /// What a `#[hook(ConfigReload)]` hook reports back. `Err` from the hook aborts the reload;
@@ -102,13 +103,13 @@ impl<T: ConfigProperties> HookParam<ConfigReload> for CfgNext<T> {
             dynamic: false,
             qualifier: path,
             config: true,
-            resolution: overseerd_core::ResolutionMode::Eager,
+            resolution: upwell_core::ResolutionMode::Eager,
         }
     }
 
-    fn extract(cx: &ReloadProposal, path: Option<&'static str>) -> overseerd_hooks::Result<Self> {
+    fn extract(cx: &ReloadProposal, path: Option<&'static str>) -> upwell_hooks::Result<Self> {
         cx.next::<T>(path)
-            .ok_or(overseerd_hooks::Error::MissingParam(T::NAME))
+            .ok_or(upwell_hooks::Error::MissingParam(T::NAME))
     }
 }
 
@@ -135,7 +136,7 @@ pub enum ConfigReloadError {
     Hook {
         component: &'static str,
         #[source]
-        source: Box<overseerd_hooks::Error>,
+        source: Box<upwell_hooks::Error>,
     },
 
     /// User-provided deserialization panicked while preparing a reload. Panic
@@ -337,7 +338,7 @@ impl ConfigReloader {
     fn lock_manager(&self) -> std::sync::MutexGuard<'_, ConfigManager> {
         self.inner.manager.lock().unwrap_or_else(|poisoned| {
             tracing::warn!(
-                target: "overseerd::config",
+                target: "upwell::config",
                 "recovering config manager after a panicking reload"
             );
             self.inner.manager.clear_poison();
@@ -513,7 +514,7 @@ fn bindings_by_type_index(manager: &ConfigManager) -> HashMap<TypeId, Vec<String
 /// Whether a hook targets a changed path: any of its `CfgNext<T>` params resolves (by
 /// `#[config("path")]` qualifier, or its type's sole binding) to a path that changed.
 fn hook_targets_changed(
-    hook: &overseerd_hooks::HookDescriptor,
+    hook: &upwell_hooks::HookDescriptor,
     changed_paths: &HashSet<String>,
     bindings_by_type: &HashMap<TypeId, Vec<String>>,
 ) -> bool {
@@ -534,15 +535,16 @@ fn hook_targets_changed(
 }
 
 /// The stable component id of the seeded [`ConfigReloader`] singleton.
-pub const CONFIG_RELOADER_ID: &str = "overseerd:config-reloader";
+pub const CONFIG_RELOADER_ID: &str = "upwell:config-reloader";
 
 /// The display name of the seeded [`ConfigReloader`] singleton.
 pub const CONFIG_RELOADER_NAME: &str = "ConfigReloader";
 
-impl overseerd_di::Component for ConfigReloader {
+impl upwell_di::Component for ConfigReloader {
+    type Handle = ConfigReloader;
+
     const ID: &'static str = CONFIG_RELOADER_ID;
     const NAME: &'static str = CONFIG_RELOADER_NAME;
-    type Handle = ConfigReloader;
 
     fn into_handle(self) -> Self::Handle {
         self
@@ -564,4 +566,4 @@ impl Injectable for ConfigReloader {
 
 /// Under `di-check`, the reloader is framework-seeded, so it is always provided.
 #[cfg(feature = "di-check")]
-impl overseerd_di::Provide<ConfigReloader> for overseerd_di::Wiring {}
+impl upwell_di::Provide<ConfigReloader> for upwell_di::Wiring {}

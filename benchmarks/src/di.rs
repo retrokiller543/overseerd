@@ -1,5 +1,5 @@
 //! Builders that stand up DI graphs of a chosen size, layered across several scopes, using only the
-//! public `overseerd-di` API.
+//! public `upwell-di` API.
 //!
 //! Two component families let a bench separate framework overhead from user-data cost:
 //!
@@ -18,8 +18,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use overseerd_core::{ResolverSet, Scope, Singleton, TypeDescriptor};
-use overseerd_di::{
+use upwell_core::{ResolverSet, Scope, Singleton, TypeDescriptor};
+use upwell_di::{
     BoxedComponent, Component, ComponentDescriptor, ComponentRegistry, Injectable, Live,
     ProviderDescriptor, ScopeContainer, ScopeRegistry,
 };
@@ -44,9 +44,10 @@ impl<const N: usize> Default for Payloaded<N> {
 }
 
 impl<const N: usize> Component for Payloaded<N> {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "payloaded-component";
     const NAME: &'static str = "PayloadedComponent";
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Arc<Self> {
         Arc::new(self)
@@ -63,9 +64,10 @@ impl<const N: usize> Default for Empty<N> {
 }
 
 impl<const N: usize> Component for Empty<N> {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "empty-component";
     const NAME: &'static str = "EmptyComponent";
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Arc<Self> {
         Arc::new(self)
@@ -177,6 +179,11 @@ macro_rules! layer_scopes {
             struct $name;
 
             impl Scope for $name {
+                fn id(&self) -> upwell_core::ScopeId {
+                    upwell_core::ScopeId::new(concat!("benchmark/", stringify!($name)))
+                        .expect("valid benchmark scope ID")
+                }
+
                 fn rank(&self) -> u8 {
                     $rank
                 }
@@ -226,7 +233,8 @@ pub async fn build_graph(entries: &[Entry], width: usize, layers: usize) -> Arc<
         HashMap::new(),
         Vec::new(),
         HashMap::new(),
-    ));
+    )
+    .expect("empty scope registry validates"));
 
     let root = &entries[0..width];
     let root_descs: Vec<ComponentDescriptor> = root.iter().map(|entry| entry.desc).collect();
@@ -279,10 +287,14 @@ pub async fn build_with_providers(entries: &[Entry], count: usize) -> Arc<ScopeC
     .expect("benchmark provider ordering validates");
     let registry = Arc::new(ScopeRegistry::new(
         HashMap::new(),
-        HashMap::new(),
+        components
+            .iter()
+            .map(|component| (component.ty.type_id, *component))
+            .collect(),
         providers,
         provider_order,
-    ));
+    )
+    .expect("provider scope registry validates"));
 
     let seeds: Vec<BoxedComponent> = slice.iter().map(|entry| (entry.make)()).collect();
 

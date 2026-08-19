@@ -12,9 +12,9 @@ use std::sync::{Arc, RwLock};
 
 use http::header::HeaderMap;
 use http::{Request, Uri};
-use overseerd_client::{ClientError, MaybeSend, MaybeSync, Transport, Unary};
-use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
+use upwell_client::{ClientError, MaybeSend, MaybeSync, Transport, Unary};
+use upwell_transport::{CodecError, Decodes, Encodes};
 
 #[cfg(all(feature = "ws", feature = "client", not(target_family = "wasm")))]
 use super::WebsocketClient;
@@ -59,7 +59,7 @@ impl ReqwestClient<(), DefaultClientInterceptor> {
     /// A client against `base_url` (e.g. `"http://localhost:3000"`) with a default reqwest client.
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: default_client(),
             base_url: base_url.into(),
             header_provider: ProviderSlot::default(),
             interceptor: DefaultClientInterceptor::default(),
@@ -267,6 +267,14 @@ where
             .to_vec();
 
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                return Err(self.fail(super::redirect_error(
+                    parts.status,
+                    &parts.headers,
+                    body_bytes,
+                )));
+            }
+
             return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 
@@ -280,6 +288,75 @@ where
             decoded,
         ))
     }
+}
+
+impl<W, I> super::HttpExchange for ReqwestClient<W, I>
+where
+    W: MaybeSend + MaybeSync,
+    I: ClientInterceptor + MaybeSend + MaybeSync,
+{
+    async fn exchange<B>(
+        &self,
+        request: Request<B>,
+    ) -> Result<HttpResponse<Vec<u8>>, ClientError<http::StatusCode>>
+    where
+        Self: Encodes<B>,
+        B: MaybeSend,
+    {
+        let (parts, body) = request.into_parts();
+        let bytes = self
+            .encode(body)
+            .map_err(|error| self.fail(ClientError::Encode(error.to_string())))?;
+        let parts = self.prepare_request(parts)?;
+        let response = self
+            .client
+            .request(parts.method, parts.uri.to_string())
+            .headers(parts.headers)
+            .body(bytes)
+            .send()
+            .await
+            .map_err(|error| self.fail(net_err(error)))?;
+        let mut parts = self.response_parts(response.status(), response.headers().clone());
+        let body = response
+            .bytes()
+            .await
+            .map_err(|error| self.fail(net_err(error)))?
+            .to_vec();
+
+        Ok(HttpResponse::new(
+            parts.status,
+            std::mem::take(&mut parts.headers),
+            body,
+        ))
+    }
+
+    fn decode_response<T>(&self, body: Vec<u8>) -> Result<T, ClientError<http::StatusCode>>
+    where
+        Self: Decodes<T>,
+    {
+        self.decode(body)
+            .map_err(|error| self.fail(ClientError::Decode(error.to_string())))
+    }
+
+    fn fail_unexpected<E>(
+        &self,
+        response: HttpResponse<Vec<u8>>,
+    ) -> ClientError<http::StatusCode, E> {
+        self.fail(super::unexpected_response(response))
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn default_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("default reqwest client configuration is valid")
+}
+
+#[cfg(target_family = "wasm")]
+fn default_client() -> reqwest::Client {
+    reqwest::Client::new()
 }
 
 // Keep the default browser transport wired into the target-relaxed client capabilities. This is a
@@ -326,6 +403,16 @@ where
         // A non-success status is a pre-stream failure (the handler errored before streaming);
         // surface it as the outer `Err` rather than streaming an error body as items.
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                let body = response
+                    .bytes()
+                    .await
+                    .map_err(|error| self.fail(net_err(error)))?
+                    .to_vec();
+
+                return Err(self.fail(super::redirect_error(parts.status, &parts.headers, body)));
+            }
+
             let body = response
                 .bytes()
                 .await
@@ -379,6 +466,14 @@ where
             .to_vec();
 
         if !parts.status.is_success() {
+            if parts.status.is_redirection() {
+                return Err(self.fail(super::redirect_error(
+                    parts.status,
+                    &parts.headers,
+                    body_bytes,
+                )));
+            }
+
             return Err(self.fail(super::remote_error(parts.status, body_bytes).typed()));
         }
 
@@ -419,7 +514,7 @@ where
 /// Maps a reqwest network failure onto the transport arm of [`ClientError`] (status `S` and error
 /// body `E` are inferred from the call site; the transport arm carries neither).
 fn net_err<S, E>(error: reqwest::Error) -> ClientError<S, E> {
-    ClientError::Transport(overseerd_transport::Error::Io(std::io::Error::other(
+    ClientError::Transport(upwell_transport::Error::Io(std::io::Error::other(
         error.to_string(),
     )))
 }

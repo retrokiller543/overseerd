@@ -1,19 +1,21 @@
-//! The native RPC protocol plugin and its builder extension.
+//! The native RPC protocol definition and its builder extension.
 
 use std::sync::Arc;
 
-use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin};
-use overseerd_core::{Descriptor, Scope, TypeDescriptor};
-use overseerd_di::{ComponentDescriptor, ServiceComponent};
-use overseerd_transport::PeerInfo;
 use tower::{Layer, Service};
+use upwell_app::{
+    AppBuilder, AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ValidationContext,
+};
+use upwell_core::{Descriptor, TypeDescriptor};
+use upwell_di::{ComponentDescriptor, ServiceComponent};
+use upwell_transport::PeerInfo;
 
 use crate::descriptors::{RpcOutcome, SERVICES, ServiceDescriptor};
 use crate::extract::ErrorResponse;
 use crate::middleware::{ErrorHandler, Guard, GuardLayer, RouterService, RpcRequest, RpcService};
-use crate::protocol::{Rpc, RpcLimits};
+use crate::protocol::{RpcLimits, RpcRuntime};
 use crate::router::RpcRouter;
-use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
+use crate::scope::{Connection as ConnectionScope, SCOPE_TOPOLOGY};
 
 /// A registered middleware step: wraps the current dispatch service in one more layer.
 /// Collected in registration order and applied outermost-first when the app is built.
@@ -22,57 +24,84 @@ type LayerApplier = Box<dyn FnOnce(RpcService) -> RpcService + Send>;
 /// The framework-provided connection-scoped injectable for the remote peer.
 ///
 /// Seeded into every connection scope with the actual `PeerInfo`, so a connection-scoped
-/// component can depend on `Arc<PeerInfo>` (e.g. to authenticate in its constructor).
+/// component can depend on `PeerInfo` (e.g. to authenticate in its constructor). This
+/// descriptor intentionally has no factory: it declares the connection scope as the only
+/// valid runtime seed destination.
 static PEER_INFO_DESCRIPTOR: ComponentDescriptor = ComponentDescriptor::manual(
-    "__overseerd_peer_info",
+    "__upwell_peer_info",
     "PeerInfo",
     TypeDescriptor::of::<PeerInfo>("PeerInfo"),
     &ConnectionScope,
 );
 
-/// The native RPC protocol plugin.
+/// The native RPC protocol definition.
 ///
 /// Accumulates the RPC-specific builder state — the discovered/registered services, the
 /// middleware layers, and the global error handler — seeds the connection-scoped
-/// `PeerInfo` via [`Plugin::register`], and builds the [`Rpc`] protocol (the router
-/// wrapped by the middleware stack) via [`ProtocolPlugin::build`].
+/// `PeerInfo`, and prepares the validated service plan consumed by [`RpcRuntime`].
 #[derive(Default)]
-pub struct RpcPlugin {
+pub struct Rpc {
     services: Vec<ServiceDescriptor>,
     layers: Vec<LayerApplier>,
     error_handler: Option<Arc<dyn ErrorHandler>>,
     limits: RpcLimits,
 }
 
-impl Plugin for RpcPlugin {
-    fn auto_discover(&mut self) {
-        self.services.extend(SERVICES.iter().copied());
-    }
+/// The validated RPC service and middleware plan awaiting runtime construction.
+pub struct PreparedRpc {
+    resolved_services: Vec<crate::routes::ResolvedService>,
+    layers: Vec<LayerApplier>,
+    error_handler: Option<Arc<dyn ErrorHandler>>,
+    needs_peer: bool,
+    limits: RpcLimits,
+}
+
+impl ProtocolDefinition for Rpc {
+    type Prepared = PreparedRpc;
+    type Error = crate::Error;
+
+    const ID: upwell_app::ProtocolId =
+        upwell_core::namespaced_id!(upwell_app::ProtocolId, "upwell/rpc");
+    const SCOPE_TOPOLOGY: upwell_app::ScopeTopology = SCOPE_TOPOLOGY;
 
     fn register(&self, registry: &mut AppRegistry) {
         registry.components.push(PEER_INFO_DESCRIPTOR);
     }
-}
 
-impl ProtocolPlugin for RpcPlugin {
-    type Protocol = Rpc;
-    type Error = crate::Error;
-
-    const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
-
-    fn build(self, runtime: &AppRuntime) -> crate::Result<Rpc> {
+    fn prepare(self, context: &ValidationContext<'_>) -> crate::Result<Self::Prepared> {
         let resolved = crate::routes::resolved_services(&self.services);
+
         crate::routes::validate_services(&resolved)?;
 
-        // Does any real component depend on the peer? If not, the connection scope need
-        // not exist solely to hold it; handlers still reach the peer via the `Peer`
-        // extractor, which reads it off the call context rather than the scope chain.
         let peer_id = PEER_INFO_DESCRIPTOR.ty.type_id;
-        let needs_peer = runtime.resolved_components().iter().any(|c| {
-            c.ty.type_id != peer_id && c.dependencies().iter().any(|d| d.ty.type_id == peer_id)
+        let needs_peer = context.resolved_components().iter().any(|component| {
+            component.ty.type_id != peer_id
+                && component
+                    .dependencies()
+                    .iter()
+                    .any(|dependency| dependency.ty.type_id == peer_id)
         });
 
-        let router = Arc::new(RpcRouter::from_services(&resolved));
+        Ok(PreparedRpc {
+            resolved_services: resolved,
+            layers: self.layers,
+            error_handler: self.error_handler,
+            needs_peer,
+            limits: self.limits,
+        })
+    }
+
+    fn auto_discover(&mut self) {
+        self.services.extend(SERVICES.iter().copied());
+    }
+}
+
+impl PreparedProtocol for PreparedRpc {
+    type Runtime = RpcRuntime;
+    type Error = crate::Error;
+
+    fn build(self, _runtime: &AppRuntime) -> crate::Result<Self::Runtime> {
+        let router = Arc::new(RpcRouter::from_services(&self.resolved_services));
 
         // Fold the registered layers onto the terminal router service. Appliers are
         // pushed in registration order, so applying them in reverse makes the
@@ -83,17 +112,170 @@ impl ProtocolPlugin for RpcPlugin {
             service = applier(service);
         }
 
-        Ok(Rpc::new(
+        Ok(RpcRuntime::new(
             router,
             service,
             self.error_handler,
-            needs_peer,
+            self.needs_peer,
             self.limits,
         ))
     }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
+        use std::collections::BTreeMap;
+
+        use upwell_app::{ResourceDisplay, ToolingEndpoint, ToolingRelationshipKind};
+
+        let route_count = self
+            .resolved_services
+            .iter()
+            .map(|service| service.rpcs.len())
+            .sum::<usize>();
+
+        contributions.display(ResourceDisplay {
+            label: Some(String::from("RPC")),
+            group: Some(String::from("Protocols")),
+            summary: Some(format!(
+                "{} services, {route_count} operations",
+                self.resolved_services.len()
+            )),
+            details: BTreeMap::from([(String::from("middleware"), self.layers.len().to_string())]),
+        });
+
+        contributions.facet(
+            "summary",
+            1,
+            upwell_app::tooling_schema::JsonValue::Object(
+                [
+                    (
+                        String::from("service_count"),
+                        self.resolved_services.len().into(),
+                    ),
+                    (
+                        String::from("route_count"),
+                        self.resolved_services
+                            .iter()
+                            .map(|service| service.rpcs.len())
+                            .sum::<usize>()
+                            .into(),
+                    ),
+                    (String::from("middleware_count"), self.layers.len().into()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        );
+
+        for service in &self.resolved_services {
+            let service_id = format!("service/{}", service.descriptor.id);
+
+            contributions.resource_with_labels(
+                &service_id,
+                service.descriptor.name,
+                BTreeMap::from([
+                    (String::from("kind"), String::from("rpc-service")),
+                    (String::from("route-count"), service.rpcs.len().to_string()),
+                ]),
+            );
+            contributions.resource_display(
+                &service_id,
+                ResourceDisplay {
+                    label: Some(service.descriptor.name.to_string()),
+                    group: Some(String::from("RPC services")),
+                    summary: Some(format!("{} operations", service.rpcs.len())),
+                    details: BTreeMap::from([
+                        (
+                            String::from("rust-type"),
+                            (service.descriptor.ty.type_name)().to_string(),
+                        ),
+                        (
+                            String::from("version"),
+                            service
+                                .descriptor
+                                .version
+                                .unwrap_or("unversioned")
+                                .to_string(),
+                        ),
+                    ]),
+                },
+            );
+            contributions.relationship(
+                ToolingRelationshipKind::Contains,
+                ToolingEndpoint::Owner,
+                ToolingEndpoint::Resource(&service_id),
+            );
+
+            for rpc in &service.rpcs {
+                let rpc_id = format!("route/{}/{}", service.descriptor.id, rpc.name);
+
+                contributions.resource_with_labels(
+                    &rpc_id,
+                    rpc.name,
+                    BTreeMap::from([(String::from("kind"), String::from("rpc-route"))]),
+                );
+                let operation = operation_kind(rpc.operation);
+                let parameters = rpc
+                    .parameters
+                    .iter()
+                    .map(|parameter| format!("{}: {}", parameter.name, (parameter.ty.type_name)()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                let parameter_summary = if parameters.is_empty() {
+                    String::from("none")
+                } else {
+                    parameters.clone()
+                };
+
+                contributions.resource_display(
+                    &rpc_id,
+                    ResourceDisplay {
+                        label: Some(format!(
+                            "{operation} {}.{}",
+                            service.descriptor.name, rpc.name
+                        )),
+                        group: Some(format!("RPC · {}", service.descriptor.name)),
+                        summary: Some(format!(
+                            "{} → {}",
+                            parameter_summary,
+                            (rpc.output.type_name)()
+                        )),
+                        details: BTreeMap::from([
+                            (String::from("operation"), operation.to_string()),
+                            (
+                                String::from("parameters"),
+                                if parameters.is_empty() {
+                                    String::from("none")
+                                } else {
+                                    parameters
+                                },
+                            ),
+                            (String::from("output"), (rpc.output.type_name)().to_string()),
+                        ]),
+                    },
+                );
+                contributions.relationship(
+                    ToolingRelationshipKind::Contains,
+                    ToolingEndpoint::Resource(&service_id),
+                    ToolingEndpoint::Resource(&rpc_id),
+                );
+            }
+        }
+    }
 }
 
-/// RPC-specific builder methods, contributed to [`AppBuilder<RpcPlugin>`] as an extension
+#[cfg(feature = "tooling")]
+fn operation_kind(kind: crate::OperationKind) -> &'static str {
+    match kind {
+        crate::OperationKind::Unary => "unary",
+        crate::OperationKind::ServerStream => "server-stream",
+        crate::OperationKind::ClientStream => "client-stream",
+        crate::OperationKind::BidiStream => "bidi-stream",
+    }
+}
+
+/// RPC-specific builder methods, contributed to [`AppBuilder<Rpc>`] as an extension
 /// trait (a foreign crate cannot add inherent methods to a generic type). Bring it into
 /// scope to register services, middleware, guards, and the error handler; it is in the
 /// prelude.
@@ -133,7 +315,7 @@ pub trait RpcAppBuilder {
     fn rpc_limits(self, limits: RpcLimits) -> Self;
 }
 
-impl RpcAppBuilder for AppBuilder<RpcPlugin> {
+impl RpcAppBuilder for AppBuilder<Rpc> {
     fn service<T>(mut self) -> Self
     where
         T: Descriptor<ServiceDescriptor> + Descriptor<ComponentDescriptor>,
@@ -194,3 +376,6 @@ impl RpcAppBuilder for AppBuilder<RpcPlugin> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests;

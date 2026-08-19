@@ -1,4 +1,4 @@
-//! The axum protocol plugin and its builder extension.
+//! The axum protocol definition and its builder extension.
 
 use std::convert::Infallible;
 use std::future::Future;
@@ -8,28 +8,30 @@ use axum::extract::Request;
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::Route;
-use overseerd_app::{AppBuilder, AppRegistry, AppRuntime, Plugin, ProtocolPlugin};
-use overseerd_config::{ConfigBinding, ContainerConfigExt};
-use overseerd_core::{Descriptor, Scope, TypeDescriptor};
-use overseerd_di::{BoxedComponent, Component, ComponentDescriptor};
 use tower::{Layer, Service};
+use upwell_app::{
+    AppBuilder, AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ValidationContext,
+};
+use upwell_config::{ConfigBinding, ContainerConfigExt};
+use upwell_core::{Descriptor, TypeDescriptor};
+use upwell_di::{BoxedComponent, Component, ComponentDescriptor};
 
 use crate::config::{AXUM_CONFIG_PATH, AxumConfig};
 use crate::controller::{CONTROLLERS, ControllerDescriptor};
 use crate::extract::ScopeHandle;
 use crate::middleware::{AxumMiddleware, MiddlewareApplier, as_layer};
-use crate::protocol::Axum;
+use crate::protocol::AxumRuntime;
 use crate::request_meta::{REQUEST_META_DESCRIPTOR, RequestMeta};
-use crate::scope::{Connection as ConnectionScope, Request as RequestScope};
+use crate::scope::{HttpRequest as HttpRequestScope, SCOPE_TOPOLOGY};
 
-/// The axum HTTP protocol plugin.
+/// The axum HTTP protocol definition.
 ///
 /// Accumulates the registered/discovered controllers, contributes no extra DI seeds, and
-/// builds the [`Axum`] protocol: each controller's [`axum::Router`] merged together and
+/// builds the [`AxumRuntime`]: each controller's [`axum::Router`] merged together and
 /// wrapped by a per-request scope layer that opens the request scope and threads it into
 /// the request extensions for the [`Inject`](crate::Inject) extractor.
 #[derive(Default)]
-pub struct AxumPlugin {
+pub struct Axum {
     controllers: Vec<ControllerDescriptor>,
 
     /// Global middleware, in registration order — both raw `tower::Layer`s (via
@@ -41,7 +43,7 @@ pub struct AxumPlugin {
     /// Discovered `#[controller(ws = ..)]` descriptors. Only mounted for protocols a user opts into
     /// via [`register_ws`](AxumAppBuilder::register_ws).
     #[cfg(feature = "ws")]
-    ws_controllers: Vec<crate::ws::WsControllerDescriptor>,
+    ws_controllers: Vec<crate::ws::WsControllerRegistration>,
 
     /// Opt-in ws endpoints: each pairs a protocol type with the path to mount its upgrade handler.
     #[cfg(feature = "ws")]
@@ -54,9 +56,10 @@ pub struct AxumPlugin {
 #[cfg(feature = "ws")]
 type WsMount = Box<
     dyn FnOnce(
-        Vec<crate::ws::WsControllerDescriptor>,
-        &AppRuntime,
-    ) -> crate::Result<(axum::Router, crate::ws::WebsocketHandler)>,
+            Vec<crate::ws::WsControllerDescriptor>,
+            &AppRuntime,
+        ) -> crate::Result<(axum::Router, crate::ws::WebsocketHandler)>
+        + Send,
 >;
 
 /// One opt-in ws endpoint: a protocol type (by [`TypeId`](std::any::TypeId)) bound to a path, with a
@@ -65,18 +68,39 @@ type WsMount = Box<
 struct WsRegistration {
     path: String,
     protocol: std::any::TypeId,
+    protocol_name: &'static str,
     mount: WsMount,
     register: fn(&mut AppRegistry),
 }
 
-impl Plugin for AxumPlugin {
-    fn auto_discover(&mut self) {
-        self.controllers.extend(CONTROLLERS.iter().copied());
+/// One validated WebSocket endpoint and the exact route plan retained from preparation.
+#[cfg(feature = "ws")]
+struct PreparedWsRegistration {
+    #[cfg(feature = "tooling")]
+    path: String,
+    #[cfg(feature = "tooling")]
+    protocol_name: &'static str,
+    controllers: Vec<crate::ws::WsControllerDescriptor>,
+    mount: WsMount,
+}
 
-        #[cfg(feature = "ws")]
-        self.ws_controllers
-            .extend(crate::ws::WS_CONTROLLERS.iter().copied());
-    }
+/// The validated Axum plan awaiting router and runtime construction.
+pub struct PreparedAxum {
+    controllers: Vec<ControllerDescriptor>,
+    middleware: Vec<MiddlewareApplier>,
+    #[cfg(feature = "tooling")]
+    base_prefix: String,
+    #[cfg(feature = "ws")]
+    ws_registrations: Vec<PreparedWsRegistration>,
+}
+
+impl ProtocolDefinition for Axum {
+    type Prepared = PreparedAxum;
+    type Error = crate::Error;
+
+    const ID: upwell_app::ProtocolId =
+        upwell_core::namespaced_id!(upwell_app::ProtocolId, "upwell/axum");
+    const SCOPE_TOPOLOGY: upwell_app::ScopeTopology = SCOPE_TOPOLOGY;
 
     fn register(&self, registry: &mut AppRegistry) {
         // Protocol configuration is a builtin: it is present even when the app does not call
@@ -86,9 +110,10 @@ impl Plugin for AxumPlugin {
             .push(ConfigBinding::of::<AxumConfig>(AXUM_CONFIG_PATH));
         registry.components.push(REQUEST_META_DESCRIPTOR);
         #[cfg(feature = "ws")]
-        registry
-            .components
-            .push(crate::ws::WS_CONNECTION_META_DESCRIPTOR);
+        registry.components.extend([
+            crate::ws::WEBSOCKET_UPGRADE_META_DESCRIPTOR,
+            crate::ws::WS_CONNECTION_META_DESCRIPTOR,
+        ]);
 
         #[cfg(feature = "openapi")]
         registry
@@ -98,25 +123,111 @@ impl Plugin for AxumPlugin {
             ));
 
         #[cfg(feature = "ws")]
-        for registration in &self.ws_registrations {
-            (registration.register)(registry);
+        {
+            let mut registered = std::collections::HashSet::new();
+
+            for registration in &self.ws_registrations {
+                if registered.insert(registration.protocol) {
+                    (registration.register)(registry);
+                }
+            }
         }
+    }
+
+    fn prepare(self, _context: &ValidationContext<'_>) -> crate::Result<Self::Prepared> {
+        let config = _context
+            .config::<AxumConfig>(AXUM_CONFIG_PATH)
+            .expect("AxumConfig missing from config store; Axum should register it")
+            .snapshot();
+        let base_prefix = normalize_base_path(&config.base_path);
+
+        if !base_prefix.is_empty() {
+            crate::config::validate_mount_path("Axum base path", &base_prefix)?;
+        }
+
+        #[cfg(feature = "ws")]
+        let ws_registrations = {
+            crate::ws::validate_config(&config)?;
+            let mut prepared = Vec::with_capacity(self.ws_registrations.len());
+            let mut endpoints = std::collections::HashSet::new();
+            let mut paths = std::collections::HashSet::new();
+
+            for registration in self.ws_registrations {
+                crate::config::validate_mount_path("WebSocket mount path", &registration.path)?;
+
+                if !endpoints.insert((registration.protocol, registration.path.clone())) {
+                    return Err(crate::Error::Config(format!(
+                        "WebSocket protocol `{}` is mounted more than once at `{}`",
+                        registration.protocol_name, registration.path
+                    )));
+                }
+
+                if !paths.insert(registration.path.clone()) {
+                    return Err(crate::Error::Config(format!(
+                        "more than one WebSocket endpoint is mounted at `{}`",
+                        registration.path
+                    )));
+                }
+
+                let controllers: Vec<crate::ws::WsControllerDescriptor> = self
+                    .ws_controllers
+                    .iter()
+                    .filter(|descriptor| (descriptor.protocol)() == registration.protocol)
+                    .map(crate::ws::WsControllerDescriptor::prepare)
+                    .collect();
+
+                crate::ws::validate_unique_destinations(&controllers, registration.protocol_name)?;
+                prepared.push(PreparedWsRegistration {
+                    #[cfg(feature = "tooling")]
+                    path: registration.path,
+                    #[cfg(feature = "tooling")]
+                    protocol_name: registration.protocol_name,
+                    controllers,
+                    mount: registration.mount,
+                });
+            }
+
+            prepared
+        };
+
+        #[cfg(feature = "openapi")]
+        {
+            let config = _context
+                .config::<crate::OpenApiConfig>(crate::AXUM_OPENAPI_CONFIG_PATH)
+                .expect("OpenApiConfig missing from config store; Axum should register it")
+                .snapshot();
+
+            crate::openapi::validate_config(&config)?;
+        }
+
+        Ok(PreparedAxum {
+            controllers: self.controllers,
+            middleware: self.middleware,
+            #[cfg(feature = "tooling")]
+            base_prefix,
+            #[cfg(feature = "ws")]
+            ws_registrations,
+        })
+    }
+
+    fn auto_discover(&mut self) {
+        self.controllers.extend(CONTROLLERS.iter().copied());
+
+        #[cfg(feature = "ws")]
+        self.ws_controllers
+            .extend(crate::ws::WS_CONTROLLERS.iter().copied());
     }
 }
 
-impl ProtocolPlugin for AxumPlugin {
-    type Protocol = Axum;
+impl PreparedProtocol for PreparedAxum {
+    type Runtime = AxumRuntime;
     type Error = crate::Error;
 
-    // Root→leaf: `Connection` (WebSocket-only) outlives `Request`. A plain HTTP request opens only
-    // `Request` (parented at root); a ws message opens `Request` parented at its `Connection`.
-    const SCOPES: &'static [&'static dyn Scope] = &[&ConnectionScope, &RequestScope];
-
-    fn build(self, runtime: &AppRuntime) -> crate::Result<Axum> {
+    fn build(self, runtime: &AppRuntime) -> crate::Result<Self::Runtime> {
         let config = runtime
             .root()
             .config::<AxumConfig>(AXUM_CONFIG_PATH)
-            .expect("AxumConfig missing from config store; AxumPlugin should register it");
+            .expect("AxumConfig missing from config store; Axum should register it");
         let config_snapshot = config.snapshot();
 
         // Merge every controller's routes. Each builder resolves its controller singleton
@@ -136,15 +247,8 @@ impl ProtocolPlugin for AxumPlugin {
             let mut endpoints = Vec::with_capacity(self.ws_registrations.len());
 
             for registration in self.ws_registrations {
-                let controllers: Vec<crate::ws::WsControllerDescriptor> = self
-                    .ws_controllers
-                    .iter()
-                    .copied()
-                    .filter(|descriptor| (descriptor.protocol)() == registration.protocol)
-                    .collect();
-
                 // The mount closure already holds the path and the protocol's options.
-                let (ws_router, handler) = (registration.mount)(controllers, runtime)?;
+                let (ws_router, handler) = (registration.mount)(registration.controllers, runtime)?;
 
                 router = router.merge(ws_router);
                 endpoints.push(handler);
@@ -177,7 +281,7 @@ impl ProtocolPlugin for AxumPlugin {
             }));
         }
 
-        // The bridge: a per-request layer that opens the Request scope (parented at the
+        // The bridge: a per-request layer that opens the HttpRequest scope (parented at the
         // singleton root) and inserts its handle into the request extensions. `Inject`
         // reads it back out; a scope-build failure degrades to 500 rather than panicking.
         // Also seeds `RequestMeta` (method/URI/headers/cookies) so request-scoped components
@@ -202,7 +306,7 @@ impl ProtocolPlugin for AxumPlugin {
                     };
 
                     match scope_runtime
-                        .open_scope(&RequestScope, parent, vec![seed])
+                        .open_scope(&HttpRequestScope, parent, vec![seed])
                         .await
                     {
                         Ok(scope) => {
@@ -213,7 +317,7 @@ impl ProtocolPlugin for AxumPlugin {
 
                         Err(error) => {
                             tracing::error!(
-                                target: "overseerd::axum",
+                                target: "upwell::axum",
                                 error = %error,
                                 "request scope build failed"
                             );
@@ -236,7 +340,7 @@ impl ProtocolPlugin for AxumPlugin {
             let openapi_config = runtime
                 .root()
                 .config::<crate::OpenApiConfig>(crate::AXUM_OPENAPI_CONFIG_PATH)
-                .expect("OpenApiConfig missing from config store; AxumPlugin should register it")
+                .expect("OpenApiConfig missing from config store; Axum should register it")
                 .snapshot();
 
             crate::openapi::mount(router, &openapi_config, &base_prefix)?
@@ -246,12 +350,361 @@ impl ProtocolPlugin for AxumPlugin {
         // prefix. Nesting preserves the inner router's layers, so the scope layer still applies.
         let router = nest_base_path(router, &base_prefix);
 
-        let axum = Axum::new(router, config);
+        let axum = AxumRuntime::new(router, config);
 
         #[cfg(feature = "ws")]
         let axum = axum.with_ws_endpoints(ws_endpoints);
 
         Ok(axum)
+    }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
+        use std::collections::BTreeMap;
+
+        use upwell_app::{ResourceDisplay, ToolingEndpoint, ToolingRelationshipKind};
+
+        contributions.display(ResourceDisplay {
+            label: Some(String::from("Axum HTTP")),
+            group: Some(String::from("Protocols")),
+            summary: Some(format!(
+                "{} controllers, {} middleware layers",
+                self.controllers.len(),
+                self.middleware.len()
+            )),
+            details: BTreeMap::from([(
+                String::from("base-path"),
+                if self.base_prefix.is_empty() {
+                    String::from("/")
+                } else {
+                    self.base_prefix.clone()
+                },
+            )]),
+        });
+
+        contributions.facet(
+            "summary",
+            1,
+            upwell_app::tooling_schema::JsonValue::Object(
+                [
+                    (
+                        String::from("controller_count"),
+                        self.controllers.len().into(),
+                    ),
+                    (
+                        String::from("middleware_count"),
+                        self.middleware.len().into(),
+                    ),
+                    #[cfg(feature = "ws")]
+                    (
+                        String::from("websocket_endpoint_count"),
+                        self.ws_registrations.len().into(),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        );
+
+        for controller in &self.controllers {
+            let id = format!("controller/{}", controller.id);
+
+            contributions.resource_with_labels(
+                &id,
+                controller.name,
+                BTreeMap::from([
+                    (String::from("base-path"), controller.base.to_string()),
+                    (String::from("kind"), String::from("http-controller")),
+                    (
+                        String::from("rust-type"),
+                        (controller.ty.type_name)().to_string(),
+                    ),
+                ]),
+            );
+            contributions.resource_display(
+                &id,
+                ResourceDisplay {
+                    label: Some(controller.name.to_string()),
+                    group: Some(String::from("HTTP controllers")),
+                    summary: Some(format!("mounted at {}", controller.base)),
+                    details: BTreeMap::from([
+                        (String::from("base-path"), controller.base.to_string()),
+                        (
+                            String::from("rust-type"),
+                            (controller.ty.type_name)().to_string(),
+                        ),
+                    ]),
+                },
+            );
+            contributions.relationship(
+                ToolingRelationshipKind::Contains,
+                ToolingEndpoint::Owner,
+                ToolingEndpoint::Resource(&id),
+            );
+
+            for route in (controller.routes)() {
+                let route_id = format!(
+                    "route/{}/{}/{}/{}",
+                    controller.id,
+                    route.method.to_ascii_lowercase(),
+                    route.path,
+                    route.handler
+                );
+                let path = join_http_paths(&self.base_prefix, controller.base, route.path);
+
+                contributions.resource_with_labels(
+                    &route_id,
+                    route.handler,
+                    BTreeMap::from([(String::from("kind"), String::from("http-route"))]),
+                );
+                let mut details = BTreeMap::from([
+                    (String::from("handler"), route.handler.to_string()),
+                    (String::from("method"), route.method.to_string()),
+                    (
+                        String::from("output"),
+                        route
+                            .output
+                            .ty
+                            .map(|output| (output.type_name)().to_string())
+                            .unwrap_or_else(|| route.output.declared.to_string()),
+                    ),
+                    (
+                        String::from("output-shape"),
+                        format!("{:?}", route.output.shape),
+                    ),
+                    (String::from("path"), path.clone()),
+                ]);
+                let responses = route
+                    .output
+                    .responses
+                    .iter()
+                    .map(|response| {
+                        let mut value = response.status.to_string();
+
+                        if let Some(redirect) = response.redirect {
+                            value.push_str(" redirect ");
+                            value.push_str(redirect);
+                        }
+
+                        match response.body {
+                            crate::HttpResponseBodyDescriptor::Empty => value.push_str(" empty"),
+                            crate::HttpResponseBodyDescriptor::Typed(body) => {
+                                value.push_str(" body ");
+                                value.push_str((body.type_name)());
+                            }
+                            crate::HttpResponseBodyDescriptor::Opaque => value.push_str(" opaque"),
+                        }
+
+                        value
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let inputs = route
+                    .inputs
+                    .iter()
+                    .map(|input| {
+                        format!(
+                            "{} ({:?}): {}",
+                            input.name,
+                            input.source,
+                            (input.ty.type_name)()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let path_parameters = route
+                    .path_parameters
+                    .iter()
+                    .map(|parameter| {
+                        if parameter.catch_all {
+                            format!("*{}", parameter.name)
+                        } else {
+                            parameter.name.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                if !inputs.is_empty() {
+                    details.insert(String::from("inputs"), inputs);
+                }
+
+                if !path_parameters.is_empty() {
+                    details.insert(String::from("path-parameters"), path_parameters);
+                }
+
+                if !responses.is_empty() {
+                    details.insert(String::from("responses"), responses);
+                }
+
+                contributions.resource_display(
+                    &route_id,
+                    ResourceDisplay {
+                        label: Some(format!("{} {path}", route.method)),
+                        group: Some(format!("HTTP · {}", controller.name)),
+                        summary: Some(format!("handler {}", route.handler)),
+                        details,
+                    },
+                );
+                contributions.relationship(
+                    ToolingRelationshipKind::Contains,
+                    ToolingEndpoint::Resource(&id),
+                    ToolingEndpoint::Resource(&route_id),
+                );
+            }
+        }
+
+        #[cfg(feature = "ws")]
+        for (ordinal, endpoint) in self.ws_registrations.iter().enumerate() {
+            let id = format!("websocket/{ordinal}");
+
+            contributions.resource_with_labels(
+                &id,
+                endpoint.protocol_name,
+                BTreeMap::from([
+                    (String::from("kind"), String::from("websocket-endpoint")),
+                    (String::from("path"), endpoint.path.clone()),
+                    (
+                        String::from("protocol-name"),
+                        endpoint.protocol_name.to_string(),
+                    ),
+                    (
+                        String::from("protocol-type"),
+                        endpoint.protocol_name.to_string(),
+                    ),
+                    (
+                        String::from("controller-count"),
+                        endpoint.controllers.len().to_string(),
+                    ),
+                ]),
+            );
+            contributions.resource_display(
+                &id,
+                ResourceDisplay {
+                    label: Some(format!("WebSocket {}", endpoint.protocol_name)),
+                    group: Some(String::from("WebSocket endpoints")),
+                    summary: Some(format!("mounted at {}", endpoint.path)),
+                    details: BTreeMap::from([
+                        (String::from("path"), endpoint.path.clone()),
+                        (
+                            String::from("controllers"),
+                            endpoint.controllers.len().to_string(),
+                        ),
+                    ]),
+                },
+            );
+            contributions.relationship(
+                ToolingRelationshipKind::Contains,
+                ToolingEndpoint::Owner,
+                ToolingEndpoint::Resource(&id),
+            );
+
+            for controller in &endpoint.controllers {
+                let controller_id = format!("websocket/{ordinal}/controller/{}", controller.id);
+
+                contributions.resource_with_labels(
+                    &controller_id,
+                    controller.name,
+                    BTreeMap::from([(String::from("kind"), String::from("websocket-controller"))]),
+                );
+                contributions.resource_display(
+                    &controller_id,
+                    ResourceDisplay {
+                        label: Some(controller.name.to_string()),
+                        group: Some(format!("WebSocket · {}", endpoint.protocol_name)),
+                        summary: Some(format!("{} message handlers", controller.routes().len())),
+                        details: BTreeMap::from([(
+                            String::from("rust-type"),
+                            (controller.ty.type_name)().to_string(),
+                        )]),
+                    },
+                );
+                contributions.relationship(
+                    ToolingRelationshipKind::Contains,
+                    ToolingEndpoint::Resource(&id),
+                    ToolingEndpoint::Resource(&controller_id),
+                );
+
+                for route in controller.routes() {
+                    let message_id = format!(
+                        "websocket/{ordinal}/controller/{}/message/{}",
+                        controller.id,
+                        route.destination()
+                    );
+                    let message = route.message();
+
+                    contributions.resource_with_labels(
+                        &message_id,
+                        route.destination(),
+                        BTreeMap::from([(String::from("kind"), String::from("websocket-message"))]),
+                    );
+                    contributions.resource_display(
+                        &message_id,
+                        ResourceDisplay {
+                            label: Some(format!("message {}", route.destination())),
+                            group: Some(format!("WebSocket · {}", controller.name)),
+                            summary: Some(
+                                message
+                                    .map(|message| {
+                                        format!(
+                                            "{:?} via {}",
+                                            message.mode,
+                                            (message.codec.type_name)()
+                                        )
+                                    })
+                                    .unwrap_or_else(|| String::from("custom message handler")),
+                            ),
+                            details: message
+                                .map(|message| {
+                                    BTreeMap::from([
+                                        (String::from("handler"), message.handler.to_string()),
+                                        (String::from("mode"), format!("{:?}", message.mode)),
+                                        (
+                                            String::from("payload"),
+                                            message
+                                                .payload
+                                                .map(|payload| (payload.type_name)().to_string())
+                                                .unwrap_or_else(|| String::from("none")),
+                                        ),
+                                        (
+                                            String::from("reply"),
+                                            message
+                                                .reply
+                                                .map(|reply| (reply.type_name)().to_string())
+                                                .unwrap_or_else(|| String::from("none")),
+                                        ),
+                                        (
+                                            String::from("codec"),
+                                            (message.codec.type_name)().to_string(),
+                                        ),
+                                    ])
+                                })
+                                .unwrap_or_default(),
+                        },
+                    );
+                    contributions.relationship(
+                        ToolingRelationshipKind::Contains,
+                        ToolingEndpoint::Resource(&controller_id),
+                        ToolingEndpoint::Resource(&message_id),
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "tooling")]
+fn join_http_paths(global: &str, controller: &str, route: &str) -> String {
+    let segments = [global, controller, route]
+        .into_iter()
+        .flat_map(|path| path.split('/'))
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+
+    if segments.is_empty() {
+        String::from("/")
+    } else {
+        format!("/{}", segments.join("/"))
     }
 }
 
@@ -281,10 +734,13 @@ fn normalize_base_path(base_path: &str) -> String {
     }
 }
 
+#[cfg(test)]
+mod tests;
+
 /// Configured serving for a built axum app.
 ///
-/// This is the zero-boilerplate counterpart to [`overseerd_app::App::serve`]: it binds the
-/// listener described by the plugin-owned [`AxumConfig`] instead of requiring a `SocketAddr` at
+/// This is the zero-boilerplate counterpart to [`upwell_app::App::serve`]: it binds the
+/// listener described by the protocol-owned [`AxumConfig`] instead of requiring a `SocketAddr` at
 /// the call site. Explicit `SocketAddr` and pre-bound `TcpListener` serving remain available for
 /// tests and advanced embedding.
 pub trait AxumAppServe {
@@ -292,13 +748,13 @@ pub trait AxumAppServe {
     fn serve_configured(self) -> impl Future<Output = crate::Result<()>> + Send;
 }
 
-impl AxumAppServe for overseerd_app::App<AxumPlugin> {
+impl AxumAppServe for upwell_app::App<Axum> {
     fn serve_configured(self) -> impl Future<Output = crate::Result<()>> + Send {
         self.serve(())
     }
 }
 
-/// axum-specific builder methods, contributed to [`AppBuilder<AxumPlugin>`] as an extension
+/// axum-specific builder methods, contributed to [`AppBuilder<Axum>`] as an extension
 /// trait. Bring it into scope to register controllers by type; it is in the prelude.
 ///
 /// Controllers also auto-register through the [`CONTROLLERS`] slice, so an
@@ -335,9 +791,8 @@ pub trait AxumAppBuilder {
     /// Opts the app into a WebSocket protocol `P`, mounting its upgrade handler at `path` with the
     /// protocol's default [`Options`](crate::ws::WebsocketProtocol::Options). Only
     /// `#[controller(ws = P)]` controllers speaking `P` are then served, under `path` (the path
-    /// can't be inferred, so it is given here). Call it once per protocol to run, e.g., a STOMP
-    /// endpoint and a `JsonWs` endpoint on different paths in one server. Rejects two protocols on
-    /// the same path at build.
+    /// can't be inferred, so it is given here). The same protocol may be mounted more than once
+    /// with distinct paths and options. Duplicate paths are rejected during preparation.
     #[cfg(feature = "ws")]
     fn register_ws<P>(self, path: impl Into<String>) -> Self
     where
@@ -353,7 +808,7 @@ pub trait AxumAppBuilder {
         P: crate::ws::WebsocketProtocol;
 }
 
-impl AxumAppBuilder for AppBuilder<AxumPlugin> {
+impl AxumAppBuilder for AppBuilder<Axum> {
     fn controller<T>(mut self) -> Self
     where
         T: Descriptor<ControllerDescriptor> + Descriptor<ComponentDescriptor>,
@@ -420,17 +875,6 @@ impl AxumAppBuilder for AppBuilder<AxumPlugin> {
     {
         let path = path.into();
 
-        let duplicate = self
-            .protocol_mut()
-            .ws_registrations
-            .iter()
-            .any(|registration| registration.path == path);
-
-        assert!(
-            !duplicate,
-            "register_ws: a websocket protocol is already mounted at `{path}`"
-        );
-
         // Capture the path and options in the mount closure so the non-generic registration can
         // carry protocol-specific `Options` without erasing their type.
         let mount_path = path.clone();
@@ -441,6 +885,7 @@ impl AxumAppBuilder for AppBuilder<AxumPlugin> {
         self.protocol_mut().ws_registrations.push(WsRegistration {
             path,
             protocol: std::any::TypeId::of::<P>(),
+            protocol_name: std::any::type_name::<P>(),
             mount,
             register: P::register,
         });

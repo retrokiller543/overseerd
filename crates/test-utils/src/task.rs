@@ -1,7 +1,9 @@
 use std::future::Future;
-use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
+#[cfg(feature = "app")]
+use std::net::{Ipv4Addr, SocketAddr};
+#[cfg(feature = "app")]
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -52,11 +54,13 @@ impl<T> Drop for AbortOnDropTask<T> {
 }
 
 /// Owns an ephemeral loopback listener's address and serving task.
+#[cfg(feature = "app")]
 pub struct LoopbackTask<T> {
     address: SocketAddr,
     task: AbortOnDropTask<T>,
 }
 
+#[cfg(feature = "app")]
 impl<T: Send + 'static> LoopbackTask<T> {
     /// Binds an ephemeral loopback listener and starts serving it.
     pub async fn spawn<F, Fut>(name: &'static str, serve: F) -> Self

@@ -1,7 +1,7 @@
 //! The example app's **surface**: every controller and component lives here, in the library, so it
 //! is part of the reusable crate — not the binary. `main.rs` only wires up and serves the app.
 //!
-//! ## Recommended layout for an Overseerd axum project
+//! ## Recommended layout for an Upwell axum project
 //!
 //! ```text
 //! src/
@@ -22,6 +22,7 @@
 #![cfg_attr(target_family = "wasm", allow(dead_code))]
 
 pub mod greet;
+pub mod responses;
 
 // The STOMP chat: its controllers' server halves are gated out on wasm by the macros, so the module
 // compiles on both targets — a wasm client gets the generated `ChatTopicClient` (subscribe) and

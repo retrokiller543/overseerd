@@ -1,25 +1,27 @@
 //! Framework-provided configuration property structs.
 //!
-//! These implement [`ConfigProperties`](overseerd_config::ConfigProperties) and derive
+//! These implement [`ConfigProperties`](upwell_config::ConfigProperties) and derive
 //! serde `Deserialize` but carry **no** `#[config(path = "..")]` auto-binding —
 //! binding a missing subtree is a hard build error, so they are opt-in. A user binds
 //! them explicitly, e.g. `AppBuilder::config::<ServerConfig>("server")` (or the
 //! `configs:` key of the `app!{}` macro), and injects them as
-//! [`Cfg<ServerConfig>`](overseerd_config::Cfg).
+//! [`Cfg<ServerConfig>`](upwell_config::Cfg).
 //!
-//! They use `#[config(overseerd = ::overseerd_config)]`: this crate lives *below* the
-//! facade and cannot reference `::overseerd::*`, so the macro's `overseerd =` override
-//! roots the generated `ConfigProperties` impl directly at `overseerd-config`. (Without
+//! They use `#[config(upwell = ::upwell_config)]`: this crate lives *below* the
+//! facade and cannot reference `::upwell::*`, so the macro's `upwell =` override
+//! roots the generated `ConfigProperties` impl directly at `upwell-config`. (Without
 //! a `path`, the macro emits only that impl — no descriptor or `linkme` registration —
-//! so `overseerd-config`'s re-export of `ConfigProperties` is all the override needs.)
+//! so `upwell-config`'s re-export of `ConfigProperties` is all the override needs.)
 
 use serde::Deserialize;
+use std::fmt;
+use std::str::FromStr;
 
-use overseerd_macros::config;
+use upwell_macros::config;
 
 /// Network binding settings for a daemon's transport, bound from a config subtree
-/// and injected as [`Cfg<ServerConfig>`](overseerd_config::Cfg).
-#[config(overseerd = ::overseerd_config)]
+/// and injected as [`Cfg<ServerConfig>`](upwell_config::Cfg).
+#[config(upwell = ::upwell_config)]
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
     /// The host or IP address the daemon binds its listener to.
@@ -30,18 +32,224 @@ pub struct ServerConfig {
 }
 
 /// Tracing/logging settings consumed by the `init_tracing` helper, bound from a
-/// config subtree and injected as [`Cfg<LoggingConfig>`](overseerd_config::Cfg).
-#[config(overseerd = ::overseerd_config)]
+/// config subtree and injected as [`Cfg<LoggingConfig>`](upwell_config::Cfg).
+#[config(upwell = ::upwell_config)]
 #[derive(Deserialize, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct LoggingConfig {
     /// An `EnvFilter`-style level directive (e.g. `"info"`, `"app=debug,info"`).
+    #[default = "info"]
     pub level: String,
 
-    /// The output format: `"full"`, `"compact"`, `"pretty"`, or `"json"`.
-    pub format: String,
+    /// The formatter used for tracing output.
+    #[default = "full"]
+    pub format: LogFormat,
 
     /// Whether to colorize the output with ANSI escape codes.
+    #[default = "true"]
     pub ansi: bool,
+
+    /// Span lifecycle events emitted by the formatter.
+    #[serde(default)]
+    pub span_events: SpanEvents,
+
+    /// Whether event targets are included in formatted output.
+    #[serde(default = "default_true")]
+    pub target: bool,
+
+    /// Whether event levels are included in formatted output.
+    #[serde(default = "default_true")]
+    pub level_display: bool,
+
+    /// Whether thread IDs are included in formatted output.
+    #[serde(default)]
+    pub thread_ids: bool,
+
+    /// Whether thread names are included in formatted output.
+    #[serde(default)]
+    pub thread_names: bool,
+
+    /// Whether source file paths are included in formatted output.
+    #[serde(default)]
+    pub file: bool,
+
+    /// Whether source line numbers are included in formatted output.
+    #[serde(default)]
+    pub line_number: bool,
+
+    /// Whether JSON output flattens event fields into the root object.
+    #[serde(default)]
+    pub flatten_event: bool,
+
+    /// Whether JSON output includes the current span and span list.
+    #[serde(default = "default_true")]
+    pub current_span: bool,
+}
+
+impl LoggingConfig {
+    /// Creates logging settings with the requested filter and default formatter options.
+    pub fn new(level: impl Into<String>) -> Self {
+        Self {
+            level: level.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Selects the formatter output style.
+    pub fn with_format(mut self, format: LogFormat) -> Self {
+        self.format = format;
+
+        self
+    }
+
+    /// Controls ANSI color output.
+    pub fn with_ansi(mut self, ansi: bool) -> Self {
+        self.ansi = ansi;
+
+        self
+    }
+
+    /// Selects synthetic span lifecycle events.
+    pub fn with_span_events(mut self, span_events: SpanEvents) -> Self {
+        self.span_events = span_events;
+
+        self
+    }
+}
+
+/// Formatter used for tracing output.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum LogFormat {
+    /// Standard human-readable event output.
+    #[default]
+    Full,
+    /// Condensed human-readable event output.
+    Compact,
+    /// Multi-line human-readable event output.
+    Pretty,
+    /// Structured JSON event output.
+    Json,
+}
+
+impl LogFormat {
+    /// All accepted formatter values in stable display order.
+    pub const VALUES: &'static [Self] = &[Self::Full, Self::Compact, Self::Pretty, Self::Json];
+
+    /// Returns the stable configuration and command-line name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Compact => "compact",
+            Self::Pretty => "pretty",
+            Self::Json => "json",
+        }
+    }
+
+    /// Returns all accepted formatter names in stable display order.
+    pub fn names() -> impl Iterator<Item = &'static str> {
+        Self::VALUES.iter().copied().map(Self::as_str)
+    }
+}
+
+impl fmt::Display for LogFormat {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for LogFormat {
+    type Err = ParseLogFormatError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::VALUES
+            .iter()
+            .copied()
+            .find(|format| format.as_str() == value)
+            .ok_or(ParseLogFormatError)
+    }
+}
+
+impl<'de> Deserialize<'de> for LogFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(feature = "cli")]
+impl clap::ValueEnum for LogFormat {
+    fn value_variants<'a>() -> &'a [Self] {
+        Self::VALUES
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        let help = match self {
+            Self::Full => "Standard human-readable event output",
+            Self::Compact => "Condensed human-readable event output",
+            Self::Pretty => "Multi-line human-readable event output",
+            Self::Json => "Structured JSON event output",
+        };
+
+        Some(clap::builder::PossibleValue::new(self.as_str()).help(help))
+    }
+}
+
+/// A string did not identify a supported tracing formatter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParseLogFormatError;
+
+impl fmt::Display for ParseLogFormatError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("expected one of: ")?;
+
+        for (index, name) in LogFormat::names().enumerate() {
+            if index > 0 {
+                formatter.write_str(", ")?;
+            }
+
+            formatter.write_str(name)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl std::error::Error for ParseLogFormatError {}
+
+#[cfg(feature = "cli")]
+impl clap::builder::ValueParserFactory for LogFormat {
+    type Parser = clap::builder::EnumValueParser<Self>;
+
+    fn value_parser() -> Self::Parser {
+        clap::builder::EnumValueParser::new()
+    }
+}
+
+/// Span lifecycle events emitted by tracing formatters.
+#[derive(Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum SpanEvents {
+    /// Do not synthesize span lifecycle events.
+    #[default]
+    None,
+    /// Emit an event when each span is created.
+    New,
+    /// Emit an event whenever a span is entered.
+    Enter,
+    /// Emit an event whenever a span is exited.
+    Exit,
+    /// Emit an event when each span closes.
+    Close,
+    /// Emit enter and exit events.
+    Active,
+    /// Emit new, enter, exit, and close events.
+    Full,
 }
 
 impl Default for ServerConfig {
@@ -57,8 +265,21 @@ impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
             level: "info".to_string(),
-            format: "full".to_string(),
+            format: LogFormat::Full,
             ansi: true,
+            span_events: SpanEvents::None,
+            target: true,
+            level_display: true,
+            thread_ids: false,
+            thread_names: false,
+            file: false,
+            line_number: false,
+            flatten_event: false,
+            current_span: true,
         }
     }
+}
+
+const fn default_true() -> bool {
+    true
 }

@@ -1,7 +1,7 @@
 //! Generic HTTP client interception.
 
 use http::{StatusCode, request, response};
-use overseerd_client::ClientError;
+use upwell_client::ClientError;
 
 /// Hooks run by the bundled HTTP clients around every request.
 ///
@@ -81,7 +81,7 @@ impl WasmClientInterceptor {
 
     fn report_callback_error(name: &str, error: wasm_bindgen::JsValue) {
         tracing::warn!(
-            target: "overseerd::axum",
+            target: "upwell::axum",
             callback = name,
             error = ?error,
             "HTTP client callback threw"
@@ -168,6 +168,7 @@ fn error_kind<E>(error: &ClientError<StatusCode, E>) -> &'static str {
         ClientError::Encode(_) => "encode",
         ClientError::Decode(_) => "decode",
         ClientError::Remote(_) => "remote",
+        ClientError::Redirect { .. } => "redirect",
         ClientError::ConnectionClosed => "connectionClosed",
         ClientError::Timeout => "timeout",
     }
@@ -177,6 +178,7 @@ fn error_kind<E>(error: &ClientError<StatusCode, E>) -> &'static str {
 fn remote_status<E>(error: &ClientError<StatusCode, E>) -> Option<u16> {
     match error {
         ClientError::Remote(error) => Some(error.code().as_u16()),
+        ClientError::Redirect { status, .. } => Some(status.as_u16()),
         _ => None,
     }
 }

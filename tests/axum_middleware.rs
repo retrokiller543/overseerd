@@ -1,3 +1,5 @@
+#![cfg(feature = "axum")]
+
 //! End-to-end tests for axum middleware registration (global/controller/path) and the
 //! `RequestMeta` request-scope seed.
 //!
@@ -12,19 +14,18 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd::axum::axum::body::{self, Body};
-use overseerd::axum::axum::extract::Request as HttpRequest;
-use overseerd::axum::axum::http::StatusCode;
-use overseerd::axum::axum::http::header::AUTHORIZATION;
-use overseerd::axum::axum::middleware::Next;
-use overseerd::axum::axum::response::Response;
-use overseerd::axum::axum::{Router, middleware as axum_middleware};
-use overseerd::axum::prelude::*;
-use overseerd::axum::tower::ServiceExt;
-use overseerd::axum::{AxumMiddleware, RequestMeta, ScopeHandle};
-use overseerd::config::Toml;
-use overseerd::prelude::*;
-use overseerd::{ConfigManager, component, methods};
+use upwell::axum::axum::body::{self, Body};
+use upwell::axum::axum::extract::Request as HttpRequest;
+use upwell::axum::axum::http::StatusCode;
+use upwell::axum::axum::http::header::AUTHORIZATION;
+use upwell::axum::axum::middleware::Next;
+use upwell::axum::axum::response::Response;
+use upwell::axum::axum::{Router, middleware as axum_middleware};
+use upwell::axum::prelude::*;
+use upwell::axum::tower::ServiceExt;
+use upwell::axum::{AxumMiddleware, RequestMeta, ScopeHandle};
+use upwell::config::Toml;
+use upwell::{ConfigManager, component, methods};
 
 /// Reads a JSON response body into the given type.
 async fn json_body<T: serde::de::DeserializeOwned>(response: Response) -> T {
@@ -45,7 +46,7 @@ struct ConfiguredController {}
 #[handlers]
 impl ConfiguredController {
     #[post("/echo")]
-    async fn echo(&self, _body: overseerd::axum::bytes::Bytes) {}
+    async fn echo(&self, _body: upwell::axum::bytes::Bytes) {}
 
     #[get("/slow")]
     async fn slow(&self) {
@@ -66,14 +67,12 @@ async fn axum_config_is_automatic_and_enforces_body_and_request_limits() {
         "#,
     )
     .expect("parse axum config");
-    let app = app! {
-        name: "configured-axum",
-        protocol: overseerd::axum::AxumPlugin,
-    }
-    .config_source(config)
-    .build()
-    .await
-    .expect("app builds with the plugin-owned binding");
+    let app = upwell::App::<upwell::axum::Axum>::builder("configured-axum")
+        .auto_discover()
+        .config_source(config)
+        .build()
+        .await
+        .expect("app builds with the plugin-owned binding");
 
     assert_eq!(app.protocol().configured_addr().port(), 4321);
     assert_eq!(app.protocol().config().max_request_body_bytes, 4);
@@ -198,15 +197,13 @@ async fn raw_layer_and_global_controller_path_middleware_run_in_order() {
         next.run(req).await
     });
 
-    let app = app! {
-        name: "test-order",
-        protocol: overseerd::axum::AxumPlugin,
-    }
-    .layer(raw_layer)
-    .middleware::<GlobalMw>()
-    .build()
-    .await
-    .expect("app builds");
+    let app = upwell::App::<upwell::axum::Axum>::builder("test-order")
+        .auto_discover()
+        .layer(raw_layer)
+        .middleware::<GlobalMw>()
+        .build()
+        .await
+        .expect("app builds");
 
     let router: Router = app.protocol().router().clone();
 
@@ -264,14 +261,12 @@ impl SharedController {
 
 #[tokio::test]
 async fn same_middleware_type_shares_one_instance_across_attach_points() {
-    let app = app! {
-        name: "test-shared",
-        protocol: overseerd::axum::AxumPlugin,
-    }
-    .middleware::<SharedMw>()
-    .build()
-    .await
-    .expect("app builds");
+    let app = upwell::App::<upwell::axum::Axum>::builder("test-shared")
+        .auto_discover()
+        .middleware::<SharedMw>()
+        .build()
+        .await
+        .expect("app builds");
 
     let router: Router = app.protocol().router().clone();
 
@@ -295,7 +290,7 @@ async fn same_middleware_type_shares_one_instance_across_attach_points() {
 // and is reused (not re-fetched) across multiple injections within one request.
 // ---------------------------------------------------------------------------
 
-#[component(scope = Request)]
+#[component(scope = HttpRequest)]
 struct AuthUser {
     #[default]
     token: Option<String>,
@@ -346,13 +341,11 @@ impl AuthController {
 
 #[tokio::test]
 async fn request_scoped_component_reads_request_meta_and_is_shared() {
-    let app = app! {
-        name: "test-auth",
-        protocol: overseerd::axum::AxumPlugin,
-    }
-    .build()
-    .await
-    .expect("app builds");
+    let app = upwell::App::<upwell::axum::Axum>::builder("test-auth")
+        .auto_discover()
+        .build()
+        .await
+        .expect("app builds");
 
     let router: Router = app.protocol().router().clone();
 

@@ -4,10 +4,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures::{SinkExt, StreamExt};
-use overseerd_client::{ClientError, ErrorBody};
-use overseerd_transport::Error as TransportError;
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite_wasm::Message;
+use upwell_client::{ClientError, ErrorBody};
+use upwell_transport::Error as TransportError;
 
 use super::{
     WebsocketClient, WebsocketClientProtocol, WebsocketDecodes, WebsocketEncodes, WsClientFrame,
@@ -228,7 +228,7 @@ fn correlate<P: WebsocketClientProtocol>(
 
         Err(error) => {
             tracing::warn!(
-                target: "overseerd::axum",
+                target: "upwell::axum",
                 %error,
                 "ws response frame could not be correlated"
             );
@@ -264,6 +264,15 @@ fn clone_client_error<S: Copy>(error: &ClientError<S>) -> ClientError<S> {
         ClientError::Remote(body) => {
             ClientError::Remote(ErrorBody::new(body.code(), body.raw().to_vec()))
         }
+        ClientError::Redirect {
+            status,
+            location,
+            body,
+        } => ClientError::Redirect {
+            status: *status,
+            location: location.clone(),
+            body: body.clone(),
+        },
         ClientError::ConnectionClosed => ClientError::ConnectionClosed,
         ClientError::Timeout => ClientError::Timeout,
     }

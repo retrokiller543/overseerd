@@ -10,7 +10,71 @@ use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
-use syn::{Attribute, Ident, ItemFn, LitStr, Meta, Path, Token, bracketed};
+use syn::{
+    Attribute, Ident, ItemFn, LitInt, LitStr, Meta, Path, Token, Type, bracketed, parenthesized,
+};
+
+/// One status-specific response declared on a route.
+#[derive(Clone)]
+pub struct ResponseCase {
+    pub status: u16,
+    pub body: Option<Type>,
+    pub redirect: Option<LitStr>,
+    pub span: proc_macro2::Span,
+}
+
+impl Parse for ResponseCase {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let content;
+        parenthesized!(content in input);
+        let mut status: Option<(LitInt, u16)> = None;
+        let mut body = None;
+        let mut redirect = None;
+
+        while !content.is_empty() {
+            let key: Ident = content.parse()?;
+            content.parse::<Token![=]>()?;
+
+            match key.to_string().as_str() {
+                "status" => {
+                    let value: LitInt = content.parse()?;
+                    let parsed = value.base10_parse::<u16>()?;
+                    status = Some((value, parsed));
+                }
+                "body" => body = Some(content.parse()?),
+                "redirect" => redirect = Some(content.parse()?),
+                _ => {
+                    return Err(syn::Error::new_spanned(
+                        key,
+                        "unknown response field; expected `status`, `body`, or `redirect`",
+                    ));
+                }
+            }
+
+            if !content.is_empty() {
+                content.parse::<Token![,]>()?;
+            }
+        }
+
+        let (status_literal, status) = status.ok_or_else(|| {
+            syn::Error::new(content.span(), "response case requires `status = NNN`")
+        })?;
+
+        if !(100..=599).contains(&status) {
+            return Err(syn::Error::new_spanned(
+                &status_literal,
+                "response status must be between 100 and 599",
+            ));
+        }
+
+        Ok(Self {
+            status,
+            body,
+            redirect,
+            span: status_literal.span(),
+        })
+    }
+}
 
 /// The verb shorthands plus the raw `route` attribute, all of which `#[handlers]` claims on a
 /// method. Used to find a method's route attribute among its attrs.
@@ -115,9 +179,15 @@ pub struct RouteAttr {
     /// server-streaming for the client; the framing comes from the return type, never hard-wired.
     pub streamed: bool,
 
-    /// `middleware = [Type, ..]` — DI-backed [`AxumMiddleware`](../overseerd_axum/trait.AxumMiddleware.html)
+    /// `middleware = [Type, ..]` — DI-backed [`AxumMiddleware`](../upwell_axum/trait.AxumMiddleware.html)
     /// singletons scoped to just this route, first-listed outermost. Empty if unset.
     pub middleware: Vec<Path>,
+    /// Explicit decoded success body type for otherwise opaque responses.
+    pub returns: Option<Type>,
+    /// Explicit status-specific response alternatives.
+    pub responses: Vec<ResponseCase>,
+    /// User-owned common client response type for heterogeneous status bodies.
+    pub response: Option<Type>,
 }
 
 /// The arguments of the raw `#[route(METHOD, "/path"[, modifiers])]` attribute.
@@ -126,6 +196,9 @@ struct RouteArgs {
     path: LitStr,
     streamed: bool,
     middleware: Vec<Path>,
+    returns: Option<Type>,
+    responses: Vec<ResponseCase>,
+    response: Option<Type>,
 }
 
 impl Parse for RouteArgs {
@@ -133,13 +206,16 @@ impl Parse for RouteArgs {
         let method: Ident = input.parse()?;
         input.parse::<Token![,]>()?;
         let path: LitStr = input.parse()?;
-        let (streamed, middleware) = parse_trailing_modifiers(input)?;
+        let (streamed, middleware, returns, responses, response) = parse_trailing_modifiers(input)?;
 
         Ok(RouteArgs {
             method,
             path,
             streamed,
             middleware,
+            returns,
+            responses,
+            response,
         })
     }
 }
@@ -149,36 +225,53 @@ struct ShorthandArgs {
     path: LitStr,
     streamed: bool,
     middleware: Vec<Path>,
+    returns: Option<Type>,
+    responses: Vec<ResponseCase>,
+    response: Option<Type>,
 }
 
 impl Parse for ShorthandArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // Bare modifiers (no path) mount at the controller base.
         if input.peek(Ident) {
-            let (streamed, middleware) = parse_modifiers(input)?;
+            let (streamed, middleware, returns, responses, response) = parse_modifiers(input)?;
 
             return Ok(ShorthandArgs {
                 path: LitStr::new("", input.span()),
                 streamed,
                 middleware,
+                returns,
+                responses,
+                response,
             });
         }
 
         let path: LitStr = input.parse()?;
-        let (streamed, middleware) = parse_trailing_modifiers(input)?;
+        let (streamed, middleware, returns, responses, response) = parse_trailing_modifiers(input)?;
 
         Ok(ShorthandArgs {
             path,
             streamed,
             middleware,
+            returns,
+            responses,
+            response,
         })
     }
 }
 
 /// Consumes an optional trailing `, <modifiers>` after a required leading argument.
-fn parse_trailing_modifiers(input: ParseStream) -> syn::Result<(bool, Vec<Path>)> {
+type RouteModifiers = (
+    bool,
+    Vec<Path>,
+    Option<Type>,
+    Vec<ResponseCase>,
+    Option<Type>,
+);
+
+fn parse_trailing_modifiers(input: ParseStream) -> syn::Result<RouteModifiers> {
     if input.is_empty() {
-        return Ok((false, Vec::new()));
+        return Ok((false, Vec::new(), None, Vec::new(), None));
     }
 
     input.parse::<Token![,]>()?;
@@ -187,17 +280,35 @@ fn parse_trailing_modifiers(input: ParseStream) -> syn::Result<(bool, Vec<Path>)
 
 /// Parses a comma-separated list of route modifiers: the `streamed` flag and/or
 /// `middleware = [Type, ..]`, in either order, each at most once.
-fn parse_modifiers(input: ParseStream) -> syn::Result<(bool, Vec<Path>)> {
+fn parse_modifiers(input: ParseStream) -> syn::Result<RouteModifiers> {
     let mut streamed = false;
     let mut middleware = Vec::new();
+    let mut returns = None;
+    let mut responses = Vec::new();
+    let mut response = None;
 
     loop {
         let ident: Ident = input.parse()?;
 
         match ident.to_string().as_str() {
-            "streamed" => streamed = true,
+            "streamed" => {
+                if streamed {
+                    return Err(syn::Error::new_spanned(
+                        ident,
+                        "duplicate `streamed` modifier",
+                    ));
+                }
+
+                streamed = true;
+            }
 
             "middleware" => {
+                if !middleware.is_empty() {
+                    return Err(syn::Error::new_spanned(
+                        ident,
+                        "duplicate `middleware` modifier",
+                    ));
+                }
                 input.parse::<Token![=]>()?;
 
                 let content;
@@ -206,11 +317,45 @@ fn parse_modifiers(input: ParseStream) -> syn::Result<(bool, Vec<Path>)> {
                     .into_iter()
                     .collect();
             }
+            "returns" => {
+                if returns.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        ident,
+                        "duplicate `returns` modifier",
+                    ));
+                }
+                input.parse::<Token![=]>()?;
+                returns = Some(input.parse()?);
+            }
+            "responses" => {
+                if !responses.is_empty() {
+                    return Err(syn::Error::new_spanned(
+                        ident,
+                        "duplicate `responses` modifier",
+                    ));
+                }
+                input.parse::<Token![=]>()?;
+                let content;
+                bracketed!(content in input);
+                responses = Punctuated::<ResponseCase, Token![,]>::parse_terminated(&content)?
+                    .into_iter()
+                    .collect();
+            }
+            "response" => {
+                if response.is_some() {
+                    return Err(syn::Error::new_spanned(
+                        ident,
+                        "duplicate `response` modifier",
+                    ));
+                }
+                input.parse::<Token![=]>()?;
+                response = Some(input.parse()?);
+            }
 
             _ => {
                 return Err(syn::Error::new_spanned(
                     &ident,
-                    "unknown route flag; expected `streamed` or `middleware = [..]`",
+                    "unknown route flag; expected `streamed`, `middleware = [..]`, `returns = Type`, `response = Type`, or `responses = [(..)]`",
                 ));
             }
         }
@@ -222,7 +367,22 @@ fn parse_modifiers(input: ParseStream) -> syn::Result<(bool, Vec<Path>)> {
         input.parse::<Token![,]>()?;
     }
 
-    Ok((streamed, middleware))
+    let mut statuses = std::collections::BTreeMap::new();
+
+    for response in &responses {
+        if let Some(previous) = statuses.insert(response.status, response.span) {
+            let mut error = syn::Error::new(
+                response.span,
+                format!("duplicate response status {}", response.status),
+            );
+
+            error.combine(syn::Error::new(previous, "first declared here"));
+
+            return Err(error);
+        }
+    }
+
+    Ok((streamed, middleware, returns, responses, response))
 }
 
 /// Whether `ident` names a route attribute this crate claims.
@@ -251,18 +411,35 @@ pub fn parse_route_attr(attr: &Attribute) -> syn::Result<RouteAttr> {
             path: args.path,
             streamed: args.streamed,
             middleware: args.middleware,
+            returns: args.returns,
+            responses: args.responses,
+            response: args.response,
         });
     }
 
     // A verb shorthand: the verb is the attribute name. `#[get]` with no arguments mounts at the
     // controller base.
-    let (path, streamed, middleware) = match &attr.meta {
-        Meta::Path(_) => (LitStr::new("", attr.path().span()), false, Vec::new()),
+    let (path, streamed, middleware, returns, responses, response) = match &attr.meta {
+        Meta::Path(_) => (
+            LitStr::new("", attr.path().span()),
+            false,
+            Vec::new(),
+            None,
+            Vec::new(),
+            None,
+        ),
 
         _ => {
             let args: ShorthandArgs = attr.parse_args()?;
 
-            (args.path, args.streamed, args.middleware)
+            (
+                args.path,
+                args.streamed,
+                args.middleware,
+                args.returns,
+                args.responses,
+                args.response,
+            )
         }
     };
 
@@ -271,6 +448,9 @@ pub fn parse_route_attr(attr: &Attribute) -> syn::Result<RouteAttr> {
         path,
         streamed,
         middleware,
+        returns,
+        responses,
+        response,
     })
 }
 
@@ -303,3 +483,6 @@ pub fn expand_standalone(item: ItemFn) -> syn::Result<TokenStream> {
         #item
     })
 }
+
+#[cfg(test)]
+mod tests;

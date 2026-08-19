@@ -1,5 +1,5 @@
 [package]
-name = "overseerd-example-daemon"
+name = "upwell-example-daemon"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,10 +7,14 @@ authors.workspace = true
 publish = false
 
 [dependencies]
-overseerd = { path = "../..", features = ["daemon", "tracing-subscriber"] }
+upwell = { path = "../..", features = ["daemon", "tracing-subscriber", "tooling"] }
+clap.workspace = true
 tokio = { workspace = true }
 serde = { workspace = true }
 tracing.workspace = true
+
+[dev-dependencies]
+upwell-test-utils = { workspace = true }
 
 # Build-time dependency-graph validation: the build script fails `cargo build`
 # if the DI graph is unsatisfiable, so CI catches it before deployment.

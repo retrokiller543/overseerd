@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::executor::block_on;
-use overseerd_core::{ResolverSet, Scope, Singleton, TypeDescriptor};
-use overseerd_di::{
+use upwell_core::{ResolverSet, Scope, ScopeId, Singleton, TypeDescriptor};
+use upwell_di::{
     BoxedComponent, Component, ComponentDescriptor, Injectable, ScopeContainer, ScopeRegistry,
 };
 
@@ -62,16 +62,16 @@ unsafe impl GlobalAlloc for TrackingAllocator {
         unsafe { System.alloc(layout) }
     }
 
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        record_allocation(1, layout.size() as i64);
-
-        unsafe { System.alloc_zeroed(layout) }
-    }
-
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         record_allocation(0, -(layout.size() as i64));
 
         unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        record_allocation(1, layout.size() as i64);
+
+        unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
@@ -160,9 +160,10 @@ impl<const N: usize> C<N> {
 }
 
 impl<const N: usize> Component for C<N> {
+    type Handle = Arc<Self>;
+
     const ID: &'static str = "mem-component";
     const NAME: &'static str = "MemComponent";
-    type Handle = Arc<Self>;
 
     fn into_handle(self) -> Arc<Self> {
         Arc::new(self)
@@ -211,6 +212,10 @@ struct Layer2;
 struct Layer3;
 
 impl Scope for Layer1 {
+    fn id(&self) -> ScopeId {
+        ScopeId::new("test/layer-1").expect("valid test scope ID")
+    }
+
     fn rank(&self) -> u8 {
         1
     }
@@ -221,6 +226,10 @@ impl Scope for Layer1 {
 }
 
 impl Scope for Layer2 {
+    fn id(&self) -> ScopeId {
+        ScopeId::new("test/layer-2").expect("valid test scope ID")
+    }
+
     fn rank(&self) -> u8 {
         2
     }
@@ -231,6 +240,10 @@ impl Scope for Layer2 {
 }
 
 impl Scope for Layer3 {
+    fn id(&self) -> ScopeId {
+        ScopeId::new("test/layer-3").expect("valid test scope ID")
+    }
+
     fn rank(&self) -> u8 {
         3
     }
@@ -243,12 +256,10 @@ impl Scope for Layer3 {
 static LAYER_SCOPES: [&'static dyn Scope; 4] = [&Singleton, &Layer1, &Layer2, &Layer3];
 
 async fn build_graph(entries: &[Entry], width: usize, layers: usize) -> Arc<ScopeContainer> {
-    let registry = Arc::new(ScopeRegistry::new(
-        HashMap::new(),
-        HashMap::new(),
-        Vec::new(),
-        HashMap::new(),
-    ));
+    let registry = Arc::new(
+        ScopeRegistry::new(HashMap::new(), HashMap::new(), Vec::new(), HashMap::new())
+            .expect("empty scope registry validates"),
+    );
 
     let root = &entries[0..width];
     let root_descs: Vec<ComponentDescriptor> = root.iter().map(|entry| entry.desc).collect();

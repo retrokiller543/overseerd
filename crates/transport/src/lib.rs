@@ -1,4 +1,4 @@
-//! Transport layer for Overseerd: the [`Transport`]/[`Connection`]/[`Respond`]
+//! Transport layer for Upwell: the [`Transport`]/[`Connection`]/[`Respond`]
 //! abstraction, the length-prefixed wire [`protocol`], and concrete transports
 //! (TCP, Unix sockets, in-memory).
 //!
@@ -6,7 +6,7 @@
 //! each of which yields `(IncomingCall, Responder)` pairs. Correlation ids live
 //! entirely here — the daemon never sees them.
 //!
-//! Usually consumed through the `overseerd` facade crate.
+//! Usually consumed through the `upwell` facade crate.
 
 pub mod codec;
 #[cfg(feature = "di")]

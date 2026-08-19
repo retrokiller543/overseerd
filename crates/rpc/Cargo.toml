@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-rpc"
-description = "The Overseerd native RPC protocol plugin: router, extractors, middleware, transports, and the serve loop, over the protocol-agnostic overseerd-app core."
+name = "upwell-rpc"
+description = "The Upwell native RPC protocol: router, extractors, middleware, transports, and the serve loop over the protocol-agnostic upwell-app core."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,36 +12,38 @@ categories.workspace = true
 
 [features]
 default = []
-client = ["dep:async-trait", "dep:overseerd-client", "overseerd-rpc-macros/client"]
+client = ["dep:async-trait", "dep:upwell-client", "upwell-rpc-macros/client"]
 di-check = [
-    "overseerd-app/di-check",
-    "overseerd-di/di-check",
-    "overseerd-config/di-check",
-    "overseerd-transport/di-check",
-    "overseerd-rpc-macros/di-check",
+    "upwell-app/di-check",
+    "upwell-di/di-check",
+    "upwell-config/di-check",
+    "upwell-transport/di-check",
+    "upwell-rpc-macros/di-check",
 ]
-yaml = ["overseerd-app/yaml", "overseerd-config/yaml"]
-watch = ["overseerd-app/watch", "overseerd-config/watch"]
-tracing-subscriber = ["overseerd-app/tracing-subscriber"]
-# Set by the `overseerd` facade: root the macros' generated plugin types at
-# `::overseerd::daemon::*`. Off (the default) keeps them at this standalone crate
-# (`::overseerd_rpc::*`), so depending on `overseerd-rpc` directly works.
-facade = ["overseerd-rpc-macros/facade"]
+hybrid-registry = ["upwell-rpc-macros/hybrid-registry"]
+yaml = ["upwell-app/yaml", "upwell-config/yaml"]
+watch = ["upwell-app/watch", "upwell-config/watch"]
+tracing-subscriber = ["upwell-app/tracing-subscriber"]
+tooling = ["upwell-app/tooling"]
+# Set by the `upwell` facade: root the macros' generated protocol types at
+# `::upwell::daemon::*`. Off (the default) keeps them at this standalone crate
+# (`::upwell_rpc::*`), so depending on `upwell-rpc` directly works.
+facade = ["upwell-rpc-macros/facade"]
 
 [dependencies]
-overseerd-app = { workspace = true }
-overseerd-rpc-macros = { workspace = true }
-overseerd-client = { workspace = true, optional = true }
-overseerd-core = { workspace = true }
-overseerd-di = { workspace = true }
-overseerd-hooks = { workspace = true }
-overseerd-config = { workspace = true }
-overseerd-transport = { workspace = true, features = ["di"] }
-overseerd-dirs = { workspace = true }
+upwell-app = { workspace = true }
+upwell-rpc-macros = { workspace = true }
+upwell-client = { workspace = true, optional = true }
+upwell-core = { workspace = true }
+upwell-di = { workspace = true }
+upwell-hooks = { workspace = true }
+upwell-config = { workspace = true }
+upwell-transport = { workspace = true, features = ["di"] }
+upwell-dirs = { workspace = true }
 arc-swap = { workspace = true }
 linkme = { workspace = true }
 inventory = { workspace = true }
-# build.rs sets the `overseerd_hybrid` cfg (below).
+# build.rs sets the `upwell_hybrid` cfg (below).
 directories = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
@@ -55,4 +57,4 @@ thiserror = { workspace = true }
 async-trait = { workspace = true, optional = true }
 
 [build-dependencies]
-overseerd-build = { workspace = true }
+upwell-build = { workspace = true }

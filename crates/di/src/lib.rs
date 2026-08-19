@@ -1,14 +1,14 @@
-//! The Overseerd dependency-injection engine.
+//! The Upwell dependency-injection engine.
 //!
 //! This crate owns the runtime DI machinery: the parent-linked [`ScopeContainer`], the
 //! construction-time [`Factory`]/[`FromContainer`] extractors, the component and provider
 //! descriptors, and the [`ComponentRegistry`] that validates the graph. It builds on the
-//! leaf vocabulary in `overseerd-core` (type descriptors, the dependency model, the
-//! resolver abstraction) and on `overseerd-hooks` for the per-component hook slice each
+//! leaf vocabulary in `upwell-core` (type descriptors, the dependency model, the
+//! resolver abstraction) and on `upwell-hooks` for the per-component hook slice each
 //! [`ComponentDescriptor`] carries.
 //!
-//! Config is deliberately *not* here: it is an external resolver (`overseerd-config`)
-//! reached through the [`ResolverCtx`](overseerd_core::ResolverCtx), so the container
+//! Config is deliberately *not* here: it is an external resolver (`upwell-config`)
+//! reached through the [`ResolverCtx`](upwell_core::ResolverCtx), so the container
 //! stays unaware of it.
 
 pub mod construct;
@@ -31,14 +31,21 @@ pub use descriptors::component::from_boxed;
 pub use descriptors::{
     BoxedComponent, COMPONENTS, Cardinality, Component, ComponentConstructionContext,
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor, Dep,
-    DependencyDescriptor, DescriptorFor, Dynamic, Injectable, Live, LiveRef, OverseerdDescriptor,
-    PROVIDERS, Provide, ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection,
-    Registration, RegistryFor, ResolutionMode, Scope, ServiceComponent, Singleton, StaticScope,
-    Transient, TypeDescriptor, Wired, Wiring,
+    DependencyDescriptor, DescriptorFor, Dynamic, Injectable, Live, LiveRef, PROVIDERS, Provide,
+    ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection, Registration,
+    RegistryFor, ResolutionMode, Scope, ScopeId, ServiceComponent, Singleton, StaticScope,
+    Transient, TypeDescriptor, UpwellDescriptor, Wired, Wiring,
 };
-pub use error::{Error, Result};
+pub use error::{
+    DeferredTransientDependency, Error, InvalidFreshDependency, ProviderComponentMissing,
+    ProviderOrderCycle, ProviderOrderSourceTraitMismatch, ProviderOrderTargetTraitMismatch, Result,
+    ScopeUnreachableDependency, ScopeUnreachableProvider, ScopeViolation,
+};
 pub use primitives::{Deferred, Fresh, FreshFromContainer, Lazy};
-pub use registry::ComponentRegistry;
+pub use registry::{
+    ComponentRegistry, DependencySelectionReason, DependencySelectionStage, DependencyTarget,
+    ProviderSelectionModel, SelectedDependency,
+};
 pub use root::{ROOT_RESOLVER_ID, ROOT_RESOLVER_NAME, RootResolver, root_resolver_descriptor};
 
 /// Re-exported so macro-generated code can reach the `#[distributed_slice]` attribute
@@ -48,6 +55,6 @@ pub use linkme;
 
 /// Re-exported so macro-generated code can reach `inventory::collect!`/`submit!`/`iter`
 /// through a stable path — the `inventory` registration backend, selected on macOS or the
-/// `overseerd_hybrid` cfg.
+/// `upwell_hybrid` cfg.
 #[doc(hidden)]
 pub use inventory;

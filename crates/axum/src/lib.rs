@@ -1,13 +1,14 @@
-//! The Overseerd axum/HTTP protocol, built on the protocol-agnostic `overseerd-app` core.
+//! The Upwell axum/HTTP protocol, built on the protocol-agnostic `upwell-app` core.
 //!
-//! This crate is a [`ProtocolPlugin`]: it builds a real [`axum::Router`] from `#[controller]`
+//! This crate provides the first-class [`Axum`] protocol definition and builds a real
+//! [`axum::Router`] from `#[controller]`
 //! components, bridges the framework's dependency injection into axum via the [`Inject`]
 //! extractor (so route handlers mix native axum extractors with DI), and serves over HTTP.
-//! Depend on it directly, or reach it through the `overseerd` facade's `axum` feature.
+//! Depend on it directly, or reach it through the `upwell` facade's `axum` feature.
 //!
-//! The DI bridge is deliberately thin and one-directional: nothing in `overseerd-di` or
-//! `overseerd-core` knows axum exists. A per-request scope layer threads an
-//! [`Arc<ScopeContainer>`](overseerd_di::ScopeContainer) through the request extensions, and
+//! The DI bridge is deliberately thin and one-directional: nothing in `upwell-di` or
+//! `upwell-core` knows axum exists. A per-request scope layer threads an
+//! [`Arc<ScopeContainer>`](upwell_di::ScopeContainer) through the request extensions, and
 //! [`Inject`] resolves components from it.
 
 #[cfg(feature = "client")]
@@ -29,7 +30,8 @@ pub mod messaging;
 /// names them); the axum extractor/response impls inside are gated to non-wasm.
 pub mod stream;
 
-// Server-only modules: the DI bridge, controllers, the serve loop, and the ws broker. None of
+// Server-only modules: the DI bridge, controllers, protocol states, the serve loop, and the ws
+// broker. None of
 // these exist on a wasm client target, where only the generated HTTP client is compiled.
 #[cfg(not(target_family = "wasm"))]
 pub mod config;
@@ -47,7 +49,7 @@ pub mod middleware;
 #[cfg(all(feature = "openapi", not(target_family = "wasm")))]
 pub mod openapi;
 #[cfg(not(target_family = "wasm"))]
-pub mod plugin;
+mod plugin;
 #[cfg(not(target_family = "wasm"))]
 pub mod protocol;
 #[cfg(not(target_family = "wasm"))]
@@ -62,19 +64,23 @@ pub use config::{AXUM_CONFIG_PATH, AxumConfig};
 #[cfg(all(feature = "openapi", not(target_family = "wasm")))]
 pub use config::{AXUM_OPENAPI_CONFIG_PATH, OpenApiConfig, OpenApiUi};
 /// The OpenAPI operation/schema slices and document assembler, re-exported at the crate root so
-/// `#[dto]`/`#[handlers]` generated code registers into a stable path and the plugin folds them.
+/// `#[dto]`/`#[handlers]` generated code registers into a stable path and the protocol folds them.
 #[cfg(all(feature = "openapi", not(target_family = "wasm")))]
 pub use openapi::{
     OPENAPI_OPERATIONS, OPENAPI_SCHEMAS, OperationEntry, SchemaEntry, build_openapi, join_base,
 };
 
 #[cfg(not(target_family = "wasm"))]
-pub use controller::{CONTROLLERS, Controller, ControllerDescriptor, ControllerRoute};
+pub use controller::{
+    CONTROLLERS, Controller, ControllerDescriptor, ControllerRoute, HttpInputDescriptor,
+    HttpInputSource, HttpOutputDescriptor, HttpOutputShape, HttpPathParameterDescriptor,
+    HttpResponseBodyDescriptor, HttpResponseDescriptor, HttpRouteDescriptor,
+};
 #[cfg(not(target_family = "wasm"))]
 pub use error::{Error, Result};
 /// The `utoipa` crate, re-exported so `#[dto]`/`#[handlers]` generated OpenAPI code names its
-/// derive (`ToSchema`), attribute (`path`), and traits through a stable plugin path
-/// (`::overseerd_axum::utoipa` / `::overseerd::axum::utoipa`) without the user crate depending on
+/// derive (`ToSchema`), attribute (`path`), and traits through a stable protocol path
+/// (`::upwell_axum::utoipa` / `::upwell::axum::utoipa`) without the user crate depending on
 /// `utoipa` directly. Native + `openapi` only.
 #[cfg(all(feature = "openapi", not(target_family = "wasm")))]
 #[doc(hidden)]
@@ -83,8 +89,9 @@ pub use utoipa;
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 pub use ws::{
     ControllerWsRoute, SOCKET_SEND_TIMEOUT, WS_CONTROLLERS, WebsocketController, WebsocketHandler,
-    WebsocketProtocol, WsConnectionMeta, WsConnectionSettings, WsControllerDescriptor,
-    WsDispatchError, WsFuture, WsHandlerFn, WsIdle, WsRespond, WsRoute, WsShutdown,
+    WebsocketProtocol, WebsocketUpgradeMeta, WsConnectionMeta, WsConnectionSettings,
+    WsControllerDescriptor, WsControllerRegistration, WsDispatchError, WsFuture, WsHandlerFn,
+    WsIdle, WsMessageDescriptor, WsMessageMode, WsRespond, WsRoute, WsRouteDescriptor, WsShutdown,
 };
 
 /// The `PubSubProtocol` capability (server side): the seam a topic-bearing protocol implements so
@@ -103,19 +110,19 @@ pub use ws::pubsub::{
 };
 
 /// The protocol-generic messaging wire contract, re-exported at the crate root on every target — the
-/// browser client's generated `#[topics]`/`#[message]` code names it through the plugin path. Behind
+/// browser client's generated `#[topics]`/`#[message]` code names it through the protocol path. Behind
 /// `ws` so a non-STOMP protocol reuses it without enabling `stomp`.
 #[cfg(feature = "ws")]
 pub use messaging::{MessagingClientProtocol, MessagingProtocol, Topic, TopicCodec, TopicParam};
 
 /// Re-exported so `#[topics]`-generated `Topic::encode` impls name the codec error without a
-/// separate `overseerd-transport` dependency. Behind `ws` so a non-STOMP protocol's generated code
+/// separate `upwell-transport` dependency. Behind `ws` so a non-STOMP protocol's generated code
 /// names it too.
 #[cfg(feature = "ws")]
-pub use overseerd_transport::CodecError;
+pub use upwell_transport::CodecError;
 
 /// The `multipart/form-data` request extractor, re-exported from axum under the `multipart` feature
-/// so a handler reaches it through the facade (`overseerd::axum::Multipart`) — pairing with the
+/// so a handler reaches it through the facade (`upwell::axum::Multipart`) — pairing with the
 /// client-side [`client::Multipart`] body builder used to send the upload.
 #[cfg(all(feature = "multipart", not(target_family = "wasm")))]
 pub use axum::extract::Multipart;
@@ -123,23 +130,10 @@ pub use axum::extract::Multipart;
 pub use extract::{Inject, InjectRejection, ScopeHandle};
 #[cfg(not(target_family = "wasm"))]
 pub use middleware::AxumMiddleware;
-/// The topic-set macro (`#[topics]`). Behind `ws` so a non-STOMP protocol declares a topic set with
-/// `#[topics(protocol = P)]`. The protocol is explicit so neutral code generation never names a
-/// concrete downstream protocol.
-#[cfg(feature = "ws")]
-pub use overseerd_axum_macros::topics;
-/// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
-/// this protocol crate. Their generated code roots plugin types at this crate
-/// (`::overseerd_axum::*`) by default, or at `::overseerd::axum::*` under the `facade` feature —
-/// so they work whether `overseerd-axum` is used directly or through the `overseerd` facade. The
-/// core macros (`app!`, `#[component]`, …) come from `overseerd` (the always-present core).
-pub use overseerd_axum_macros::{
-    controller, delete, get, handlers, head, message, options, patch, post, put, route,
-};
 #[cfg(not(target_family = "wasm"))]
-pub use plugin::{AxumAppBuilder, AxumAppServe, AxumPlugin};
+pub use plugin::{Axum, AxumAppBuilder, AxumAppServe, PreparedAxum};
 #[cfg(not(target_family = "wasm"))]
-pub use protocol::Axum;
+pub use protocol::AxumRuntime;
 #[cfg(not(target_family = "wasm"))]
 pub use request_meta::RequestMeta;
 /// The `StreamBody` request extractor is an axum `FromRequest` — server-only.
@@ -147,6 +141,19 @@ pub use request_meta::RequestMeta;
 pub use stream::StreamBody;
 /// Pure stream framing, available on every target (the generated streaming client names these).
 pub use stream::{Ndjson, RawStream, StreamEncode, chunk_u8};
+/// The topic-set macro (`#[topics]`). Behind `ws` so a non-STOMP protocol declares a topic set with
+/// `#[topics(protocol = P)]`. The protocol is explicit so neutral code generation never names a
+/// concrete downstream protocol.
+#[cfg(feature = "ws")]
+pub use upwell_axum_macros::topics;
+/// The axum controller macros (`#[controller]`, `#[handlers]`, the route attributes), owned by
+/// this protocol crate. Their generated code roots protocol types at this crate
+/// (`::upwell_axum::*`) by default, or at `::upwell::axum::*` under the `facade` feature —
+/// so they work whether `upwell-axum` is used directly or through the `upwell` facade. The
+/// core macros (`app!`, `#[component]`, …) come from `upwell` (the always-present core).
+pub use upwell_axum_macros::{
+    controller, delete, get, handlers, head, message, options, patch, post, put, route,
+};
 
 /// Re-exported so streaming-client codegen can project a concrete stream's item type
 /// (`<S as Stream>::Item`) and name the item stream it returns. Referenced only by generated code.
@@ -159,10 +166,10 @@ pub use dto::Dto;
 
 /// The axum controller macros' companion `#[dto]` attribute: derives `serde` (+ `tsify::Tsify` on
 /// wasm) and marks a type [`Dto`] so it may cross the HTTP wire.
-pub use overseerd_axum_macros::dto;
+pub use upwell_axum_macros::dto;
 
 /// The `bytes` crate, re-exported so raw-stream client codegen names `bytes::Bytes` through a
-/// stable path (`::overseerd_axum::bytes`) without depending on axum's re-export — the client
+/// stable path (`::upwell_axum::bytes`) without depending on axum's re-export — the client
 /// body/stream path stays wasm-safe. Referenced by generated code and available on every target.
 pub use bytes;
 
@@ -170,42 +177,51 @@ pub use bytes;
 /// generated handler resolves its `Inject<T>` parameters from. Referenced only by generated code.
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
 #[doc(hidden)]
-pub use overseerd_di::ScopeContainer as __ScopeContainer;
+pub use upwell_di::ScopeContainer as __ScopeContainer;
 
 /// The DI scope container, re-exported for downstream WebSocket protocol implementations.
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
-pub use overseerd_di::ScopeContainer;
+pub use upwell_di::ScopeContainer;
 
 /// DI construction primitives needed by downstream protocol implementations that seed message
 /// scope metadata or implement injectable authentication adapters.
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
-pub use overseerd_di::{BoxedComponent, Component, FromContainer, Injectable, Provide, Wiring};
+pub use upwell_di::{
+    BoxedComponent, Component, ComponentDescriptor, FromContainer, Injectable, Provide, Wiring,
+};
 
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
-pub use overseerd_core::TypeDescriptor;
+pub use upwell_core::{StaticScope, TypeDescriptor};
 
 /// The DI error returned while resolving protocol-owned connection dependencies.
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
-pub use overseerd_di::Error as DiError;
+pub use upwell_di::Error as DiError;
 
-/// Standard HTTP and WebSocket scope markers available to downstream protocol implementations.
+/// The standard HTTP request scope marker.
+#[cfg(not(target_family = "wasm"))]
+pub use scope::{HttpRequest, HttpRequest as HttpRequestScope};
+
+/// Standard WebSocket scope markers available to downstream protocol implementations.
 #[cfg(all(feature = "ws", not(target_family = "wasm")))]
-pub use scope::{Connection as ConnectionScope, Request as RequestScope};
+pub use scope::{
+    WebsocketConnection, WebsocketConnection as WebsocketConnectionScope, WebsocketMessage,
+    WebsocketMessage as WebsocketMessageScope,
+};
 
-/// The axum app type: an [`App`](overseerd_app::App) specialized to [`AxumPlugin`].
+/// The axum app type: an [`App`](upwell_app::App) specialized to [`Axum`].
 /// `App::builder(name)` resolves through this alias without a turbofish.
 #[cfg(not(target_family = "wasm"))]
-pub type App = overseerd_app::App<AxumPlugin>;
+pub type App = upwell_app::App<Axum>;
 
-/// The axum app builder: [`AppBuilder`](overseerd_app::AppBuilder) specialized to [`AxumPlugin`].
+/// The axum app builder: [`AppBuilder`](upwell_app::AppBuilder) specialized to [`Axum`].
 #[cfg(not(target_family = "wasm"))]
-pub type AppBuilder = overseerd_app::AppBuilder<AxumPlugin>;
+pub type AppBuilder = upwell_app::AppBuilder<Axum>;
 
-// Re-export the agnostic app surface so a standalone `overseerd-axum` user has one import.
+// Re-export the agnostic app surface so a standalone `upwell-axum` user has one import.
 #[cfg(not(target_family = "wasm"))]
-pub use overseerd_app::{
-    AppRegistry, AppRuntime, LoggingConfig, Plugin, Protocol, ProtocolPlugin, Serve, ServerConfig,
-    ShutdownHandle, ShutdownSignal,
+pub use upwell_app::{
+    AppRegistry, AppRuntime, LoggingConfig, Plugin, PreparedProtocol, ProtocolDefinition,
+    ProtocolRuntime, Serve, ServerConfig, ShutdownHandle, ShutdownSignal,
 };
 
 /// Re-exported so macro-generated code can reach the `#[distributed_slice]` attribute for
@@ -232,7 +248,7 @@ pub use axum;
 pub use tower;
 
 /// The `http` crate (verb, headers, request/response), re-exported at the crate root so a
-/// dependant resolves `::overseerd_axum::http` — the path the generated client builds its
+/// dependant resolves `::upwell_axum::http` — the path the generated client builds its
 /// `http::Request` against. Natively this rides on axum's re-export; on wasm (no axum) the `http`
 /// crate is depended on directly via the `client` feature.
 #[cfg(not(target_family = "wasm"))]

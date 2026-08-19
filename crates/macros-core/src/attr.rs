@@ -32,11 +32,11 @@ const COMPONENT_KEYS: &[&str] = &[
     "priority",
     "before",
     "after",
-    "overseerd",
+    "upwell",
     "crate",
 ];
 
-/// Parses an `overseerd = <path>` / `crate = <path>` override value into a [`syn::Path`]. Shared
+/// Parses an `upwell = <path>` / `crate = <path>` override value into a [`syn::Path`]. Shared
 /// by the component and impl-block macros so the crate-root override is spelled identically.
 pub(crate) fn parse_path_override(input: ParseStream) -> syn::Result<syn::Path> {
     input.parse::<Token![=]>()?;
@@ -113,8 +113,8 @@ pub struct ComponentArgs<Ext: ParseKeyed = NoExt> {
     pub factory: Option<syn::Path>,
     /// Suppresses the field-injection default factory (`default_factory = false`).
     pub no_default_factory: bool,
-    /// Override for the core `overseerd` facade root (`overseerd = ::path`).
-    pub overseerd: Option<syn::Path>,
+    /// Override for the core `upwell` facade root (`upwell = ::path`).
+    pub upwell: Option<syn::Path>,
     /// Override for the plugin own-types root (`crate = ::path`).
     pub krate: Option<syn::Path>,
     /// The macro extension (its own keyed args, item pass, and emission).
@@ -123,9 +123,9 @@ pub struct ComponentArgs<Ext: ParseKeyed = NoExt> {
 
 impl<Ext: ParseKeyed> ComponentArgs<Ext> {
     /// Resolves the crate [`Paths`] for this invocation: the macro's `default` roots with any
-    /// `overseerd =` / `crate =` overrides applied.
+    /// `upwell =` / `crate =` overrides applied.
     pub fn paths(&self, default: Paths) -> Paths {
-        default.resolve(self.overseerd.clone(), self.krate.clone())
+        default.resolve(self.upwell.clone(), self.krate.clone())
     }
 }
 
@@ -159,7 +159,7 @@ impl<Ext: ParseKeyed> Parse for ComponentArgs<Ext> {
                     let value: syn::LitBool = input.parse()?;
                     args.no_default_factory = !value.value;
                 }
-                "overseerd" => args.overseerd = Some(parse_path_override(input)?),
+                "upwell" => args.upwell = Some(parse_path_override(input)?),
                 "crate" => args.krate = Some(parse_path_override(input)?),
                 "scope" => {
                     input.parse::<Token![=]>()?;
@@ -347,7 +347,7 @@ pub fn is_payload_param(ty: &Type) -> bool {
 
 /// The logical response *body* type, for descriptor metadata only.
 ///
-/// Handlers may return any [`Responder`](overseerd_core::Responder): a bare value,
+/// Handlers may return any [`Responder`](upwell_core::Responder): a bare value,
 /// `Result<T, E>`, `ResponseStream<T>`, `Result<ResponseStream<T>, E>`, `()`,
 /// etc. This peels the `Result` and `ResponseStream` wrappers to the body type,
 /// and reports `()` for an absent return. It never fails: dispatch is uniform
@@ -463,7 +463,7 @@ pub fn streaming_inner(ty: &Type) -> Option<Type> {
 }
 
 /// If `output` is `Result<Ok, Err?>`, returns `(Ok, Err)`. `Err` is `None` for a
-/// one-argument alias such as `overseerd::Result<T>` (whose error is the framework
+/// one-argument alias such as `upwell::Result<T>` (whose error is the framework
 /// `Error`, opaque to the client and surfaced as a raw body).
 pub fn result_type_args(output: &ReturnType) -> Option<(Type, Option<Type>)> {
     let ReturnType::Type(_, ty) = output else {

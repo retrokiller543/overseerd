@@ -1,4 +1,4 @@
-//! End-to-end proof of manual config reloading: a file-backed daemon injects two
+//! End-to-end proof of manual config reloading: a file-backed app injects two
 //! `Cfg<T>` bindings, one source value changes, and a reload re-publishes **only**
 //! the changed binding — the unchanged one keeps its exact `Arc` (no spurious swap),
 //! and a snapshot taken before the reload stays pinned to the old value.
@@ -6,13 +6,12 @@
 use std::fs;
 use std::sync::Arc;
 
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::dirs::{Config, DirectoriesManager};
-use overseerd::{Cfg, ConfigManager, component, config};
-use overseerd_config::ResolverChain;
 use serde::Deserialize;
 use tempfile::TempDir;
+use upwell::config::Toml;
+use upwell::dirs::{Config, DirectoriesManager};
+use upwell::{App, Cfg, ConfigManager, component, config};
+use upwell_config::ResolverChain;
 
 #[config(path = "svc")]
 #[derive(Deserialize)]
@@ -47,7 +46,7 @@ impl Consumer {
 
 fn temp_config_dir() -> TempDir {
     tempfile::Builder::new()
-        .prefix("overseerd-config-reload-")
+        .prefix("upwell-config-reload-")
         .tempdir()
         .expect("create temp config dir")
 }
@@ -66,7 +65,7 @@ async fn reload_swaps_only_the_changed_binding() {
         ConfigManager::<Toml>::load_in_with_resolvers(&config_dir, &[], ResolverChain::empty())
             .expect("load config");
 
-    let daemon = App::builder("config-reload-test")
+    let daemon = App::<()>::builder("config-reload-test")
         .config_source(manager)
         .auto_discover()
         .build()

@@ -4,46 +4,46 @@
 //! overridable so a macro works wherever the crates live (a fork, a vendored tree, a
 //! third-party plugin):
 //!
-//! - **core** — the always-present `overseerd` facade: vocabulary, the DI engine, config,
+//! - **core** — the always-present `upwell` facade: vocabulary, the DI engine, config,
 //!   hooks, the transport substrate, and the agnostic `client` module. Every plugin relies on
-//!   it, so core items resolve here (`::overseerd::Component`, `::overseerd::client::Client`, …).
+//!   it, so core items resolve here (`::upwell::Component`, `::upwell::client::Client`, …).
 //! - **plugin** — the crate owning the macro's *own* generated types. For the RPC macros that
-//!   is the `daemon` module (`::overseerd::daemon::ServiceDescriptor`, …); a third-party plugin
+//!   is the `daemon` module (`::upwell::daemon::ServiceDescriptor`, …); a third-party plugin
 //!   points it at its own crate.
 //!
 //! Each macro crate supplies its defaults (so built-in macros are zero-config); a
-//! per-invocation `overseerd = ::fork` / `crate = ::my_plugin` overrides them.
+//! per-invocation `upwell = ::fork` / `crate = ::my_plugin` overrides them.
 
-use quote::ToTokens;
-use syn::Path;
+use syn::parse::Parser as _;
+use syn::punctuated::Punctuated;
+use syn::{Path, PathSegment, Token};
 
-pub const OVERSEERD_CRATE: &str = "overseerd";
+pub const UPWELL_CRATE: &str = "upwell";
 
-/// A path to a **core-framework** item, rooted at the always-present `overseerd` facade.
+/// A path to a **core-framework** item, rooted at the always-present `upwell` facade.
 /// Used for vocabulary, the DI engine, config, hooks, and transport — everything any plugin
 /// can rely on. (The fixed-root counterpart of [`Paths::core`]; the codegen will migrate to
 /// the parameterized [`Paths`] as the per-macro path overrides land.)
-pub fn overseerd_path(item: &str) -> Path {
-    syn::parse_str(&format!("::{OVERSEERD_CRATE}::{item}"))
-        .expect("valid overseerd facade item path")
+pub fn upwell_path(item: &str) -> Path {
+    syn::parse_str(&format!("::{UPWELL_CRATE}::{item}")).expect("valid upwell facade item path")
 }
 
 /// A path to a **daemon (RPC) plugin** item, rooted at the facade's `daemon` module
-/// (`::overseerd::daemon::<item>`). The fixed-root counterpart of [`Paths::plugin`].
-pub fn overseerd_daemon_path(item: &str) -> Path {
-    syn::parse_str(&format!("::{OVERSEERD_CRATE}::daemon::{item}"))
-        .expect("valid overseerd daemon item path")
+/// (`::upwell::daemon::<item>`). The fixed-root counterpart of [`Paths::plugin`].
+pub fn upwell_daemon_path(item: &str) -> Path {
+    syn::parse_str(&format!("::{UPWELL_CRATE}::daemon::{item}"))
+        .expect("valid upwell daemon item path")
 }
 
 /// A path to a **protocol-agnostic client** item, rooted at the facade's `client` module
-/// (`::overseerd::client::<item>`). The fixed-root counterpart of [`Paths::client`].
-pub fn overseerd_client_path(item: &str) -> Path {
-    syn::parse_str(&format!("::{OVERSEERD_CRATE}::client::{item}"))
-        .expect("valid overseerd client item path")
+/// (`::upwell::client::<item>`). The fixed-root counterpart of [`Paths::client`].
+pub fn upwell_client_path(item: &str) -> Path {
+    syn::parse_str(&format!("::{UPWELL_CRATE}::client::{item}"))
+        .expect("valid upwell client item path")
 }
 
 /// The resolved crate roots a macro emits against. Construct with the macro crate's defaults
-/// (e.g. [`Paths::overseerd`] / [`Paths::overseerd_daemon`]) and override per-invocation.
+/// (e.g. [`Paths::upwell`] / [`Paths::upwell_daemon`]) and override per-invocation.
 #[derive(Clone)]
 pub struct Paths {
     core: Path,
@@ -51,11 +51,11 @@ pub struct Paths {
 }
 
 impl Default for Paths {
-    /// The core-macro default: both roots at the `overseerd` facade. Macro crates with a
-    /// different default (the RPC macros use [`overseerd_daemon`](Paths::overseerd_daemon))
+    /// The core-macro default: both roots at the `upwell` facade. Macro crates with a
+    /// different default (the RPC macros use [`upwell_daemon`](Paths::upwell_daemon))
     /// construct explicitly.
     fn default() -> Self {
-        Self::overseerd()
+        Self::upwell()
     }
 }
 
@@ -66,9 +66,9 @@ impl Paths {
     }
 
     /// The default for **core** macros (`#[component]`, `#[config]`, …): both roots are the
-    /// `overseerd` facade, since their generated types live at the facade root.
-    pub fn overseerd() -> Self {
-        let root: Path = syn::parse_quote!(::overseerd);
+    /// `upwell` facade, since their generated types live at the facade root.
+    pub fn upwell() -> Self {
+        let root: Path = syn::parse_quote!(::upwell);
 
         Self {
             core: root.clone(),
@@ -76,16 +76,16 @@ impl Paths {
         }
     }
 
-    /// The default for the **RPC daemon** macros: core at `::overseerd`, own types under
-    /// `::overseerd::daemon`.
-    pub fn overseerd_daemon() -> Self {
+    /// The default for the **RPC daemon** macros: core at `::upwell`, own types under
+    /// `::upwell::daemon`.
+    pub fn upwell_daemon() -> Self {
         Self {
-            core: syn::parse_quote!(::overseerd),
-            plugin: syn::parse_quote!(::overseerd::daemon),
+            core: syn::parse_quote!(::upwell),
+            plugin: syn::parse_quote!(::upwell::daemon),
         }
     }
 
-    /// Overrides the core (`overseerd` facade) root — the `overseerd = ::fork` argument.
+    /// Overrides the core (`upwell` facade) root — the `upwell = ::fork` argument.
     pub fn with_core(mut self, core: Path) -> Self {
         self.core = core;
 
@@ -99,7 +99,7 @@ impl Paths {
         self
     }
 
-    /// Applies optional per-invocation overrides (the `overseerd = ..` / `crate = ..` macro
+    /// Applies optional per-invocation overrides (the `upwell = ..` / `crate = ..` macro
     /// args) onto these defaults, leaving unset roots unchanged.
     pub fn resolve(mut self, core: Option<Path>, plugin: Option<Path>) -> Self {
         if let Some(core) = core {
@@ -113,18 +113,18 @@ impl Paths {
         self
     }
 
-    /// A core-framework item: `<core>::<item>` (e.g. `::overseerd::Component`).
+    /// A core-framework item: `<core>::<item>` (e.g. `::upwell::Component`).
     pub fn core(&self, item: &str) -> Path {
         self.join(&self.core, item)
     }
 
-    /// A plugin-owned item: `<plugin>::<item>` (e.g. `::overseerd::daemon::ServiceDescriptor`).
+    /// A plugin-owned item: `<plugin>::<item>` (e.g. `::upwell::daemon::ServiceDescriptor`).
     pub fn plugin(&self, item: &str) -> Path {
         self.join(&self.plugin, item)
     }
 
     /// An agnostic **client** item: `<core>::client::<item>` (e.g.
-    /// `::overseerd::client::Client`). The generated client surface is protocol-agnostic, so it
+    /// `::upwell::client::Client`). The generated client surface is protocol-agnostic, so it
     /// roots at the core facade's `client` module — never at a protocol's `plugin` root.
     pub fn client(&self, item: &str) -> Path {
         self.join(&self.core, &format!("client::{item}"))
@@ -132,8 +132,16 @@ impl Paths {
 
     /// Appends `::<item>` (which may itself contain `::`) to a root path.
     fn join(&self, root: &Path, item: &str) -> Path {
-        let combined = format!("{}::{item}", root.to_token_stream());
+        let suffix = Punctuated::<PathSegment, Token![::]>::parse_separated_nonempty
+            .parse_str(item)
+            .expect("framework item suffix must contain relative Rust path segments");
+        let mut path = root.clone();
 
-        syn::parse_str(&combined).expect("valid composed item path")
+        path.segments.extend(suffix);
+
+        path
     }
 }
+
+#[cfg(test)]
+mod tests;

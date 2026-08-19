@@ -1,5 +1,6 @@
 //! Proof of the builtin `Startup`/`Shutdown` lifecycle hooks: `run()` fires `Startup` before
 //! waiting and `Shutdown` once a graceful stop is triggered.
+#![cfg(feature = "daemon")]
 #![allow(dead_code)]
 
 mod common;
@@ -8,11 +9,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use futures::FutureExt;
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::{ConfigManager, Shutdown, Startup, component, methods};
-use overseerd_app::{
-    AppRegistry, AppRuntime, Plugin, Protocol, ProtocolPlugin, Serve, ShutdownSignal,
+use upwell::config::Toml;
+use upwell::daemon::App;
+use upwell::{ConfigManager, Shutdown, Startup, component, methods};
+use upwell_app::{
+    AppRegistry, AppRuntime, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, ScopeTopology,
+    Serve, ShutdownSignal, ValidationContext,
 };
 
 use common::{AbortOnDropTask, deadline};
@@ -51,6 +53,62 @@ struct PartiallyStartedComponent {
     startups: AtomicUsize,
     #[default]
     stopped: AtomicUsize,
+}
+
+#[derive(Default)]
+struct PanicProtocol;
+
+struct PreparedPanicProtocol;
+
+struct PanicRuntime;
+
+#[derive(Clone, Copy)]
+enum PanicPhase {
+    Construction,
+    Poll,
+}
+
+impl ProtocolDefinition for PanicProtocol {
+    type Prepared = PreparedPanicProtocol;
+    type Error = upwell::daemon::Error;
+
+    const ID: upwell_app::ProtocolId =
+        upwell::namespaced_id!(upwell_app::ProtocolId, "test/panic-cleanup");
+    const SCOPE_TOPOLOGY: ScopeTopology = ScopeTopology::empty();
+
+    fn register(&self, _registry: &mut AppRegistry) {}
+
+    fn prepare(self, _context: &ValidationContext<'_>) -> Result<Self::Prepared, Self::Error> {
+        Ok(PreparedPanicProtocol)
+    }
+}
+
+impl PreparedProtocol for PreparedPanicProtocol {
+    type Runtime = PanicRuntime;
+    type Error = upwell::daemon::Error;
+
+    fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
+        Ok(PanicRuntime)
+    }
+}
+
+impl ProtocolRuntime for PanicRuntime {
+    type Error = upwell::daemon::Error;
+}
+
+impl Serve<PanicPhase> for PanicRuntime {
+    fn serve(
+        self,
+        _runtime: AppRuntime,
+        _shutdown: ShutdownSignal,
+        phase: PanicPhase,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        if matches!(phase, PanicPhase::Construction) {
+            panic!("serve future construction panic");
+        }
+
+        async move { panic!("serve future polling panic") }
+    }
 }
 
 impl FailingStartupComponent {
@@ -96,14 +154,14 @@ impl PartiallyStartedComponent {
 #[methods]
 impl LifecycleComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> upwell::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -113,16 +171,14 @@ impl LifecycleComponent {
 #[methods]
 impl FailingStartupComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> upwell::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
-        Err(overseerd::daemon::Error::MissingComponent(
-            "startup rejected",
-        ))
+        Err(upwell::daemon::Error::MissingComponent("startup rejected"))
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -132,14 +188,14 @@ impl FailingStartupComponent {
 #[methods]
 impl NeverStartedComponent {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> upwell::daemon::Result<()> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -149,23 +205,23 @@ impl NeverStartedComponent {
 #[methods]
 impl PartiallyStartedComponent {
     #[hook(Startup)]
-    async fn first_startup(&self) -> overseerd::daemon::Result<()> {
+    async fn first_startup(&self) -> upwell::daemon::Result<()> {
         self.startups.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
     }
 
     #[hook(Startup)]
-    async fn second_startup_fails(&self) -> overseerd::daemon::Result<()> {
+    async fn second_startup_fails(&self) -> upwell::daemon::Result<()> {
         self.startups.fetch_add(1, Ordering::SeqCst);
 
-        Err(overseerd::daemon::Error::MissingComponent(
+        Err(upwell::daemon::Error::MissingComponent(
             "second startup rejected",
         ))
     }
 
     #[hook(Shutdown)]
-    async fn on_stop(&self) -> overseerd::daemon::Result<()> {
+    async fn on_stop(&self) -> upwell::daemon::Result<()> {
         self.stopped.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -174,7 +230,7 @@ impl PartiallyStartedComponent {
 
 #[tokio::test]
 async fn startup_and_shutdown_hooks_fire() {
-    let daemon = App::builder("lifecycle-test")
+    let daemon = upwell::daemon::App::builder("lifecycle-test")
         .config_source(ConfigManager::<Toml>::empty())
         .component::<LifecycleComponent>()
         .build()
@@ -216,6 +272,30 @@ async fn startup_and_shutdown_hooks_fire() {
         1,
         "shutdown hook fired on graceful stop"
     );
+}
+
+#[tokio::test]
+async fn serve_panics_still_run_shutdown_hooks() {
+    for phase in [PanicPhase::Construction, PanicPhase::Poll] {
+        let app = upwell_app::App::<PanicProtocol>::builder("serve-panic-cleanup-test")
+            .config_source(ConfigManager::<Toml>::empty())
+            .component::<LifecycleComponent>()
+            .build()
+            .await
+            .expect("application builds");
+        let component = app
+            .container()
+            .get::<LifecycleComponent>()
+            .expect("lifecycle component built");
+
+        let panic = std::panic::AssertUnwindSafe(app.serve(phase))
+            .catch_unwind()
+            .await;
+
+        assert!(panic.is_err(), "serve panic is resumed after cleanup");
+        assert_eq!(component.started(), 1);
+        assert_eq!(component.stopped(), 1, "shutdown hook ran after panic");
+    }
 }
 
 #[tokio::test]
@@ -282,30 +362,51 @@ async fn later_startup_failure_preserves_cleanup_for_an_already_started_componen
 }
 
 #[derive(Default)]
-struct PanickingPlugin;
-
 struct PanickingProtocol;
 
-impl Plugin for PanickingPlugin {
+struct PreparedPanickingProtocol;
+
+struct PanickingRuntime;
+
+impl ProtocolDefinition for PanickingProtocol {
+    type Prepared = PreparedPanickingProtocol;
+    type Error = upwell_app::Error;
+
+    const ID: upwell::ProtocolId = upwell::namespaced_id!(upwell::ProtocolId, "test/panicking");
+    const SCOPE_TOPOLOGY: upwell::ScopeTopology = upwell::ScopeTopology::empty();
+
     fn register(&self, _registry: &mut AppRegistry) {}
-}
 
-impl ProtocolPlugin for PanickingPlugin {
-    type Protocol = PanickingProtocol;
-    type Error = overseerd_app::Error;
-
-    const SCOPES: &'static [&'static dyn overseerd::Scope] = &[];
-
-    fn build(self, _runtime: &AppRuntime) -> Result<Self::Protocol, Self::Error> {
-        Ok(PanickingProtocol)
+    fn prepare(
+        self,
+        _context: &upwell::ValidationContext<'_>,
+    ) -> Result<Self::Prepared, Self::Error> {
+        Ok(PreparedPanickingProtocol)
     }
 }
 
-impl Protocol for PanickingProtocol {
-    type Error = overseerd_app::Error;
+impl PreparedProtocol for PreparedPanickingProtocol {
+    type Runtime = PanickingRuntime;
+    type Error = upwell_app::Error;
+
+    fn build(self, _runtime: &AppRuntime) -> Result<Self::Runtime, Self::Error> {
+        Ok(PanickingRuntime)
+    }
+
+    #[cfg(feature = "tooling")]
+    fn tooling(&self, contributions: &mut upwell_app::ToolingContributions) {
+        contributions.display(upwell_app::ResourceDisplay {
+            label: Some(String::from("Panicking test protocol")),
+            ..Default::default()
+        });
+    }
 }
 
-impl Serve<()> for PanickingProtocol {
+impl ProtocolRuntime for PanickingRuntime {
+    type Error = upwell_app::Error;
+}
+
+impl Serve<()> for PanickingRuntime {
     async fn serve(
         self,
         _runtime: AppRuntime,
@@ -318,7 +419,7 @@ impl Serve<()> for PanickingProtocol {
 
 #[tokio::test]
 async fn protocol_panic_still_runs_shutdown_hooks() {
-    let app = overseerd_app::App::<PanickingPlugin>::builder("panic-cleanup-test")
+    let app = upwell_app::App::<PanickingProtocol>::builder("panic-cleanup-test")
         .config_source(ConfigManager::<Toml>::empty())
         .component::<LifecycleComponent>()
         .build()

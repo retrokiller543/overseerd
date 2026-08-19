@@ -1,7 +1,7 @@
-//! The Overseerd protocol-agnostic client *contract*.
+//! The Upwell protocol-agnostic client *contract*.
 //!
 //! The framework implements no client calls. It defines **capabilities** a protocol may
-//! support — one trait each — and a protocol (`overseerd-rpc`, a future HTTP binding, …)
+//! support — one trait each — and a protocol (`upwell-rpc`, a future HTTP binding, …)
 //! implements the subset it can. A protocol *declares* support by implementing a capability
 //! and *refuses* by simply not: a client-streaming call over HTTP/1.1 is then a compile
 //! error — a protocol limitation expressed in the type system, never a framework limit.
@@ -34,9 +34,9 @@ use std::marker::PhantomData;
 
 use futures::Stream;
 
-use overseerd_transport::Error;
+use upwell_transport::Error;
 
-pub use overseerd_transport::{CodecError, Decodes, Encodes};
+pub use upwell_transport::{CodecError, Decodes, Encodes};
 
 // ---------------------------------------------------------------------------
 // Target-conditional thread-safety markers. Natively the client contract keeps
@@ -179,6 +179,15 @@ pub enum ClientError<S, E = Raw> {
     Encode(String),
     Decode(String),
     Remote(ErrorBody<S, E>),
+    /// An HTTP-style redirect response surfaced without following it automatically.
+    Redirect {
+        /// Protocol-defined redirect status.
+        status: S,
+        /// Redirect destination when the response supplied one.
+        location: Option<String>,
+        /// Raw redirect response body.
+        body: Vec<u8>,
+    },
     ConnectionClosed,
     /// A request awaited its reply longer than the configured timeout — the call is abandoned
     /// (its pending slot dropped) rather than blocking until the connection eventually closes.
@@ -193,6 +202,20 @@ impl<S> ClientError<S, Raw> {
     }
 }
 
+impl<S, E> ClientError<S, E> {
+    /// Returns redirect response details without consuming the error.
+    pub fn redirect(&self) -> Option<(&S, Option<&str>, &[u8])> {
+        match self {
+            Self::Redirect {
+                status,
+                location,
+                body,
+            } => Some((status, location.as_deref(), body)),
+            _ => None,
+        }
+    }
+}
+
 impl<S: std::fmt::Debug, E> std::fmt::Debug for ClientError<S, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -203,6 +226,16 @@ impl<S: std::fmt::Debug, E> std::fmt::Debug for ClientError<S, E> {
             ClientError::Decode(s) => f.debug_tuple("Decode").field(s).finish(),
 
             ClientError::Remote(b) => f.debug_tuple("Remote").field(b).finish(),
+            ClientError::Redirect {
+                status,
+                location,
+                body,
+            } => f
+                .debug_struct("Redirect")
+                .field("status", status)
+                .field("location", location)
+                .field("body_len", &body.len())
+                .finish(),
 
             ClientError::ConnectionClosed => f.write_str("ConnectionClosed"),
 
@@ -221,6 +254,13 @@ impl<S: std::fmt::Debug, E> std::fmt::Display for ClientError<S, E> {
             ClientError::Decode(s) => write!(f, "decoding response: {s}"),
 
             ClientError::Remote(b) => write!(f, "remote error (status {:?})", b.code),
+            ClientError::Redirect {
+                status, location, ..
+            } => write!(
+                f,
+                "redirect response (status {status:?}, location {})",
+                location.as_deref().unwrap_or("<missing>")
+            ),
 
             ClientError::ConnectionClosed => write!(f, "connection closed before response"),
 
@@ -257,6 +297,15 @@ pub fn retype<S, E>(err: ClientError<S, Raw>) -> ClientError<S, E> {
         ClientError::Decode(s) => ClientError::Decode(s),
 
         ClientError::Remote(b) => ClientError::Remote(b.cast()),
+        ClientError::Redirect {
+            status,
+            location,
+            body,
+        } => ClientError::Redirect {
+            status,
+            location,
+            body,
+        },
 
         ClientError::ConnectionClosed => ClientError::ConnectionClosed,
 

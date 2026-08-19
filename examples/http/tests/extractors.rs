@@ -5,16 +5,24 @@
 //! real server on an ephemeral port, so a route that classified wrong (no client method, or one that
 //! silently drops an input) fails to compile or round-trips wrong here.
 
-use overseerd::axum::Multipart;
-use overseerd::axum::axum::Json;
-use overseerd::axum::axum::body::Bytes;
-use overseerd::axum::axum::extract::{FromRequestParts, Query, RawForm, RawQuery};
-use overseerd::axum::axum::http::header::{HeaderMap, HeaderValue};
-use overseerd::axum::axum::http::request::Parts;
-use overseerd::axum::client::{Multipart as ClientMultipart, ReqwestClient};
-use overseerd::axum::prelude::*;
-use overseerd::prelude::*;
-use overseerd_test_utils::{TestEnvironment, TestServer, deadline};
+use upwell::axum::Multipart;
+use upwell::axum::axum::Json;
+use upwell::axum::axum::body::Bytes;
+use upwell::axum::axum::extract::{FromRequestParts, Query, RawForm, RawQuery};
+use upwell::axum::axum::http::header::{HeaderMap, HeaderValue};
+use upwell::axum::axum::http::request::Parts;
+use upwell::axum::client::{Multipart as ClientMultipart, ReqwestClient};
+use upwell::axum::prelude::*;
+use upwell::prelude::*;
+use upwell_test_utils::{TestEnvironment, TestServer, deadline};
+
+app! {
+    /// Generated host for extractor integration tests.
+    app ExtractorsTestApplication {
+        name: "extractors-test",
+        protocol: upwell::axum::Axum,
+    }
+}
 
 /// A custom `FromRequestParts` guard: the kind of auth/tenant extractor the client generator must
 /// treat as server-only context and drop, so a guarded route still gets a client method. It reads an
@@ -111,6 +119,13 @@ impl Extras {
         Json(key.0)
     }
 
+    /// Axum request extensions are available from the Overseer prelude and remain server context,
+    /// so this route still generates a zero-argument client method.
+    #[get("/extension")]
+    async fn extension(&self, Extension(value): Extension<String>) -> Json<String> {
+        Json(value)
+    }
+
     /// Guard-consumed path param: the `{id}` hole is resolved *inside* the `Tenant` guard, so the
     /// handler lists no `Path` arg. The client method must still exist, deriving `id` from the route
     /// template (#61). Round-trips the id the guard read back out.
@@ -192,16 +207,14 @@ impl Extras {
 
 #[tokio::test]
 async fn generated_client_covers_every_extractor() {
-    let environment = TestEnvironment::new("overseerd-http-extractors-");
-    let app = app! {
-        name: "extractors-test",
-        protocol: overseerd::axum::AxumPlugin,
-    }
-    .config_source(environment.config())
-    .directories(environment.directories())
-    .build()
-    .await
-    .expect("app builds");
+    let environment = TestEnvironment::new("upwell-http-extractors-");
+    let app = ExtractorsTestApplication::builder()
+        .expect("app builder")
+        .config_source(environment.config())
+        .directories(environment.directories())
+        .build()
+        .await
+        .expect("app builds");
 
     let server = TestServer::start_with_guard(app, environment).await;
     let addr = server.address();
@@ -357,4 +370,27 @@ async fn generated_client_covers_every_extractor() {
     assert_eq!(*who, "override");
 
     server.shutdown().await;
+}
+
+#[tokio::test]
+async fn extension_extractor_is_public_and_client_treats_it_as_server_context() {
+    let environment = TestEnvironment::new("upwell-http-extension-");
+    let app = ExtractorsTestApplication::builder()
+        .expect("app builder")
+        .config_source(environment.config())
+        .directories(environment.directories())
+        .layer(upwell::axum::axum::Extension(String::from(
+            "from-extension",
+        )))
+        .build()
+        .await
+        .expect("app builds");
+    let server = TestServer::start_with_guard(app, environment).await;
+    let client = ExtrasClient::new(ReqwestClient::new(format!("http://{}", server.address())));
+
+    let value = deadline("extension request", client.extension())
+        .await
+        .expect("extension call");
+
+    assert_eq!(*value, "from-extension");
 }

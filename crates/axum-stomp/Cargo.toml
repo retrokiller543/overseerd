@@ -1,6 +1,6 @@
 [package]
-name = "overseerd-axum-stomp"
-description = "STOMP 1.2 WebSocket messaging protocol for overseerd-axum."
+name = "upwell-axum-stomp"
+description = "STOMP 1.2 WebSocket messaging protocol for upwell-axum."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,14 +12,14 @@ categories.workspace = true
 
 [features]
 default = []
-client = ["overseerd-axum/client", "dep:overseerd-client"]
-tungstenite = ["client", "overseerd-axum/tungstenite", "dep:tokio-tungstenite-wasm"]
-di-check = ["overseerd-axum/di-check"]
+client = ["upwell-axum/client", "dep:upwell-client"]
+tungstenite = ["client", "upwell-axum/tungstenite", "dep:tokio-tungstenite-wasm"]
+di-check = ["upwell-axum/di-check"]
 
 [dependencies]
-overseerd-axum = { workspace = true, features = ["ws"] }
-overseerd-client = { workspace = true, optional = true }
-overseerd-transport = { workspace = true }
+upwell-axum = { workspace = true, features = ["ws"] }
+upwell-client = { workspace = true, optional = true }
+upwell-transport = { workspace = true }
 bytes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

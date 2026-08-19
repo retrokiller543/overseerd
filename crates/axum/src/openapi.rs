@@ -138,7 +138,7 @@ pub fn mount(
         return Ok(router);
     }
 
-    validate_paths(config)?;
+    validate_config(config)?;
 
     let doc = build_openapi(&config.title, &config.version, base_path);
     let spec_url = spec_url(base_path, &config.json_path);
@@ -161,10 +161,18 @@ pub fn mount(
 /// nested under `ui_path` (a UI's wildcard would then also claim it). Only checked when the selected
 /// UI is **actually compiled** — a UI whose crate feature is absent falls back to serving JSON only
 /// (see [`mount_ui`]), which has nothing to collide with, so overlapping paths are then harmless.
-fn validate_paths(config: &OpenApiConfig) -> crate::Result<()> {
+pub(crate) fn validate_config(config: &OpenApiConfig) -> crate::Result<()> {
+    if !config.enabled {
+        return Ok(());
+    }
+
+    crate::config::validate_mount_path("OpenAPI JSON path", &config.json_path)?;
+
     if !ui_is_compiled(config.ui) {
         return Ok(());
     }
+
+    crate::config::validate_mount_path("OpenAPI UI path", &config.ui_path)?;
 
     let json = config.json_path.trim_end_matches('/');
     let ui = config.ui_path.trim_end_matches('/');
@@ -299,7 +307,7 @@ fn mount_ui(
 #[allow(dead_code)]
 fn warn_missing_ui(ui: &str, feature: &str) {
     tracing::warn!(
-        target: "overseerd::axum",
+        target: "upwell::axum",
         ui,
         feature,
         "OpenAPI UI selected in config but its crate feature is not enabled; serving JSON only"

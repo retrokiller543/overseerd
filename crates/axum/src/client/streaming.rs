@@ -9,9 +9,9 @@
 
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use overseerd_client::ClientError;
-use overseerd_transport::{CodecError, Decodes, Encodes};
 use serde::de::DeserializeOwned;
+use upwell_client::ClientError;
+use upwell_transport::{CodecError, Decodes, Encodes};
 
 use crate::client::HttpResponse;
 use crate::stream::{Ndjson, RawStream, StreamEncode};
@@ -68,7 +68,7 @@ pub trait HttpClientStreaming: Send + Sync {
 
 /// Deframes a stream of raw body chunks into typed items, per a wire framing. Pluggable: a new
 /// framing (multipart, length-delimited, …) is another impl. Keyed on the item type like
-/// [`Encodes`](overseerd_transport::Encodes), so a framing supports exactly the items it carries.
+/// [`Encodes`](upwell_transport::Encodes), so a framing supports exactly the items it carries.
 ///
 /// The yielded item is the **exact** type the server declared (`T`, or a `Result<T, E>` the
 /// handler chose to stream) — the client mirrors the server's types. A transport or frame-decode
@@ -107,7 +107,7 @@ impl<W> StreamDecode<Bytes> for RawStream<W> {
         body.take_while(|chunk| {
             if let Err(error) = chunk {
                 tracing::warn!(
-                    target: "overseerd::axum",
+                    target: "upwell::axum",
                     %error,
                     "stream transport error; ending stream"
                 );

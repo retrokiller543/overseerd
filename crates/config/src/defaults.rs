@@ -48,7 +48,7 @@ pub enum EnumTag {
 /// consumed by the merge step.
 ///
 /// Built from `&'static` data so it is `Copy` and `const`-constructible: the macro emits it as
-/// an associated const ([`ConfigProperties::DEFAULTS`](../../overseerd_core/config/trait.ConfigProperties.html)).
+/// an associated const ([`ConfigProperties::DEFAULTS`](../../upwell_core/config/trait.ConfigProperties.html)).
 /// Struct defaults fill every missing field; enum defaults fill only the fields of the variant
 /// actually present in the config, since variants are mutually exclusive and a phantom variant
 /// branch would confuse the deserializer. An enum may also name a **default variant**

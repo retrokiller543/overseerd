@@ -1,0 +1,17 @@
+[package]
+name = "upwell-tooling-schema"
+description = "Versioned protocol-neutral JSON schema for Upwell developer tooling."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+semver = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

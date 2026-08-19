@@ -1,20 +1,20 @@
-# overseerd-dirs
+# upwell-dirs
 
-> Unified application directories for Overseerd, injectable as `Dir<K>`.
+> Unified application directories for Upwell, injectable as `Dir<K>`.
 
-Part of the [Overseerd](../../README.md) framework — a standalone directories layer on top of `overseerd-core` and `overseerd-di`.
+Part of the [Upwell](../../README.md) framework — a standalone directories layer on top of `upwell-core` and `upwell-di`.
 
 ## Role
 
-`overseerd-dirs` provides an application's platform directories as typed injectables. A [`DirectoriesManager`] — built once (typically in `main` or by the app builder) from project metadata — resolves the per-application config, data, cache, state, runtime, and temp directories via the `directories` crate's XDG / Known-Folder logic. Each is handed out as a typed [`Dir<K>`] keyed by a marker ([`Config`], [`Data`], [`Cache`], [`State`], [`Runtime`], [`Tmp`]), each implementing [`DirKind`]. `Dir<K>` derefs to its [`Path`] and reading it never fails (resolution happened once at the manager); only [`ensure`](Dir::ensure) touches disk. The crate is standalone: it depends only on `overseerd-core` and `overseerd-di` and knows nothing about config.
+`upwell-dirs` provides an application's platform directories as typed injectables. A [`DirectoriesManager`] — built once (typically in `main` or by the app builder) from project metadata — resolves the per-application config, data, cache, state, runtime, and temp directories via the `directories` crate's XDG / Known-Folder logic. Each is handed out as a typed [`Dir<K>`] keyed by a marker ([`Config`], [`Data`], [`Cache`], [`State`], [`Runtime`], [`Tmp`]), each implementing [`DirKind`]. `Dir<K>` derefs to its [`Path`] and reading it never fails (resolution happened once at the manager); only [`ensure`](Dir::ensure) touches disk. The crate is standalone: it depends only on `upwell-core` and `upwell-di` and knows nothing about config.
 
 ## Usage
 
-Most users depend on the [`overseerd`](../../README.md) facade, which re-exports this crate — you rarely name it directly. A component field-injects exactly the directory kind it needs:
+Most users depend on the [`upwell`](../../README.md) facade, which re-exports this crate — you rarely name it directly. A component field-injects exactly the directory kind it needs:
 
 ```rust
-use overseerd::prelude::*;
-use overseerd::dirs::{Dir, Data};
+use upwell::prelude::*;
+use upwell::dirs::{Dir, Data};
 
 #[component]
 pub struct Store {
@@ -30,10 +30,10 @@ impl Store {
 
 ## Internal role
 
-`Dir<K>` and `DirectoriesManager` implement [`Component`](overseerd_di::Component)/[`Injectable`](overseerd_di::Injectable) from `overseerd-di`, so they resolve through the DI container like any other component (and under `di-check` are framework-seeded via [`Provide`](overseerd_di::Provide)). `overseerd-config` consumes [`DirectoriesManager::entries`] — the directory namespace as plain `(label, path)` data — to build a `${@config}`/`${@runtime}`/… templating resolver without ever naming the individual `Dir` kind types. `overseerd-app` seeds the manager so directory resolution is defined once for the whole application.
+`Dir<K>` and `DirectoriesManager` implement [`Component`](upwell_di::Component)/[`Injectable`](upwell_di::Injectable) from `upwell-di`, so they resolve through the DI container like any other component (and under `di-check` are framework-seeded via [`Provide`](upwell_di::Provide)). `upwell-config` consumes [`DirectoriesManager::entries`] — the directory namespace as plain `(label, path)` data — to build a `${@config}`/`${@runtime}`/… templating resolver without ever naming the individual `Dir` kind types. `upwell-app` seeds the manager so directory resolution is defined once for the whole application.
 
 ## Feature flags
 
 | Feature | Effect |
 |---|---|
-| `di-check` | Forwards to `overseerd-di/di-check`, enabling the framework-seeded [`Provide`](overseerd_di::Provide) impls so `Dir<K>` and `DirectoriesManager` satisfy compile-time DI checks. |
+| `di-check` | Forwards to `upwell-di/di-check`, enabling the framework-seeded [`Provide`](upwell_di::Provide) impls so `Dir<K>` and `DirectoriesManager` satisfy compile-time DI checks. |

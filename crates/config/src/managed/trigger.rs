@@ -31,7 +31,7 @@ pub fn spawn_reload_triggers(
         handles.push(spawn_sighup(reloader.clone()));
 
         #[cfg(not(unix))]
-        tracing::warn!(target: "overseerd::config", "reload_on_sighup is Unix-only; ignoring");
+        tracing::warn!(target: "upwell::config", "reload_on_sighup is Unix-only; ignoring");
     }
 
     if triggers.watch {
@@ -42,7 +42,7 @@ pub fn spawn_reload_triggers(
 
         #[cfg(not(feature = "watch"))]
         tracing::warn!(
-            target: "overseerd::config",
+            target: "upwell::config",
             "watch_config requires the `watch` feature; ignoring"
         );
     }
@@ -61,7 +61,7 @@ pub async fn stop_reload_triggers(handles: Vec<JoinHandle<()>>) {
         match handle.await {
             Ok(()) => {}
             Err(error) if error.is_cancelled() => {}
-            Err(error) => error!(target: "overseerd::config", %error, "reload trigger task failed"),
+            Err(error) => error!(target: "upwell::config", %error, "reload trigger task failed"),
         }
     }
 }
@@ -74,7 +74,7 @@ async fn run_reload(reloader: &ConfigReloader, cause: &'static str) {
         .await
     {
         Ok(Ok(report)) => info!(
-            target: "overseerd::config",
+            target: "upwell::config",
             cause,
             generation = report.generation,
             changed = report.changed.len(),
@@ -82,14 +82,14 @@ async fn run_reload(reloader: &ConfigReloader, cause: &'static str) {
         ),
 
         Ok(Err(error)) => error!(
-            target: "overseerd::config",
+            target: "upwell::config",
             cause,
             %error,
             "configuration reload failed"
         ),
 
         Err(_) => error!(
-            target: "overseerd::config",
+            target: "upwell::config",
             cause,
             "configuration reload panicked; trigger remains active"
         ),
@@ -106,19 +106,19 @@ fn spawn_sighup(reloader: ConfigReloader) -> JoinHandle<()> {
             Ok(hangup) => hangup,
 
             Err(error) => {
-                error!(target: "overseerd::config", %error, "failed to install SIGHUP handler");
+                error!(target: "upwell::config", %error, "failed to install SIGHUP handler");
 
                 return;
             }
         };
 
-        info!(target: "overseerd::config", "reloading configuration on SIGHUP");
+        info!(target: "upwell::config", "reloading configuration on SIGHUP");
 
         while hangup.recv().await.is_some() {
             run_reload(&reloader, "sighup").await;
         }
 
-        warn!(target: "overseerd::config", "SIGHUP reload trigger stopped unexpectedly");
+        warn!(target: "upwell::config", "SIGHUP reload trigger stopped unexpectedly");
     })
 }
 
@@ -136,7 +136,7 @@ fn spawn_watch(reloader: ConfigReloader, debounce: std::time::Duration) -> Optio
 
     if sources.is_empty() {
         tracing::warn!(
-            target: "overseerd::config",
+            target: "upwell::config",
             "watch_config enabled but there are no config sources to watch"
         );
 
@@ -159,7 +159,7 @@ fn spawn_watch(reloader: ConfigReloader, debounce: std::time::Duration) -> Optio
             Ok(watcher) => watcher,
 
             Err(error) => {
-                error!(target: "overseerd::config", %error, "failed to create config file watcher");
+                error!(target: "upwell::config", %error, "failed to create config file watcher");
 
                 return None;
             }
@@ -168,7 +168,7 @@ fn spawn_watch(reloader: ConfigReloader, debounce: std::time::Duration) -> Optio
     for dir in &dirs {
         if let Err(error) = watcher.watch(dir, RecursiveMode::NonRecursive) {
             error!(
-                target: "overseerd::config",
+                target: "upwell::config",
                 dir = %dir.display(),
                 %error,
                 "failed to watch config directory"
@@ -182,7 +182,7 @@ fn spawn_watch(reloader: ConfigReloader, debounce: std::time::Duration) -> Optio
         // Hold the watcher for the task's lifetime; dropping it stops watching.
         let _watcher = watcher;
 
-        info!(target: "overseerd::config", dirs = watched, "watching config files for changes");
+        info!(target: "upwell::config", dirs = watched, "watching config files for changes");
 
         while rx.recv().await.is_some() {
             tokio::time::sleep(debounce).await;
@@ -192,7 +192,7 @@ fn spawn_watch(reloader: ConfigReloader, debounce: std::time::Duration) -> Optio
             run_reload(&reloader, "file-change").await;
         }
 
-        warn!(target: "overseerd::config", "config file reload trigger stopped unexpectedly");
+        warn!(target: "upwell::config", "config file reload trigger stopped unexpectedly");
     }))
 }
 

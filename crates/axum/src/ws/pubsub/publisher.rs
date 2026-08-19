@@ -9,8 +9,8 @@
 
 use std::marker::PhantomData;
 
-use overseerd_di::{ComponentConstructionContext, DependencyDescriptor, FromContainer};
-use overseerd_transport::CodecError;
+use upwell_di::{ComponentConstructionContext, DependencyDescriptor, FromContainer};
+use upwell_transport::CodecError;
 
 use crate::messaging::Topic;
 use crate::ws::PubSubProtocol;
@@ -68,7 +68,7 @@ where
         <TopicBus<T::Protocol> as FromContainer>::dependency()
     }
 
-    async fn from_container(cx: &ComponentConstructionContext) -> overseerd_di::Result<Self> {
+    async fn from_container(cx: &ComponentConstructionContext) -> upwell_di::Result<Self> {
         let bus = <TopicBus<T::Protocol> as FromContainer>::from_container(cx).await?;
 
         Ok(Self {
@@ -83,10 +83,10 @@ where
 /// (STOMP marks its bus provided). A custom protocol whose bus is never registered therefore fails
 /// the compile-time check instead of passing it and blowing up at injection time.
 #[cfg(feature = "di-check")]
-impl<T> overseerd_di::Provide<Publisher<T>> for overseerd_di::Wiring
+impl<T> upwell_di::Provide<Publisher<T>> for upwell_di::Wiring
 where
     T: Topic,
     T::Protocol: PubSubProtocol,
-    overseerd_di::Wiring: overseerd_di::Provide<TopicBus<T::Protocol>>,
+    upwell_di::Wiring: upwell_di::Provide<TopicBus<T::Protocol>>,
 {
 }

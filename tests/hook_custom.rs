@@ -6,26 +6,27 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::{ConfigManager, HookKind, component, methods};
+use upwell::config::Toml;
+use upwell::{App, AppError, ConfigManager, HookKind, component, methods};
 
 /// A user-defined lifecycle kind — no inputs, no output.
 struct Startup;
 
 impl HookKind for Startup {
-    const NAME: &'static str = "startup";
     type Output = ();
     type Cx = ();
+
+    const NAME: &'static str = "startup";
 }
 
 /// A kind nobody listens to, to prove `has` is false for it.
 struct Unused;
 
 impl HookKind for Unused {
-    const NAME: &'static str = "unused";
     type Output = ();
     type Cx = ();
+
+    const NAME: &'static str = "unused";
 }
 
 /// Subscribes to the custom `Startup` kind. The hook takes `&self` and no inputs.
@@ -44,7 +45,7 @@ impl Boot {
 #[methods]
 impl Boot {
     #[hook(Startup)]
-    async fn on_start(&self) -> overseerd::daemon::Result<()> {
+    async fn on_start(&self) -> Result<(), AppError> {
         self.started.fetch_add(1, Ordering::SeqCst);
 
         Ok(())
@@ -53,7 +54,7 @@ impl Boot {
 
 #[tokio::test]
 async fn external_hook_kind_fires_through_the_manager() {
-    let daemon = App::builder("hook-custom-test")
+    let daemon = App::<()>::builder("hook-custom-test")
         .config_source(ConfigManager::<Toml>::empty())
         .auto_discover()
         .build()

@@ -22,9 +22,9 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use futures::executor::block_on;
-use overseerd_benchmarks::alloc::{self, TrackingAllocator};
-use overseerd_benchmarks::di::{self, Entry};
-use overseerd_benchmarks::measure::AllocBytes;
+use upwell_benchmarks::alloc::{self, TrackingAllocator};
+use upwell_benchmarks::di::{self, Entry};
+use upwell_benchmarks::measure::AllocBytes;
 
 #[global_allocator]
 static GLOBAL: TrackingAllocator = TrackingAllocator;

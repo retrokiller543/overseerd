@@ -3,8 +3,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use overseerd_core::TypeDescriptor;
-use overseerd_di::RootResolver;
+use upwell_core::TypeDescriptor;
+use upwell_di::RootResolver;
 
 use crate::run::JobRunContext;
 use crate::schedule::{JobOptions, ScheduleKind};

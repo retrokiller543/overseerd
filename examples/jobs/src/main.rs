@@ -1,5 +1,5 @@
-//! A minimal Overseerd daemon that runs scheduled **jobs**, showing the observability and
-//! control surface of `overseerd-jobs`.
+//! A minimal Upwell daemon that runs scheduled **jobs**, showing the observability and
+//! control surface of `upwell-jobs`.
 //!
 //! It demonstrates:
 //!
@@ -10,14 +10,16 @@
 //!   `Heartbeat::rebuild_index`,
 //! - a `#[job(cron = "..")]` cron job (`Heartbeat::hourly`),
 //! - a **named dynamic** job scheduled at run time (`JobScheduler::schedule_named`),
-//! - **per-run log capture** via a [`JobLogLayer`] feeding an [`InMemoryJobLogStore`],
+//! - **per-run log capture** via `JobLogLayer` feeding an `InMemoryJobLogStore`,
 //! - **introspection** (`list_jobs`, `metrics`) and a **manual trigger** (`run_now`) from a
 //!   monitor task.
+//! - a named `app!` host whose setup, construction, and serving phases own the complete process
+//!   lifecycle.
 //!
-//! Run it and watch the `overseerd::example` / `overseerd::jobs` log lines:
+//! Run it and watch the `upwell::example` / `upwell::jobs` log lines:
 //!
 //! ```text
-//! cargo run -p overseerd-example-jobs
+//! cargo run -p upwell-example-jobs
 //! ```
 //!
 //! Press Ctrl-C to shut down — the scheduler cancels every loop on the way out.
@@ -26,14 +28,27 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use overseerd::config::Toml;
-use overseerd::daemon::App;
-use overseerd::jobs::{
-    JobLogConfig, JobProgress, JobRunContext, JobScheduler, JobsPlugin, Schedule, init_tracing,
-    jobs,
-};
-use overseerd::{ConfigManager, LoggingConfig, component, methods};
 use tracing::info;
+use upwell::config::Toml;
+use upwell::jobs::{
+    JobLogConfig, JobLogSink, JobProgress, JobRunContext, JobScheduler, JobsPlugin, Schedule,
+    configure_bootstrap_tracing, jobs,
+};
+use upwell::{ConfigManager, app, component, methods};
+
+/// Failures raised while wiring or serving the jobs application lifecycle.
+#[derive(Debug, thiserror::Error)]
+enum JobsApplicationError {
+    /// Setup did not retain the jobs log sink for post-build scheduler wiring.
+    #[error("jobs log sink is missing from the lifecycle context")]
+    MissingLogSink,
+    /// The jobs plugin did not seed its scheduler in the built root container.
+    #[error("jobs scheduler is missing from the built application")]
+    MissingScheduler,
+    /// The built application failed during startup, shutdown waiting, or shutdown hooks.
+    #[error(transparent)]
+    Application(#[from] upwell::AppError),
+}
 
 /// A dependency a job resolves per run, proving `#[job]` methods can inject like constructors.
 /// `#[default]` on the field satisfies the (unused) field-injection factory; the real value
@@ -73,7 +88,7 @@ impl Heartbeat {
     async fn tick(&self) {
         let beat = self.beats.fetch_add(1, Ordering::Relaxed) + 1;
 
-        info!(target: "overseerd::example", beat, "heartbeat tick");
+        info!(target: "upwell::example", beat, "heartbeat tick");
     }
 
     /// Fires every five seconds, injects `Arc<Greeter>`, and reports progress through the
@@ -83,7 +98,7 @@ impl Heartbeat {
     async fn announce(&self, greeter: Arc<Greeter>, cx: JobRunContext) {
         cx.progress(JobProgress::phase("announcing")).await;
 
-        info!(target: "overseerd::example", message = greeter.message(), "announce");
+        info!(target: "upwell::example", message = greeter.message(), "announce");
 
         cx.progress(JobProgress::message("done").counted(1, 1))
             .await;
@@ -99,68 +114,79 @@ impl Heartbeat {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
-        info!(target: "overseerd::example", "index rebuilt");
+        info!(target: "upwell::example", "index rebuilt");
     }
 
     /// Fires at the top of every hour, via a cron nickname.
     #[job(cron = "@hourly")]
     async fn hourly(&self) {
-        info!(target: "overseerd::example", "hourly cron job fired");
+        info!(target: "upwell::example", "hourly cron job fired");
+    }
+}
+
+app! {
+    /// Runs scheduled jobs through generated setup, build, and serve lifecycle phases.
+    app JobsApplication {
+        name: "jobs-example",
+        protocol: upwell::daemon::Rpc,
+        managers: {
+            config: ConfigManager::<Toml>::empty(),
+        },
+        plugins: [JobsPlugin],
+        cli: {
+            log: { default_value: "info,upwell=debug" },
+        },
+        setup(context) {
+            let mut context = context;
+
+            // Setup contributes capture before generated bootstrap installs the tracing subscriber.
+            let log_sink = configure_bootstrap_tracing(&mut context, JobLogConfig::default());
+
+            context.insert(log_sink);
+
+            Ok::<_, JobsApplicationError>(context)
+        },
+        after_build(context, app) {
+            // Construction has seeded the scheduler, so runtime-only wiring belongs here.
+            let log_sink = context
+                .remove::<Arc<dyn JobLogSink>>()
+                .ok_or(JobsApplicationError::MissingLogSink)?;
+            let scheduler = app
+                .container()
+                .get::<JobScheduler>()
+                .ok_or(JobsApplicationError::MissingScheduler)?;
+
+            scheduler.set_log_sink(log_sink);
+
+            // This dynamic schedule models a job loaded from an external source at runtime.
+            let _handle = scheduler.schedule_named(
+                "poll-upstream",
+                Schedule::every(Duration::from_secs(3)),
+                || async {
+                    info!(target: "upwell::example", "dynamic job fired");
+
+                    Ok(())
+                },
+            );
+
+            // Monitoring starts only after the scheduler and capture sink are fully connected.
+            tokio::spawn(monitor(Arc::clone(&scheduler)));
+
+            Ok::<_, JobsApplicationError>(app)
+        },
+        serve(_context, app) {
+            info!(target: "upwell::example", "daemon running — Ctrl-C to stop");
+
+            app.run().await?;
+
+            Ok::<(), JobsApplicationError>(())
+        },
     }
 }
 
 #[tokio::main]
-async fn main() -> overseerd::daemon::Result<()> {
-    // Per-run log capture, wired through the jobs-aware `init_tracing`: it installs the usual
-    // framework subscriber and layers a bounded in-memory capture sink onto it, driven by
-    // config. The returned sink is handed to the scheduler below. (`init_tracing` returns a
-    // no-op sink instead when `JobLogConfig::enabled` is false.)
-    let logging = LoggingConfig {
-        level: "info,overseerd=debug".to_string(),
-        format: "full".to_string(),
-        ansi: true,
-    };
-    let log_sink = init_tracing(&logging, JobLogConfig::default()).expect("install tracing");
-
-    // Bind no config files — this example needs none.
-    let config = ConfigManager::<Toml>::empty();
-
-    let app = App::builder("jobs-example")
-        .config_source(config)
-        .auto_discover()
-        .plugin(JobsPlugin)
-        .build()
-        .await?;
-
-    let scheduler = app
-        .container()
-        .get::<JobScheduler>()
-        .expect("the jobs plugin seeds the scheduler");
-
-    // Route captured job logs into the sink `init_tracing` created (default is the no-op sink).
-    scheduler.set_log_sink(log_sink);
-
-    // A named dynamic job, as if its schedule had just been read from a database. The returned
-    // handle could later `.cancel()` it; here we keep it for the process lifetime.
-    let _handle = scheduler.schedule_named(
-        "poll-upstream",
-        Schedule::every(Duration::from_secs(3)),
-        || async {
-            info!(target: "overseerd::example", "dynamic job fired");
-
-            Ok(())
-        },
-    );
-
-    // A monitor task: periodically logs the aggregate metrics and per-job state, and manually
-    // triggers the `announce` job to show `run_now` and log capture working together.
-    tokio::spawn(monitor(Arc::clone(&scheduler)));
-
-    info!(target: "overseerd::example", "daemon running — Ctrl-C to stop");
-
-    app.run().await?;
-
-    Ok(())
+async fn main() -> Result<(), upwell::CliError> {
+    JobsApplication::run().await
 }
 
 /// Periodically reports scheduler state and demonstrates a manual trigger plus log lookup.
@@ -171,7 +197,7 @@ async fn monitor(scheduler: Arc<JobScheduler>) {
         let metrics = scheduler.metrics();
 
         info!(
-            target: "overseerd::example",
+            target: "upwell::example",
             jobs = metrics.jobs_scheduled,
             active = metrics.active_runs,
             completed = metrics.completed_runs,
@@ -181,7 +207,7 @@ async fn monitor(scheduler: Arc<JobScheduler>) {
 
         for info in scheduler.list_jobs() {
             info!(
-                target: "overseerd::example",
+                target: "upwell::example",
                 job = %info.name,
                 state = ?info.state,
                 runs = info.run_count,
@@ -203,7 +229,7 @@ async fn monitor(scheduler: Arc<JobScheduler>) {
             let records = scheduler.log_records(run_id, 16).await;
 
             info!(
-                target: "overseerd::example",
+                target: "upwell::example",
                 run = %run_id,
                 captured = records.len(),
                 "captured logs for manual run"
