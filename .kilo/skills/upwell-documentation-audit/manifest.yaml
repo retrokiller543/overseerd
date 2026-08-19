@@ -1,0 +1,110 @@
+schema_version: 1
+skill: upwell-documentation-audit
+repository:
+  framework: https://github.com/upwell-rs/upwell
+  documentation: https://github.com/upwell-rs/upwell-docs
+published_docs:
+  base_url: https://upwell-docs-production.up.railway.app
+  release: 1.0.0
+  audited_at: null
+  inventory:
+    guides:
+      - slug: getting-started
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/getting-started
+      - slug: release-compatibility
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/release-compatibility
+      - slug: di/components
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/di/components
+      - slug: di/advanced
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/di/advanced
+      - slug: framework/application-model
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/framework/application-model
+      - slug: framework/app-macro
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/framework/app-macro
+      - slug: extensions/plugins
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/extensions/plugins
+      - slug: extensions/protocols/authoring
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/extensions/protocols/authoring
+      - slug: rpc/services
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/rpc/services
+      - slug: axum/http
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/http
+      - slug: axum/websocket
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/websocket
+      - slug: jobs/scheduled
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/jobs/scheduled
+      - slug: cargo-upwell
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell
+      - slug: cargo-upwell/inspect-and-graph
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell/inspect-and-graph
+      - slug: cargo-upwell/automation-and-extensions
+        url: https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell/automation-and-extensions
+    symbols_url: https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols
+    source_url: https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/src/
+  machine_readable:
+    llms_url: https://upwell-docs-production.up.railway.app/llms.txt
+    sitemap_url: https://upwell-docs-production.up.railway.app/sitemap.xml
+quality_model:
+  minimum_acceptable_score: 3
+  report_scores_at_or_below: 2
+capabilities:
+  - id: framework.getting-started
+    area: framework
+    public_surface: upwell facade onboarding and feature selection
+    status: pending_audit
+  - id: framework.application-lifecycle
+    area: framework
+    public_surface: app!, App::<Protocol>::builder, lifecycle, generated CLI, configuration, shutdown
+    status: pending_audit
+  - id: di.components-and-providers
+    area: di
+    public_surface: components, providers, scopes, dependency checks, configuration injection, hooks
+    status: pending_audit
+  - id: extensions.plugins-and-protocols
+    area: extensions
+    public_surface: plugins and custom protocol authoring
+    status: pending_audit
+  - id: rpc.services-and-clients
+    area: rpc
+    public_surface: RPC services, handlers, transports, errors, generated clients
+    status: pending_audit
+  - id: axum.http
+    area: axum
+    public_surface: controllers, handlers, DTOs, extractors, responses, streaming, request extensions
+    status: pending_audit
+  - id: axum.websocket
+    area: axum
+    public_surface: WebSocket controllers and protocol extensions
+    status: pending_audit
+  - id: axum.multipart
+    area: axum
+    public_surface: multipart upload extractor and client body builder
+    status: pending_audit
+  - id: axum.openapi
+    area: axum
+    public_surface: OpenAPI generation and supported UI integrations
+    status: pending_audit
+  - id: websocket.json-ws
+    area: websocket
+    public_surface: JSON-envelope request/reply over WebSocket
+    status: pending_audit
+  - id: websocket.stomp
+    area: websocket
+    public_surface: STOMP topics, subscriptions, broker behavior, and typed clients
+    status: pending_audit
+  - id: jobs.scheduling
+    area: jobs
+    public_surface: scheduled jobs, policies, observability, lifecycle integration
+    status: pending_audit
+  - id: clients.native-and-wasm
+    area: clients
+    public_surface: native and browser/wasm client setup, backend selection, TypeScript integration
+    status: pending_audit
+  - id: tooling.cargo-upwell
+    area: tooling
+    public_surface: init, probe, inspect, query, graph, export, automation, extensions, templates
+    status: pending_audit
+  - id: tooling.schema-and-watch
+    area: tooling
+    public_surface: tooling schema/export, configuration watch/reload, compatibility and platform constraints
+    status: pending_audit
