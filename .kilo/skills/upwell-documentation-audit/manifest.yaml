@@ -6,7 +6,10 @@ repository:
 published_docs:
   base_url: https://upwell-docs-production.up.railway.app
   release: 1.0.0
-  audited_at: null
+  channel: development
+  audited_at: 2026-08-19
+  framework_revision: 07f2e13430dc407d8870c9cff35ec4c8c0a67a9e
+  framework_revision_url: https://github.com/upwell-rs/upwell/commit/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e
   inventory:
     guides:
       - slug: getting-started
@@ -41,6 +44,17 @@ published_docs:
         url: https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell/automation-and-extensions
     symbols_url: https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols
     source_url: https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/src/
+    sitemap_counts:
+      guides: 15
+      symbol_routes: 3234
+      source_routes: 0
+    search_index:
+      url: https://upwell-docs-production.up.railway.app/docs/1.0.0/search.json
+      total_records: 3248
+      guides: 15
+      symbols: 3189
+      symbol_pages: 44
+      degraded: false
   machine_readable:
     llms_url: https://upwell-docs-production.up.railway.app/llms.txt
     sitemap_url: https://upwell-docs-production.up.railway.app/sitemap.xml
@@ -51,60 +65,305 @@ capabilities:
   - id: framework.getting-started
     area: framework
     public_surface: upwell facade onboarding and feature selection
-    status: pending_audit
-  - id: framework.application-lifecycle
+    status: covered
+    score: 4
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/getting-started
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/release-compatibility
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/Cargo.toml
+    evidence: Runnable onboarding covers project creation, direct dependencies, feature activation, a component, an HTTP controller, a named host, configuration, and execution.
+  - id: framework.application-host
     area: framework
-    public_surface: app!, App::<Protocol>::builder, lifecycle, generated CLI, configuration, shutdown
-    status: pending_audit
+    public_surface: app!, App::<Protocol>::builder, generated CLI, setup, prepare, build, and serve phases
+    status: covered
+    score: 4
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/framework/application-model
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/framework/app-macro
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/app/src/app.rs
+    evidence: Guides cover generated and direct hosts, typestate phases, manager ownership, callbacks, CLI behavior, lifecycle boundaries, and reference links.
+  - id: framework.lifecycle-hooks
+    area: framework
+    public_surface: Startup, Shutdown, ShutdownHandle, App::run, and App::serve
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/framework/application-model
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/di/components
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_app/lifecycle/ShutdownHandle
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/app/src/app.rs#L813-L978
+    evidence: Individual APIs are discoverable, but no complete component startup, partial-startup cleanup, and graceful shutdown workflow exists.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/6
+  - id: framework.feature-composition
+    area: framework
+    public_surface: facade features, protocol composition, client backends, and target compatibility
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/getting-started
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/framework/application-model
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/framework/app-macro
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/Cargo.toml#L155-L331
+    evidence: High-level choices are documented, but implications, weak forwarding, backend requirements, targets, and one protocol per App are not presented as one compatibility reference.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/15
+  - id: framework.platform-directories
+    area: framework
+    public_surface: DirectoriesManager, Dir<K>, secure platform directories, native and wasm boundaries, and registry backends
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/framework/app-macro
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_dirs/DirectoriesManager
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_dirs/Dir
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/dirs/src/lib.rs#L41-L485
+    evidence: Accurate reference exists, but platform locations, creation checks, fallback, custom roots, and target boundaries lack a cohesive workflow.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/9
   - id: di.components-and-providers
     area: di
     public_surface: components, providers, scopes, dependency checks, configuration injection, hooks
-    status: pending_audit
+    status: covered
+    score: 4
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/di/components
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/di/advanced
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/di/src/lib.rs
+    evidence: Focused guides cover construction, explicit initialization, trait providers, qualifiers, scopes, live values, and delayed resolution with constraints and references.
+  - id: config.sources-and-reload
+    area: config
+    public_surface: typed bindings, source precedence, profiles, substitutions, Cfg<T>, reload triggers, and transactional hooks
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/getting-started
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/framework/app-macro
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/di/advanced
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_config/managed/source/ConfigManager
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/config/src/managed/source.rs#L117-L571
+    evidence: Typed bindings and APIs are covered, but source/profile precedence through transactional manual and automatic reload is not documented end to end.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/5
   - id: extensions.plugins-and-protocols
     area: extensions
     public_surface: plugins and custom protocol authoring
-    status: pending_audit
+    status: covered
+    score: 4
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/extensions/plugins
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/extensions/protocols/authoring
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/app/src/plugin.rs
+    evidence: Guides cover composition, provenance, relations, slots, phases, validation, scoped dispatch, serving ownership, and inspection.
   - id: rpc.services-and-clients
     area: rpc
-    public_surface: RPC services, handlers, transports, errors, generated clients
-    status: pending_audit
+    public_surface: RPC services, handlers, extractors, errors, and server streaming
+    status: covered
+    score: 3
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/rpc/services
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/rpc/src/lib.rs
+    evidence: Service declaration, injected dependencies, request extraction, errors, and four server handler shapes have usable guide coverage.
+  - id: rpc.server-policies
+    area: rpc
+    public_surface: explicit services, middleware, guards, global errors, and RpcLimits
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/rpc/services
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_rpc/plugin/RpcAppBuilder
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/rpc/src/plugin.rs#L282-L381
+    evidence: The builder reference lists APIs, but policy ordering, failure boundaries, and operational setup lack a guide workflow.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/7
   - id: axum.http
     area: axum
     public_surface: controllers, handlers, DTOs, extractors, responses, streaming, request extensions
-    status: pending_audit
+    status: covered
+    score: 3
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/http
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/axum/src/lib.rs
+    evidence: Controller, DTO, route, extraction, request-scope, injection, and basic streaming concepts have usable guide coverage; advanced workflows are scored separately.
+  - id: axum.streaming
+    area: axum
+    public_surface: StreamBody<T>, Ndjson<S>, RawStream<S>, generated clients, and stream limits
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/http
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum/stream/Ndjson
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum/stream/RawStream
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/axum/src/stream.rs#L64-L510
+    evidence: Symbols are documented and one request stream is shown, but bidirectional workflow, framing choices, client use, malformed input, and operational limits are missing.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/13
   - id: axum.websocket
     area: axum
     public_surface: WebSocket controllers and protocol extensions
-    status: pending_audit
+    status: covered
+    score: 4
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/websocket
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/axum/src/ws/mod.rs
+    evidence: Guide covers registered protocols, custom protocol authoring, mounting, scopes, subprotocols, shutdown, JSON-WS handlers, and STOMP publication.
   - id: axum.multipart
     area: axum
     public_surface: multipart upload extractor and client body builder
-    status: pending_audit
+    status: reported
+    score: 1
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/http
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum/client/body/Multipart
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/axum/src/client/body.rs#L117-L280
+    evidence: A client body symbol exists, but no guide covers feature activation, server extraction, generated native calls, browser files, or constraints.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/10
+  - id: axum.request-context
+    area: axum
+    public_surface: RequestMeta, Inject<RequestMeta>, and Axum Extension<T>
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/http
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum/request_meta/RequestMeta
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/axum/src/request_meta.rs#L1-L84
+    evidence: Request scopes and the metadata type are discoverable, but DI metadata access and upstream extension installation/extraction are not demonstrated.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/11
   - id: axum.openapi
     area: axum
     public_surface: OpenAPI generation and supported UI integrations
-    status: pending_audit
-  - id: websocket.json-ws
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/http
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum/config/OpenApiConfig
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum/config/OpenApiUi
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum/openapi
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/axum/src/openapi.rs#L75-L294
+    evidence: Detailed references exist, but dependency/feature setup, generated metadata, runtime serving, UI choices, fallback, paths, and validation lack a workflow guide.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/12
+  - id: websocket.generated-clients
     area: websocket
-    public_surface: JSON-envelope request/reply over WebSocket
-    status: pending_audit
-  - id: websocket.stomp
-    area: websocket
-    public_surface: STOMP topics, subscriptions, broker behavior, and typed clients
-    status: pending_audit
+    public_surface: native and browser JSON-WS and STOMP generated client connection, request, subscription, and disconnect lifecycle
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/websocket
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum_json_ws/JsonWs
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum_stomp/client/transport/StompClientTransport
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/axum-stomp/src/client/transport.rs#L123-L355
+    evidence: Server workflows and client symbols exist, but native/browser connection, generated client construction, authentication, subscription ownership, cancellation, and disconnect are not shown.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/14
   - id: jobs.scheduling
     area: jobs
     public_surface: scheduled jobs, policies, observability, lifecycle integration
-    status: pending_audit
-  - id: clients.native-and-wasm
+    status: covered
+    score: 3
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/jobs/scheduled
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_jobs
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_jobs/scheduler/JobScheduler
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/jobs/src/lib.rs
+    evidence: Guide plus module and scheduler references cover static and dynamic jobs, policies, progress, control, observability, logging, and worker lifecycle sufficiently for current development use.
+  - id: clients.native
     area: clients
-    public_surface: native and browser/wasm client setup, backend selection, TypeScript integration
-    status: pending_audit
+    public_surface: generated HTTP and RPC clients, native backends, transports, streaming, and errors
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/http
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/rpc/services
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum/client/reqwest_backend/ReqwestClient
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_rpc/client/connect_tcp
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/Cargo.toml#L223-L249
+    evidence: Generated artifacts and transport references exist, but feature setup, backend selection, construction, invocation, streams, cancellation, and error handling lack end-to-end examples.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/8
+  - id: clients.browser-wasm-typescript
+    area: clients
+    public_surface: browser Wasm package, Connection, generated clients, TypeScript DTOs, messaging, and wasm-ts
+    status: reported
+    score: 1
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/getting-started
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/axum/websocket
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/upwell_axum_macros/dto
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/examples/http/Cargo.toml#L7-L43
+    evidence: Browser clients are mentioned, but crate layout, target dependencies, features, wasm-pack, package import, Connection, TypeScript output, ABI modes, and target constraints are absent.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/18
   - id: tooling.cargo-upwell
     area: tooling
     public_surface: init, probe, inspect, query, graph, export, automation, extensions, templates
-    status: pending_audit
-  - id: tooling.schema-and-watch
+    status: covered
+    score: 4
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell/inspect-and-graph
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell/automation-and-extensions
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/cargo-upwell/src/main.rs
+    evidence: CLI installation, target selection, validation, inspection, graphing, explanation, export, automation, exit codes, completions, and basic extension workflows have complete guide coverage.
+  - id: tooling.programmatic-integration
     area: tooling
-    public_surface: tooling schema/export, configuration watch/reload, compatibility and platform constraints
-    status: pending_audit
+    public_surface: cargo-upwell library discovery, commands, probes, cancellation, schema validation, graph queries, explanations, and canonical output
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell/inspect-and-graph
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/cargo_upwell/run_probe
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/cargo_upwell/graph/model/GraphQuery
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/cargo-upwell/src/lib.rs#L1-L127
+    evidence: The public presentation-neutral library is represented by symbols, but editor/tool integration requires reconstructing discovery, execution, validation, query, output, cancellation, and failure flows.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/16
+  - id: tooling.renderer-authoring
+    area: tooling
+    public_surface: WebAssembly component renderer WIT contract, build, catalog registration, sandbox, and invocation
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell/automation-and-extensions#add-one-renderer-without-duplicating-the-catalog-reference
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/cargo_upwell/renderer/component/ComponentRendererHost
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/cargo-upwell/wit/renderer.wit
+    evidence: Registering an existing component is documented, but WIT bindings, guest implementation, build, payloads, response claims, restrictions, and limits are not.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/17
+  - id: tooling.catalog
+    area: tooling
+    public_surface: local and Git templates, metadata-only tools, renderers, catalog paths, overlays, and validation
+    status: reported
+    score: 2
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell/automation-and-extensions#generate-a-project-from-a-known-template
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/cargo-upwell/automation-and-extensions#add-one-renderer-without-duplicating-the-catalog-reference
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols/cargo_upwell/init/catalog/Catalog
+    framework_evidence: https://github.com/upwell-rs/upwell/blob/07f2e13430dc407d8870c9cff35ec4c8c0a67a9e/crates/cargo-upwell/catalog.example.toml
+    evidence: Common template and renderer cases are shown, but the complete schema, Git refs, tools, paths, overlays, collisions, reproducibility, and validation are not documented.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/19
+  - id: site.machine-symbol-inventory
+    area: site
+    public_surface: release-scoped machine-readable documented-symbol inventory
+    status: reported
+    score: 0
+    audited_at: 2026-08-19
+    docs:
+      - https://upwell-docs-production.up.railway.app/llms.txt
+      - https://upwell-docs-production.up.railway.app/docs/1.0.0/symbols.json
+      - https://upwell-docs-production.up.railway.app/docs/upwell/1.0.0/symbols
+    evidence: llms.txt advertises symbols.json, but the endpoint returned HTTP 404 while the human symbol index and search.json remained available.
+    issue_url: https://github.com/upwell-rs/upwell-docs/issues/4
