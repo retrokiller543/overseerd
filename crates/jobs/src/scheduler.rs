@@ -498,6 +498,7 @@ impl upwell_core::Descriptor<ComponentDescriptor> for JobScheduler {
         name: SCHEDULER_NAME,
         ty: TypeDescriptor::of::<JobScheduler>(SCHEDULER_NAME),
         scope: &Singleton,
+        condition: None,
         factories: scheduler_factories,
         hooks: scheduler_hooks,
     };

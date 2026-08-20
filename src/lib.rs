@@ -37,12 +37,13 @@ pub mod scope {
 pub use upwell_di::{
     BoxedComponent, COMPONENTS, Component, ComponentConstructionContext, ComponentContainer,
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor,
-    ComponentRegistry, ComponentSource, Deferred, Dep, DescriptorFor, Dynamic, Factory,
-    FactoryOutput, Fresh, FreshFromContainer, FromContainer, Injectable, Lazy, Live, LiveRef,
-    PROVIDERS, Provide, ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection,
-    Registration, RegistryFor, RootResolver, ScopeContainer, ScopeRegistry, ServiceComponent,
-    UpwellDescriptor, Wired, Wiring, dispatch_factory, factory_dependencies, from_boxed,
-    topological_sort,
+    ComponentRegistry, ComponentSource, ConditionCatalog, ConditionDecision, ConditionDependency,
+    ConditionError, ConditionEvaluation, ConditionFactSnapshot, Deferred, Dep, DescriptorFor,
+    Dynamic, Factory, FactoryOutput, Fresh, FreshFromContainer, FromContainer, Injectable, Lazy,
+    Live, LiveRef, PROVIDERS, Provide, ProviderDescriptor, ProviderOf, ProviderOrder,
+    ProviderOrderDirection, Registration, RegistryFor, RootResolver, ScopeContainer, ScopeRegistry,
+    ServiceComponent, UpwellDescriptor, ValidatedConditionEvaluation, Wired, Wiring, dependency_of,
+    dependency_of_observed, dispatch_factory, factory_dependencies, from_boxed, topological_sort,
 };
 /// The DI layer's own error/result, exposed under distinct names so macro-generated
 /// **factory** code can name them without colliding with the root [`Error`]/[`Result`].

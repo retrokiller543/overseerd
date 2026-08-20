@@ -4,9 +4,10 @@ use std::fmt;
 use std::fmt::Write;
 
 use upwell_config::{CONFIG_BINDINGS, ConfigBinding};
-use upwell_core::DependencyDescriptor;
+use upwell_core::{ConfigFactDescriptor, DependencyDescriptor};
 use upwell_di::{
-    COMPONENTS, Component, ComponentDescriptor, ComponentRegistry, PROVIDERS, ProviderDescriptor,
+    COMPONENTS, Component, ComponentDescriptor, ComponentRegistry, ConditionCatalog,
+    ConditionEvaluation, ConditionFactSnapshot, PROVIDERS, ProviderDescriptor,
     ProviderSelectionModel,
 };
 
@@ -72,6 +73,18 @@ impl AppRegistry {
     /// Collapses the registered descriptors to one per type (delegated to the DI engine).
     pub fn resolved_components(&self) -> crate::Result<Vec<ComponentDescriptor>> {
         Ok(self.component_registry().resolved_components()?)
+    }
+
+    /// Evaluates static eligibility from an already validated typed fact snapshot.
+    ///
+    /// This does not load configuration or construct ordinary components. The returned registry
+    /// contains eligible declarations and still requires ordinary scope-aware graph validation.
+    pub fn evaluate_conditions(
+        &self,
+        facts: impl IntoIterator<Item = ConfigFactDescriptor>,
+        snapshot: &ConditionFactSnapshot,
+    ) -> Result<ConditionEvaluation, upwell_di::ConditionError> {
+        ConditionCatalog::new(&self.component_registry(), facts)?.evaluate(snapshot)
     }
 
     /// Returns the effective descriptor registered for component type `T`.
@@ -293,6 +306,7 @@ mod tests {
             qualifier: None,
             config: true,
             resolution: upwell_core::ResolutionMode::Eager,
+            observation: upwell_core::DependencyObservation::Live,
         }]
     }
 
@@ -312,6 +326,7 @@ mod tests {
             name: "NeedsConfig",
             ty: TypeDescriptor::of::<()>("NeedsConfig"),
             scope: &Singleton,
+            condition: None,
             factories: config_factories,
             hooks: upwell_hooks::no_hooks,
         }

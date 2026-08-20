@@ -155,3 +155,30 @@ The private executable model under `upwell-app::runtime::generation_spike` prove
 The model intentionally does not claim that today's `Dep<dyn Trait>`, provider erasure,
 `ConfigReloader`, `AppRuntime`, or protocol captures already satisfy these properties. Production
 integration and end-to-end proofs belong to later epic issues.
+
+## Descriptor catalog result
+
+Issue #210 adds the static vocabulary and pure registry seam needed before runtime integration:
+
+- `ComponentDescriptor` owns an optional static root condition; independently conditional factories
+  and provider mappings remain structurally unsupported in v1.
+- Config fact descriptors and supplied fact snapshots are separate types. Snapshots are validated
+  completely against the catalog before expression evaluation and redact their scalar values from
+  debug output.
+- `ConditionCatalog` validates stable IDs, references, scalar kinds, singleton/factory ownership,
+  manual overrides, complete provider ordering, and every availability cycle without constructing
+  or erasing components.
+- Evaluation returns an explicitly eligible registry. `evaluate_validated` additionally applies the
+  existing provider selection and rank-based DI graph validation; application scope topology remains
+  the preparation layer's responsibility.
+- Provider mapping identities are derived from the validated concrete component ID, provided trait
+  type, and qualifier, independent of descriptor order.
+- Condition dependencies are queryable as config, component, and exact provider-mapping facts for
+  later invalidation and explanation work.
+- `DependencyObservation` records fixed `Snapshot` versus generation-aware `Live` edges independently
+  of eager/lazy/deferred/fresh resolution timing. `Arc`, lazy, deferred, and fresh handles are
+  snapshots; `Dep` and `Cfg` are live.
+
+This issue does not define user-facing condition macro syntax, typed config fact extraction,
+condition tooling facets, protocol-role validation, graph diffs, transition strategies, or runtime
+publication. Those remain owned by #208, #205, #207, #209, and #206 respectively.

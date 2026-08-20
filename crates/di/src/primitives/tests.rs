@@ -149,6 +149,7 @@ fn visible_descriptor() -> ComponentDescriptor {
         name: "VisibleProvider",
         ty: TypeDescriptor::of::<VisibleProvider>("VisibleProvider"),
         scope: &VisibleScope,
+        condition: None,
         factories: visible_factories,
         hooks: upwell_hooks::no_hooks,
     }
@@ -160,6 +161,7 @@ fn sibling_descriptor() -> ComponentDescriptor {
         name: "SiblingPrimaryProvider",
         ty: TypeDescriptor::of::<SiblingPrimaryProvider>("SiblingPrimaryProvider"),
         scope: &SiblingScope,
+        condition: None,
         factories: sibling_factories,
         hooks: upwell_hooks::no_hooks,
     }
@@ -171,6 +173,7 @@ fn transient_descriptor() -> ComponentDescriptor {
         name: "TransientProvider",
         ty: TypeDescriptor::of::<TransientProvider>("TransientProvider"),
         scope: &Transient,
+        condition: None,
         factories: transient_factories,
         hooks: upwell_hooks::no_hooks,
     }

@@ -65,6 +65,7 @@ static SENTINEL_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: SentinelComponent::NAME,
     ty: TypeDescriptor::of::<SentinelComponent>(SentinelComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: sentinel_factories,
     hooks: upwell_hooks::no_hooks,
 };

@@ -11,6 +11,7 @@
 //! reached through the [`ResolverCtx`](upwell_core::ResolverCtx), so the container
 //! stays unaware of it.
 
+pub mod condition;
 pub mod construct;
 pub mod container;
 pub mod descriptors;
@@ -20,9 +21,13 @@ pub mod registry;
 pub mod root;
 mod seeded;
 
+pub use condition::{
+    AvailabilityEdge, ConditionCatalog, ConditionDecision, ConditionDependency, ConditionError,
+    ConditionEvaluation, ConditionFactSnapshot, ValidatedConditionEvaluation,
+};
 pub use construct::{
-    Factory, FactoryOutput, FromContainer, dependency_of, dispatch_factory, factory_dependencies,
-    short_name,
+    Factory, FactoryOutput, FromContainer, dependency_of, dependency_of_observed, dispatch_factory,
+    factory_dependencies, short_name,
 };
 pub use container::{
     ComponentContainer, ComponentSource, ScopeContainer, ScopeRegistry, topological_sort,
@@ -30,11 +35,12 @@ pub use container::{
 pub use descriptors::component::from_boxed;
 pub use descriptors::{
     BoxedComponent, COMPONENTS, Cardinality, Component, ComponentConstructionContext,
-    ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor, Dep,
-    DependencyDescriptor, DescriptorFor, Dynamic, Injectable, Live, LiveRef, PROVIDERS, Provide,
-    ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection, Registration,
-    RegistryFor, ResolutionMode, Scope, ScopeId, ServiceComponent, Singleton, StaticScope,
-    Transient, TypeDescriptor, UpwellDescriptor, Wired, Wiring,
+    ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor,
+    ConditionDescriptor, Dep, DependencyDescriptor, DependencyObservation, DescriptorFor, Dynamic,
+    Injectable, Live, LiveRef, PROVIDERS, Provide, ProviderDescriptor, ProviderMappingId,
+    ProviderOf, ProviderOrder, ProviderOrderDirection, Registration, RegistryFor, ResolutionMode,
+    Scope, ScopeId, ServiceComponent, Singleton, StaticScope, Transient, TypeDescriptor,
+    UpwellDescriptor, Wired, Wiring,
 };
 pub use error::{
     DeferredTransientDependency, Error, InvalidFreshDependency, ProviderComponentMissing,

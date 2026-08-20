@@ -122,6 +122,7 @@ static PROTOCOL_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: ProtocolComponent::NAME,
     ty: TypeDescriptor::of::<ProtocolComponent>(ProtocolComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: protocol_factories,
     hooks: upwell_hooks::no_hooks,
 };
@@ -131,6 +132,7 @@ static APPLICATION_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: ApplicationComponent::NAME,
     ty: TypeDescriptor::of::<ApplicationComponent>(ApplicationComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: application_factories,
     hooks: upwell_hooks::no_hooks,
 };

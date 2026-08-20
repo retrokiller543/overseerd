@@ -105,6 +105,7 @@ fn parent_dependency() -> Vec<DependencyDescriptor> {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }]
 }
 
@@ -118,6 +119,7 @@ fn sibling_dependency() -> Vec<DependencyDescriptor> {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }]
 }
 
@@ -131,6 +133,7 @@ fn shared_provider_dependency() -> Vec<DependencyDescriptor> {
         qualifier: Some("shared"),
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }]
 }
 
@@ -144,6 +147,7 @@ fn reordered_provider_dependency() -> Vec<DependencyDescriptor> {
         qualifier: Some("shared"),
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }]
 }
 
@@ -157,6 +161,7 @@ fn transient_dependency() -> Vec<DependencyDescriptor> {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }]
 }
 
@@ -231,6 +236,7 @@ fn descriptor<T: 'static>(
         name,
         ty: TypeDescriptor::of::<T>(name),
         scope,
+        condition: None,
         factories,
         hooks: upwell_hooks::no_hooks,
     }

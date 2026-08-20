@@ -176,6 +176,7 @@ pub fn topic_bus_descriptor<P: PubSubProtocol>() -> ComponentDescriptor {
         name,
         ty: TypeDescriptor::of::<TopicBus<P>>(name),
         scope: &Singleton,
+        condition: None,
         factories: topic_bus_factories::<P>,
         hooks: no_hooks,
     }

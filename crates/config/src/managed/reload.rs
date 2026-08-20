@@ -104,6 +104,7 @@ impl<T: ConfigProperties> HookParam<ConfigReload> for CfgNext<T> {
             qualifier: path,
             config: true,
             resolution: upwell_core::ResolutionMode::Eager,
+            observation: upwell_core::DependencyObservation::Snapshot,
         }
     }
 

@@ -100,6 +100,7 @@ fn dependency() -> Vec<DependencyDescriptor> {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }]
 }
 
@@ -119,6 +120,7 @@ fn component(
         name,
         ty,
         scope,
+        condition: None,
         factories,
         hooks: upwell_hooks::no_hooks,
     }
@@ -163,6 +165,7 @@ fn provider_dependency(
         qualifier,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }
 }
 
@@ -419,6 +422,7 @@ fn provider_introspection_uses_runtime_scope_and_order_semantics() {
                 qualifier: None,
                 config: false,
                 resolution: ResolutionMode::Eager,
+                observation: upwell_core::DependencyObservation::Snapshot,
             },
             &components,
             reaches,

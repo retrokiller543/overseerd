@@ -67,6 +67,7 @@ fn component<T: 'static>(
         name: id,
         ty: TypeDescriptor::of::<T>(id),
         scope,
+        condition: None,
         factories,
         hooks: upwell_hooks::no_hooks,
     }
@@ -106,6 +107,7 @@ fn dependency(
         qualifier,
         config: false,
         resolution,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }
 }
 

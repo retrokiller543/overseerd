@@ -11,8 +11,8 @@ use std::{
 };
 
 use upwell_core::{
-    DependencyDescriptor, ResolutionMode, ResolverCtx, ResolverSet, Scope, Singleton,
-    TypeDescriptor, UpwellDescriptor,
+    ConditionDescriptor, DependencyDescriptor, ProviderMappingId, ResolutionMode, ResolverCtx,
+    ResolverSet, Scope, Singleton, TypeDescriptor, UpwellDescriptor,
 };
 use upwell_hooks::{HookDescriptor, no_hooks};
 
@@ -297,6 +297,17 @@ impl fmt::Debug for ProviderDescriptor {
             .field("priority", &self.priority)
             .field("ordering", &self.ordering)
             .finish_non_exhaustive()
+    }
+}
+
+impl ProviderDescriptor {
+    /// Returns the stable mapping identity relative to its validated concrete component.
+    pub fn mapping_id(&self, component: &ComponentDescriptor) -> ProviderMappingId {
+        ProviderMappingId {
+            component: component.id,
+            trait_type: self.trait_ty.type_name,
+            qualifier: self.qualifier,
+        }
     }
 }
 
@@ -924,6 +935,8 @@ pub struct ComponentDescriptor {
     pub name: &'static str,
     pub ty: TypeDescriptor,
     pub scope: &'static dyn Scope,
+    /// Optional root condition. Provider mappings inherit this component's eligibility.
+    pub condition: Option<&'static ConditionDescriptor>,
     pub factories: fn() -> &'static [ComponentFactoryDescriptor],
     /// The component's `{Type}Hooks` slice (its `#[hook]` methods). Empty for a type
     /// that declares none — and for every manually-seeded instance.
@@ -943,6 +956,7 @@ impl ComponentDescriptor {
             name: T::NAME,
             ty: TypeDescriptor::of::<T>(T::NAME),
             scope: &Singleton,
+            condition: None,
             factories: no_factories,
             hooks: no_hooks,
         }
@@ -963,6 +977,7 @@ impl ComponentDescriptor {
             name,
             ty,
             scope,
+            condition: None,
             factories: no_factories,
             hooks: no_hooks,
         }
@@ -1010,6 +1025,7 @@ impl fmt::Debug for ComponentDescriptor {
             .field("name", &self.name)
             .field("ty", &self.ty)
             .field("scope", &self.scope.name())
+            .field("condition", &self.condition)
             .field("dependencies", &self.dependencies())
             .finish_non_exhaustive()
     }
