@@ -1010,6 +1010,10 @@ impl ComponentDescriptor {
             return Ok(factories.first());
         }
 
+        if factories.iter().filter(|factory| factory.default).count() > 1 {
+            return Err(crate::Error::AmbiguousFactory(self.name.to_string()));
+        }
+
         let mut explicit = factories.iter().filter(|factory| !factory.default);
         let first = explicit.next();
 

@@ -110,6 +110,10 @@ pub enum Error {
     #[error(transparent)]
     Condition(#[from] upwell_di::ConditionError),
 
+    /// A condition evaluation was produced from another application's config bindings.
+    #[error("condition evaluation belongs to another application config-binding catalog")]
+    ConditionEvaluationApplicationMismatch,
+
     /// A configuration loading, binding, or substitution failure.
     #[error(transparent)]
     Config(#[from] upwell_config::ConfigError),

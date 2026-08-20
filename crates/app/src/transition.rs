@@ -43,10 +43,12 @@ impl CandidateGraph {
     ) -> crate::Result<Self> {
         let component_registry = registry.component_registry();
 
-        if !evaluation.belongs_to(&component_registry)?
-            || !evaluation.belongs_to_application(registry.condition_identity())
-        {
+        if !evaluation.belongs_to(&component_registry)? {
             return Err(upwell_di::ConditionError::EvaluationCatalogMismatch.into());
+        }
+
+        if !evaluation.belongs_to_application(registry.condition_identity()) {
+            return Err(crate::Error::ConditionEvaluationApplicationMismatch);
         }
 
         Self::prepare_registry(
