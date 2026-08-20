@@ -771,6 +771,7 @@ pub fn topological_sort<'a>(
     let mut expansion = WaitExpansion {
         selection,
         sortable: &sortable,
+        components,
         can_access: &can_access,
         provider_memo: HashMap::new(),
         visiting: HashSet::new(),
@@ -801,8 +802,8 @@ pub fn topological_sort<'a>(
                 .all(|dependency| is_built(*dependency));
 
             if resolved {
-                trace!(component = %descriptor.name, "dependency order resolved");
                 result.push(descriptor);
+                crate::observability::build_position(descriptor, result.len() - 1);
                 false
             } else {
                 true
@@ -815,6 +816,14 @@ pub fn topological_sort<'a>(
                 .map(|d| d.name)
                 .collect::<Vec<_>>()
                 .join(", ");
+            for diagnostics in construction_cycle_diagnostics(components, &waits, &remaining) {
+                crate::observability::construction_cycle(
+                    diagnostics.cycle_id,
+                    &diagnostics.members,
+                    &diagnostics.edges,
+                    &diagnostics.blocked,
+                );
+            }
 
             error!(components = %stuck, "dependency cycle detected in component graph");
 
@@ -831,6 +840,7 @@ pub fn topological_sort<'a>(
 struct WaitExpansion<'a> {
     selection: &'a ProviderSelectionModel,
     sortable: &'a HashSet<TypeId>,
+    components: &'a [ComponentDescriptor],
     can_access: &'a dyn Fn(&dyn Scope, &'static dyn Scope) -> bool,
     provider_memo: HashMap<TypeId, HashSet<TypeId>>,
     visiting: HashSet<TypeId>,
@@ -840,13 +850,28 @@ impl WaitExpansion<'_> {
     fn component_waits(&mut self, descriptor: ComponentDescriptor) -> HashSet<TypeId> {
         let mut waits = HashSet::new();
 
-        for dependency in descriptor.dependencies().into_iter().filter(|dependency| {
-            !dependency.optional
-                && !dependency.dynamic
-                && !dependency.config
-                && dependency.resolution == ResolutionMode::Eager
-        }) {
-            self.expand_dependency(descriptor.scope, &dependency, &mut waits);
+        for dependency in descriptor.dependencies() {
+            let reason = construction_edge_reason(&dependency);
+            let accepted = reason == "required-eager";
+
+            crate::observability::construction_edge(&descriptor, &dependency, accepted, reason);
+
+            if accepted {
+                self.expand_dependency(descriptor.scope, &dependency, &mut waits);
+            }
+        }
+
+        let mut ordered = waits.iter().copied().collect::<Vec<_>>();
+        ordered.sort_by_key(|type_id| component_id(self.components, *type_id));
+
+        for dependency in ordered {
+            if let Some(target) = self
+                .components
+                .iter()
+                .find(|component| component.ty.type_id == dependency)
+            {
+                crate::observability::construction_wait(&descriptor, target);
+            }
         }
 
         waits
@@ -922,5 +947,102 @@ impl WaitExpansion<'_> {
     }
 }
 
+fn construction_edge_reason(dependency: &upwell_core::DependencyDescriptor) -> &'static str {
+    if dependency.optional {
+        return "optional";
+    }
+
+    if dependency.dynamic {
+        return "dynamic";
+    }
+
+    if dependency.config {
+        return "config-external";
+    }
+
+    match dependency.resolution {
+        ResolutionMode::Eager => "required-eager",
+        ResolutionMode::Lazy => "lazy",
+        ResolutionMode::Deferred => "deferred-cycle-break",
+        ResolutionMode::Fresh => "fresh",
+    }
+}
+
+struct CycleDiagnostics<'a> {
+    cycle_id: &'a str,
+    members: Vec<&'a str>,
+    edges: Vec<(&'a str, &'a str)>,
+    blocked: Vec<&'a str>,
+}
+
+fn construction_cycle_diagnostics<'a>(
+    components: &'a [ComponentDescriptor],
+    waits: &HashMap<TypeId, HashSet<TypeId>>,
+    remaining: &[&ComponentDescriptor],
+) -> Vec<CycleDiagnostics<'a>> {
+    let remaining_ids = remaining
+        .iter()
+        .map(|component| component.ty.type_id)
+        .collect::<Vec<_>>();
+    let keys = components
+        .iter()
+        .map(|component| (component.ty.type_id, component.id.to_string()))
+        .collect::<HashMap<_, _>>();
+    let cycles = crate::registry::order::cycle::components(&remaining_ids, waits, &keys);
+    let all_cyclic = cycles.iter().flatten().copied().collect::<HashSet<_>>();
+    let mut blocked = remaining_ids
+        .iter()
+        .filter(|type_id| !all_cyclic.contains(type_id))
+        .map(|type_id| component_id(components, *type_id))
+        .collect::<Vec<_>>();
+
+    blocked.sort_unstable();
+
+    cycles
+        .into_iter()
+        .map(|cycle| {
+            let cycle_set = cycle.iter().copied().collect::<HashSet<_>>();
+            let mut members = cycle
+                .iter()
+                .map(|type_id| component_id(components, *type_id))
+                .collect::<Vec<_>>();
+            let mut edges = cycle
+                .iter()
+                .flat_map(|from| {
+                    waits[from]
+                        .iter()
+                        .filter(|to| cycle_set.contains(to))
+                        .map(|to| {
+                            (
+                                component_id(components, *from),
+                                component_id(components, *to),
+                            )
+                        })
+                })
+                .collect::<Vec<_>>();
+
+            members.sort_unstable();
+            edges.sort_unstable();
+
+            CycleDiagnostics {
+                cycle_id: members.first().copied().unwrap_or(""),
+                members,
+                edges,
+                blocked: blocked.clone(),
+            }
+        })
+        .collect()
+}
+
+fn component_id(components: &[ComponentDescriptor], type_id: TypeId) -> &str {
+    components
+        .iter()
+        .find(|component| component.ty.type_id == type_id)
+        .map_or("<external>", |component| component.id)
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod observability_tests;

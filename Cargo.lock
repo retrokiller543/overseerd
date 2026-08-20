@@ -4505,6 +4505,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "upwell-build",
  "upwell-core",
  "upwell-hooks",

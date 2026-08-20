@@ -1,7 +1,7 @@
 use std::any::TypeId;
 use std::collections::{HashMap, HashSet};
 
-mod order;
+pub(crate) mod order;
 pub(crate) mod selection;
 
 pub use selection::{
@@ -299,24 +299,36 @@ impl ComponentRegistry {
                     continue;
                 }
 
-                if dep.cardinality == Cardinality::One
-                    && !dep.dynamic
-                    && matching
-                    && visible
-                    && model
-                        .select_runtime_one(
-                            dep_id,
-                            dep.qualifier,
-                            dep.resolution,
-                            c.scope,
-                            can_access,
-                        )
-                        .is_none()
-                {
-                    return Err(Error::AmbiguousProvider {
-                        component_id: Some(c.id.to_string()),
-                        type_name: (dep.ty.type_name)().to_string(),
-                    });
+                if dep.cardinality == Cardinality::One && !dep.dynamic && matching && visible {
+                    let selected = model.select_runtime_one(
+                        dep_id,
+                        dep.qualifier,
+                        dep.resolution,
+                        c.scope,
+                        can_access,
+                    );
+
+                    if let Some(selected) = selected {
+                        if let Some(component) =
+                            model.component(selected.provider.concrete_ty.type_id)
+                        {
+                            crate::observability::provider_selection(
+                                c,
+                                &dep,
+                                selected.provider,
+                                component,
+                                selected.reason,
+                                selected.stage,
+                            );
+                        }
+                    } else {
+                        crate::observability::selection_absent(c, &dep);
+
+                        return Err(Error::AmbiguousProvider {
+                            component_id: Some(c.id.to_string()),
+                            type_name: (dep.ty.type_name)().to_string(),
+                        });
+                    }
                 }
 
                 if must_exist && !available.contains(&dep_id) && (!matching || !visible) {

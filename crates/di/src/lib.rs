@@ -16,10 +16,13 @@ pub mod construct;
 pub mod container;
 pub mod descriptors;
 pub mod error;
+mod observability;
 mod primitives;
 pub mod registry;
 pub mod root;
 mod seeded;
+#[cfg(test)]
+mod test_support;
 
 pub use condition::{
     AvailabilityEdge, ConditionCatalog, ConditionDecision, ConditionDependency, ConditionError,
