@@ -4342,6 +4342,7 @@ dependencies = [
 name = "upwell-app"
 version = "0.20.0"
 dependencies = [
+ "arc-swap",
  "clap",
  "futures",
  "serde",
