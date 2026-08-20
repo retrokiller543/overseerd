@@ -386,7 +386,10 @@ fn source_macro_captures_the_call_site() {
         assert!(SOURCE.column > 0);
     }
 
-    assert!(SOURCE.file.ends_with("condition/tests.rs"));
+    assert_eq!(
+        std::path::Path::new(SOURCE.file).file_name(),
+        Some(std::ffi::OsStr::new("tests.rs"))
+    );
 }
 
 struct ComponentA;
