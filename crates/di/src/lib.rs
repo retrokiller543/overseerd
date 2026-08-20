@@ -59,8 +59,8 @@ pub use registry::{
 pub use root::{ROOT_RESOLVER_ID, ROOT_RESOLVER_NAME, RootResolver, root_resolver_descriptor};
 pub use transition::{
     BindingTransition, DependencyDemand, DependencyDemandId, EffectiveGraph, EffectiveNode,
-    EffectiveNodeRole, EffectiveTarget, GraphDiff, NodeAction, NodeChange, NodeChangeKind,
-    PlannedNode, ReasonKind, StaleGraphCandidate, TransitionPlan, TransitionReason,
+    EffectiveNodeRole, EffectiveTarget, FactoryIdentity, GraphDiff, NodeAction, NodeChange,
+    NodeChangeKind, PlannedNode, ReasonKind, StaleGraphCandidate, TransitionPlan, TransitionReason,
 };
 
 /// Re-exported so macro-generated code can reach the `#[distributed_slice]` attribute

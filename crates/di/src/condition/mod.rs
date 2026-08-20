@@ -68,7 +68,7 @@ pub struct ConditionDecision {
 #[derive(Clone, Debug)]
 pub struct ConditionEvaluation {
     pub(super) catalog: CatalogIdentity,
-    pub(super) application: Option<Box<[(String, String)]>>,
+    pub(super) application: Option<Box<[ApplicationBindingIdentity]>>,
     pub(super) facts: ConditionFactSnapshot,
     pub(super) eligible: ComponentRegistry,
     pub(super) components: BTreeMap<&'static str, bool>,
@@ -102,11 +102,20 @@ impl ConditionEvaluation {
     #[doc(hidden)]
     pub fn with_application_identity(
         mut self,
-        bindings: impl IntoIterator<Item = (String, String)>,
+        bindings: impl IntoIterator<Item = (TypeId, String, String)>,
     ) -> Self {
-        let mut bindings = bindings.into_iter().collect::<Vec<_>>();
+        let mut bindings = bindings
+            .into_iter()
+            .map(|(type_id, type_name, path)| ApplicationBindingIdentity {
+                type_id,
+                type_name,
+                path,
+            })
+            .collect::<Vec<_>>();
 
-        bindings.sort();
+        bindings.sort_by(|left, right| {
+            (&left.type_name, &left.path).cmp(&(&right.type_name, &right.path))
+        });
         self.application = Some(bindings.into_boxed_slice());
 
         self
@@ -116,13 +125,35 @@ impl ConditionEvaluation {
     #[doc(hidden)]
     pub fn belongs_to_application(
         &self,
-        bindings: impl IntoIterator<Item = (String, String)>,
+        bindings: impl IntoIterator<Item = (TypeId, String, String)>,
     ) -> bool {
-        let mut bindings = bindings.into_iter().collect::<Vec<_>>();
+        let mut bindings = bindings
+            .into_iter()
+            .map(|(type_id, type_name, path)| ApplicationBindingIdentity {
+                type_id,
+                type_name,
+                path,
+            })
+            .collect::<Vec<_>>();
 
-        bindings.sort();
+        bindings.sort_by(|left, right| {
+            (&left.type_name, &left.path).cmp(&(&right.type_name, &right.path))
+        });
 
         self.application.as_deref() == Some(bindings.as_slice())
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct ApplicationBindingIdentity {
+    type_id: TypeId,
+    type_name: String,
+    path: String,
+}
+
+impl fmt::Debug for ApplicationBindingIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ApplicationBindingIdentity(<redacted>)")
     }
 }
 
@@ -141,8 +172,11 @@ struct RegistryIdentity {
 #[derive(Clone, Eq, PartialEq)]
 struct ComponentIdentity {
     id: &'static str,
-    concrete_type: &'static str,
+    concrete_type: TypeIdentity,
     scope: ScopeId,
+    scope_name: &'static str,
+    scope_rank: u8,
+    scope_transient: bool,
     condition: Option<usize>,
     factory: Option<&'static str>,
     factories: usize,
@@ -154,6 +188,8 @@ struct ComponentIdentity {
 #[derive(Clone, Eq, PartialEq)]
 struct ProviderIdentity {
     mapping: ProviderMappingId,
+    trait_type: TypeIdentity,
+    concrete_type: TypeIdentity,
     primary: bool,
     priority: i64,
     ordering: Box<[ProviderOrderIdentity]>,
@@ -162,9 +198,24 @@ struct ProviderIdentity {
 
 #[derive(Clone, Eq, PartialEq)]
 struct ProviderOrderIdentity {
-    target_type: &'static str,
-    traits: Box<[&'static str]>,
+    target_type: TypeIdentity,
+    traits: Box<[TypeIdentity]>,
     before: bool,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct TypeIdentity {
+    id: TypeId,
+    name: &'static str,
+}
+
+impl TypeIdentity {
+    fn new(descriptor: upwell_core::TypeDescriptor) -> Self {
+        Self {
+            id: descriptor.type_id,
+            name: (descriptor.type_name)(),
+        }
+    }
 }
 
 impl CatalogIdentity {
@@ -203,8 +254,11 @@ impl RegistryIdentity {
 
                 Ok(ComponentIdentity {
                     id: component.id,
-                    concrete_type: (component.ty.type_name)(),
+                    concrete_type: TypeIdentity::new(component.ty),
                     scope: component.scope.id(),
+                    scope_name: component.scope.name(),
+                    scope_rank: component.scope.rank(),
+                    scope_transient: component.scope.is_transient(),
                     condition: component
                         .condition
                         .map(|condition| std::ptr::from_ref(condition).addr()),
@@ -231,11 +285,12 @@ impl RegistryIdentity {
                     .ordering
                     .iter()
                     .map(|order| ProviderOrderIdentity {
-                        target_type: (order.target.type_name)(),
+                        target_type: TypeIdentity::new(order.target),
                         traits: order
                             .traits
                             .iter()
-                            .map(|trait_ty| (trait_ty.type_name)())
+                            .copied()
+                            .map(TypeIdentity::new)
                             .collect(),
                         before: matches!(order.direction, crate::ProviderOrderDirection::Before),
                     })
@@ -243,6 +298,8 @@ impl RegistryIdentity {
 
                 Ok(ProviderIdentity {
                     mapping: provider.mapping_id(component),
+                    trait_type: TypeIdentity::new(provider.trait_ty),
+                    concrete_type: TypeIdentity::new(provider.concrete_ty),
                     primary: provider.primary,
                     priority: provider.priority,
                     ordering,

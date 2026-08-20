@@ -113,8 +113,16 @@ pub struct EffectiveNode {
     pub concrete_type: &'static str,
     pub scope: ScopeId,
     pub role: EffectiveNodeRole,
-    pub factory: Option<&'static str>,
+    pub factory: Option<FactoryIdentity>,
     pub dependencies: Box<[DependencyDemand]>,
+}
+
+/// One selected construction recipe identity.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FactoryIdentity {
+    pub id: &'static str,
+    construct: usize,
+    dependencies: usize,
 }
 
 /// A complete immutable effective dependency graph derived without constructing components.
@@ -186,7 +194,11 @@ impl EffectiveGraph {
                     concrete_type: (component.ty.type_name)(),
                     scope,
                     role,
-                    factory: factory.map(|factory| factory.id),
+                    factory: factory.map(|factory| FactoryIdentity {
+                        id: factory.id,
+                        construct: factory.construct as usize,
+                        dependencies: factory.dependencies as usize,
+                    }),
                     dependencies,
                 },
             );

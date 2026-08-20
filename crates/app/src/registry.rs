@@ -90,6 +90,19 @@ impl AppRegistry {
         Ok(evaluation.with_application_identity(self.condition_identity()))
     }
 
+    /// Incrementally re-evaluates conditions while preserving this application's catalog identity.
+    pub fn evaluate_changed_conditions(
+        &self,
+        facts: impl IntoIterator<Item = ConfigFactDescriptor>,
+        previous: &ConditionEvaluation,
+        snapshot: &ConditionFactSnapshot,
+    ) -> Result<ConditionEvaluation, upwell_di::ConditionError> {
+        let evaluation = ConditionCatalog::new(&self.component_registry(), facts)?
+            .evaluate_changed(previous, snapshot)?;
+
+        Ok(evaluation.with_application_identity(self.condition_identity()))
+    }
+
     /// Returns the effective descriptor registered for component type `T`.
     ///
     /// Duplicate registrations are resolved by the same rules used during registry validation.
@@ -213,10 +226,14 @@ impl AppRegistry {
         Ok(())
     }
 
-    pub(crate) fn condition_identity(&self) -> impl Iterator<Item = (String, String)> + '_ {
-        self.config_bindings
-            .iter()
-            .map(|binding| ((binding.ty.type_name)().to_string(), binding.path.clone()))
+    pub(crate) fn condition_identity(&self) -> impl Iterator<Item = (TypeId, String, String)> + '_ {
+        self.config_bindings.iter().map(|binding| {
+            (
+                binding.ty.type_id,
+                (binding.ty.type_name)().to_string(),
+                binding.path.clone(),
+            )
+        })
     }
 
     fn write_components(&self, f: &mut impl Write) -> fmt::Result {

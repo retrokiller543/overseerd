@@ -24,7 +24,9 @@ impl ConditionCatalog {
     /// Re-evaluates only conditions reachable from changed config facts.
     ///
     /// The returned evaluation is still complete and is suitable for ordinary graph
-    /// validation. `previous` must be the evaluation produced from `previous_snapshot`.
+    /// validation. `previous` must have been produced by this catalog. Trusted callbacks
+    /// must obey their descriptor contract: declared inputs are exhaustive and evaluation
+    /// is deterministic, non-blocking, panic-free, and side-effect free.
     pub fn evaluate_changed(
         &self,
         previous: &ConditionEvaluation,
@@ -61,7 +63,10 @@ impl ConditionCatalog {
             .cloned()
             .collect();
 
-        self.evaluate_from(snapshot, states, decisions)
+        let mut evaluation = self.evaluate_from(snapshot, states, decisions)?;
+        evaluation.application.clone_from(&previous.application);
+
+        Ok(evaluation)
     }
 
     fn evaluate_from(

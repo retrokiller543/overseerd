@@ -91,6 +91,12 @@ static DEPENDENT_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDes
     dependencies: dependent_dependencies,
     default: false,
 }];
+static CHANGED_EMPTY_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "empty",
+    construct: panic_factory,
+    dependencies: fixed_dependencies,
+    default: false,
+}];
 
 fn empty_factory() -> &'static [ComponentFactoryDescriptor] {
     &EMPTY_FACTORY
@@ -106,6 +112,10 @@ fn fixed_factory() -> &'static [ComponentFactoryDescriptor] {
 
 fn dependent_factory() -> &'static [ComponentFactoryDescriptor] {
     &DEPENDENT_FACTORY
+}
+
+fn changed_empty_factory() -> &'static [ComponentFactoryDescriptor] {
+    &CHANGED_EMPTY_FACTORY
 }
 
 fn component<T: 'static>(
@@ -281,6 +291,32 @@ fn singleton_to_scoped_change_still_retires_the_active_singleton() {
 
     assert!(plan.retirement_order.contains(&"unrelated"));
     assert!(!plan.construction_order.contains(&"unrelated"));
+}
+
+#[test]
+fn changed_recipe_with_the_same_label_replaces_the_component() {
+    let active = graph(false);
+    let mut candidate_registry = registry(false);
+    let unrelated = candidate_registry
+        .components
+        .iter_mut()
+        .find(|component| component.id == "unrelated")
+        .expect("unrelated component exists");
+    unrelated.factories = changed_empty_factory;
+    let candidate =
+        EffectiveGraph::build(RuntimeGenerationId::INITIAL, &candidate_registry, |_, _| {
+            true
+        })
+        .expect("candidate validates");
+
+    let plan = active
+        .plan_transition(&candidate)
+        .expect("candidate uses active base generation");
+
+    assert_eq!(action(&plan, "unrelated"), Some(NodeAction::Replace));
+    assert!(plan.diff.nodes.iter().any(|change| {
+        change.component == "unrelated" && change.kinds.contains(&NodeChangeKind::FactoryChanged)
+    }));
 }
 
 fn action(plan: &TransitionPlan, component: &str) -> Option<NodeAction> {

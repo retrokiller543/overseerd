@@ -991,6 +991,20 @@ impl ComponentDescriptor {
     /// Errors if more than one explicit factory exists for the type.
     pub fn effective_factory(&self) -> crate::Result<Option<&'static ComponentFactoryDescriptor>> {
         let factories = (self.factories)();
+        let mut ids = std::collections::HashSet::new();
+
+        for factory in factories {
+            if factory.id.is_empty() {
+                return Err(crate::Error::EmptyFactoryId(self.name.to_string()));
+            }
+
+            if !ids.insert(factory.id) {
+                return Err(crate::Error::DuplicateFactoryId {
+                    component: self.name.to_string(),
+                    factory: factory.id.to_string(),
+                });
+            }
+        }
 
         if factories.len() == 1 {
             return Ok(factories.first());
