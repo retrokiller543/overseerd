@@ -106,6 +106,10 @@ pub enum Error {
     #[error(transparent)]
     Di(#[from] upwell_di::Error),
 
+    /// A conditional component catalog or evaluation is invalid.
+    #[error(transparent)]
+    Condition(#[from] upwell_di::ConditionError),
+
     /// A configuration loading, binding, or substitution failure.
     #[error(transparent)]
     Config(#[from] upwell_config::ConfigError),

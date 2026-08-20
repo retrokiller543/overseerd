@@ -18,8 +18,16 @@ struct LiveConsumer;
 struct FixedConsumer;
 struct FixedDependent;
 struct Unrelated;
+struct RequestScope;
 
 trait Authenticator: Send + Sync {}
+
+impl upwell_core::StaticScope for RequestScope {
+    const ID: upwell_core::ScopeId =
+        upwell_core::namespaced_id!(upwell_core::ScopeId, "test/request");
+    const RANK: u8 = 1;
+    const NAME: &'static str = "Request";
+}
 
 fn panic_factory(
     _: &mut ComponentConstructionContext,
@@ -248,6 +256,31 @@ fn stale_candidate_generation_is_rejected() {
             candidate: RuntimeGenerationId::new(1),
         })
     );
+}
+
+#[test]
+fn singleton_to_scoped_change_still_retires_the_active_singleton() {
+    let active = graph(false);
+    let mut candidate_registry = registry(false);
+    let unrelated = candidate_registry
+        .components
+        .iter_mut()
+        .find(|component| component.id == "unrelated")
+        .expect("unrelated component exists");
+    unrelated.scope = &RequestScope;
+    let candidate = EffectiveGraph::build(
+        RuntimeGenerationId::INITIAL,
+        &candidate_registry,
+        |consumer, dependency| consumer == dependency,
+    )
+    .expect("candidate validates");
+
+    let plan = active
+        .plan_transition(&candidate)
+        .expect("candidate uses active base generation");
+
+    assert!(plan.retirement_order.contains(&"unrelated"));
+    assert!(!plan.construction_order.contains(&"unrelated"));
 }
 
 fn action(plan: &TransitionPlan, component: &str) -> Option<NodeAction> {

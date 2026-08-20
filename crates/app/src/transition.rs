@@ -41,6 +41,14 @@ impl CandidateGraph {
         evaluation: &ConditionEvaluation,
         topology: &PreparedScopeTopology,
     ) -> crate::Result<Self> {
+        let component_registry = registry.component_registry();
+
+        if !evaluation.belongs_to(&component_registry)?
+            || !evaluation.belongs_to_application(registry.condition_identity())
+        {
+            return Err(upwell_di::ConditionError::EvaluationCatalogMismatch.into());
+        }
+
         Self::prepare_registry(
             base_generation,
             registry,
