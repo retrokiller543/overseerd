@@ -32,7 +32,7 @@ impl ConditionCatalog {
     ) -> Result<ConditionEvaluation, ConditionError> {
         self.validate_snapshot(snapshot)?;
 
-        if previous.catalog.as_ref() != self.component_order.as_slice() {
+        if previous.catalog != self.identity {
             return Err(ConditionError::EvaluationCatalogMismatch);
         }
 
@@ -96,7 +96,8 @@ impl ConditionCatalog {
         decisions.sort_by_key(|decision| (decision.component_id, decision.condition_id));
 
         let evaluation = ConditionEvaluation {
-            catalog: self.component_order.clone().into_boxed_slice(),
+            catalog: self.identity.clone(),
+            application: None,
             facts: snapshot.clone(),
             eligible,
             components: states,

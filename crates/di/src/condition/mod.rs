@@ -2,7 +2,9 @@ use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
-use upwell_core::{ConditionScalar, ConfigFactDescriptor, ConfigFactId, ProviderMappingId};
+use upwell_core::{
+    ConditionScalar, ConfigFactDescriptor, ConfigFactId, ProviderMappingId, ScopeId,
+};
 
 use crate::{ComponentDescriptor, ComponentRegistry, ProviderDescriptor, ProviderSelectionModel};
 
@@ -65,7 +67,8 @@ pub struct ConditionDecision {
 /// Deterministic eligibility result for one supplied fact snapshot.
 #[derive(Clone, Debug)]
 pub struct ConditionEvaluation {
-    pub(super) catalog: Box<[&'static str]>,
+    pub(super) catalog: CatalogIdentity,
+    pub(super) application: Option<Box<[(String, String)]>>,
     pub(super) facts: ConditionFactSnapshot,
     pub(super) eligible: ComponentRegistry,
     pub(super) components: BTreeMap<&'static str, bool>,
@@ -88,6 +91,172 @@ impl ConditionEvaluation {
 
     pub fn decisions(&self) -> &[ConditionDecision] {
         &self.decisions
+    }
+
+    /// Returns whether this evaluation was produced from `registry`'s static DI catalog.
+    pub fn belongs_to(&self, registry: &ComponentRegistry) -> Result<bool, ConditionError> {
+        Ok(self.catalog.registry == RegistryIdentity::new(registry)?)
+    }
+
+    /// Associates an app-layer config-binding catalog with this evaluation.
+    #[doc(hidden)]
+    pub fn with_application_identity(
+        mut self,
+        bindings: impl IntoIterator<Item = (String, String)>,
+    ) -> Self {
+        let mut bindings = bindings.into_iter().collect::<Vec<_>>();
+
+        bindings.sort();
+        self.application = Some(bindings.into_boxed_slice());
+
+        self
+    }
+
+    /// Returns whether this evaluation originated from the supplied app-layer bindings.
+    #[doc(hidden)]
+    pub fn belongs_to_application(
+        &self,
+        bindings: impl IntoIterator<Item = (String, String)>,
+    ) -> bool {
+        let mut bindings = bindings.into_iter().collect::<Vec<_>>();
+
+        bindings.sort();
+
+        self.application.as_deref() == Some(bindings.as_slice())
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(super) struct CatalogIdentity {
+    registry: RegistryIdentity,
+    facts: Box<[ConfigFactDescriptor]>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct RegistryIdentity {
+    components: Box<[ComponentIdentity]>,
+    providers: Box<[ProviderIdentity]>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct ComponentIdentity {
+    id: &'static str,
+    concrete_type: &'static str,
+    scope: ScopeId,
+    condition: Option<usize>,
+    factory: Option<&'static str>,
+    factories: usize,
+    hooks: usize,
+    construct: Option<usize>,
+    dependencies: Option<usize>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct ProviderIdentity {
+    mapping: ProviderMappingId,
+    primary: bool,
+    priority: i64,
+    ordering: Box<[ProviderOrderIdentity]>,
+    erase: usize,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct ProviderOrderIdentity {
+    target_type: &'static str,
+    traits: Box<[&'static str]>,
+    before: bool,
+}
+
+impl CatalogIdentity {
+    fn new(
+        registry: &ComponentRegistry,
+        facts: &BTreeMap<ConfigFactId, ConfigFactDescriptor>,
+    ) -> Result<Self, ConditionError> {
+        Ok(Self {
+            registry: RegistryIdentity::new(registry)?,
+            facts: facts.values().copied().collect(),
+        })
+    }
+}
+
+impl fmt::Debug for CatalogIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("CatalogIdentity(<redacted>)")
+    }
+}
+
+impl RegistryIdentity {
+    fn new(registry: &ComponentRegistry) -> Result<Self, ConditionError> {
+        let components = registry
+            .resolved_components()
+            .map_err(ConditionError::Registry)?;
+        let by_type = components
+            .iter()
+            .map(|component| (component.ty.type_id, *component))
+            .collect::<HashMap<_, _>>();
+        let components = components
+            .iter()
+            .map(|component| {
+                let factory = component
+                    .effective_factory()
+                    .map_err(ConditionError::Registry)?;
+
+                Ok(ComponentIdentity {
+                    id: component.id,
+                    concrete_type: (component.ty.type_name)(),
+                    scope: component.scope.id(),
+                    condition: component
+                        .condition
+                        .map(|condition| std::ptr::from_ref(condition).addr()),
+                    factory: factory.map(|factory| factory.id),
+                    factories: component.factories as usize,
+                    hooks: component.hooks as usize,
+                    construct: factory.map(|factory| factory.construct as usize),
+                    dependencies: factory.map(|factory| factory.dependencies as usize),
+                })
+            })
+            .collect::<Result<Vec<_>, ConditionError>>()?
+            .into_boxed_slice();
+        let mut providers = registry
+            .providers
+            .iter()
+            .map(|provider| {
+                let component = by_type.get(&provider.concrete_ty.type_id).ok_or(
+                    ConditionError::MissingProviderComponent {
+                        trait_type: (provider.trait_ty.type_name)(),
+                        qualifier: provider.qualifier,
+                    },
+                )?;
+                let ordering = provider
+                    .ordering
+                    .iter()
+                    .map(|order| ProviderOrderIdentity {
+                        target_type: (order.target.type_name)(),
+                        traits: order
+                            .traits
+                            .iter()
+                            .map(|trait_ty| (trait_ty.type_name)())
+                            .collect(),
+                        before: matches!(order.direction, crate::ProviderOrderDirection::Before),
+                    })
+                    .collect();
+
+                Ok(ProviderIdentity {
+                    mapping: provider.mapping_id(component),
+                    primary: provider.primary,
+                    priority: provider.priority,
+                    ordering,
+                    erase: provider.erase as usize,
+                })
+            })
+            .collect::<Result<Vec<_>, ConditionError>>()?;
+
+        providers.sort_by_key(|provider| provider.mapping);
+
+        Ok(Self {
+            components,
+            providers: providers.into_boxed_slice(),
+        })
     }
 }
 
@@ -113,6 +282,7 @@ impl ValidatedConditionEvaluation {
 
 /// Validated static inputs for deterministic condition evaluation.
 pub struct ConditionCatalog {
+    pub(super) identity: CatalogIdentity,
     pub(super) components: BTreeMap<&'static str, ComponentDescriptor>,
     pub(super) registry_order: Vec<&'static str>,
     pub(super) component_order: Vec<&'static str>,

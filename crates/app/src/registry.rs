@@ -84,7 +84,10 @@ impl AppRegistry {
         facts: impl IntoIterator<Item = ConfigFactDescriptor>,
         snapshot: &ConditionFactSnapshot,
     ) -> Result<ConditionEvaluation, upwell_di::ConditionError> {
-        ConditionCatalog::new(&self.component_registry(), facts)?.evaluate(snapshot)
+        let evaluation =
+            ConditionCatalog::new(&self.component_registry(), facts)?.evaluate(snapshot)?;
+
+        Ok(evaluation.with_application_identity(self.condition_identity()))
     }
 
     /// Returns the effective descriptor registered for component type `T`.
@@ -208,6 +211,12 @@ impl AppRegistry {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn condition_identity(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        self.config_bindings
+            .iter()
+            .map(|binding| ((binding.ty.type_name)().to_string(), binding.path.clone()))
     }
 
     fn write_components(&self, f: &mut impl Write) -> fmt::Result {

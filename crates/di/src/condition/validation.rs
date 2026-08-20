@@ -65,7 +65,9 @@ impl ConditionCatalog {
         let provider_order = registry
             .provider_order(&components.values().copied().collect::<Vec<_>>())
             .map_err(ConditionError::Registry)?;
+        let identity = super::CatalogIdentity::new(registry, &facts)?;
         let catalog = Self {
+            identity,
             registry_order,
             component_order: components.keys().copied().collect(),
             components,

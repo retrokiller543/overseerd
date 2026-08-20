@@ -120,6 +120,7 @@ pub(super) fn plan(
 
     for change in &diff.nodes {
         let kinds = change.kinds.as_ref();
+        let mut changed_directly = false;
 
         if kinds.contains(&NodeChangeKind::Added) {
             require(
@@ -129,7 +130,7 @@ pub(super) fn plan(
                 ReasonKind::Added,
                 Vec::new(),
             );
-            changed_instances.push_back((change.component, Vec::new()));
+            changed_directly = true;
         } else if kinds.contains(&NodeChangeKind::Removed) {
             require(
                 &mut requirements,
@@ -138,24 +139,32 @@ pub(super) fn plan(
                 ReasonKind::Removed,
                 Vec::new(),
             );
-            changed_instances.push_back((change.component, Vec::new()));
-        } else if kinds.contains(&NodeChangeKind::FactoryChanged) {
-            require(
-                &mut requirements,
-                change.component,
-                NodeAction::Replace,
-                ReasonKind::FactoryChanged,
-                Vec::new(),
-            );
-            changed_instances.push_back((change.component, Vec::new()));
-        } else if kinds.contains(&NodeChangeKind::IdentityChanged) {
-            require(
-                &mut requirements,
-                change.component,
-                NodeAction::Replace,
-                ReasonKind::IdentityChanged,
-                Vec::new(),
-            );
+            changed_directly = true;
+        } else {
+            if kinds.contains(&NodeChangeKind::FactoryChanged) {
+                require(
+                    &mut requirements,
+                    change.component,
+                    NodeAction::Replace,
+                    ReasonKind::FactoryChanged,
+                    Vec::new(),
+                );
+                changed_directly = true;
+            }
+
+            if kinds.contains(&NodeChangeKind::IdentityChanged) {
+                require(
+                    &mut requirements,
+                    change.component,
+                    NodeAction::Replace,
+                    ReasonKind::IdentityChanged,
+                    Vec::new(),
+                );
+                changed_directly = true;
+            }
+        }
+
+        if changed_directly {
             changed_instances.push_back((change.component, Vec::new()));
         }
 
@@ -266,23 +275,36 @@ pub(super) fn plan(
             node.component == binding.dependency.consumer && node.action == NodeAction::RebindLive
         })
     });
-    let executable = nodes
+    let actions = nodes
         .iter()
-        .filter(|node| node.role == EffectiveNodeRole::Singleton)
         .map(|node| (node.component, node.action))
         .collect::<BTreeMap<_, _>>();
     let construction_order = candidate
         .construction_order
         .iter()
         .filter(|component| {
-            executable
+            candidate
+                .nodes
                 .get(**component)
-                .is_some_and(|action| matches!(action, NodeAction::Add | NodeAction::Replace))
+                .is_some_and(|node| node.role == EffectiveNodeRole::Singleton)
+                && actions
+                    .get(**component)
+                    .is_some_and(|action| matches!(action, NodeAction::Add | NodeAction::Replace))
         })
         .copied()
         .collect::<Vec<_>>()
         .into_boxed_slice();
-    let retirement_order = retirement_order(active, &executable).into_boxed_slice();
+    let retirement_actions = actions
+        .into_iter()
+        .filter(|(component, action)| {
+            active
+                .nodes
+                .get(component)
+                .is_some_and(|node| node.role == EffectiveNodeRole::Singleton)
+                && matches!(action, NodeAction::Remove | NodeAction::Replace)
+        })
+        .collect();
+    let retirement_order = retirement_order(active, &retirement_actions).into_boxed_slice();
 
     Ok(TransitionPlan {
         base_generation: active.generation,

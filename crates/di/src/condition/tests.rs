@@ -145,6 +145,32 @@ fn changed_facts_reuse_unrelated_condition_decisions() {
     assert_eq!(incremental.decisions, complete.decisions);
 }
 
+#[test]
+fn incremental_evaluation_rejects_a_different_catalog_with_the_same_component_ids() {
+    let default = component::<DefaultAuthenticator>("default-authenticator", None);
+    let custom = component::<CustomAuthenticator>("custom-authenticator", Some(&CUSTOM_ENABLED));
+    let registry = ComponentRegistry {
+        components: vec![custom, default],
+        providers: Vec::new(),
+    };
+    let catalog = ConditionCatalog::new(&registry, facts()).expect("catalog validates");
+    let previous = catalog
+        .evaluate(&snapshot(false, "safe"))
+        .expect("initial facts evaluate");
+    let changed_facts = [facts()[0]];
+    let changed_catalog =
+        ConditionCatalog::new(&registry, changed_facts).expect("catalog validates");
+
+    assert!(matches!(
+        changed_catalog.evaluate_changed(
+            &previous,
+            &ConditionFactSnapshot::new([(ENABLED, ConditionScalar::Bool(true))])
+                .expect("snapshot validates")
+        ),
+        Err(ConditionError::EvaluationCatalogMismatch)
+    ));
+}
+
 struct DefaultAuthenticator;
 struct CustomAuthenticator;
 trait Authenticator: Send + Sync {}
