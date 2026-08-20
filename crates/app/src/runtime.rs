@@ -202,4 +202,6 @@ impl AppRuntime {
 }
 
 #[cfg(test)]
+mod generation_spike;
+#[cfg(test)]
 mod tests;
