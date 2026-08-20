@@ -143,7 +143,7 @@ impl ComponentRegistry {
         })
     }
 
-    fn validate_with_scope_access(
+    pub(crate) fn validate_with_scope_access(
         &self,
         components: &[ComponentDescriptor],
         selection: &selection::ProviderSelectionModel,
@@ -814,6 +814,7 @@ mod tests {
                 name: $name,
                 ty: $ty,
                 scope: $scope,
+                condition: None,
                 factories,
                 hooks: ::upwell_hooks::no_hooks,
             }
@@ -839,6 +840,7 @@ mod tests {
         name: "PgPool",
         ty: TypeDescriptor::of::<u16>("PgPool"),
         scope: &Singleton,
+        condition: None,
         factories: pg_pool_factories,
         hooks: upwell_hooks::no_hooks,
     };
@@ -853,6 +855,7 @@ mod tests {
             qualifier: None,
             config: false,
             resolution: ResolutionMode::Eager,
+            observation: upwell_core::DependencyObservation::Snapshot,
         }]
     }
 
@@ -871,6 +874,7 @@ mod tests {
         name: "BackupRepository",
         ty: TypeDescriptor::of::<u8>("BackupRepository"),
         scope: &Singleton,
+        condition: None,
         factories: backup_repo_factories,
         hooks: upwell_hooks::no_hooks,
     };
@@ -960,6 +964,7 @@ mod tests {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }];
 
     static REQUEST_DEP_ON_CONNECTION: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -971,6 +976,7 @@ mod tests {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }];
 
     static SINGLETON_DEFERRED_TRANSIENT: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -982,6 +988,7 @@ mod tests {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Deferred,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }];
 
     static SINGLETON_FRESH_REQUEST: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -993,6 +1000,7 @@ mod tests {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Fresh,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }];
 
     static SINGLETON_FRESH_SHARED_COLLECTION: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -1004,6 +1012,7 @@ mod tests {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Fresh,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }];
 
     static SINGLETON_FRESH_SHARED_KEYED: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -1015,6 +1024,7 @@ mod tests {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Fresh,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }];
 
     static REQUEST_FRESH_CONNECTION_TARGET: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -1026,6 +1036,7 @@ mod tests {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Fresh,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }];
 
     static CONNECTION_TARGET_DEP_ON_SHARED: [DependencyDescriptor; 1] = [DependencyDescriptor {
@@ -1037,6 +1048,7 @@ mod tests {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }];
 
     #[test]
@@ -1182,6 +1194,7 @@ mod tests {
             qualifier: None,
             config: false,
             resolution: ResolutionMode::Lazy,
+            observation: upwell_core::DependencyObservation::Snapshot,
         }];
         let transient = scoped!(
             "TransientLazy",
@@ -1287,6 +1300,7 @@ mod tests {
             qualifier: None,
             config: false,
             resolution: ResolutionMode::Deferred,
+            observation: upwell_core::DependencyObservation::Snapshot,
         }];
         let consumer = scoped!(
             "DeferredTraitConsumer",
@@ -1333,6 +1347,7 @@ mod tests {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Deferred,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }];
 
     #[test]
@@ -1390,6 +1405,7 @@ mod tests {
             qualifier: None,
             config: false,
             resolution: ResolutionMode::Deferred,
+            observation: upwell_core::DependencyObservation::Snapshot,
         }];
         let consumer = scoped!(
             "RequestDeferredConsumer",
@@ -1440,6 +1456,7 @@ mod tests {
             qualifier: None,
             config: false,
             resolution: ResolutionMode::Deferred,
+            observation: upwell_core::DependencyObservation::Snapshot,
         }];
         let consumer = scoped!(
             "ChainConsumer",
@@ -1499,6 +1516,7 @@ mod tests {
             qualifier: None,
             config: false,
             resolution: ResolutionMode::Deferred,
+            observation: upwell_core::DependencyObservation::Snapshot,
         }];
         let consumer = scoped!(
             "SiblingConsumer",

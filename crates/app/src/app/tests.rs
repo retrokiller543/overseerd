@@ -80,6 +80,7 @@ static BOUNDARY_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: BoundaryComponent::NAME,
     ty: TypeDescriptor::of::<BoundaryComponent>(BoundaryComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: boundary_factories,
     hooks: upwell_hooks::no_hooks,
 };
