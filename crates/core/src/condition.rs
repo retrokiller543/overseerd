@@ -3,6 +3,14 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+/// Captures the call site's source location for descriptor diagnostics.
+#[macro_export]
+macro_rules! descriptor_source {
+    () => {
+        $crate::DescriptorSource::new(file!(), line!(), column!())
+    };
+}
+
 /// Static source location for descriptor diagnostics.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct DescriptorSource {
@@ -222,6 +230,93 @@ impl ConditionScalar {
     }
 }
 
+/// Read-only access to the statically declared config inputs of a callback predicate.
+#[derive(Clone, Copy)]
+pub struct ConfigConditionContext<'a> {
+    inputs: &'a [(ConfigFactId, &'a ConditionScalar)],
+}
+
+impl<'a> ConfigConditionContext<'a> {
+    #[doc(hidden)]
+    pub const fn new(inputs: &'a [(ConfigFactId, &'a ConditionScalar)]) -> Self {
+        Self { inputs }
+    }
+
+    pub fn get(&self, id: ConfigFactId) -> Option<&'a ConditionScalar> {
+        self.inputs
+            .iter()
+            .find_map(|(candidate, value)| (*candidate == id).then_some(*value))
+    }
+}
+
+/// One statically declared availability input of a callback predicate.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum AvailabilityTarget {
+    Component(&'static str),
+    ProviderMapping(ProviderMappingId),
+}
+
+/// Read-only access to the statically declared availability inputs of a callback predicate.
+#[derive(Clone, Copy)]
+pub struct AvailabilityConditionContext<'a> {
+    inputs: &'a [(AvailabilityTarget, bool)],
+}
+
+impl<'a> AvailabilityConditionContext<'a> {
+    #[doc(hidden)]
+    pub const fn new(inputs: &'a [(AvailabilityTarget, bool)]) -> Self {
+        Self { inputs }
+    }
+
+    pub fn eligible(&self, target: AvailabilityTarget) -> Option<bool> {
+        self.inputs
+            .iter()
+            .find_map(|(candidate, value)| (*candidate == target).then_some(*value))
+    }
+}
+
+/// Trusted callback over statically declared, validated scalar config facts.
+///
+/// The context prevents undeclared framework lookups, but Rust callbacks remain ordinary trusted
+/// code. Implementations must be deterministic, non-blocking, panic-free, and free of external
+/// side effects; the framework cannot sandbox environment, filesystem, or global-state access.
+#[derive(Clone, Copy)]
+pub struct ConfigConditionCallback {
+    pub kind: &'static str,
+    pub inputs: &'static [ConfigFactId],
+    pub evaluate: for<'a> fn(ConfigConditionContext<'a>) -> bool,
+}
+
+impl fmt::Debug for ConfigConditionCallback {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConfigConditionCallback")
+            .field("kind", &self.kind)
+            .field("inputs", &self.inputs)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Trusted callback over statically declared component and provider-mapping eligibility.
+///
+/// The same purity and failure contract as [`ConfigConditionCallback`] applies.
+#[derive(Clone, Copy)]
+pub struct AvailabilityConditionCallback {
+    pub kind: &'static str,
+    pub inputs: &'static [AvailabilityTarget],
+    pub evaluate: for<'a> fn(AvailabilityConditionContext<'a>) -> bool,
+}
+
+impl fmt::Debug for AvailabilityConditionCallback {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AvailabilityConditionCallback")
+            .field("kind", &self.kind)
+            .field("inputs", &self.inputs)
+            .finish_non_exhaustive()
+    }
+}
+
 impl fmt::Debug for ConditionScalar {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -249,6 +344,8 @@ pub enum ConditionPredicate {
     },
     ComponentEligible(&'static str),
     ProviderMappingEligible(ProviderMappingId),
+    ConfigCallback(&'static ConfigConditionCallback),
+    AvailabilityCallback(&'static AvailabilityConditionCallback),
     All(&'static [ConditionDescriptor]),
     Any(&'static [ConditionDescriptor]),
     Not(&'static ConditionDescriptor),
@@ -261,6 +358,8 @@ impl ConditionPredicate {
             Self::ConfigEquals { .. } => ConditionPredicateKind::ConfigEquals,
             Self::ComponentEligible(_) => ConditionPredicateKind::ComponentEligible,
             Self::ProviderMappingEligible(_) => ConditionPredicateKind::ProviderMappingEligible,
+            Self::ConfigCallback(_) => ConditionPredicateKind::ConfigCallback,
+            Self::AvailabilityCallback(_) => ConditionPredicateKind::AvailabilityCallback,
             Self::All(_) => ConditionPredicateKind::All,
             Self::Any(_) => ConditionPredicateKind::Any,
             Self::Not(_) => ConditionPredicateKind::Not,
@@ -283,6 +382,8 @@ pub enum ConditionPredicateKind {
     ConfigEquals,
     ComponentEligible,
     ProviderMappingEligible,
+    ConfigCallback,
+    AvailabilityCallback,
     All,
     Any,
     Not,

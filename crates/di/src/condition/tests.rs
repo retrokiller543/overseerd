@@ -3,9 +3,11 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use upwell_core::{
+    AvailabilityConditionCallback, AvailabilityConditionContext, AvailabilityTarget,
     ConditionDescriptor, ConditionPredicate, ConditionScalar, ConditionScalarKind,
-    ConditionScalarLiteral, ConfigFactDescriptor, ConfigFactId, DependencyObservation,
-    DescriptorSource, ProviderMappingId, Singleton, Transient, TypeDescriptor,
+    ConditionScalarLiteral, ConfigConditionCallback, ConfigConditionContext, ConfigFactDescriptor,
+    ConfigFactId, DependencyObservation, DescriptorSource, ProviderMappingId, Singleton, Transient,
+    TypeDescriptor,
 };
 
 use super::*;
@@ -16,7 +18,7 @@ use crate::{
 
 const ENABLED: ConfigFactId = ConfigFactId::new("AuthConfig", "auth", "custom.enabled");
 const MODE: ConfigFactId = ConfigFactId::new("AuthConfig", "auth", "mode");
-const SOURCE: DescriptorSource = DescriptorSource::new("condition/tests.rs", 1, 1);
+const SOURCE: DescriptorSource = upwell_core::descriptor_source!();
 
 fn no_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
     Vec::new()
@@ -240,12 +242,31 @@ fn inactive_dependencies_are_ignored_but_active_dependencies_still_validate() {
     catalog
         .evaluate_validated(&snapshot(false, "safe"))
         .expect("inactive ordinary dependencies are outside the effective graph");
-    assert!(matches!(
-        catalog.evaluate_validated(&snapshot(true, "safe")),
-        Err(ConditionError::Registry(
-            crate::Error::MissingDependency { .. }
-        ))
-    ));
+    let events = crate::test_support::capture_events(|| {
+        assert!(matches!(
+            catalog.evaluate_validated(&snapshot(true, "safe")),
+            Err(ConditionError::Registry(
+                crate::Error::MissingDependency { .. }
+            ))
+        ));
+    });
+
+    assert!(events.iter().any(|event| {
+        event
+            .fields
+            .get("event_name")
+            .is_some_and(|value| value == "condition-validation")
+            && event
+                .fields
+                .get("result")
+                .is_some_and(|value| value == "rejected")
+    }));
+    assert!(!events.iter().any(|event| {
+        event
+            .fields
+            .values()
+            .any(|value| value == "committed" || value == "activated")
+    }));
 }
 
 static MODE_EQUALS: ConditionDescriptor = ConditionDescriptor {
@@ -269,11 +290,103 @@ fn fact_values_and_literals_are_redacted() {
     let catalog = ConditionCatalog::new(&registry, facts()).expect("catalog validates");
     let fact_snapshot = snapshot(false, "runtime-canary");
 
+    let events = crate::test_support::capture_events(|| {
+        catalog.evaluate(&fact_snapshot).expect("facts evaluate");
+    });
     let evaluation = catalog.evaluate(&fact_snapshot).expect("facts evaluate");
     let rendered = format!("{fact_snapshot:?} {evaluation:?} {MODE_EQUALS:?}");
+    let rendered_events = format!("{events:?}");
 
     assert!(!rendered.contains("runtime-canary"));
     assert!(!rendered.contains("private-canary"));
+    assert!(!rendered_events.contains("runtime-canary"));
+    assert!(!rendered_events.contains("private-canary"));
+    assert!(events.iter().any(|event| {
+        event.target == crate::observability::CONDITION_TARGET
+            && event
+                .fields
+                .get("event_name")
+                .is_some_and(|value| value == "condition-node")
+            && event
+                .fields
+                .get("condition_id")
+                .is_some_and(|value| value == "mode-equals")
+    }));
+}
+
+fn config_callback(context: ConfigConditionContext<'_>) -> bool {
+    context
+        .get(ENABLED)
+        .and_then(ConditionScalar::as_bool)
+        .unwrap_or(false)
+        && context.get(MODE).is_none()
+}
+
+static CONFIG_CALLBACK: ConfigConditionCallback = ConfigConditionCallback {
+    kind: "test/config-enabled",
+    inputs: &[ENABLED],
+    evaluate: config_callback,
+};
+
+fn availability_callback(context: AvailabilityConditionContext<'_>) -> bool {
+    context
+        .eligible(AvailabilityTarget::Component("a"))
+        .unwrap_or(false)
+}
+
+static AVAILABILITY_CALLBACK: AvailabilityConditionCallback = AvailabilityConditionCallback {
+    kind: "test/component-a",
+    inputs: &[AvailabilityTarget::Component("a")],
+    evaluate: availability_callback,
+};
+
+static CONFIG_CALLBACK_CONDITION: ConditionDescriptor = ConditionDescriptor {
+    id: "config-callback",
+    source: SOURCE,
+    predicate: ConditionPredicate::ConfigCallback(&CONFIG_CALLBACK),
+};
+
+static AVAILABILITY_CALLBACK_CONDITION: ConditionDescriptor = ConditionDescriptor {
+    id: "availability-callback",
+    source: SOURCE,
+    predicate: ConditionPredicate::AvailabilityCallback(&AVAILABILITY_CALLBACK),
+};
+
+#[test]
+fn callbacks_can_read_only_declared_metadata_inputs() {
+    let registry = ComponentRegistry {
+        components: vec![
+            component::<ComponentA>("a", Some(&CONFIG_CALLBACK_CONDITION)),
+            component::<ComponentB>("b", Some(&AVAILABILITY_CALLBACK_CONDITION)),
+        ],
+        providers: Vec::new(),
+    };
+    let catalog = ConditionCatalog::new(&registry, facts()).expect("catalog validates");
+
+    let evaluation = catalog
+        .evaluate(&snapshot(true, "hidden-from-callback"))
+        .expect("callbacks evaluate");
+
+    assert_eq!(evaluation.component_eligible("a"), Some(true));
+    assert_eq!(evaluation.component_eligible("b"), Some(true));
+    assert_eq!(
+        catalog.dependencies("a").expect("component is known"),
+        [ConditionDependency::Config(ENABLED)]
+    );
+    assert_eq!(
+        catalog.dependencies("b").expect("component is known"),
+        [ConditionDependency::Component("a")]
+    );
+}
+
+#[test]
+fn source_macro_captures_the_call_site() {
+    const {
+        assert!(SOURCE.line > 0);
+        assert!(SOURCE.column > 0);
+    }
+
+    assert!(SOURCE.file.ends_with("condition/tests.rs"));
 }
 
 struct ComponentA;

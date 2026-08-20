@@ -182,3 +182,22 @@ Issue #210 adds the static vocabulary and pure registry seam needed before runti
 This issue does not define user-facing condition macro syntax, typed config fact extraction,
 condition tooling facets, protocol-role validation, graph diffs, transition strategies, or runtime
 publication. Those remain owned by #208, #205, #207, #209, and #206 respectively.
+
+Condition descriptors may also use metadata-complete config or availability callbacks. Their
+contexts expose only statically declared scalar facts or eligibility inputs through the framework;
+the declared inputs, not callback execution paths, remain authoritative for validation, cycle
+detection, invalidation, tooling, and deterministic input ordering. Callbacks receive no resolver,
+component, factory, selected-provider, filesystem, or mutation capability from Upwell. They remain
+ordinary trusted Rust code, however, so implementations contractually must be deterministic,
+non-blocking, panic-free, and free of external side effects. Upwell cannot sandbox direct access to
+environment, filesystem, or global process state.
+
+The DI engine emits subscriber-neutral structured tracing for debugging graph decisions. Candidate
+condition node outcomes and eligibility, provider selection reasons/stages, construction-edge
+inclusion or exclusion, build positions, and exact cycle members/edges use the
+`upwell::di::condition`, `upwell::di::selection`, and `upwell::di::graph` targets. Detailed outcomes
+are `TRACE` diagnostics, validated candidate summaries are `DEBUG`, and cycle paths are `ERROR`.
+Events contain stable IDs and categories but never current config values or expected equality
+literals. A deferred edge is reported as an intentional construction-cycle break; unsupported eager
+cycles remain rejected and report exact cyclic members separately from components blocked behind
+them.
