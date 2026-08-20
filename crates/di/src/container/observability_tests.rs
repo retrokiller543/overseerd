@@ -78,6 +78,13 @@ fn e_to_a_dependencies() -> Vec<DependencyDescriptor> {
     vec![dependency::<A>(ResolutionMode::Eager)]
 }
 
+fn a_to_b_and_c_dependencies() -> Vec<DependencyDescriptor> {
+    vec![
+        dependency::<B>(ResolutionMode::Eager),
+        dependency::<C>(ResolutionMode::Eager),
+    ]
+}
+
 static A_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
     construct: panic_factory,
     dependencies: a_dependencies,
@@ -113,6 +120,11 @@ static E_TO_A_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescri
     dependencies: e_to_a_dependencies,
     default: true,
 }];
+static A_TO_B_AND_C_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    construct: panic_factory,
+    dependencies: a_to_b_and_c_dependencies,
+    default: true,
+}];
 
 fn a_factory() -> &'static [ComponentFactoryDescriptor] {
     &A_FACTORY
@@ -140,6 +152,10 @@ fn d_to_c_factory() -> &'static [ComponentFactoryDescriptor] {
 
 fn e_to_a_factory() -> &'static [ComponentFactoryDescriptor] {
     &E_TO_A_FACTORY
+}
+
+fn a_to_b_and_c_factory() -> &'static [ComponentFactoryDescriptor] {
+    &A_TO_B_AND_C_FACTORY
 }
 
 fn selection(components: &[ComponentDescriptor]) -> ProviderSelectionModel {
@@ -264,4 +280,27 @@ fn independent_eager_cycles_have_separate_cycle_identities() {
         .collect::<Vec<_>>();
 
     assert_eq!(blocked, [("a".to_string(), "e".to_string())]);
+}
+
+#[test]
+fn members_of_one_cycle_are_not_blocked_members_of_another() {
+    let components = [
+        descriptor::<D>("d", d_to_c_factory),
+        descriptor::<B>("b", b_eager_factory),
+        descriptor::<C>("c", c_to_d_factory),
+        descriptor::<A>("a", a_to_b_and_c_factory),
+    ];
+    let selection = selection(&components);
+
+    let events = crate::test_support::capture_events(|| {
+        let _ = topological_sort(&components, &HashSet::new(), &selection, |_, _| true)
+            .expect_err("linked eager cycles reject construction order");
+    });
+
+    assert!(!events.iter().any(|event| {
+        event
+            .fields
+            .get("event_name")
+            .is_some_and(|value| value == "cycle-blocked")
+    }));
 }

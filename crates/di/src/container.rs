@@ -989,6 +989,7 @@ fn construction_cycle_diagnostics<'a>(
         .map(|component| (component.ty.type_id, component.id.to_string()))
         .collect::<HashMap<_, _>>();
     let cycles = crate::registry::order::cycle::components(&remaining_ids, waits, &keys);
+    let all_cyclic = cycles.iter().flatten().copied().collect::<HashSet<_>>();
 
     cycles
         .into_iter()
@@ -1014,7 +1015,7 @@ fn construction_cycle_diagnostics<'a>(
                 .collect::<Vec<_>>();
             let mut blocked = remaining_ids
                 .iter()
-                .filter(|candidate| !cycle_set.contains(candidate))
+                .filter(|candidate| !all_cyclic.contains(candidate))
                 .filter(|candidate| transitively_waits_on(**candidate, &cycle_set, waits))
                 .map(|type_id| component_id(components, *type_id))
                 .collect::<Vec<_>>();
