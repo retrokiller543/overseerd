@@ -989,14 +989,6 @@ fn construction_cycle_diagnostics<'a>(
         .map(|component| (component.ty.type_id, component.id.to_string()))
         .collect::<HashMap<_, _>>();
     let cycles = crate::registry::order::cycle::components(&remaining_ids, waits, &keys);
-    let all_cyclic = cycles.iter().flatten().copied().collect::<HashSet<_>>();
-    let mut blocked = remaining_ids
-        .iter()
-        .filter(|type_id| !all_cyclic.contains(type_id))
-        .map(|type_id| component_id(components, *type_id))
-        .collect::<Vec<_>>();
-
-    blocked.sort_unstable();
 
     cycles
         .into_iter()
@@ -1020,18 +1012,50 @@ fn construction_cycle_diagnostics<'a>(
                         })
                 })
                 .collect::<Vec<_>>();
+            let mut blocked = remaining_ids
+                .iter()
+                .filter(|candidate| !cycle_set.contains(candidate))
+                .filter(|candidate| transitively_waits_on(**candidate, &cycle_set, waits))
+                .map(|type_id| component_id(components, *type_id))
+                .collect::<Vec<_>>();
 
             members.sort_unstable();
             edges.sort_unstable();
+            blocked.sort_unstable();
 
             CycleDiagnostics {
                 cycle_id: members.first().copied().unwrap_or(""),
                 members,
                 edges,
-                blocked: blocked.clone(),
+                blocked,
             }
         })
         .collect()
+}
+
+fn transitively_waits_on(
+    component: TypeId,
+    targets: &HashSet<TypeId>,
+    waits: &HashMap<TypeId, HashSet<TypeId>>,
+) -> bool {
+    let mut pending = vec![component];
+    let mut visited = HashSet::new();
+
+    while let Some(current) = pending.pop() {
+        if !visited.insert(current) {
+            continue;
+        }
+
+        for dependency in waits.get(&current).into_iter().flatten() {
+            if targets.contains(dependency) {
+                return true;
+            }
+
+            pending.push(*dependency);
+        }
+    }
+
+    false
 }
 
 fn component_id(components: &[ComponentDescriptor], type_id: TypeId) -> &str {

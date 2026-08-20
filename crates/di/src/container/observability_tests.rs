@@ -48,6 +48,7 @@ struct A;
 struct B;
 struct C;
 struct D;
+struct E;
 
 fn a_dependencies() -> Vec<DependencyDescriptor> {
     vec![dependency::<B>(ResolutionMode::Eager)]
@@ -71,6 +72,10 @@ fn c_to_d_dependencies() -> Vec<DependencyDescriptor> {
 
 fn d_to_c_dependencies() -> Vec<DependencyDescriptor> {
     vec![dependency::<C>(ResolutionMode::Eager)]
+}
+
+fn e_to_a_dependencies() -> Vec<DependencyDescriptor> {
+    vec![dependency::<A>(ResolutionMode::Eager)]
 }
 
 static A_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
@@ -103,6 +108,11 @@ static D_TO_C_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescri
     dependencies: d_to_c_dependencies,
     default: true,
 }];
+static E_TO_A_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    construct: panic_factory,
+    dependencies: e_to_a_dependencies,
+    default: true,
+}];
 
 fn a_factory() -> &'static [ComponentFactoryDescriptor] {
     &A_FACTORY
@@ -126,6 +136,10 @@ fn c_to_d_factory() -> &'static [ComponentFactoryDescriptor] {
 
 fn d_to_c_factory() -> &'static [ComponentFactoryDescriptor] {
     &D_TO_C_FACTORY
+}
+
+fn e_to_a_factory() -> &'static [ComponentFactoryDescriptor] {
+    &E_TO_A_FACTORY
 }
 
 fn selection(components: &[ComponentDescriptor]) -> ProviderSelectionModel {
@@ -208,6 +222,7 @@ fn eager_cycles_distinguish_members_from_blocked_components() {
 #[test]
 fn independent_eager_cycles_have_separate_cycle_identities() {
     let components = [
+        descriptor::<E>("e", e_to_a_factory),
         descriptor::<D>("d", d_to_c_factory),
         descriptor::<B>("b", b_eager_factory),
         descriptor::<C>("c", c_to_d_factory),
@@ -231,4 +246,22 @@ fn independent_eager_cycles_have_separate_cycle_identities() {
         .collect::<Vec<_>>();
 
     assert_eq!(summaries, ["a", "c"]);
+
+    let blocked = events
+        .iter()
+        .filter(|event| {
+            event
+                .fields
+                .get("event_name")
+                .is_some_and(|value| value == "cycle-blocked")
+        })
+        .map(|event| {
+            (
+                event.fields["cycle_id"].clone(),
+                event.fields["component_id"].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(blocked, [("a".to_string(), "e".to_string())]);
 }

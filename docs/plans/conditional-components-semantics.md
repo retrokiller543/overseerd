@@ -20,6 +20,8 @@ model is:
 - equality between a typed config fact and a scalar boolean, integer, string, or enum-token literal;
 - eligibility of a component by stable component ID;
 - eligibility of one exact provider mapping by stable mapping ID;
+- a trusted config callback over a statically declared set of typed facts;
+- a trusted availability callback over statically declared component or provider-mapping inputs;
 - `all`, `any`, and `not` composition.
 
 Every expression node has an owner-scoped stable condition ID and source metadata. References use
@@ -30,8 +32,9 @@ short-circuiting cannot change explanation output.
 
 Config facts are statically registered beneath a typed config binding. Conditions consume candidate
 config only after source merging, defaults, placeholder resolution, deserialization, and validation.
-There is no float coercion, string-to-boolean coercion, arbitrary `PartialEq`, or executable closure
-predicate in v1.
+There is no float coercion, string-to-boolean coercion, arbitrary `PartialEq`, or callback context
+with undeclared framework inputs in v1. Callback descriptors are static function pointers rather
+than capturing closures and follow the trusted-code contract described below.
 
 ## Eligibility and provider selection
 
