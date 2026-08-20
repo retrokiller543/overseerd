@@ -68,7 +68,7 @@ pub struct ConditionDecision {
 #[derive(Clone, Debug)]
 pub struct ConditionEvaluation {
     pub(super) catalog: CatalogIdentity,
-    pub(super) application: Option<Box<[ApplicationBindingIdentity]>>,
+    pub(super) application: Option<HashMap<(TypeId, String), usize>>,
     pub(super) facts: ConditionFactSnapshot,
     pub(super) eligible: ComponentRegistry,
     pub(super) components: BTreeMap<&'static str, bool>,
@@ -104,19 +104,7 @@ impl ConditionEvaluation {
         mut self,
         bindings: impl IntoIterator<Item = (TypeId, String, String)>,
     ) -> Self {
-        let mut bindings = bindings
-            .into_iter()
-            .map(|(type_id, type_name, path)| ApplicationBindingIdentity {
-                type_id,
-                type_name,
-                path,
-            })
-            .collect::<Vec<_>>();
-
-        bindings.sort_by(|left, right| {
-            (&left.type_name, &left.path).cmp(&(&right.type_name, &right.path))
-        });
-        self.application = Some(bindings.into_boxed_slice());
+        self.application = Some(application_identity(bindings));
 
         self
     }
@@ -127,34 +115,22 @@ impl ConditionEvaluation {
         &self,
         bindings: impl IntoIterator<Item = (TypeId, String, String)>,
     ) -> bool {
-        let mut bindings = bindings
-            .into_iter()
-            .map(|(type_id, type_name, path)| ApplicationBindingIdentity {
-                type_id,
-                type_name,
-                path,
-            })
-            .collect::<Vec<_>>();
-
-        bindings.sort_by(|left, right| {
-            (&left.type_name, &left.path).cmp(&(&right.type_name, &right.path))
-        });
-
-        self.application.as_deref() == Some(bindings.as_slice())
+        self.application
+            .as_ref()
+            .is_some_and(|expected| *expected == application_identity(bindings))
     }
 }
 
-#[derive(Clone, Eq, PartialEq)]
-pub struct ApplicationBindingIdentity {
-    type_id: TypeId,
-    type_name: String,
-    path: String,
-}
+fn application_identity(
+    bindings: impl IntoIterator<Item = (TypeId, String, String)>,
+) -> HashMap<(TypeId, String), usize> {
+    let mut identity = HashMap::new();
 
-impl fmt::Debug for ApplicationBindingIdentity {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("ApplicationBindingIdentity(<redacted>)")
+    for (type_id, _type_name, path) in bindings {
+        *identity.entry((type_id, path)).or_default() += 1;
     }
+
+    identity
 }
 
 #[derive(Clone, Eq, PartialEq)]
