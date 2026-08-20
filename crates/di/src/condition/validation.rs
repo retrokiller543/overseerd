@@ -18,6 +18,10 @@ impl ConditionCatalog {
         let resolved = registry
             .resolved_components()
             .map_err(ConditionError::Registry)?;
+        let registry_order = resolved
+            .iter()
+            .map(|component| component.id)
+            .collect::<Vec<_>>();
         let mut components = BTreeMap::new();
         let mut by_type = HashMap::new();
 
@@ -62,6 +66,7 @@ impl ConditionCatalog {
             .provider_order(&components.values().copied().collect::<Vec<_>>())
             .map_err(ConditionError::Registry)?;
         let catalog = Self {
+            registry_order,
             component_order: components.keys().copied().collect(),
             components,
             providers,

@@ -98,12 +98,14 @@ fn no_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
 }
 
 static PROTOCOL_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: construct_protocol_component,
     dependencies: no_dependencies,
     default: true,
 }];
 
 static APPLICATION_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: construct_application_component,
     dependencies: no_dependencies,
     default: true,

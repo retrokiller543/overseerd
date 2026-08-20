@@ -812,6 +812,7 @@ mod tests {
             }
 
             static FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+                id: "static",
                 construct: fake_factory,
                 dependencies: deps,
                 default: false,
@@ -838,6 +839,7 @@ mod tests {
     }
 
     static PG_POOL_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+        id: "static",
         construct: fake_factory,
         dependencies: pg_pool_deps,
         default: false,
@@ -872,6 +874,7 @@ mod tests {
     }
 
     static BACKUP_REPO_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+        id: "static",
         construct: fake_factory,
         dependencies: backup_repo_deps,
         default: false,

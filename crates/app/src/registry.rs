@@ -151,7 +151,7 @@ impl AppRegistry {
     /// Validates config edges against the registered bindings: a `#[config("path")]` edge
     /// must have a binding of its type at that path, and a `#[config]` shorthand edge must
     /// have exactly one binding of its type.
-    fn validate_configs(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
+    pub(crate) fn validate_configs(&self, components: &[ComponentDescriptor]) -> crate::Result<()> {
         let mut bound: HashMap<TypeId, Vec<&str>> = HashMap::new();
 
         for binding in &self.config_bindings {
@@ -311,6 +311,7 @@ mod tests {
     }
 
     static CONFIG_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+        id: "static",
         construct: fake_factory,
         dependencies: config_deps,
         default: false,

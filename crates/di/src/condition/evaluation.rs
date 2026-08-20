@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use upwell_core::{
     AvailabilityConditionContext, AvailabilityTarget, ConditionDescriptor, ConditionPredicate,
@@ -18,9 +18,58 @@ impl ConditionCatalog {
     ) -> Result<ConditionEvaluation, ConditionError> {
         self.validate_snapshot(snapshot)?;
 
-        let mut states = BTreeMap::new();
-        let mut decisions = Vec::new();
+        self.evaluate_from(snapshot, BTreeMap::new(), Vec::new())
+    }
 
+    /// Re-evaluates only conditions reachable from changed config facts.
+    ///
+    /// The returned evaluation is still complete and is suitable for ordinary graph
+    /// validation. `previous` must be the evaluation produced from `previous_snapshot`.
+    pub fn evaluate_changed(
+        &self,
+        previous: &ConditionEvaluation,
+        snapshot: &ConditionFactSnapshot,
+    ) -> Result<ConditionEvaluation, ConditionError> {
+        self.validate_snapshot(snapshot)?;
+
+        if previous.catalog.as_ref() != self.component_order.as_slice() {
+            return Err(ConditionError::EvaluationCatalogMismatch);
+        }
+
+        let changed = self
+            .facts
+            .keys()
+            .filter(|id| previous.facts.facts[id] != snapshot.facts[id])
+            .copied()
+            .collect::<BTreeSet<_>>();
+
+        if changed.is_empty() {
+            return Ok(previous.clone());
+        }
+
+        let invalidated = self.invalidated_components(&changed);
+        let states = previous
+            .components
+            .iter()
+            .filter(|(component, _)| !invalidated.contains(**component))
+            .map(|(component, state)| (*component, *state))
+            .collect();
+        let decisions = previous
+            .decisions
+            .iter()
+            .filter(|decision| !invalidated.contains(decision.component_id))
+            .cloned()
+            .collect();
+
+        self.evaluate_from(snapshot, states, decisions)
+    }
+
+    fn evaluate_from(
+        &self,
+        snapshot: &ConditionFactSnapshot,
+        mut states: BTreeMap<&'static str, bool>,
+        mut decisions: Vec<ConditionDecision>,
+    ) -> Result<ConditionEvaluation, ConditionError> {
         for component in &self.component_order {
             self.evaluate_component(component, snapshot, &mut states, &mut decisions)?;
         }
@@ -32,7 +81,7 @@ impl ConditionCatalog {
             .collect::<BTreeMap<_, _>>();
         let eligible = ComponentRegistry {
             components: self
-                .component_order
+                .registry_order
                 .iter()
                 .filter(|id| states[**id])
                 .map(|id| self.components[id])
@@ -44,7 +93,11 @@ impl ConditionCatalog {
                 .map(|(_, provider)| *provider)
                 .collect(),
         };
+        decisions.sort_by_key(|decision| (decision.component_id, decision.condition_id));
+
         let evaluation = ConditionEvaluation {
+            catalog: self.component_order.clone().into_boxed_slice(),
+            facts: snapshot.clone(),
             eligible,
             components: states,
             providers,
@@ -54,6 +107,52 @@ impl ConditionCatalog {
         crate::observability::condition_evaluation(&evaluation, &self.components);
 
         Ok(evaluation)
+    }
+
+    fn invalidated_components(
+        &self,
+        changed: &BTreeSet<upwell_core::ConfigFactId>,
+    ) -> BTreeSet<&'static str> {
+        let dependencies = self
+            .component_order
+            .iter()
+            .map(|component| {
+                (
+                    *component,
+                    self.dependencies(component)
+                        .expect("validated condition owner"),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut invalidated = dependencies
+            .iter()
+            .filter(|(_, dependencies)| {
+                dependencies.iter().any(|dependency| {
+                    matches!(dependency, super::ConditionDependency::Config(fact) if changed.contains(fact))
+                })
+            })
+            .map(|(component, _)| *component)
+            .collect::<BTreeSet<_>>();
+
+        loop {
+            let before = invalidated.len();
+
+            for (component, dependencies) in &dependencies {
+                if dependencies.iter().any(|dependency| match dependency {
+                    super::ConditionDependency::Component(target) => invalidated.contains(target),
+                    super::ConditionDependency::Provider(target) => {
+                        invalidated.contains(target.component)
+                    }
+                    super::ConditionDependency::Config(_) => false,
+                }) {
+                    invalidated.insert(*component);
+                }
+            }
+
+            if invalidated.len() == before {
+                return invalidated;
+            }
+        }
     }
 
     pub fn evaluate_validated(

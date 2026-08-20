@@ -44,6 +44,7 @@ fn no_dependencies() -> Vec<DependencyDescriptor> {
 }
 
 static FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: fake_factory,
     dependencies: no_dependencies,
     default: false,

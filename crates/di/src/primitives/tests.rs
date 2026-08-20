@@ -114,18 +114,21 @@ fn transient_factory<'a>(
 }
 
 static VISIBLE_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: visible_factory,
     dependencies: no_dependencies,
     default: false,
 }];
 
 static SIBLING_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: sibling_factory,
     dependencies: no_dependencies,
     default: false,
 }];
 
 static TRANSIENT_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: transient_factory,
     dependencies: no_dependencies,
     default: false,

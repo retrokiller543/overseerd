@@ -166,32 +166,38 @@ fn transient_dependency() -> Vec<DependencyDescriptor> {
 }
 
 static EMPTY_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "empty",
     construct,
     dependencies: no_dependencies,
     default: false,
 }];
 static PARENT_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "parent",
     construct,
     dependencies: parent_dependency,
     default: false,
 }];
 static SIBLING_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "sibling",
     construct,
     dependencies: sibling_dependency,
     default: false,
 }];
 static SHARED_PROVIDER_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "shared-provider",
     construct,
     dependencies: shared_provider_dependency,
     default: false,
 }];
 static REORDERED_PROVIDER_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "reordered-provider",
     construct,
     dependencies: reordered_provider_dependency,
     default: false,
 }];
 static TRANSIENT_DEPENDENCY_FACTORY: [ComponentFactoryDescriptor; 1] =
     [ComponentFactoryDescriptor {
+        id: "transient-dependency",
         construct,
         dependencies: transient_dependency,
         default: false,

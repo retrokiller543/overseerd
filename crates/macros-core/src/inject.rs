@@ -250,6 +250,7 @@ pub fn field_injection_component(
 
         let factory_literal = quote! {
             #component_factory_descriptor {
+                id: "default",
                 construct: __upwell_factory,
                 dependencies: __upwell_deps,
                 default: true,
@@ -366,6 +367,7 @@ pub fn explicit_factory(
 
     let factory_literal = quote! {
         #component_factory_descriptor {
+            id: concat!("factory:", stringify!(#factory_path)),
             construct: __upwell_explicit_factory,
             dependencies: __upwell_explicit_deps,
             default: false,

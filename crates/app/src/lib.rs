@@ -24,6 +24,7 @@ pub mod scope;
 mod test_support;
 #[cfg(feature = "tooling")]
 pub mod tooling;
+pub mod transition;
 
 #[doc(hidden)]
 pub use app::HostLifecycleCapabilities;
@@ -76,6 +77,7 @@ pub use tooling::{
     ToolingProbeOutputError, ToolingProbeOutputTargetError, ToolingProbeTargetError,
     ToolingProjectionError, ToolingRelationshipKind,
 };
+pub use transition::CandidateGraph;
 pub use upwell_core::{Scope, ScopeId, StaticScope, namespaced_id};
 
 #[cfg(feature = "tooling")]
