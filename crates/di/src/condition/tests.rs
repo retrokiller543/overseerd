@@ -39,6 +39,7 @@ fn panic_factory(
 }
 
 static FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: panic_factory,
     dependencies: no_dependencies,
     default: true,
@@ -49,6 +50,7 @@ fn factory() -> &'static [ComponentFactoryDescriptor] {
 }
 
 static MISSING_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: panic_factory,
     dependencies: missing_dependencies,
     default: true,
@@ -114,6 +116,33 @@ fn snapshot(enabled: bool, mode: &str) -> ConditionFactSnapshot {
         (MODE, ConditionScalar::string(mode)),
     ])
     .expect("facts are unique")
+}
+
+#[test]
+fn changed_facts_reuse_unrelated_condition_decisions() {
+    let default = component::<DefaultAuthenticator>("default-authenticator", None);
+    let custom = component::<CustomAuthenticator>("custom-authenticator", Some(&CUSTOM_ENABLED));
+    let registry = ComponentRegistry {
+        components: vec![custom, default],
+        providers: Vec::new(),
+    };
+    let catalog = ConditionCatalog::new(&registry, facts()).expect("catalog validates");
+    let before_snapshot = snapshot(false, "safe");
+    let before = catalog
+        .evaluate(&before_snapshot)
+        .expect("initial facts evaluate");
+    let after_snapshot = snapshot(true, "safe");
+
+    let incremental = catalog
+        .evaluate_changed(&before, &after_snapshot)
+        .expect("changed facts evaluate");
+    let complete = catalog
+        .evaluate(&after_snapshot)
+        .expect("complete evaluation succeeds");
+
+    assert_eq!(incremental.components, complete.components);
+    assert_eq!(incremental.providers, complete.providers);
+    assert_eq!(incremental.decisions, complete.decisions);
 }
 
 struct DefaultAuthenticator;

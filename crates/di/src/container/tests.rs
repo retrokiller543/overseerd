@@ -160,16 +160,19 @@ fn fresh_target_factory(
 }
 
 static TARGET_PROVIDER_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: target_provider_factory,
     dependencies: no_dependencies,
     default: false,
 }];
 static OWNER_PROVIDER_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: owner_provider_factory,
     dependencies: no_dependencies,
     default: false,
 }];
 static FRESH_TARGET_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: fresh_target_factory,
     dependencies: fresh_target_dependencies,
     default: false,

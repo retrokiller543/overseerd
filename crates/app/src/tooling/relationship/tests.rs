@@ -58,12 +58,14 @@ fn aggregate_dependencies() -> Vec<DependencyDescriptor> {
 }
 
 static PROVIDER_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: fake_factory,
     dependencies: no_dependencies,
     default: false,
 }];
 
 static CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: fake_factory,
     dependencies: aggregate_dependencies,
     default: false,

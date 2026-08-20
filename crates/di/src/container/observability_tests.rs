@@ -86,41 +86,49 @@ fn a_to_b_and_c_dependencies() -> Vec<DependencyDescriptor> {
 }
 
 static A_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: panic_factory,
     dependencies: a_dependencies,
     default: true,
 }];
 static B_EAGER_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: panic_factory,
     dependencies: b_eager_dependencies,
     default: true,
 }];
 static B_DEFERRED_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: panic_factory,
     dependencies: b_deferred_dependencies,
     default: true,
 }];
 static C_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: panic_factory,
     dependencies: c_dependencies,
     default: true,
 }];
 static C_TO_D_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: panic_factory,
     dependencies: c_to_d_dependencies,
     default: true,
 }];
 static D_TO_C_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: panic_factory,
     dependencies: d_to_c_dependencies,
     default: true,
 }];
 static E_TO_A_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: panic_factory,
     dependencies: e_to_a_dependencies,
     default: true,
 }];
 static A_TO_B_AND_C_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: panic_factory,
     dependencies: a_to_b_and_c_dependencies,
     default: true,

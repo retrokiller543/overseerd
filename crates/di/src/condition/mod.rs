@@ -65,6 +65,8 @@ pub struct ConditionDecision {
 /// Deterministic eligibility result for one supplied fact snapshot.
 #[derive(Clone, Debug)]
 pub struct ConditionEvaluation {
+    pub(super) catalog: Box<[&'static str]>,
+    pub(super) facts: ConditionFactSnapshot,
     pub(super) eligible: ComponentRegistry,
     pub(super) components: BTreeMap<&'static str, bool>,
     pub(super) providers: BTreeMap<ProviderMappingId, bool>,
@@ -112,6 +114,7 @@ impl ValidatedConditionEvaluation {
 /// Validated static inputs for deterministic condition evaluation.
 pub struct ConditionCatalog {
     pub(super) components: BTreeMap<&'static str, ComponentDescriptor>,
+    pub(super) registry_order: Vec<&'static str>,
     pub(super) component_order: Vec<&'static str>,
     pub(super) providers: Vec<(ProviderMappingId, ProviderDescriptor)>,
     pub(super) facts: BTreeMap<ConfigFactId, ConfigFactDescriptor>,

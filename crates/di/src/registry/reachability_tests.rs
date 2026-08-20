@@ -61,6 +61,7 @@ fn no_dependencies() -> Vec<DependencyDescriptor> {
 }
 
 static NO_DEPENDENCY_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: fake_factory,
     dependencies: no_dependencies,
     default: false,
@@ -72,6 +73,7 @@ fn no_dependency_factory() -> &'static [ComponentFactoryDescriptor] {
 
 fn dependency_factory() -> &'static [ComponentFactoryDescriptor] {
     static FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+        id: "static",
         construct: fake_factory,
         dependencies: dependency,
         default: false,
@@ -82,6 +84,7 @@ fn dependency_factory() -> &'static [ComponentFactoryDescriptor] {
 
 fn provider_dependency_factory() -> &'static [ComponentFactoryDescriptor] {
     static FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+        id: "static",
         construct: fake_factory,
         dependencies: required_provider_dependency,
         default: false,

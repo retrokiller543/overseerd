@@ -100,6 +100,7 @@ fn diagnostic_provider_dependency() -> Vec<DependencyDescriptor> {
 
 static DIAGNOSTIC_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] =
     [ComponentFactoryDescriptor {
+        id: "diagnostic-consumer",
         construct,
         dependencies: diagnostic_dependency,
         default: false,
@@ -111,6 +112,7 @@ fn diagnostic_consumer_factories() -> &'static [ComponentFactoryDescriptor] {
 
 static DIAGNOSTIC_PROVIDER_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] =
     [ComponentFactoryDescriptor {
+        id: "diagnostic-provider-consumer",
         construct,
         dependencies: diagnostic_provider_dependency,
         default: false,
@@ -759,12 +761,14 @@ fn snapshot_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
 }
 
 static FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "projected",
     construct,
     dependencies,
     default: true,
 }];
 
 static SNAPSHOT_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "snapshot",
     construct,
     dependencies: snapshot_dependencies,
     default: true,
@@ -924,6 +928,7 @@ fn construct_config_consumer(
 }
 
 static CONFIG_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: construct_config_consumer,
     dependencies: exact_config_dependency,
     default: true,
@@ -1092,6 +1097,7 @@ fn provider_consumer_dependencies() -> Vec<DependencyDescriptor> {
 
 static PROVIDER_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] =
     [ComponentFactoryDescriptor {
+        id: "static",
         construct: construct_config_consumer,
         dependencies: provider_consumer_dependencies,
         default: true,

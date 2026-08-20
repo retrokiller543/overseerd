@@ -27,6 +27,8 @@ pub enum ConditionError {
     MissingFactValue(ConfigFactId),
     #[error("unknown supplied config fact: {0:?}")]
     UnknownFactValue(ConfigFactId),
+    #[error("the previous condition evaluation belongs to another catalog")]
+    EvaluationCatalogMismatch,
     #[error("config fact kind mismatch for {fact:?}: expected {expected:?}, found {actual:?}")]
     FactKindMismatch {
         fact: ConfigFactId,

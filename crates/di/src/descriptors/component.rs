@@ -849,6 +849,8 @@ pub type ComponentFactory =
 /// [`ComponentDescriptor::effective_factory`].
 #[derive(Clone, Copy)]
 pub struct ComponentFactoryDescriptor {
+    /// Stable identity of this construction recipe within its owning component.
+    pub id: &'static str,
     pub construct: ComponentFactory,
     /// The factory's dependency edges, reported at runtime. Read only at build.
     pub dependencies: fn() -> Vec<DependencyDescriptor>,
@@ -859,6 +861,7 @@ pub struct ComponentFactoryDescriptor {
 impl fmt::Debug for ComponentFactoryDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ComponentFactoryDescriptor")
+            .field("id", &self.id)
             .field("dependencies", &(self.dependencies)())
             .field("default", &self.default)
             .finish_non_exhaustive()

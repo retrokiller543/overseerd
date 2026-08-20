@@ -39,11 +39,13 @@ pub use upwell_di::{
     ComponentDescriptor, ComponentFactories, ComponentFactory, ComponentFactoryDescriptor,
     ComponentRegistry, ComponentSource, ConditionCatalog, ConditionDecision, ConditionDependency,
     ConditionError, ConditionEvaluation, ConditionFactSnapshot, Deferred, Dep, DescriptorFor,
-    Dynamic, Factory, FactoryOutput, Fresh, FreshFromContainer, FromContainer, Injectable, Lazy,
-    Live, LiveRef, PROVIDERS, Provide, ProviderDescriptor, ProviderOf, ProviderOrder,
-    ProviderOrderDirection, Registration, RegistryFor, RootResolver, ScopeContainer, ScopeRegistry,
-    ServiceComponent, UpwellDescriptor, ValidatedConditionEvaluation, Wired, Wiring, dependency_of,
-    dependency_of_observed, dispatch_factory, factory_dependencies, from_boxed, topological_sort,
+    Dynamic, EffectiveGraph, Factory, FactoryOutput, Fresh, FreshFromContainer, FromContainer,
+    Injectable, Lazy, Live, LiveRef, NodeAction, PROVIDERS, PlannedNode, Provide,
+    ProviderDescriptor, ProviderOf, ProviderOrder, ProviderOrderDirection, ReasonKind,
+    Registration, RegistryFor, RootResolver, ScopeContainer, ScopeRegistry, ServiceComponent,
+    StaleGraphCandidate, TransitionPlan, TransitionReason, UpwellDescriptor,
+    ValidatedConditionEvaluation, Wired, Wiring, dependency_of, dependency_of_observed,
+    dispatch_factory, factory_dependencies, from_boxed, topological_sort,
 };
 /// The DI layer's own error/result, exposed under distinct names so macro-generated
 /// **factory** code can name them without colliding with the root [`Error`]/[`Result`].
@@ -95,10 +97,10 @@ pub use upwell_app::contribute;
 #[cfg(not(target_family = "wasm"))]
 pub use upwell_app::{
     App, AppBuilder, AppHost, AppRegistry, AppRuntime, AppStage, ApplicationPluginRegistrar,
-    BootstrapContext, Built, CompositionDiagnostic, CompositionDiagnostics, CompositionDirective,
-    CompositionEdge, CompositionPhase, CompositionTarget, ContributionId, ContributionProvenance,
-    Contributor, EarlyPluginCatalog, EarlyPluginPlan, EffectivePluginPlan, ExecutionMode,
-    HostError, IdErrorKind, Initial, InstallationOrigin, InstallationProvenance,
+    BootstrapContext, Built, CandidateGraph, CompositionDiagnostic, CompositionDiagnostics,
+    CompositionDirective, CompositionEdge, CompositionPhase, CompositionTarget, ContributionId,
+    ContributionProvenance, Contributor, EarlyPluginCatalog, EarlyPluginPlan, EffectivePluginPlan,
+    ExecutionMode, HostError, IdErrorKind, Initial, InstallationOrigin, InstallationProvenance,
     InvalidCompositionId, LifecyclePhase, LogFormat, LoggingConfig, PhaseError, Plugin,
     PluginContribution, PluginContributionKind, PluginContributions, PluginDeclaration, PluginId,
     PluginPlanError, PluginRelation, PluginResolutionPlan, PluginSlotId, PluginWithOptions,

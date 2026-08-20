@@ -66,6 +66,7 @@ fn no_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
 }
 
 static BOUNDARY_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: construct_boundary_component,
     dependencies: no_dependencies,
     default: true,

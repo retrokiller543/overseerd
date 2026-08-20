@@ -196,7 +196,7 @@ impl fmt::Debug for ConditionScalarLiteral {
 }
 
 /// An owned scalar supplied to condition evaluation.
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub enum ConditionScalar {
     Bool(bool),
     Integer(i128),
