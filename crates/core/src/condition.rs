@@ -278,8 +278,10 @@ impl<'a> AvailabilityConditionContext<'a> {
 /// Trusted callback over statically declared, validated scalar config facts.
 ///
 /// The context prevents undeclared framework lookups, but Rust callbacks remain ordinary trusted
-/// code. Implementations must be deterministic, non-blocking, panic-free, and free of external
-/// side effects; the framework cannot sandbox environment, filesystem, or global-state access.
+/// code. `inputs` must exhaustively declare every value that can affect the outcome; incremental
+/// evaluation reuses the result while those inputs are unchanged. Implementations must also be
+/// deterministic, non-blocking, panic-free, and free of external side effects; the framework
+/// cannot sandbox environment, filesystem, or global-state access.
 #[derive(Clone, Copy)]
 pub struct ConfigConditionCallback {
     pub kind: &'static str,
@@ -299,7 +301,8 @@ impl fmt::Debug for ConfigConditionCallback {
 
 /// Trusted callback over statically declared component and provider-mapping eligibility.
 ///
-/// The same purity and failure contract as [`ConfigConditionCallback`] applies.
+/// `inputs` must exhaustively declare every eligibility value that can affect the outcome. The
+/// same purity and failure contract as [`ConfigConditionCallback`] applies.
 #[derive(Clone, Copy)]
 pub struct AvailabilityConditionCallback {
     pub kind: &'static str,

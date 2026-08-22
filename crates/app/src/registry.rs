@@ -14,6 +14,23 @@ use upwell_di::{
 use crate::error::Error;
 use crate::scope::PreparedScopeTopology;
 
+/// A condition evaluation bound to one application's DI and config catalogs.
+#[derive(Clone, Debug)]
+pub struct AppConditionEvaluation {
+    evaluation: ConditionEvaluation,
+    bindings: HashMap<(TypeId, String), usize>,
+}
+
+impl AppConditionEvaluation {
+    pub fn evaluation(&self) -> &ConditionEvaluation {
+        &self.evaluation
+    }
+
+    pub(crate) fn belongs_to(&self, registry: &AppRegistry) -> bool {
+        self.bindings == registry.condition_identity()
+    }
+}
+
 /// Holds the *agnostic* component, provider, and config-binding descriptors of an app —
 /// declarations only. Runtime instances live in the
 /// [`ScopeContainer`](upwell_di::ScopeContainer).
@@ -83,24 +100,36 @@ impl AppRegistry {
         &self,
         facts: impl IntoIterator<Item = ConfigFactDescriptor>,
         snapshot: &ConditionFactSnapshot,
-    ) -> Result<ConditionEvaluation, upwell_di::ConditionError> {
+    ) -> Result<AppConditionEvaluation, upwell_di::ConditionError> {
         let evaluation =
             ConditionCatalog::new(&self.component_registry(), facts)?.evaluate(snapshot)?;
 
-        Ok(evaluation.with_application_identity(self.condition_identity()))
+        Ok(AppConditionEvaluation {
+            evaluation,
+            bindings: self.condition_identity(),
+        })
     }
 
     /// Incrementally re-evaluates conditions while preserving this application's catalog identity.
     pub fn evaluate_changed_conditions(
         &self,
         facts: impl IntoIterator<Item = ConfigFactDescriptor>,
-        previous: &ConditionEvaluation,
+        previous: &AppConditionEvaluation,
         snapshot: &ConditionFactSnapshot,
-    ) -> Result<ConditionEvaluation, upwell_di::ConditionError> {
-        let evaluation = ConditionCatalog::new(&self.component_registry(), facts)?
-            .evaluate_changed(previous, snapshot)?;
+    ) -> crate::Result<AppConditionEvaluation> {
+        let bindings = self.condition_identity();
 
-        Ok(evaluation.with_application_identity(self.condition_identity()))
+        if previous.bindings != bindings {
+            return Err(Error::ConditionEvaluationApplicationMismatch);
+        }
+
+        let evaluation = ConditionCatalog::new(&self.component_registry(), facts)?
+            .evaluate_changed(&previous.evaluation, snapshot)?;
+
+        Ok(AppConditionEvaluation {
+            evaluation,
+            bindings,
+        })
     }
 
     /// Returns the effective descriptor registered for component type `T`.
@@ -226,14 +255,16 @@ impl AppRegistry {
         Ok(())
     }
 
-    pub(crate) fn condition_identity(&self) -> impl Iterator<Item = (TypeId, String, String)> + '_ {
-        self.config_bindings.iter().map(|binding| {
-            (
-                binding.ty.type_id,
-                (binding.ty.type_name)().to_string(),
-                binding.path.clone(),
-            )
-        })
+    fn condition_identity(&self) -> HashMap<(TypeId, String), usize> {
+        let mut identity = HashMap::new();
+
+        for binding in &self.config_bindings {
+            *identity
+                .entry((binding.ty.type_id, binding.path.clone()))
+                .or_default() += 1;
+        }
+
+        identity
     }
 
     fn write_components(&self, f: &mut impl Write) -> fmt::Result {

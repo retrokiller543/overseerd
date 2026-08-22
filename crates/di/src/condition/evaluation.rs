@@ -41,7 +41,7 @@ impl ConditionCatalog {
         let changed = self
             .facts
             .keys()
-            .filter(|id| previous.facts.facts[id] != snapshot.facts[id])
+            .filter(|id| previous.facts.facts.get(id) != snapshot.facts.get(id))
             .copied()
             .collect::<BTreeSet<_>>();
 
@@ -49,7 +49,7 @@ impl ConditionCatalog {
             return Ok(previous.clone());
         }
 
-        let invalidated = self.invalidated_components(&changed);
+        let invalidated = self.invalidated_components(&changed)?;
         let states = previous
             .components
             .iter()
@@ -63,10 +63,7 @@ impl ConditionCatalog {
             .cloned()
             .collect();
 
-        let mut evaluation = self.evaluate_from(snapshot, states, decisions)?;
-        evaluation.application.clone_from(&previous.application);
-
-        Ok(evaluation)
+        self.evaluate_from(snapshot, states, decisions)
     }
 
     fn evaluate_from(
@@ -102,7 +99,6 @@ impl ConditionCatalog {
 
         let evaluation = ConditionEvaluation {
             catalog: self.identity.clone(),
-            application: None,
             facts: snapshot.clone(),
             eligible,
             components: states,
@@ -118,18 +114,15 @@ impl ConditionCatalog {
     fn invalidated_components(
         &self,
         changed: &BTreeSet<upwell_core::ConfigFactId>,
-    ) -> BTreeSet<&'static str> {
+    ) -> Result<BTreeSet<&'static str>, ConditionError> {
         let dependencies = self
             .component_order
             .iter()
             .map(|component| {
-                (
-                    *component,
-                    self.dependencies(component)
-                        .expect("validated condition owner"),
-                )
+                self.dependencies(component)
+                    .map(|dependencies| (*component, dependencies))
             })
-            .collect::<BTreeMap<_, _>>();
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
         let mut invalidated = dependencies
             .iter()
             .filter(|(_, dependencies)| {
@@ -156,7 +149,7 @@ impl ConditionCatalog {
             }
 
             if invalidated.len() == before {
-                return invalidated;
+                return Ok(invalidated);
             }
         }
     }

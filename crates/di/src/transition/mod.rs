@@ -118,11 +118,18 @@ pub struct EffectiveNode {
 }
 
 /// One selected construction recipe identity.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 pub struct FactoryIdentity {
     pub id: &'static str,
-    construct: usize,
-    dependencies: usize,
+}
+
+impl std::fmt::Debug for FactoryIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_tuple("FactoryIdentity")
+            .field(&self.id)
+            .finish()
+    }
 }
 
 /// A complete immutable effective dependency graph derived without constructing components.
@@ -149,9 +156,7 @@ impl EffectiveGraph {
         Self::from_validated(generation, &components, selection, can_reach)
     }
 
-    /// Freezes an effective component set already validated with `selection`.
-    #[doc(hidden)]
-    pub fn from_validated(
+    fn from_validated(
         generation: RuntimeGenerationId,
         components: &[ComponentDescriptor],
         selection: Arc<ProviderSelectionModel>,
@@ -175,7 +180,7 @@ impl EffectiveGraph {
                         *component, ordinal, dependency, &selection, &by_type, can_reach,
                     )
                 })
-                .collect::<Vec<_>>()
+                .collect::<crate::Result<Vec<_>>>()?
                 .into_boxed_slice();
             let scope = component.scope.id();
             let role = if scope == Singleton::ID {
@@ -194,11 +199,7 @@ impl EffectiveGraph {
                     concrete_type: (component.ty.type_name)(),
                     scope,
                     role,
-                    factory: factory.map(|factory| FactoryIdentity {
-                        id: factory.id,
-                        construct: factory.construct as usize,
-                        dependencies: factory.dependencies as usize,
-                    }),
+                    factory: factory.map(|factory| FactoryIdentity { id: factory.id }),
                     dependencies,
                 },
             );
@@ -210,22 +211,20 @@ impl EffectiveGraph {
             .filter(|component| component.scope.id() == Singleton::ID)
             .copied()
             .collect::<Vec<_>>();
-        let prebuilt = singletons
-            .iter()
-            .filter(|component| {
-                component
-                    .effective_factory()
-                    .is_ok_and(|factory| factory.is_none())
-            })
-            .map(|component| component.ty.type_id)
-            .collect::<HashSet<TypeId>>();
+        let mut prebuilt = HashSet::new();
+        let mut constructed = HashSet::new();
+
+        for component in &singletons {
+            if component.effective_factory()?.is_some() {
+                constructed.insert(component.id);
+            } else {
+                prebuilt.insert(component.ty.type_id);
+            }
+        }
+
         let construction_order = topological_sort(&singletons, &prebuilt, &selection, can_reach)?
             .into_iter()
-            .filter(|component| {
-                component
-                    .effective_factory()
-                    .is_ok_and(|factory| factory.is_some())
-            })
+            .filter(|component| constructed.contains(component.id))
             .map(|component| component.id)
             .collect::<Vec<_>>()
             .into_boxed_slice();
@@ -271,7 +270,7 @@ fn capture_demand(
     selection: &ProviderSelectionModel,
     by_type: &BTreeMap<TypeId, ComponentDescriptor>,
     can_reach: impl Fn(ScopeId, ScopeId) -> bool + Copy,
-) -> DependencyDemand {
+) -> crate::Result<DependencyDemand> {
     let targets = if dependency.config {
         vec![EffectiveTarget::Config {
             config_type: (dependency.ty.type_name)(),
@@ -287,23 +286,35 @@ fn capture_demand(
             .selected_dependencies_with_scope_reachability(&consumer, &dependency, can_reach)
             .into_iter()
             .map(|selected| match selected.target {
-                DependencyTarget::Component(component) => EffectiveTarget::Component {
+                DependencyTarget::Component(component) => Ok(EffectiveTarget::Component {
                     component: component.id,
                     scope: component.scope.id(),
-                },
+                }),
                 DependencyTarget::Provider(provider) => {
-                    let component = by_type[&provider.concrete_ty.type_id];
-
-                    EffectiveTarget::Provider {
+                    let component = by_type
+                        .get(&provider.concrete_ty.type_id)
+                        .copied()
+                        .ok_or_else(|| {
+                            crate::Error::ProviderComponentMissing(Box::new(
+                                crate::error::ProviderComponentMissing {
+                                    trait_name: (provider.trait_ty.type_name)().to_string(),
+                                    trait_type: (provider.trait_ty.type_name)().to_string(),
+                                    component: (provider.concrete_ty.type_name)().to_string(),
+                                    component_type: (provider.concrete_ty.type_name)().to_string(),
+                                    qualifier: provider.qualifier.to_string(),
+                                },
+                            ))
+                        })?;
+                    Ok(EffectiveTarget::Provider {
                         mapping: provider.mapping_id(&component),
-                        scope: selected.scope.expect("validated provider scope"),
-                    }
+                        scope: component.scope.id(),
+                    })
                 }
             })
-            .collect()
+            .collect::<crate::Result<Vec<_>>>()?
     };
 
-    DependencyDemand {
+    Ok(DependencyDemand {
         id: DependencyDemandId {
             consumer: consumer.id,
             ordinal,
@@ -318,7 +329,7 @@ fn capture_demand(
         resolution: dependency.resolution,
         observation: dependency.observation,
         targets: targets.into_boxed_slice(),
-    }
+    })
 }
 
 fn reverse_index(

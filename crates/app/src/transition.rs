@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use upwell_core::{RuntimeGenerationId, ScopeId};
-use upwell_di::{ComponentDescriptor, ConditionEvaluation, EffectiveGraph, ProviderSelectionModel};
+use upwell_di::{ComponentDescriptor, EffectiveGraph, ProviderSelectionModel};
 
-use crate::AppRegistry;
 use crate::scope::{PreparedScopeTopology, ScopePlan, SeedDestination};
+use crate::{AppConditionEvaluation, AppRegistry};
 
 /// A validated candidate effective graph plus the plans used by future scope openings.
 ///
@@ -38,23 +38,23 @@ impl CandidateGraph {
     pub fn prepare_evaluation(
         base_generation: RuntimeGenerationId,
         registry: &AppRegistry,
-        evaluation: &ConditionEvaluation,
+        evaluation: &AppConditionEvaluation,
         topology: &PreparedScopeTopology,
     ) -> crate::Result<Self> {
         let component_registry = registry.component_registry();
 
-        if !evaluation.belongs_to(&component_registry)? {
+        if !evaluation.evaluation().belongs_to(&component_registry)? {
             return Err(upwell_di::ConditionError::EvaluationCatalogMismatch.into());
         }
 
-        if !evaluation.belongs_to_application(registry.condition_identity()) {
+        if !evaluation.belongs_to(registry) {
             return Err(crate::Error::ConditionEvaluationApplicationMismatch);
         }
 
         Self::prepare_registry(
             base_generation,
             registry,
-            evaluation.eligible_registry().clone(),
+            evaluation.evaluation().eligible_registry().clone(),
             topology,
         )
     }
@@ -66,21 +66,14 @@ impl CandidateGraph {
         topology: &PreparedScopeTopology,
     ) -> crate::Result<Self> {
         let components = component_registry.resolved_components()?;
-        let selection = Arc::new(component_registry.provider_selection_model(&components)?);
-
-        component_registry.validate_with_scope_reachability_using(
-            &components,
-            &selection,
-            |consumer, dependency| topology.is_reachable(&consumer, &dependency),
-        )?;
         registry.validate_configs(&components)?;
 
-        let graph = EffectiveGraph::from_validated(
+        let graph = EffectiveGraph::build(
             base_generation,
-            &components,
-            Arc::clone(&selection),
+            &component_registry,
             |consumer, dependency| topology.is_reachable(&consumer, &dependency),
         )?;
+        let selection = Arc::clone(graph.provider_selection());
         let scopes = ScopePlan::partition(&components, &selection, topology)?;
         let singleton_order = graph
             .construction_order()
@@ -130,3 +123,6 @@ impl CandidateGraph {
             .map(|destination| (destination.scope, destination.type_name))
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -69,6 +69,8 @@ impl ComponentRegistry {
         let mut positions: HashMap<TypeId, usize> = HashMap::new();
 
         for component in &self.components {
+            component.validate_factory_ids()?;
+
             let type_id = component.ty.type_id;
             let new_manual = component.effective_factory()?.is_none();
 
@@ -803,6 +805,114 @@ mod tests {
         _: &'a mut ComponentConstructionContext,
     ) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + 'a>> {
         Box::pin(async { todo!() })
+    }
+
+    fn no_dependencies() -> Vec<DependencyDescriptor> {
+        Vec::new()
+    }
+
+    fn descriptor_with_factories(
+        factories: fn() -> &'static [ComponentFactoryDescriptor],
+    ) -> ComponentDescriptor {
+        ComponentDescriptor {
+            id: "factory-fixture",
+            name: "FactoryFixture",
+            ty: TypeDescriptor::of::<u128>("FactoryFixture"),
+            scope: &Singleton,
+            condition: None,
+            factories,
+            hooks: upwell_hooks::no_hooks,
+        }
+    }
+
+    #[test]
+    fn factory_ids_are_validated_during_registry_resolution() {
+        static EMPTY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+            id: "",
+            construct: fake_factory,
+            dependencies: no_dependencies,
+            default: false,
+        }];
+        static DUPLICATE: [ComponentFactoryDescriptor; 2] = [
+            ComponentFactoryDescriptor {
+                id: "duplicate",
+                construct: fake_factory,
+                dependencies: no_dependencies,
+                default: false,
+            },
+            ComponentFactoryDescriptor {
+                id: "duplicate",
+                construct: fake_factory,
+                dependencies: no_dependencies,
+                default: true,
+            },
+        ];
+        fn empty() -> &'static [ComponentFactoryDescriptor] {
+            &EMPTY
+        }
+        fn duplicate() -> &'static [ComponentFactoryDescriptor] {
+            &DUPLICATE
+        }
+
+        let empty_error = ComponentRegistry {
+            components: vec![descriptor_with_factories(empty)],
+            providers: Vec::new(),
+        }
+        .resolved_components()
+        .expect_err("empty factory ID is invalid");
+        let duplicate_error = ComponentRegistry {
+            components: vec![descriptor_with_factories(duplicate)],
+            providers: Vec::new(),
+        }
+        .resolved_components()
+        .expect_err("duplicate factory ID is invalid");
+
+        assert!(matches!(empty_error, Error::EmptyFactoryId(_)));
+        assert!(matches!(duplicate_error, Error::DuplicateFactoryId { .. }));
+    }
+
+    #[test]
+    fn explicit_factory_still_wins_over_multiple_defaults() {
+        static FACTORIES: [ComponentFactoryDescriptor; 3] = [
+            ComponentFactoryDescriptor {
+                id: "default-a",
+                construct: fake_factory,
+                dependencies: no_dependencies,
+                default: true,
+            },
+            ComponentFactoryDescriptor {
+                id: "explicit",
+                construct: fake_factory,
+                dependencies: no_dependencies,
+                default: false,
+            },
+            ComponentFactoryDescriptor {
+                id: "default-b",
+                construct: fake_factory,
+                dependencies: no_dependencies,
+                default: true,
+            },
+        ];
+        fn factories() -> &'static [ComponentFactoryDescriptor] {
+            &FACTORIES
+        }
+
+        let descriptor = descriptor_with_factories(factories);
+        let resolved = ComponentRegistry {
+            components: vec![descriptor],
+            providers: Vec::new(),
+        }
+        .resolved_components()
+        .expect("multiple defaults remain valid when one explicit factory exists");
+
+        assert_eq!(
+            resolved[0]
+                .effective_factory()
+                .expect("factory selection succeeds")
+                .expect("explicit factory exists")
+                .id,
+            "explicit"
+        );
     }
 
     macro_rules! scoped {
