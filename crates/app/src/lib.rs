@@ -66,7 +66,7 @@ pub use protocol::{
     PreBuildContext, PreparedProtocol, ProtocolDefinition, ProtocolRuntime, Serve,
     ValidationContext,
 };
-pub use registry::AppRegistry;
+pub use registry::{AppConditionEvaluation, AppRegistry};
 pub use runtime::AppRuntime;
 pub use scope::{
     PreparedScopeTopology, ScopeBoundary, ScopeParent, ScopeTopology, ScopeTopologyError,

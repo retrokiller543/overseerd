@@ -850,6 +850,9 @@ pub type ComponentFactory =
 #[derive(Clone, Copy)]
 pub struct ComponentFactoryDescriptor {
     /// Stable identity of this construction recipe within its owning component.
+    ///
+    /// This identity is part of graph transition comparison. Change it whenever the recipe's
+    /// construction semantics change. IDs must be non-empty and unique within a component.
     pub id: &'static str,
     pub construct: ComponentFactory,
     /// The factory's dependency edges, reported at runtime. Read only at build.
@@ -991,27 +994,9 @@ impl ComponentDescriptor {
     /// Errors if more than one explicit factory exists for the type.
     pub fn effective_factory(&self) -> crate::Result<Option<&'static ComponentFactoryDescriptor>> {
         let factories = (self.factories)();
-        let mut ids = std::collections::HashSet::new();
-
-        for factory in factories {
-            if factory.id.is_empty() {
-                return Err(crate::Error::EmptyFactoryId(self.name.to_string()));
-            }
-
-            if !ids.insert(factory.id) {
-                return Err(crate::Error::DuplicateFactoryId {
-                    component: self.name.to_string(),
-                    factory: factory.id.to_string(),
-                });
-            }
-        }
 
         if factories.len() == 1 {
             return Ok(factories.first());
-        }
-
-        if factories.iter().filter(|factory| factory.default).count() > 1 {
-            return Err(crate::Error::AmbiguousFactory(self.name.to_string()));
         }
 
         let mut explicit = factories.iter().filter(|factory| !factory.default);
@@ -1026,6 +1011,25 @@ impl ComponentDescriptor {
 
             None => Ok(factories.iter().find(|factory| factory.default)),
         }
+    }
+
+    pub(crate) fn validate_factory_ids(&self) -> crate::Result<()> {
+        let mut ids = std::collections::HashSet::new();
+
+        for factory in (self.factories)() {
+            if factory.id.is_empty() {
+                return Err(crate::Error::EmptyFactoryId(self.name.to_string()));
+            }
+
+            if !ids.insert(factory.id) {
+                return Err(crate::Error::DuplicateFactoryId {
+                    component: self.name.to_string(),
+                    factory: factory.id.to_string(),
+                });
+            }
+        }
+
+        Ok(())
     }
 
     /// The dependencies of the effective factory (empty for a manual instance, or if

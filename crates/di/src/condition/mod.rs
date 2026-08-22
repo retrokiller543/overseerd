@@ -68,7 +68,6 @@ pub struct ConditionDecision {
 #[derive(Clone, Debug)]
 pub struct ConditionEvaluation {
     pub(super) catalog: CatalogIdentity,
-    pub(super) application: Option<HashMap<(TypeId, String), usize>>,
     pub(super) facts: ConditionFactSnapshot,
     pub(super) eligible: ComponentRegistry,
     pub(super) components: BTreeMap<&'static str, bool>,
@@ -97,40 +96,6 @@ impl ConditionEvaluation {
     pub fn belongs_to(&self, registry: &ComponentRegistry) -> Result<bool, ConditionError> {
         Ok(self.catalog.registry == RegistryIdentity::new(registry)?)
     }
-
-    /// Associates an app-layer config-binding catalog with this evaluation.
-    #[doc(hidden)]
-    pub fn with_application_identity(
-        mut self,
-        bindings: impl IntoIterator<Item = (TypeId, String, String)>,
-    ) -> Self {
-        self.application = Some(application_identity(bindings));
-
-        self
-    }
-
-    /// Returns whether this evaluation originated from the supplied app-layer bindings.
-    #[doc(hidden)]
-    pub fn belongs_to_application(
-        &self,
-        bindings: impl IntoIterator<Item = (TypeId, String, String)>,
-    ) -> bool {
-        self.application
-            .as_ref()
-            .is_some_and(|expected| *expected == application_identity(bindings))
-    }
-}
-
-fn application_identity(
-    bindings: impl IntoIterator<Item = (TypeId, String, String)>,
-) -> HashMap<(TypeId, String), usize> {
-    let mut identity = HashMap::new();
-
-    for (type_id, _type_name, path) in bindings {
-        *identity.entry((type_id, path)).or_default() += 1;
-    }
-
-    identity
 }
 
 #[derive(Clone, Eq, PartialEq)]

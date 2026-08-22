@@ -35,6 +35,12 @@ fn panic_factory(
     panic!("transition planning must not construct components")
 }
 
+fn changed_panic_factory(
+    _: &mut ComponentConstructionContext,
+) -> Pin<Box<dyn Future<Output = crate::Result<BoxedComponent>> + Send + '_>> {
+    panic!("changed transition recipe must not construct components")
+}
+
 fn no_dependencies() -> Vec<DependencyDescriptor> {
     Vec::new()
 }
@@ -92,9 +98,9 @@ static DEPENDENT_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDes
     default: false,
 }];
 static CHANGED_EMPTY_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
-    id: "empty",
-    construct: panic_factory,
-    dependencies: fixed_dependencies,
+    id: "changed-empty",
+    construct: changed_panic_factory,
+    dependencies: no_dependencies,
     default: false,
 }];
 
@@ -294,7 +300,7 @@ fn singleton_to_scoped_change_still_retires_the_active_singleton() {
 }
 
 #[test]
-fn changed_recipe_with_the_same_label_replaces_the_component() {
+fn changed_recipe_identity_replaces_the_component() {
     let active = graph(false);
     let mut candidate_registry = registry(false);
     let unrelated = candidate_registry
