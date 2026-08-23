@@ -86,6 +86,21 @@ impl RuntimePublication {
         RuntimeView::from_generation(self.current.load_full())
     }
 
+    fn resolver_provider(
+        &self,
+    ) -> impl Fn() -> Option<Arc<dyn upwell_core::ResolverCtx + Send + Sync>> + Send + Sync + 'static
+    {
+        let current = Arc::downgrade(&self.current);
+
+        move || {
+            let current = current.upgrade()?;
+            let generation = current.load_full();
+            let root: Arc<dyn upwell_core::ResolverCtx + Send + Sync> = generation.root.clone();
+
+            Some(root)
+        }
+    }
+
     #[allow(dead_code, reason = "used by the next component-strategy integration")]
     fn publish(
         &self,
@@ -112,7 +127,6 @@ impl RuntimePublication {
 pub(crate) struct RuntimeTransitionCoordinator {
     owner: Arc<()>,
     publication: RuntimePublication,
-    hooks: HookManager,
     #[allow(dead_code, reason = "used by the reserved transition entry point")]
     writer: Arc<Mutex<()>>,
     #[allow(dead_code, reason = "used by the reserved transition entry point")]
@@ -123,11 +137,13 @@ impl RuntimeTransitionCoordinator {
     pub(crate) fn new(initial: PreparedRuntimeGeneration, hooks: HookManager) -> Self {
         let owner = Arc::new(());
         let initial = initial.commit(Arc::clone(&owner), RuntimeGenerationId::INITIAL);
+        let publication = RuntimePublication::new(initial);
+
+        hooks.attach_resolver_provider(publication.resolver_provider());
 
         Self {
             owner,
-            publication: RuntimePublication::new(initial),
-            hooks,
+            publication,
             writer: Arc::new(Mutex::new(())),
             next_attempt: Arc::new(AtomicU64::new(1)),
         }
@@ -233,11 +249,6 @@ impl RuntimeTransition {
         let result = coordinator
             .publication
             .publish(attempt, &base.generation, candidate);
-
-        if let Ok(committed) = &result {
-            let context: Arc<dyn upwell_core::ResolverCtx + Send + Sync> = committed.root().clone();
-            coordinator.hooks.attach(Arc::downgrade(&context));
-        }
 
         drop(writer);
 

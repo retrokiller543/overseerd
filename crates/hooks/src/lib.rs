@@ -164,7 +164,7 @@ pub struct HookManager {
 }
 
 struct HookManagerInner {
-    ctx: RwLock<Option<Weak<dyn ResolverCtx + Send + Sync>>>,
+    resolver: RwLock<Option<Arc<ResolverProvider>>>,
     /// Hooks indexed by kind `TypeId`, so a kind with no listeners is an O(1) miss and a
     /// fire over it does no work at all.
     by_kind: HashMap<TypeId, Vec<HookDescriptor>>,
@@ -182,7 +182,7 @@ impl HookManager {
 
         Self {
             inner: Arc::new(HookManagerInner {
-                ctx: RwLock::new(None),
+                resolver: RwLock::new(None),
                 by_kind,
             }),
         }
@@ -193,11 +193,23 @@ impl HookManager {
     /// The manager retains only this weak reference so a component storing its own manager cannot
     /// create a root-container cycle. A later runtime generation replaces the previous context.
     pub fn attach(&self, ctx: Weak<dyn ResolverCtx + Send + Sync>) {
+        self.attach_resolver_provider(move || ctx.upgrade());
+    }
+
+    /// Attaches a provider that selects the resolver context for each hook run.
+    ///
+    /// Runtime generation owners use this to load the resolver from the same atomic snapshot as
+    /// the rest of the committed runtime state.
+    #[doc(hidden)]
+    pub fn attach_resolver_provider(
+        &self,
+        provider: impl Fn() -> Option<Arc<dyn ResolverCtx + Send + Sync>> + Send + Sync + 'static,
+    ) {
         *self
             .inner
-            .ctx
+            .resolver
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(ctx);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(provider));
     }
 
     /// Whether any hook of kind `K` is registered — an O(1) check a firing site uses to
@@ -285,14 +297,18 @@ impl HookManager {
     }
 
     fn resolver_context(&self) -> Option<Arc<dyn ResolverCtx + Send + Sync>> {
-        self.inner
-            .ctx
+        let provider = self
+            .inner
+            .resolver
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-            .and_then(Weak::upgrade)
+            .clone()?;
+
+        provider()
     }
 }
+
+type ResolverProvider = dyn Fn() -> Option<Arc<dyn ResolverCtx + Send + Sync>> + Send + Sync;
 
 fn unavailable_outcomes<K: HookKind>(
     bucket: &[HookDescriptor],
