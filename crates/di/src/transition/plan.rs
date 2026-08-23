@@ -86,6 +86,18 @@ pub struct TransitionPlan {
     pub retirement_order: Box<[&'static str]>,
 }
 
+impl TransitionPlan {
+    /// Returns whether this plan requires no dependency-graph transition work.
+    ///
+    /// A wider runtime transaction may still publish config or other generation state.
+    pub fn is_noop(&self) -> bool {
+        self.nodes.is_empty()
+            && self.bindings.is_empty()
+            && self.construction_order.is_empty()
+            && self.retirement_order.is_empty()
+    }
+}
+
 /// Failure to compare graphs that do not share one active base generation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error(

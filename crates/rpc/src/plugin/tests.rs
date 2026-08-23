@@ -183,9 +183,8 @@ async fn peer_info_seed_opens_only_at_connection_destination() {
         addr: Some("127.0.0.1:1234".parse().expect("valid test address")),
     };
     let connection = runtime
-        .open_scope(
+        .open_scope_from_root(
             &ConnectionScope,
-            Arc::clone(runtime.root()),
             vec![BoxedComponent {
                 ty: TypeDescriptor::of::<upwell_transport::PeerInfo>("PeerInfo"),
                 value: Box::new(peer.clone()),

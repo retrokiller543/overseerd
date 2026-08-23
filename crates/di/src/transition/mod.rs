@@ -242,6 +242,14 @@ impl EffectiveGraph {
         self.generation
     }
 
+    /// Assigns the semantic generation allocated when this prepared graph is committed.
+    #[doc(hidden)]
+    pub fn into_committed_generation(mut self, generation: RuntimeGenerationId) -> Self {
+        self.generation = generation;
+
+        self
+    }
+
     pub fn nodes(&self) -> impl ExactSizeIterator<Item = &EffectiveNode> {
         self.nodes.values()
     }
