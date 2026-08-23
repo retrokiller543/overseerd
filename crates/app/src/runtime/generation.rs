@@ -5,6 +5,7 @@ use arc_swap::ArcSwap;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use upwell_core::RuntimeGenerationId;
 use upwell_di::{ComponentDescriptor, EffectiveGraph, ScopeContainer, ScopeRegistry};
+use upwell_hooks::HookManager;
 
 use super::RuntimeScopePlan;
 
@@ -111,6 +112,7 @@ impl RuntimePublication {
 pub(crate) struct RuntimeTransitionCoordinator {
     owner: Arc<()>,
     publication: RuntimePublication,
+    hooks: HookManager,
     #[allow(dead_code, reason = "used by the reserved transition entry point")]
     writer: Arc<Mutex<()>>,
     #[allow(dead_code, reason = "used by the reserved transition entry point")]
@@ -118,13 +120,14 @@ pub(crate) struct RuntimeTransitionCoordinator {
 }
 
 impl RuntimeTransitionCoordinator {
-    pub(crate) fn new(initial: PreparedRuntimeGeneration) -> Self {
+    pub(crate) fn new(initial: PreparedRuntimeGeneration, hooks: HookManager) -> Self {
         let owner = Arc::new(());
         let initial = initial.commit(Arc::clone(&owner), RuntimeGenerationId::INITIAL);
 
         Self {
             owner,
             publication: RuntimePublication::new(initial),
+            hooks,
             writer: Arc::new(Mutex::new(())),
             next_attempt: Arc::new(AtomicU64::new(1)),
         }
@@ -230,6 +233,11 @@ impl RuntimeTransition {
         let result = coordinator
             .publication
             .publish(attempt, &base.generation, candidate);
+
+        if let Ok(committed) = &result {
+            let context: Arc<dyn upwell_core::ResolverCtx + Send + Sync> = committed.root().clone();
+            coordinator.hooks.attach(Arc::downgrade(&context));
+        }
 
         drop(writer);
 

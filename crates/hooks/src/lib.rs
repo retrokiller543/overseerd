@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, RwLock, Weak};
 
 use futures::FutureExt;
 use upwell_core::{DependencyDescriptor, ResolverCtx, TypeDescriptor, UpwellDescriptor};
@@ -164,7 +164,7 @@ pub struct HookManager {
 }
 
 struct HookManagerInner {
-    ctx: OnceLock<Weak<dyn ResolverCtx + Send + Sync>>,
+    ctx: RwLock<Option<Weak<dyn ResolverCtx + Send + Sync>>>,
     /// Hooks indexed by kind `TypeId`, so a kind with no listeners is an O(1) miss and a
     /// fire over it does no work at all.
     by_kind: HashMap<TypeId, Vec<HookDescriptor>>,
@@ -182,7 +182,7 @@ impl HookManager {
 
         Self {
             inner: Arc::new(HookManagerInner {
-                ctx: OnceLock::new(),
+                ctx: RwLock::new(None),
                 by_kind,
             }),
         }
@@ -191,9 +191,13 @@ impl HookManager {
     /// Attaches the resolver context owned by the active runtime generation.
     ///
     /// The manager retains only this weak reference so a component storing its own manager cannot
-    /// create a root-container cycle. Idempotent; a second attach is ignored.
+    /// create a root-container cycle. A later runtime generation replaces the previous context.
     pub fn attach(&self, ctx: Weak<dyn ResolverCtx + Send + Sync>) {
-        let _ = self.inner.ctx.set(ctx);
+        *self
+            .inner
+            .ctx
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(ctx);
     }
 
     /// Whether any hook of kind `K` is registered — an O(1) check a firing site uses to
@@ -214,7 +218,7 @@ impl HookManager {
             return Vec::new();
         };
 
-        let Some(ctx) = self.inner.ctx.get().and_then(Weak::upgrade) else {
+        let Some(ctx) = self.resolver_context() else {
             return unavailable_outcomes::<K>(bucket, filter);
         };
 
@@ -244,7 +248,7 @@ impl HookManager {
             return Vec::new();
         };
 
-        let Some(ctx) = self.inner.ctx.get().and_then(Weak::upgrade) else {
+        let Some(ctx) = self.resolver_context() else {
             return bucket
                 .iter()
                 .find(|hook| filter(hook))
@@ -278,6 +282,15 @@ impl HookManager {
                     .iter()
                     .any(|hook| hook.component_ty.type_id == component)
             })
+    }
+
+    fn resolver_context(&self) -> Option<Arc<dyn ResolverCtx + Send + Sync>> {
+        self.inner
+            .ctx
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .and_then(Weak::upgrade)
     }
 }
 

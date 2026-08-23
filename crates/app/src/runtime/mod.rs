@@ -73,7 +73,7 @@ impl AppRuntime {
 
         Self {
             name,
-            transitions: RuntimeTransitionCoordinator::new(generation),
+            transitions: RuntimeTransitionCoordinator::new(generation, hooks.clone()),
             hooks,
         }
     }
