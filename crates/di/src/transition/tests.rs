@@ -209,6 +209,24 @@ fn repeated_planning_is_deterministic() {
 }
 
 #[test]
+fn identical_graphs_produce_a_no_op_plan() {
+    let active = graph(false);
+    let candidate = graph(false);
+
+    let plan = active
+        .plan_transition(&candidate)
+        .expect("candidate uses active base generation");
+
+    assert!(plan.is_noop());
+    assert!(
+        plan.diff
+            .nodes
+            .iter()
+            .all(|change| change.kinds.as_ref() == [NodeChangeKind::Unchanged])
+    );
+}
+
+#[test]
 fn replacement_suppresses_redundant_live_binding_work() {
     let active = graph(false);
     let mut candidate_registry = registry(true);

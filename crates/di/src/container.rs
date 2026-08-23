@@ -367,6 +367,7 @@ pub struct ScopeContainer {
     resolver_base: ResolverSet,
     resolvers: std::sync::OnceLock<ResolverSet>,
     slot: ScopeResolverSlot,
+    generation_lease: Option<Arc<dyn Any + Send + Sync>>,
 }
 
 impl ResolverCtx for ScopeContainer {
@@ -435,6 +436,12 @@ impl ScopeContainer {
         Arc::ptr_eq(&self.registry, registry)
     }
 
+    /// Returns the runtime-generation lease retained by this scope when its type matches `T`.
+    #[doc(hidden)]
+    pub fn generation_lease<T: Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        Arc::clone(self.generation_lease.as_ref()?).downcast().ok()
+    }
+
     pub(crate) fn can_access(&self, scope: &'static dyn Scope) -> bool {
         if scope.is_transient() || self.scope.id() == scope.id() {
             return true;
@@ -475,7 +482,10 @@ impl ScopeContainer {
         externals: ResolverSet,
         registry: Arc<ScopeRegistry>,
     ) -> crate::Result<Arc<ScopeContainer>> {
-        let root = Self::build(&Singleton, None, registry, order, instances, externals).await?;
+        let root = Self::build(
+            &Singleton, None, registry, order, instances, externals, None,
+        )
+        .await?;
 
         info!(count = root.store.components.len(), "root container built");
 
@@ -496,6 +506,40 @@ impl ScopeContainer {
         order: &[ComponentDescriptor],
         seeds: Vec<BoxedComponent>,
     ) -> crate::Result<Arc<ScopeContainer>> {
+        let generation_lease = parent.generation_lease.clone();
+
+        Self::open_child_inner(scope, parent, registry, order, seeds, generation_lease).await
+    }
+
+    /// Opens a child scope while retaining one opaque runtime-generation state object.
+    #[doc(hidden)]
+    pub async fn open_child_with_generation_lease<T: Any + Send + Sync>(
+        scope: &'static dyn Scope,
+        parent: Arc<ScopeContainer>,
+        registry: Arc<ScopeRegistry>,
+        order: &[ComponentDescriptor],
+        seeds: Vec<BoxedComponent>,
+        generation_lease: Arc<T>,
+    ) -> crate::Result<Arc<ScopeContainer>> {
+        Self::open_child_inner(
+            scope,
+            parent,
+            registry,
+            order,
+            seeds,
+            Some(generation_lease),
+        )
+        .await
+    }
+
+    async fn open_child_inner(
+        scope: &'static dyn Scope,
+        parent: Arc<ScopeContainer>,
+        registry: Arc<ScopeRegistry>,
+        order: &[ComponentDescriptor],
+        seeds: Vec<BoxedComponent>,
+        generation_lease: Option<Arc<dyn Any + Send + Sync>>,
+    ) -> crate::Result<Arc<ScopeContainer>> {
         let externals = parent.resolvers().clone();
 
         if order.is_empty() && seeds.is_empty() {
@@ -507,10 +551,20 @@ impl ScopeContainer {
                 resolver_base: externals,
                 resolvers: std::sync::OnceLock::new(),
                 slot: ScopeResolverSlot::attached(container.clone()),
+                generation_lease,
             }));
         }
 
-        Self::build(scope, Some(parent), registry, order, seeds, externals).await
+        Self::build(
+            scope,
+            Some(parent),
+            registry,
+            order,
+            seeds,
+            externals,
+            generation_lease,
+        )
+        .await
     }
 
     /// Seeds instances, then constructs `order` in sequence, aliasing trait
@@ -524,6 +578,7 @@ impl ScopeContainer {
         order: &[ComponentDescriptor],
         seeds: Vec<BoxedComponent>,
         externals: ResolverSet,
+        generation_lease: Option<Arc<dyn Any + Send + Sync>>,
     ) -> crate::Result<Arc<ScopeContainer>> {
         let slot = ScopeResolverSlot::default();
         let mut cx = ComponentConstructionContext::new_with_slot(
@@ -582,6 +637,7 @@ impl ScopeContainer {
                 resolver_base: resolvers.clone(),
                 resolvers: std::sync::OnceLock::from(resolvers),
                 slot: slot.clone(),
+                generation_lease,
             }
         });
         slot.attach(&container)?;
