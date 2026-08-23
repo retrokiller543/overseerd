@@ -2,6 +2,7 @@ use std::any::{Any, TypeId};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use upwell_core::{DependencyDescriptor, ResolverCtx, ResolverSet, TypeDescriptor};
 
@@ -160,4 +161,23 @@ fn attaching_a_new_generation_replaces_an_expired_context() {
             })
         )]
     ));
+}
+
+#[test]
+fn resolver_provider_is_loaded_for_each_hook_run() {
+    let manager = HookManager::new(vec![panicking_hook()]);
+    let loads = Arc::new(AtomicUsize::new(0));
+    let provider_loads = Arc::clone(&loads);
+    let resolver: Arc<dyn ResolverCtx + Send + Sync> = Arc::new(ResolverSet::new());
+
+    manager.attach_resolver_provider(move || {
+        provider_loads.fetch_add(1, Ordering::Relaxed);
+
+        Some(Arc::clone(&resolver))
+    });
+
+    let _ = futures::executor::block_on(manager.run::<Startup>(&(), |_| true));
+    let _ = futures::executor::block_on(manager.run::<Startup>(&(), |_| true));
+
+    assert_eq!(loads.load(Ordering::Relaxed), 2);
 }
