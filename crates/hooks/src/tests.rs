@@ -137,3 +137,27 @@ fn expired_resolver_context_returns_typed_errors() {
         [(_, Err(Error::ResolverUnavailable))]
     ));
 }
+
+#[test]
+fn attaching_a_new_generation_replaces_an_expired_context() {
+    let manager = HookManager::new(vec![panicking_hook()]);
+    let initial: Arc<dyn ResolverCtx + Send + Sync> = Arc::new(ResolverSet::new());
+    manager.attach(Arc::downgrade(&initial));
+    drop(initial);
+
+    let replacement: Arc<dyn ResolverCtx + Send + Sync> = Arc::new(ResolverSet::new());
+    manager.attach(Arc::downgrade(&replacement));
+
+    let outcomes = futures::executor::block_on(manager.run::<Startup>(&(), |_| true));
+
+    assert!(matches!(
+        outcomes.as_slice(),
+        [(
+            _,
+            Err(Error::Panicked {
+                hook: "startup",
+                ..
+            })
+        )]
+    ));
+}

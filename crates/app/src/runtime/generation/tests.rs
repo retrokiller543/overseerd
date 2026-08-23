@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use upwell_core::{ResolverSet, RuntimeGenerationId};
 use upwell_di::{ComponentRegistry, EffectiveGraph, ScopeContainer, ScopeRegistry};
+use upwell_hooks::HookManager;
 
 use super::*;
 use crate::ScopeTopology;
@@ -37,9 +38,13 @@ async fn prepared() -> PreparedRuntimeGeneration {
     )
 }
 
+async fn coordinator() -> RuntimeTransitionCoordinator {
+    RuntimeTransitionCoordinator::new(prepared().await, HookManager::new(Vec::new()))
+}
+
 #[tokio::test]
 async fn no_op_attempts_advance_attempts_without_publishing_generations() {
-    let coordinator = RuntimeTransitionCoordinator::new(prepared().await);
+    let coordinator = coordinator().await;
     let initial = coordinator.current();
     let first = coordinator.begin().await;
 
@@ -60,7 +65,7 @@ async fn no_op_attempts_advance_attempts_without_publishing_generations() {
 
 #[tokio::test]
 async fn publication_allocates_and_stamps_one_semantic_generation() {
-    let coordinator = RuntimeTransitionCoordinator::new(prepared().await);
+    let coordinator = coordinator().await;
     let transition = coordinator.begin().await;
 
     let committed = transition
@@ -113,7 +118,7 @@ async fn stale_base_cannot_replace_a_newer_generation() {
 
 #[tokio::test]
 async fn publish_rejects_candidate_prepared_from_another_base() {
-    let coordinator = RuntimeTransitionCoordinator::new(prepared().await);
+    let coordinator = coordinator().await;
     let first = coordinator.begin().await;
     let committed = first
         .publish(prepared().await)
@@ -137,7 +142,7 @@ async fn publish_rejects_candidate_prepared_from_another_base() {
 
 #[tokio::test]
 async fn coordinator_serializes_attempts_and_pins_the_latest_base() {
-    let coordinator = RuntimeTransitionCoordinator::new(prepared().await);
+    let coordinator = coordinator().await;
     let first = coordinator.begin().await;
     let waiting = coordinator.clone();
     let second = tokio::spawn(async move { waiting.begin().await });
