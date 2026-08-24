@@ -160,6 +160,7 @@ fn construct_topic_bus<P: PubSubProtocol>(
 
 fn topic_bus_factories<P: PubSubProtocol>() -> &'static [ComponentFactoryDescriptor] {
     &[ComponentFactoryDescriptor {
+        id: "static",
         construct: construct_topic_bus::<P>,
         dependencies: topic_bus_dependencies,
         default: true,
@@ -176,6 +177,7 @@ pub fn topic_bus_descriptor<P: PubSubProtocol>() -> ComponentDescriptor {
         name,
         ty: TypeDescriptor::of::<TopicBus<P>>(name),
         scope: &Singleton,
+        condition: None,
         factories: topic_bus_factories::<P>,
         hooks: no_hooks,
     }

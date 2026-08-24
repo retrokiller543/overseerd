@@ -36,6 +36,15 @@ pub enum Error {
         parent: ScopeId,
     },
 
+    /// A nested boundary was opened over a parent without a runtime-generation lease.
+    #[error("cannot open scope '{child}' over unpinned parent '{parent}'")]
+    UnpinnedScopeParent {
+        /// The requested child boundary.
+        child: ScopeId,
+        /// The supplied parent's stable scope identity.
+        parent: ScopeId,
+    },
+
     /// A child was opened over a parent other than its declared parent.
     #[error("scope '{child}' requires parent '{expected}', but parent '{actual}' was supplied")]
     InvalidScopeParent {
@@ -105,6 +114,14 @@ pub enum Error {
     /// provider, scope violation, duplicate/ambiguous factory, …).
     #[error(transparent)]
     Di(#[from] upwell_di::Error),
+
+    /// A conditional component catalog or evaluation is invalid.
+    #[error(transparent)]
+    Condition(#[from] upwell_di::ConditionError),
+
+    /// A condition evaluation was produced from another application's config bindings.
+    #[error("condition evaluation belongs to another application config-binding catalog")]
+    ConditionEvaluationApplicationMismatch,
 
     /// A configuration loading, binding, or substitution failure.
     #[error(transparent)]

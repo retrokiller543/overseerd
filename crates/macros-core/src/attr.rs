@@ -452,6 +452,11 @@ pub fn cfg_inner(ty: &Type) -> Option<Type> {
     first_type_arg(ty, "Cfg")
 }
 
+/// The target type `T` of a live `Dep<T>` field.
+pub fn dep_inner(ty: &Type) -> Option<Type> {
+    first_type_arg(ty, "Dep")
+}
+
 /// The request body type `T` of a `Payload<T>` parameter.
 pub fn payload_inner(ty: &Type) -> Option<Type> {
     first_type_arg(ty, "Payload")

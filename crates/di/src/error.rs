@@ -224,6 +224,12 @@ pub enum Error {
     )]
     AmbiguousFactory(String),
 
+    #[error("factory for component '{0}' has an empty stable identity")]
+    EmptyFactoryId(String),
+
+    #[error("component '{component}' registers duplicate factory identity '{factory}'")]
+    DuplicateFactoryId { component: String, factory: String },
+
     #[error("missing dependency for component '{component}': {dependency}")]
     MissingDependency {
         /// Human-readable component name.

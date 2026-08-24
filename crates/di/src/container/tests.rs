@@ -116,6 +116,7 @@ fn dependency<T: ?Sized + 'static>(dynamic: bool) -> DependencyDescriptor {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }
 }
 
@@ -159,16 +160,19 @@ fn fresh_target_factory(
 }
 
 static TARGET_PROVIDER_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: target_provider_factory,
     dependencies: no_dependencies,
     default: false,
 }];
 static OWNER_PROVIDER_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: owner_provider_factory,
     dependencies: no_dependencies,
     default: false,
 }];
 static FRESH_TARGET_FACTORY: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: fresh_target_factory,
     dependencies: fresh_target_dependencies,
     default: false,
@@ -489,6 +493,7 @@ async fn fresh_target_resolves_from_its_declared_scope_ancestry() {
         name: "TargetProvider",
         ty: TypeDescriptor::of::<TargetProvider>("TargetProvider"),
         scope: &FreshTargetScope,
+        condition: None,
         factories: target_provider_factories,
         hooks: upwell_hooks::no_hooks,
     };
@@ -497,6 +502,7 @@ async fn fresh_target_resolves_from_its_declared_scope_ancestry() {
         name: "OwnerProvider",
         ty: TypeDescriptor::of::<OwnerProvider>("OwnerProvider"),
         scope: &FreshOwnerScope,
+        condition: None,
         factories: owner_provider_factories,
         hooks: upwell_hooks::no_hooks,
     };
@@ -505,6 +511,7 @@ async fn fresh_target_resolves_from_its_declared_scope_ancestry() {
         name: "FreshTarget",
         ty: TypeDescriptor::of::<FreshTarget>("FreshTarget"),
         scope: &FreshTargetScope,
+        condition: None,
         factories: fresh_target_factories,
         hooks: upwell_hooks::no_hooks,
     };

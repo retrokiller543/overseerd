@@ -66,3 +66,29 @@ fn linkme_registration_items_allow_their_required_unsafe_attributes() {
         "component linkme registration scopes its unsafe lint allowance: {tokens}"
     );
 }
+
+#[test]
+fn generated_dependency_observation_matches_handle_semantics() {
+    let tokens = expand(
+        ComponentArgs::<NoExt>::default(),
+        syn::parse_quote! {
+            struct Example {
+                fixed: std::sync::Arc<Fixed>,
+                live: Dep<Live>,
+                #[config]
+                config: Cfg<Config>,
+            }
+        },
+        &Paths::upwell(),
+    )
+    .expect("component expands")
+    .to_string();
+
+    assert!(tokens.contains("DependencyObservation :: Snapshot"));
+    assert_eq!(
+        tokens.matches("DependencyObservation :: Live").count(),
+        2,
+        "Dep and Cfg fields are the only live observations: {tokens}"
+    );
+    assert!(tokens.contains("condition : :: core :: option :: Option :: None"));
+}

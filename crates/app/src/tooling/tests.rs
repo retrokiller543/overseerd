@@ -80,6 +80,7 @@ fn diagnostic_dependency() -> Vec<DependencyDescriptor> {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }]
 }
 
@@ -93,11 +94,13 @@ fn diagnostic_provider_dependency() -> Vec<DependencyDescriptor> {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }]
 }
 
 static DIAGNOSTIC_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] =
     [ComponentFactoryDescriptor {
+        id: "diagnostic-consumer",
         construct,
         dependencies: diagnostic_dependency,
         default: false,
@@ -109,6 +112,7 @@ fn diagnostic_consumer_factories() -> &'static [ComponentFactoryDescriptor] {
 
 static DIAGNOSTIC_PROVIDER_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] =
     [ComponentFactoryDescriptor {
+        id: "diagnostic-provider-consumer",
         construct,
         dependencies: diagnostic_provider_dependency,
         default: false,
@@ -123,6 +127,7 @@ static DIAGNOSTIC_CONSUMER: ComponentDescriptor = ComponentDescriptor {
     name: "Friendly Consumer Name",
     ty: TypeDescriptor::of::<DiagnosticConsumer>("DiagnosticConsumer"),
     scope: &DiagnosticConsumerScope,
+    condition: None,
     factories: diagnostic_consumer_factories,
     hooks: upwell_hooks::no_hooks,
 };
@@ -132,6 +137,7 @@ static DIAGNOSTIC_DEPENDENCY: ComponentDescriptor = ComponentDescriptor {
     name: "Friendly Dependency Name",
     ty: TypeDescriptor::of::<DiagnosticDependency>("DiagnosticDependency"),
     scope: &DiagnosticDependencyScope,
+    condition: None,
     factories,
     hooks: upwell_hooks::no_hooks,
 };
@@ -141,6 +147,7 @@ static DIAGNOSTIC_PROVIDER_CONSUMER: ComponentDescriptor = ComponentDescriptor {
     name: "Friendly Provider Consumer",
     ty: TypeDescriptor::of::<DiagnosticProviderConsumer>("DiagnosticProviderConsumer"),
     scope: &DiagnosticConsumerScope,
+    condition: None,
     factories: diagnostic_provider_consumer_factories,
     hooks: upwell_hooks::no_hooks,
 };
@@ -150,6 +157,7 @@ static DIAGNOSTIC_PROVIDER_COMPONENT: ComponentDescriptor = ComponentDescriptor 
     name: "Friendly Provider Component",
     ty: TypeDescriptor::of::<DiagnosticProviderComponent>("DiagnosticProviderComponent"),
     scope: &DiagnosticDependencyScope,
+    condition: None,
     factories,
     hooks: upwell_hooks::no_hooks,
 };
@@ -753,12 +761,14 @@ fn snapshot_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
 }
 
 static FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "projected",
     construct,
     dependencies,
     default: true,
 }];
 
 static SNAPSHOT_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "snapshot",
     construct,
     dependencies: snapshot_dependencies,
     default: true,
@@ -788,6 +798,7 @@ fn snapshot_dependency(name: &'static str) -> DependencyDescriptor {
         qualifier: None,
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }
 }
 
@@ -827,6 +838,7 @@ static COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: ProjectedComponent::NAME,
     ty: TypeDescriptor::of::<ProjectedComponent>(ProjectedComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories,
     hooks: upwell_hooks::no_hooks,
 };
@@ -836,6 +848,7 @@ static SNAPSHOT_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: ProjectedComponent::NAME,
     ty: TypeDescriptor::of::<ProjectedComponent>(ProjectedComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: snapshot_factories,
     hooks: snapshot_hooks,
 };
@@ -904,6 +917,7 @@ fn config_dependency(qualifier: Option<&'static str>) -> DependencyDescriptor {
         qualifier,
         config: true,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Live,
     }
 }
 
@@ -914,6 +928,7 @@ fn construct_config_consumer(
 }
 
 static CONFIG_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: construct_config_consumer,
     dependencies: exact_config_dependency,
     default: true,
@@ -928,6 +943,7 @@ static RELOAD_HOOK_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: ReloadHookComponent::NAME,
     ty: TypeDescriptor::of::<ReloadHookComponent>(ReloadHookComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: no_component_factories,
     hooks: reload_hooks,
 };
@@ -965,6 +981,7 @@ static AMBIGUOUS_CONFIG_HOOK_COMPONENT: ComponentDescriptor = ComponentDescripto
     name: ReloadHookComponent::NAME,
     ty: TypeDescriptor::of::<ReloadHookComponent>(ReloadHookComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: no_component_factories,
     hooks: ambiguous_config_hooks,
 };
@@ -974,6 +991,7 @@ static MISSING_CONFIG_HOOK_COMPONENT: ComponentDescriptor = ComponentDescriptor 
     name: ReloadHookComponent::NAME,
     ty: TypeDescriptor::of::<ReloadHookComponent>(ReloadHookComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: no_component_factories,
     hooks: missing_config_hooks,
 };
@@ -983,6 +1001,7 @@ static CONFIG_CONSUMER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: ConfigConsumer::NAME,
     ty: TypeDescriptor::of::<ConfigConsumer>(ConfigConsumer::NAME),
     scope: &Singleton,
+    condition: None,
     factories: config_consumer_factories,
     hooks: upwell_hooks::no_hooks,
 };
@@ -1072,11 +1091,13 @@ fn provider_consumer_dependencies() -> Vec<DependencyDescriptor> {
         qualifier: Some("projected"),
         config: false,
         resolution: ResolutionMode::Eager,
+        observation: upwell_core::DependencyObservation::Snapshot,
     }]
 }
 
 static PROVIDER_CONSUMER_FACTORIES: [ComponentFactoryDescriptor; 1] =
     [ComponentFactoryDescriptor {
+        id: "static",
         construct: construct_config_consumer,
         dependencies: provider_consumer_dependencies,
         default: true,
@@ -1091,6 +1112,7 @@ static PROVIDER_CONSUMER_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: ProviderConsumer::NAME,
     ty: TypeDescriptor::of::<ProviderConsumer>(ProviderConsumer::NAME),
     scope: &Singleton,
+    condition: None,
     factories: provider_consumer_factories,
     hooks: upwell_hooks::no_hooks,
 };
@@ -1459,6 +1481,7 @@ fn selected_plugin_component_and_provider_retain_provenance_and_resolution() {
             && relationship.labels["role"] == "resolved-provider"
             && relationship.labels["selection-reason"] == "qualified"
             && relationship.labels["resolution"] == "eager"
+            && relationship.labels["observation"] == "snapshot"
             && relationship.labels["cardinality"] == "one"
     }));
     assert!(document.relationships.iter().any(|relationship| {

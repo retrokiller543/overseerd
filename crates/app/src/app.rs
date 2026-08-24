@@ -15,11 +15,12 @@ use upwell_config::{
     ConfigReloader, ConfigStore, ReloadTriggers, spawn_reload_triggers, stop_reload_triggers,
 };
 use upwell_core::{
-    Descriptor, ResolverCtx, ResolverSet, Singleton as SingletonScope, TypeDescriptor,
+    Descriptor, ResolverCtx, ResolverSet, RuntimeGenerationId, Singleton as SingletonScope,
+    TypeDescriptor,
 };
 use upwell_di::{
-    BoxedComponent, Component, ComponentDescriptor, Injectable, RootResolver, ScopeContainer,
-    ScopeRegistry, root_resolver_descriptor, topological_sort,
+    BoxedComponent, Component, ComponentDescriptor, EffectiveGraph, Injectable, RootResolver,
+    ScopeContainer, ScopeRegistry, root_resolver_descriptor, topological_sort,
 };
 use upwell_dirs::{Cache, Config, Data, Dir, DirKind, DirectoriesManager, Runtime, State, Tmp};
 use upwell_hooks::{
@@ -99,6 +100,7 @@ pub struct PreparedApp<D: ProtocolDefinition> {
     reload_triggers: ReloadTriggers,
     resolved: Arc<[ComponentDescriptor]>,
     root_order: Arc<[ComponentDescriptor]>,
+    effective_graph: EffectiveGraph,
     #[cfg(feature = "tooling")]
     host_lifecycle: Option<HostLifecycleCapabilities>,
     #[cfg(feature = "tooling")]
@@ -387,6 +389,12 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
             &scope_topology,
         )?;
         let scopes = ScopePlan::partition(&resolved, &provider_selection, &scope_topology)?;
+        let effective_graph = EffectiveGraph::build(
+            RuntimeGenerationId::INITIAL,
+            &component_registry,
+            |consumer, dependency| scope_topology.is_reachable(&consumer, &dependency),
+        )
+        .map_err(Error::from)?;
         let prebuilt: HashSet<_> = instances
             .iter()
             .map(|instance| instance.ty.type_id)
@@ -490,6 +498,7 @@ impl<D: ProtocolDefinition> AppBuilder<D> {
             reload_triggers,
             resolved: Arc::from(resolved),
             root_order: Arc::from(root_order),
+            effective_graph,
             #[cfg(feature = "tooling")]
             host_lifecycle: None,
             #[cfg(feature = "tooling")]
@@ -611,6 +620,7 @@ impl<D: ProtocolDefinition> PreparedApp<D> {
             reload_triggers,
             resolved,
             root_order,
+            effective_graph,
             #[cfg(feature = "tooling")]
                 host_lifecycle: _,
             #[cfg(feature = "tooling")]
@@ -639,7 +649,7 @@ impl<D: ProtocolDefinition> PreparedApp<D> {
 
         // Hooks resolve their `&self` receiver through the root container.
         let hook_ctx: Arc<dyn ResolverCtx + Send + Sync> = root.clone();
-        hook_manager.attach(hook_ctx);
+        hook_manager.attach(Arc::downgrade(&hook_ctx));
 
         // The root resolver hands the finished root to any singleton that needs to resolve
         // from the container at run time (kept as a `Weak`, so it adds no reference cycle).
@@ -657,6 +667,7 @@ impl<D: ProtocolDefinition> PreparedApp<D> {
             scope_registry,
             RuntimeScopePlan::new(scope_topology, scope_orders, seed_destinations),
             resolved,
+            effective_graph,
             hook_manager,
         );
 
@@ -785,7 +796,7 @@ impl<D: ProtocolDefinition> App<D> {
     }
 
     /// The root (singleton) scope container.
-    pub fn container(&self) -> &Arc<ScopeContainer> {
+    pub fn container(&self) -> Arc<ScopeContainer> {
         self.runtime.root()
     }
 
@@ -922,6 +933,7 @@ impl<D: ProtocolDefinition> App<D> {
 /// Runs startup hooks sequentially, returning the components whose startup fully
 /// succeeded. On failure the list lets the caller pair shutdown only with work that
 /// actually started.
+#[allow(clippy::result_large_err)]
 async fn run_startup(
     hooks: &HookManager,
 ) -> Result<HashSet<TypeId>, (crate::Error, HashSet<TypeId>)> {

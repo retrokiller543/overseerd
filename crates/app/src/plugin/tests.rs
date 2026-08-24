@@ -98,12 +98,14 @@ fn no_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
 }
 
 static PROTOCOL_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: construct_protocol_component,
     dependencies: no_dependencies,
     default: true,
 }];
 
 static APPLICATION_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: construct_application_component,
     dependencies: no_dependencies,
     default: true,
@@ -122,6 +124,7 @@ static PROTOCOL_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: ProtocolComponent::NAME,
     ty: TypeDescriptor::of::<ProtocolComponent>(ProtocolComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: protocol_factories,
     hooks: upwell_hooks::no_hooks,
 };
@@ -131,6 +134,7 @@ static APPLICATION_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: ApplicationComponent::NAME,
     ty: TypeDescriptor::of::<ApplicationComponent>(ApplicationComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: application_factories,
     hooks: upwell_hooks::no_hooks,
 };

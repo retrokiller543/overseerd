@@ -11,8 +11,8 @@ use std::{
 };
 
 use upwell_core::{
-    DependencyDescriptor, ResolutionMode, ResolverCtx, ResolverSet, Scope, Singleton,
-    TypeDescriptor, UpwellDescriptor,
+    ConditionDescriptor, DependencyDescriptor, ProviderMappingId, ResolutionMode, ResolverCtx,
+    ResolverSet, Scope, Singleton, TypeDescriptor, UpwellDescriptor,
 };
 use upwell_hooks::{HookDescriptor, no_hooks};
 
@@ -297,6 +297,17 @@ impl fmt::Debug for ProviderDescriptor {
             .field("priority", &self.priority)
             .field("ordering", &self.ordering)
             .finish_non_exhaustive()
+    }
+}
+
+impl ProviderDescriptor {
+    /// Returns the stable mapping identity relative to its validated concrete component.
+    pub fn mapping_id(&self, component: &ComponentDescriptor) -> ProviderMappingId {
+        ProviderMappingId {
+            component: component.id,
+            trait_type: self.trait_ty.type_name,
+            qualifier: self.qualifier,
+        }
     }
 }
 
@@ -838,6 +849,11 @@ pub type ComponentFactory =
 /// [`ComponentDescriptor::effective_factory`].
 #[derive(Clone, Copy)]
 pub struct ComponentFactoryDescriptor {
+    /// Stable identity of this construction recipe within its owning component.
+    ///
+    /// This identity is part of graph transition comparison. Change it whenever the recipe's
+    /// construction semantics change. IDs must be non-empty and unique within a component.
+    pub id: &'static str,
     pub construct: ComponentFactory,
     /// The factory's dependency edges, reported at runtime. Read only at build.
     pub dependencies: fn() -> Vec<DependencyDescriptor>,
@@ -848,6 +864,7 @@ pub struct ComponentFactoryDescriptor {
 impl fmt::Debug for ComponentFactoryDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ComponentFactoryDescriptor")
+            .field("id", &self.id)
             .field("dependencies", &(self.dependencies)())
             .field("default", &self.default)
             .finish_non_exhaustive()
@@ -924,6 +941,8 @@ pub struct ComponentDescriptor {
     pub name: &'static str,
     pub ty: TypeDescriptor,
     pub scope: &'static dyn Scope,
+    /// Optional root condition. Provider mappings inherit this component's eligibility.
+    pub condition: Option<&'static ConditionDescriptor>,
     pub factories: fn() -> &'static [ComponentFactoryDescriptor],
     /// The component's `{Type}Hooks` slice (its `#[hook]` methods). Empty for a type
     /// that declares none — and for every manually-seeded instance.
@@ -943,6 +962,7 @@ impl ComponentDescriptor {
             name: T::NAME,
             ty: TypeDescriptor::of::<T>(T::NAME),
             scope: &Singleton,
+            condition: None,
             factories: no_factories,
             hooks: no_hooks,
         }
@@ -963,6 +983,7 @@ impl ComponentDescriptor {
             name,
             ty,
             scope,
+            condition: None,
             factories: no_factories,
             hooks: no_hooks,
         }
@@ -992,6 +1013,25 @@ impl ComponentDescriptor {
         }
     }
 
+    pub(crate) fn validate_factory_ids(&self) -> crate::Result<()> {
+        let mut ids = std::collections::HashSet::new();
+
+        for factory in (self.factories)() {
+            if factory.id.is_empty() {
+                return Err(crate::Error::EmptyFactoryId(self.name.to_string()));
+            }
+
+            if !ids.insert(factory.id) {
+                return Err(crate::Error::DuplicateFactoryId {
+                    component: self.name.to_string(),
+                    factory: factory.id.to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     /// The dependencies of the effective factory (empty for a manual instance, or if
     /// the factory choice is ambiguous — that is surfaced separately during validation).
     pub fn dependencies(&self) -> Vec<DependencyDescriptor> {
@@ -1010,6 +1050,7 @@ impl fmt::Debug for ComponentDescriptor {
             .field("name", &self.name)
             .field("ty", &self.ty)
             .field("scope", &self.scope.name())
+            .field("condition", &self.condition)
             .field("dependencies", &self.dependencies())
             .finish_non_exhaustive()
     }

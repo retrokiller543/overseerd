@@ -66,6 +66,7 @@ fn no_dependencies() -> Vec<upwell_core::DependencyDescriptor> {
 }
 
 static BOUNDARY_FACTORIES: [ComponentFactoryDescriptor; 1] = [ComponentFactoryDescriptor {
+    id: "static",
     construct: construct_boundary_component,
     dependencies: no_dependencies,
     default: true,
@@ -80,6 +81,7 @@ static BOUNDARY_COMPONENT: ComponentDescriptor = ComponentDescriptor {
     name: BoundaryComponent::NAME,
     ty: TypeDescriptor::of::<BoundaryComponent>(BoundaryComponent::NAME),
     scope: &Singleton,
+    condition: None,
     factories: boundary_factories,
     hooks: upwell_hooks::no_hooks,
 };
